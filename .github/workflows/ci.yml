@@ -23,6 +23,12 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Ensure static embed placeholder
+        # CI 不构建前端（prod 由 Dockerfile 用 Node/pnpm 构建 out/ 后注入 static/out）。
+        # static/static.go 的 //go:embed all:out 需要 static/out 至少有一个文件才能编译，
+        # 这里放一个占位文件让全项目 go build 通过；不影响 relay 等内部包的真实编译验证。
+        run: mkdir -p static/out && echo 'placeholder for go:embed (CI; frontend built separately in prod)' > static/out/placeholder
+
       - name: Build (jsoniter tag，与 Dockerfile 生产构建一致)
         run: go build -tags=jsoniter ./...
 
