@@ -1,5 +1,7 @@
-import type { LLMChannel } from '@/api/endpoints/model';
-import { GroupMode } from '@/api/endpoints/group';
+// 相对路径导入：本文件被 node --test 直接加载（utils.test.ts），@/ 别名与无扩展名导入在该环境下不可解析；
+// GroupMode 所在的 api/endpoints/group.ts 含 enum（node strip-only 模式不支持），
+// 故 MODE_LABELS 用与 GroupMode 枚举值一致的字面量键（1-5），不再导入该枚举。
+import type { LLMChannel } from '../../../api/endpoints/model.ts';
 export {
     ALL_CAPABILITIES,
     CAPABILITY_COLORS,
@@ -9,14 +11,14 @@ export {
     matchesGroupEndpointFilter,
     type CapabilityType,
     type GroupEndpointFilter,
-} from './capabilities';
+} from './capabilities.ts';
 
-export const MODE_LABELS: Record<GroupMode, string> = {
-    [GroupMode.RoundRobin]: 'roundRobin',
-    [GroupMode.Random]: 'random',
-    [GroupMode.Failover]: 'failover',
-    [GroupMode.Weighted]: 'weighted',
-    [GroupMode.Auto]: 'auto',
+export const MODE_LABELS: Record<number, string> = {
+    1: 'roundRobin',
+    2: 'random',
+    3: 'failover',
+    4: 'weighted',
+    5: 'auto',
 } as const;
 
 export const ENDPOINT_TYPE_OPTIONS = [
@@ -127,4 +129,12 @@ export function buildChannelNameByModelKey(modelChannels: LLMChannel[]) {
         map.set(modelChannelKey(mc.channel_id, mc.name), mc.channel_name);
     });
     return map;
+}
+
+/**
+ * 过滤掉禁用渠道的模型，用于分组编辑器的"添加模型"候选列表，
+ * 避免把请求路由到不会启用的渠道。
+ */
+export function filterEnabledModelChannels(modelChannels: LLMChannel[]) {
+    return modelChannels.filter((mc) => mc.enabled !== false);
 }

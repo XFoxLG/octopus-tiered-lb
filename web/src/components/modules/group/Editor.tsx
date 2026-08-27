@@ -14,7 +14,7 @@ import { getModelIcon } from '@/lib/model-icons';
 import { GroupMode } from '@/api/endpoints/group';
 import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
-import { CHAT_ENDPOINT_PROVIDER_OPTIONS, OUTBOUND_FORMAT_OPTIONS, matchesGroupName, memberKey, MODE_LABELS, MUSIC_ENDPOINT_PROVIDER_OPTIONS, VIDEO_ENDPOINT_PROVIDER_OPTIONS, IMAGE_ENDPOINT_PROVIDER_OPTIONS, AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS, ENDPOINT_TYPE_OPTIONS, normalizeEndpointProvider, normalizeEndpointType, normalizeOutboundFormat, normalizeKey } from './utils';
+import { CHAT_ENDPOINT_PROVIDER_OPTIONS, OUTBOUND_FORMAT_OPTIONS, matchesGroupName, memberKey, MODE_LABELS, MUSIC_ENDPOINT_PROVIDER_OPTIONS, VIDEO_ENDPOINT_PROVIDER_OPTIONS, IMAGE_ENDPOINT_PROVIDER_OPTIONS, AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS, ENDPOINT_TYPE_OPTIONS, filterEnabledModelChannels, normalizeEndpointProvider, normalizeEndpointType, normalizeOutboundFormat, normalizeKey } from './utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { HelpCircle } from 'lucide-react';
 
@@ -284,6 +284,12 @@ export function GroupEditor({
     const { data: modelChannels = [] } = useModelChannelList();
     const conditionPlaceholder = '[{"key":"model","op":"contains","value":"gpt-4"}]';
 
+    // 添加模型列表只展示启用渠道；已选成员（含禁用渠道的存量成员）不受影响
+    const enabledModelChannels = useMemo(
+        () => filterEnabledModelChannels(modelChannels),
+        [modelChannels]
+    );
+
     const [groupName, setGroupName] = useState(initial?.name ?? '');
     const [category, setCategory] = useState(initial?.category ?? '');
     const [endpointType, setEndpointType] = useState(normalizeEndpointType(initial?.endpoint_type));
@@ -317,14 +323,14 @@ export function GroupEditor({
         if (regexKey) {
             try {
                 const re = parseRegex(regexKey);
-                return { matchedModelChannels: modelChannels.filter((mc) => re.test(mc.name)), regexError: '' };
+                return { matchedModelChannels: enabledModelChannels.filter((mc) => re.test(mc.name)), regexError: '' };
             } catch (e) {
                 return { matchedModelChannels: [], regexError: (e as Error)?.message ?? 'Invalid regex' };
             }
         }
         if (!groupKey) return { matchedModelChannels: [], regexError: '' };
-        return { matchedModelChannels: modelChannels.filter((mc) => matchesGroupName(mc.name, groupKey)), regexError: '' };
-    }, [groupKey, regexKey, modelChannels]);
+        return { matchedModelChannels: enabledModelChannels.filter((mc) => matchesGroupName(mc.name, groupKey)), regexError: '' };
+    }, [groupKey, regexKey, enabledModelChannels]);
 
     const handleAddMember = useCallback((channel: LLMChannel) => {
         const key = memberKey(channel);
@@ -782,7 +788,7 @@ export function GroupEditor({
 
                             <div className="grid min-w-0 grid-cols-1 gap-3 xl:flex-1 xl:min-h-0 2xl:grid-cols-[minmax(18rem,0.92fr)_minmax(20rem,1.18fr)] 2xl:gap-4">
                                 <ModelPickerSection
-                                    modelChannels={modelChannels}
+                                    modelChannels={enabledModelChannels}
                                     selectedMembers={selectedMembers}
                                     onAdd={handleAddMember}
                                     onAutoAdd={handleAutoAdd}
