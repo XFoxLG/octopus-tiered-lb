@@ -289,6 +289,7 @@ type relayAttempt struct {
 	// 流正常结束时用于截断检测（finish_reason=length → 可重试），避免为此改动
 	// transformStreamData 的签名。
 	streamFinishReason string
+}
 
 // getResponseFilterConfig 返回本次尝试的响应过滤配置，仅加载一次并缓存。
 func (ra *relayAttempt) getResponseFilterConfig() responseFilterConfig {
