@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { AUTO_STRATEGY_FIELDS, RETRY_FIELDS } from './runtime-settings.ts';
 
-test('retry fields expose count, route retries, total attempts, cooldown and 429 hold timings in order', () => {
+test('retry fields expose separated error cooldowns, channel rate-limit controls and hold timings in order', () => {
     assert.deepEqual(
         RETRY_FIELDS.map((field) => field.key),
         [
@@ -11,6 +11,11 @@ test('retry fields expose count, route retries, total attempts, cooldown and 429
             'relay_route_retries',
             'relay_max_total_attempts',
             'ratelimit_cooldown',
+            'auth_error_cooldown',
+            'server_error_cooldown',
+            'rate_limit_channel_threshold',
+            'rate_limit_channel_window',
+            'rate_limit_channel_cooldown',
             'rate_limit_hold_interval',
             'rate_limit_hold_max_wait',
         ]

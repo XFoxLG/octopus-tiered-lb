@@ -139,10 +139,23 @@ func (b *Auto) Candidates(items []model.GroupItem) []model.GroupItem {
 		if IsChannelAllKeysTripped(item.ChannelID, item.ModelName) {
 			scored[i].score = math.Inf(-1)
 		}
+		if rateLimited, _ := IsChannelRateLimited(item.ChannelID, item.ModelName); rateLimited {
+			// A channel-level 429 quarantine is stronger than a soft Auto score.
+			// Keep the item for recovery/probe visibility, but place it last.
+			scored[i].score = math.Inf(-1)
+		}
 	}
 
 	// Sort: unexplored first, then by score descending
 	sort.SliceStable(scored, func(i, j int) bool {
+		// Hard health gates always outrank exploration. Otherwise an untrained
+		// but fully quarantined channel could be selected before a healthy one.
+		iQuarantined := math.IsInf(scored[i].score, -1)
+		jQuarantined := math.IsInf(scored[j].score, -1)
+		if iQuarantined != jQuarantined {
+			return !iQuarantined
+		}
+
 		// Exploration priority: unexplored channels come first
 		if scored[i].explored != scored[j].explored {
 			return !scored[i].explored
@@ -162,10 +175,11 @@ func (b *Auto) Candidates(items []model.GroupItem) []model.GroupItem {
 			return scored[i].score > scored[j].score
 		}
 
-		// Same score: prefer the candidate backed by more in-window
-		// samples before falling back to weight/priority.
+		// Same score: prefer the candidate with fewer in-window samples. This
+		// gives equally healthy candidates a chance to recover from temporary
+		// starvation instead of repeatedly selecting the same high-weight item.
 		if scored[i].totalSamples != scored[j].totalSamples {
-			return scored[i].totalSamples > scored[j].totalSamples
+			return scored[i].totalSamples < scored[j].totalSamples
 		}
 
 		// Same score: fall back to weight/priority

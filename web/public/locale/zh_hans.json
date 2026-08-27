@@ -1453,9 +1453,36 @@
         "placeholder": "请输入路由级重试次数"
       },
       "ratelimitCooldown": {
-        "label": "Key 冷却时间（秒）",
-        "hint": "渠道 Key 返回上游错误（如 429 限流、401/403 认证失败等）后，在该冷却时间内跳过此 Key。设为 0 关闭冷却。",
+        "label": "429 Key 冷却时间（秒）",
+        "hint": "单个 Key 返回 429 后，在该时间内跳过此 Key；优先尊重上游 Retry-After。设为 0 表示不使用本地 429 冷却。",
         "placeholder": "请输入冷却时间"
+      },
+      "authErrorCooldown": {
+        "label": "401/403 Key 隔离时间（秒）",
+        "hint": "Key 认证失败或权限不足后，在该时间内隔离此 Key；不会因缩短 429 冷却而过早重复使用失效凭据。设为 0 关闭隔离。",
+        "placeholder": "300"
+      },
+      "serverErrorCooldown": {
+        "label": "408/5xx Key 冷却时间（秒）",
+        "hint": "上游超时或服务端错误后短暂跳过该 Key；真正的渠道故障仍由熔断器处理。设为 0 关闭该冷却。",
+        "placeholder": "30"
+      },
+      "rateLimitChannel": {
+        "threshold": {
+          "label": "渠道级 429 触发次数",
+          "hint": "同一渠道和模型在窗口内累计达到该次数后，暂时隔离整个渠道；用于识别账号池整体无容量，而非单个 Key 限流。",
+          "placeholder": "2"
+        },
+        "window": {
+          "label": "渠道级 429 统计窗口（秒）",
+          "hint": "在此时间窗口内统计 429 次数。",
+          "placeholder": "30"
+        },
+        "cooldown": {
+          "label": "渠道级 429 隔离时间（秒）",
+          "hint": "渠道级限流触发后暂时跳过该渠道；上游 Retry-After 更长时优先遵从上游建议。",
+          "placeholder": "30"
+        }
       },
       "maxTotalAttempts": {
         "label": "最大总尝试次数",
@@ -2478,10 +2505,10 @@
       "matchRegexPlaceholder": "留空则默认按分组名称精准匹配",
       "matchRegexInvalid": "正则无效",
       "searchAriaLabel": "搜索模型",
-      "firstTokenTimeOut": "首字超时",
-      "firstTokenTimeOutHint": "单位秒，仅流式响应起效，0 表示不限制",
-      "attemptTimeOut": "转发超时",
-      "attemptTimeOutHint": "单位秒，单次转发尝试的超时时间，0 表示不限制（流式和非流式均生效）",
+      "firstTokenTimeOut": "首个 Token 超时",
+      "firstTokenTimeOutHint": "单位：秒，仅限制流式响应等待首个上游 Token 的时间；不限制后续长文生成，0 表示不限制。",
+      "attemptTimeOut": "单次转发超时",
+      "attemptTimeOutHint": "单位：秒，覆盖一次上游 HTTP 请求及完整响应读取；长文生成应按实际最长耗时设置，0 表示不限制。",
       "sessionKeepTime": "会话保持",
       "sessionKeepTimeHint": "单位秒，会话期间保持使用同一渠道，0 表示禁用",
       "reasoningBufferStrategy": {

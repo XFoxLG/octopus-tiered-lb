@@ -32,7 +32,12 @@ const (
 	SettingKeyCircuitBreakerHalfOpenProbeTimeout SettingKey = "circuit_breaker_half_open_probe_timeout" // 熔断 HalfOpen 探测超时（秒），0=禁用；试探请求被中途放弃时避免永久跳过（issue #162）
 	SettingKeyPublicAPIBaseURL                   SettingKey = "public_api_base_url"                     // 对外可访问的 API 基础地址，用于生成示例
 	SettingKeyAlertNotifyLanguage                SettingKey = "alert_notify_language"                   // 告警通知发送语言
-	SettingKeyRatelimitCooldown                  SettingKey = "ratelimit_cooldown"                      // Key 错误冷却时间（秒），0=关闭
+	SettingKeyRatelimitCooldown                  SettingKey = "ratelimit_cooldown"                      // 429 Key 冷却时间（秒），0=关闭
+	SettingKeyAuthErrorCooldown                  SettingKey = "auth_error_cooldown"                    // 401/403 Key 隔离时间（秒），0=关闭
+	SettingKeyServerErrorCooldown                SettingKey = "server_error_cooldown"                  // 408/5xx Key 冷却时间（秒），0=关闭
+	SettingKeyRateLimitChannelThreshold          SettingKey = "rate_limit_channel_threshold"            // 短窗口内触发渠道级限流所需的 429 次数
+	SettingKeyRateLimitChannelWindow             SettingKey = "rate_limit_channel_window"               // 渠道级限流统计窗口（秒）
+	SettingKeyRateLimitChannelCooldown           SettingKey = "rate_limit_channel_cooldown"             // 渠道级限流隔离时间（秒）
 	SettingKeyKeySelectionStrategy               SettingKey = "key_selection_strategy"                  // Key 选择策略：cost(默认) | availability | priority
 	SettingKeyRelayMaxTotalAttempts              SettingKey = "relay_max_total_attempts"                // 所有候选渠道的最大决策纪录次数，0/负数回退到内置默认上限（issue #192）
 	SettingKeyRetryEmptyOutput                   SettingKey = "retry_empty_output"                      // 输出为空(无可见内容)时自动重试，流式与非流式均适用（issue #106/#155）
@@ -143,6 +148,11 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},         // 默认最大冷却600秒（10分钟）
 		{Key: SettingKeyCircuitBreakerHalfOpenProbeTimeout, Value: "60"}, // 默认 HalfOpen 探测超时60秒；试探被中途放弃后避免永久跳过（issue #162）
 		{Key: SettingKeyRatelimitCooldown, Value: "300"},                 // 默认 Key 错误冷却300秒（5分钟），0=关闭
+		{Key: SettingKeyAuthErrorCooldown, Value: "300"},                // 默认认证错误隔离300秒（5分钟），0=关闭
+		{Key: SettingKeyServerErrorCooldown, Value: "30"},               // 默认服务错误冷却30秒，0=关闭
+		{Key: SettingKeyRateLimitChannelThreshold, Value: "2"},           // 默认同窗口两个429即认为渠道容量受限
+		{Key: SettingKeyRateLimitChannelWindow, Value: "30"},             // 默认渠道限流统计窗口30秒
+		{Key: SettingKeyRateLimitChannelCooldown, Value: "30"},           // 默认渠道限流隔离30秒
 		{Key: SettingKeyKeySelectionStrategy, Value: "cost"},             // 默认 Key 选择策略：成本最低优先；可选 availability（可用度优先）
 		{Key: SettingKeyRelayMaxTotalAttempts, Value: "0"},               // 0 回退到内置默认上限（issue #192 防止 attempts 无限膨胀）
 		{Key: SettingKeyRetryEmptyOutput, Value: "true"},                 // 默认启用空输出重试
@@ -245,7 +255,9 @@ func (s *Setting) Validate() error {
 		return nil
 	case SettingKeyModelInfoUpdateInterval, SettingKeySyncLLMInterval, SettingKeyRelayLogKeepPeriod, SettingKeyRelayLogKeepCount,
 		SettingKeyRelayRetryCount, SettingKeyRelayRouteRetries, SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown,
-		SettingKeyCircuitBreakerMaxCooldown, SettingKeyCircuitBreakerHalfOpenProbeTimeout, SettingKeyRatelimitCooldown, SettingKeyRelayMaxTotalAttempts,
+		SettingKeyCircuitBreakerMaxCooldown, SettingKeyCircuitBreakerHalfOpenProbeTimeout, SettingKeyRatelimitCooldown,
+		SettingKeyAuthErrorCooldown, SettingKeyServerErrorCooldown, SettingKeyRateLimitChannelThreshold,
+		SettingKeyRateLimitChannelWindow, SettingKeyRateLimitChannelCooldown, SettingKeyRelayMaxTotalAttempts,
 		SettingKeyRateLimitHoldInterval, SettingKeyRateLimitHoldMaxWait,
 		SettingKeySemanticCacheTTL, SettingKeySemanticCacheThreshold, SettingKeySemanticCacheMaxEntries,
 		SettingKeySemanticCacheEmbeddingTimeoutSeconds,
@@ -272,8 +284,18 @@ func (s *Setting) Validate() error {
 		if s.Key == SettingKeyRelayRouteRetries && v < 1 {
 			return fmt.Errorf("relay route retries must be greater than or equal to 1")
 		}
-		if (s.Key == SettingKeyRatelimitCooldown || s.Key == SettingKeyRelayMaxTotalAttempts) && v < 0 {
+		if (s.Key == SettingKeyRatelimitCooldown || s.Key == SettingKeyAuthErrorCooldown ||
+			s.Key == SettingKeyServerErrorCooldown || s.Key == SettingKeyRelayMaxTotalAttempts) && v < 0 {
 			return fmt.Errorf("setting value must be greater than or equal to 0")
+		}
+		if s.Key == SettingKeyRateLimitChannelThreshold && v < 1 {
+			return fmt.Errorf("rate limit channel threshold must be greater than 0")
+		}
+		if s.Key == SettingKeyRateLimitChannelWindow && v < 1 {
+			return fmt.Errorf("rate limit channel window must be greater than 0")
+		}
+		if s.Key == SettingKeyRateLimitChannelCooldown && v < 1 {
+			return fmt.Errorf("rate limit channel cooldown must be greater than 0")
 		}
 		// 允许设为 0：0 表示不限制流会话总数（不推荐，最坏情况会吃光内存）。
 		if s.Key == SettingKeyStreamSessionMaxSessions && v < 0 {

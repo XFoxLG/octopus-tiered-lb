@@ -45,13 +45,14 @@ func init() {
 	}
 
 	// 注册渠道删除时的清理钩子：清除熔断器、Auto 策略统计、Key 冷却、可用度分数、
-	// 速度 TPS 统计和 Key 巡检状态中的残留条目，防止全局 map 无限增长。
+	// 速度 TPS 统计、渠道级限流状态和 Key 巡检状态中的残留条目，防止全局 map 无限增长。
 	// Key 巡检状态清理通过 OnChannelDeletedKeyHealthHook 函数变量注入，避免
 	// relay -> task 循环依赖（task 已导入 relay）。
 	op.OnChannelDeletedHooks = append(op.OnChannelDeletedHooks, func(channelID int) {
 		balancer.RemoveChannelEntries(channelID)
 		balancer.RemoveChannelStats(channelID)
 		balancer.RemoveChannelKeyCooldowns(channelID)
+		balancer.RemoveChannelRateLimitEntries(channelID)
 		balancer.RemoveChannelKeyAvailability(channelID)
 		balancer.RemoveChannelKeySpeed(channelID)
 		if OnChannelDeletedKeyHealthHook != nil {

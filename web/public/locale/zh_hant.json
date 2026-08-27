@@ -1453,9 +1453,36 @@
         "placeholder": "請輸入路由級重試次數"
       },
       "ratelimitCooldown": {
-        "label": "Key 冷卻時間（秒）",
-        "hint": "渠道 Key 返回上游錯誤（如 429 限流、401/403 認證失敗等）後，在該冷卻時間內跳過此 Key。設為 0 關閉冷卻。",
+        "label": "429 Key 冷卻時間（秒）",
+        "hint": "單個 Key 返回 429 後，在該時間內跳過此 Key；優先遵從上游 Retry-After。設為 0 表示不使用本地 429 冷卻。",
         "placeholder": "請輸入冷卻時間"
+      },
+      "authErrorCooldown": {
+        "label": "401/403 Key 隔離時間（秒）",
+        "hint": "Key 認證失敗或權限不足後，在該時間內隔離此 Key；不會因縮短 429 冷卻而過早重用失效憑據。設為 0 關閉隔離。",
+        "placeholder": "300"
+      },
+      "serverErrorCooldown": {
+        "label": "408/5xx Key 冷卻時間（秒）",
+        "hint": "上游逾時或服務端錯誤後短暫跳過該 Key；真正的渠道故障仍由熔斷器處理。設為 0 關閉該冷卻。",
+        "placeholder": "30"
+      },
+      "rateLimitChannel": {
+        "threshold": {
+          "label": "渠道級 429 觸發次數",
+          "hint": "同一渠道和模型在窗口內累計達到該次數後，暫時隔離整個渠道；用於識別賬號池整體無容量，而非單個 Key 限流。",
+          "placeholder": "2"
+        },
+        "window": {
+          "label": "渠道級 429 統計窗口（秒）",
+          "hint": "在此時間窗口內統計 429 次數。",
+          "placeholder": "30"
+        },
+        "cooldown": {
+          "label": "渠道級 429 隔離時間（秒）",
+          "hint": "渠道級限流觸發後暫時跳過該渠道；上游 Retry-After 更長時優先遵從上游建議。",
+          "placeholder": "30"
+        }
       },
       "maxTotalAttempts": {
         "label": "最大總嘗試次數",

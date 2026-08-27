@@ -48,7 +48,8 @@ func getRateLimitHoldConfig() rateLimitHoldConfig {
 // shouldHoldOnRateLimit 判断本次失败是否应进入「当前渠道内延时重试」。
 // 仅对真正的 429 生效；其它 ScopeSameChannel（401/403/空输出）保持原立即换 Key。
 func shouldHoldOnRateLimit(cfg rateLimitHoldConfig, decision RetryDecision) bool {
-	return cfg.Enabled && decision.Scope == ScopeSameChannel && decision.Code == 429
+	return cfg.Enabled && decision.Scope == ScopeSameChannel && decision.Code == 429 &&
+		decision.RateLimitScope != RateLimitScopeChannel
 }
 
 // canContinueRateLimitHold 在累计等待后是否还能再等一轮 interval。
@@ -60,14 +61,36 @@ func canContinueRateLimitHold(cfg rateLimitHoldConfig, waited time.Duration) boo
 	return waited+cfg.Interval <= cfg.MaxWait
 }
 
+// rateLimitHoldWaitDuration selects the longer of the local safety interval
+// and the provider's Retry-After recommendation, but never exceeds the
+// remaining per-channel hold budget.
+func rateLimitHoldWaitDuration(cfg rateLimitHoldConfig, decision RetryDecision, waited time.Duration) (time.Duration, bool) {
+	if !shouldHoldOnRateLimit(cfg, decision) || !canContinueRateLimitHold(cfg, waited) {
+		return 0, false
+	}
+
+	waitFor := cfg.Interval
+	if decision.RetryAfter > waitFor {
+		waitFor = decision.RetryAfter
+	}
+	remainingBudget := cfg.MaxWait - waited
+	if waitFor <= 0 || waitFor > remainingBudget {
+		return 0, false
+	}
+	return waitFor, true
+}
+
 // waitRateLimitHold 阻塞等待下一轮 429 重试，同时响应客户端/操作上下文取消。
 // 返回 true 表示等待完成可继续重试；false 表示上下文已取消。
 func waitRateLimitHold(ctx context.Context, cfg rateLimitHoldConfig, channelName string, waited time.Duration) bool {
+	return waitRateLimitHoldFor(ctx, cfg, channelName, waited, cfg.Interval)
+}
+
+func waitRateLimitHoldFor(ctx context.Context, cfg rateLimitHoldConfig, channelName string, waited, waitFor time.Duration) bool {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	remainingBudget := cfg.MaxWait - waited
-	waitFor := cfg.Interval
 	if remainingBudget > 0 && remainingBudget < waitFor {
 		waitFor = remainingBudget
 	}

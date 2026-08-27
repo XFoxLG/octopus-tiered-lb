@@ -453,7 +453,13 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// 记录按模型粒度的 key 冷却：某模型触发错误时，仅冷却该 (keyID, model) 组合，
 	// 不影响该 key 上其它模型的可用性（见 issue #94）。仅错误响应（≥400）才冷却。
 	if statusCode >= 400 {
-		balancer.RecordKeyCooldown(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode)
+		balancer.RecordKeyCooldownWithRetryAfter(
+			ra.channel.ID,
+			ra.usedKey.ID,
+			ra.internalRequest.Model,
+			statusCode,
+			retryAfterFromError(fwdErr),
+		)
 	}
 	// 记录可用度衰减：按错误类型加权（401/403 重扣、429/5xx 轻扣），仅 availability 策略生效。
 	balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, false)
@@ -480,6 +486,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 
 		// 熔断器：记录成功
 		balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		balancer.RecordChannelRateLimitSuccess(ra.channel.ID, ra.internalRequest.Model)
 		// Auto策略：记录成功
 		balancer.RecordAutoSuccess(ra.channel.ID, ra.internalRequest.Model)
 		// Auto策略：记录延迟（毫秒）
@@ -747,14 +754,7 @@ func (ra *relayAttempt) handleForwardResponse(response *http.Response) (int, err
 		return response.StatusCode, nil
 	}
 
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxErrorBodyBytes+1))
-	if err != nil {
-		return response.StatusCode, fmt.Errorf("failed to read response body: %w", err)
-	}
-	if len(body) > maxErrorBodyBytes {
-		return response.StatusCode, fmt.Errorf("upstream error: %d: response body too large", response.StatusCode)
-	}
-	return response.StatusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
+	return response.StatusCode, readUpstreamHTTPError(response, maxErrorBodyBytes)
 }
 
 // upstreamErrorDetailPrefix 是 handleForwardResponse 生成的上游错误前缀。
@@ -1576,10 +1576,20 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not preferred for zen model prefix")
 				continue
 			}
+			if rateLimited, remaining := balancer.IsChannelRateLimited(channel.ID, resolvedModelName); rateLimited {
+				message := "channel rate limit active"
+				if remaining > 0 {
+					message = fmt.Sprintf("channel rate limit active, remaining cooldown: %ds", int(remaining.Seconds()))
+				}
+				routeIter.Skip(channel.ID, 0, channel.Name, message)
+				lastErr = fmt.Errorf("channel %s is temporarily rate limited", channel.Name)
+				continue
+			}
 
 			req.internalRequest.Model = resolvedModelName
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
+		keyRetryLoop:
 			for keyRound := 1; keyRound <= maxKeyRetriesPerRoute; keyRound++ {
 				if budget.reachedMaxForwarded(routeIter) {
 					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
@@ -1712,6 +1722,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				}
 				currentAttempts := append(allAttempts, req.iter.Attempts()...)
 				if result.Success {
+					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
 					if poolAccount != nil {
 						poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, true, 0, 0)
 						poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
@@ -1733,6 +1744,19 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					// P0 调度健壮性：OpenAI 403 阈值禁用 / OAuth 401 临时禁用（对齐 sub2api ratelimit_service）。
 					handlePoolAuthError(poolAccount, poolCredType, result.Decision.Code)
 				}
+				if result.Decision.Code == http.StatusTooManyRequests {
+					channelRateLimited, remaining := balancer.RecordChannelRateLimit(
+						channel.ID,
+						usedKey.ID,
+						resolvedModelName,
+						result.Decision.RateLimitScope == RateLimitScopeChannel,
+						result.Decision.RetryAfter,
+					)
+					if channelRateLimited {
+						log.Warnf("channel rate limit opened: channel=%s model=%s remaining=%s",
+							channel.Name, resolvedModelName, remaining.Round(time.Second))
+					}
+				}
 
 				// 熔断器和 Auto 策略：在所有 adapter 类型（如 Responses→Chat）均失败后才记录，
 				// 避免 Response adapter 降级到 Chat 的过程中误触发熔断。
@@ -1750,8 +1774,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 				// hold 路径：本轮 429 会立刻再试同一渠道，不写 failure hint / 不记 failedKey，
 				// 并清掉 attempt() 里刚写入的 key 冷却，避免间隔到期后仍被挡住。
-				holdingRateLimit := shouldHoldOnRateLimit(rateLimitHoldCfg, result.Decision) &&
-					canContinueRateLimitHold(rateLimitHoldCfg, rateLimitHoldWaited)
+				holdingRateLimit := shouldHoldOnRateLimit(rateLimitHoldCfg, result.Decision)
 				if channel.PoolID == 0 && !holdingRateLimit {
 					recordFailureHint(channel.ID, usedKey.ID, resolvedModelName, result.Decision, result.Err, ratelimitCooldown)
 				}
@@ -1769,21 +1792,35 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					return nil, result.Err
 				case ScopeSameChannel:
 					lastErr = result.Err
+					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
+					if result.Decision.Code == http.StatusTooManyRequests {
+						if channelRateLimited, _ := balancer.IsChannelRateLimited(channel.ID, resolvedModelName); channelRateLimited {
+							break keyRetryLoop
+						}
+						// Rotate through every currently eligible key before waiting. This
+						// avoids holding a healthy multi-key channel on one exhausted key.
+						if channel.GetChannelKeyExcludingWithCooldown(failedKeyIDs, resolvedModelName, ratelimitCooldown).ChannelKey != "" {
+							continue
+						}
+					}
 					// 可选：429 时在当前渠道内延时重试，而不是立刻换 Key/渠道。
 					// 默认关闭，保持历史「马上 failover」行为。
 					if shouldHoldOnRateLimit(rateLimitHoldCfg, result.Decision) {
-						if canContinueRateLimitHold(rateLimitHoldCfg, rateLimitHoldWaited) {
-							if channel.PoolID == 0 {
-								balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModelName)
-							}
+						if waitFor, canWait := rateLimitHoldWaitDuration(rateLimitHoldCfg, result.Decision, rateLimitHoldWaited); canWait {
 							holdCtx := req.clientCtx
 							if holdCtx == nil {
 								holdCtx = req.operationCtx
 							}
-							if !waitRateLimitHold(holdCtx, rateLimitHoldCfg, channel.Name, rateLimitHoldWaited) {
+							if !waitRateLimitHoldFor(holdCtx, rateLimitHoldCfg, channel.Name, rateLimitHoldWaited, waitFor) {
 								return nil, handleClientDisconnect(req, currentAttempts)
 							}
-							rateLimitHoldWaited += rateLimitHoldCfg.Interval
+							if channel.PoolID == 0 {
+								balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModelName)
+							}
+							// The held key is eligible again after the wait; keep other
+							// failed keys excluded but remove this key from the retry set.
+							failedKeyIDs = failedKeyIDs[:len(failedKeyIDs)-1]
+							rateLimitHoldWaited += waitFor
 							if rateLimitHoldWaited > rateLimitHoldCfg.MaxWait {
 								rateLimitHoldWaited = rateLimitHoldCfg.MaxWait
 							}
@@ -1792,14 +1829,12 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 							continue
 						}
 						// 等待预算耗尽：结束本渠道，转下一渠道。
-						failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-						break
+						break keyRetryLoop
 					}
-					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
 				case ScopeNextChannel:
 					lastErr = result.Err
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-					break
+					break keyRetryLoop
 				default:
 					lastErr = result.Err
 					req.metrics.Save(false, lastErr, currentAttempts)

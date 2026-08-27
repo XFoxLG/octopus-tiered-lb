@@ -3,6 +3,7 @@ package balancer
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
@@ -49,6 +50,7 @@ func (it *Iterator) appendSkipAttempt(attempt model.ChannelAttempt) {
 // 自动处理：策略排序 + 渠道黑名单过滤 + 粘性通道提前
 // excludedChannels 为该 API Key 排除的渠道 ID 集合（issue #55），nil/空表示不排除。
 func NewIterator(group model.Group, apiKeyID int, requestModel string, excludedChannels map[int]struct{}) *Iterator {
+	group.Items = deduplicateGroupItems(group.Items)
 	b := GetBalancer(group.Mode)
 	candidates := b.Candidates(group.Items)
 
@@ -99,6 +101,38 @@ func NewIterator(group model.Group, apiKeyID int, requestModel string, excludedC
 		stickyIdx:  stickyIdx,
 		modelName:  requestModel,
 	}
+}
+
+// deduplicateGroupItems protects the routing loop from malformed/imported
+// groups that contain the same channel/model pair more than once. Different
+// model mappings on the same channel remain distinct candidates because they
+// may require different upstream model names.
+func deduplicateGroupItems(items []model.GroupItem) []model.GroupItem {
+	if len(items) < 2 {
+		return items
+	}
+
+	seen := make(map[string]int, len(items))
+	result := make([]model.GroupItem, 0, len(items))
+	for _, item := range items {
+		key := fmt.Sprintf("%d\x00%s", item.ChannelID, strings.TrimSpace(item.ModelName))
+		index, exists := seen[key]
+		if !exists {
+			seen[key] = len(result)
+			result = append(result, item)
+			continue
+		}
+
+		// Preserve the strongest effective configuration when duplicate rows
+		// came from an import: maximum weight, then minimum priority.
+		if item.Weight > result[index].Weight {
+			result[index].Weight = item.Weight
+		}
+		if result[index].Priority == 0 || (item.Priority > 0 && item.Priority < result[index].Priority) {
+			result[index].Priority = item.Priority
+		}
+	}
+	return result
 }
 
 // Next 移动到下一个候选，返回 false 表示遍历完成
