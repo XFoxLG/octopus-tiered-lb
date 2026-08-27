@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [tiered-adaptive-lb, master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      # 与 Dockerfile 生产构建一致：纯 Go sqlite 驱动（glebarez/sqlite）无需 CGO。
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build (jsoniter tag，与 Dockerfile 生产构建一致)
+        run: go build -tags=jsoniter ./...
+
+      - name: Vet relay package
+        run: go vet -tags=jsoniter ./internal/relay/...
+
+      - name: Test relay package（含 budget 预算拆分回归测试）
+        run: go test -tags=jsoniter ./internal/relay/...

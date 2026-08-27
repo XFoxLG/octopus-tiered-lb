@@ -1454,34 +1454,15 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 	var lastErr error
 	rateLimitHoldCfg := getRateLimitHoldConfig()
 
-	// roundDecisions 返回到当前为止累计的决策纪录条数（真实转发 + 冷却跳过 + 熔断跳过）。
-	// 与之前只统计 ForwardedAttempts 不同：当所有渠道都处于冷却/熔断时，真实转发恒为 0，
-	// 只统计转发会让最大总尝试上限形同虚设，attempts 仍会无上限膨胀（见 issue #192）。
-	// 因此改用「决策纪录总数」作为上限，同时约束转发工作量与 relay_logs 体积。
-	roundDecisions := func(iter *balancer.Iterator) int {
-		return len(allAttempts) + len(iter.Attempts())
-	}
-	// reachedMaxTotalAttempts 判断累计决策纪录是否已达到「最大总尝试次数」上限。
-	// 传入当前路由迭代器以统计本轮的决策记录；0/负数已在调用方回退为默认上限。
-	reachedMaxTotalAttempts := func(iter *balancer.Iterator) bool {
-		if maxTotalAttempts <= 0 {
-			return false
-		}
-		return roundDecisions(iter) >= maxTotalAttempts
-	}
-	// roundAppended 标记当前路由轮次迭代器的决策记录是否已并入 allAttempts。
-	// goto exhausted 可能在轮次中途触发（达到最大总尝试次数），此时需要补齐当前迭代器
-	// 的记录以保证 relay log 完整；而正常轮次结束已通过累加语句并入，避免重复。
-	roundAppended := false
-	// lastRoundForwarded 记录上一轮是否有真实转发。若某一轮所有决策都是跳过/熔断（无真实
-	// 转发），说明渠道全部不可用，继续下一轮只会重复同样的失败并膨胀 attempts，应快速失败。
-	lastRoundForwarded := 0
+	// 三种预算分离（修复 issue #95 -> #192 回归）。逻辑封装在 relayBudget，见 budget.go：
+	// 预算1 真实转发（跳过/熔断不消耗，健康渠道不被跳过墙挡住）、预算2 零进展快速失败、
+	// 预算3 日志明细上限（由 Iterator.maxSkipAttemptRecords 约束，与本预算解耦）。
+	budget := newRelayBudget(maxTotalAttempts)
 
 	// 应用全局模型映射表（Phase 7）
 	requestModel = modelmapping.Resolve(req.operationCtx, requestModel, group.ID)
 
 	for routeRound := 1; routeRound <= maxRouteRetries; routeRound++ {
-		roundAppended = false
 		if isClientDisconnected(req.clientCtx) {
 			return nil, handleClientDisconnect(req, allAttempts)
 		}
@@ -1492,20 +1473,21 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 			return nil, err
 		}
 
-		// 快速失败防护（issue #192）：上一轮完全没有真实转发（全部是冷却/熔断跳过），
-		// 说明当前所有渠道都不可用。继续下一轮只会以相同方式失败并重复膨胀 attempts，
-		// 这里直接落到 exhausted 返回 502，而不是继续死循环。
-		if roundAppended && lastRoundForwarded == 0 && routeRound > 1 {
-			log.Warnf("[%s] all channels unavailable (no real progress in round R%d), failing fast: model=%s, decisions=%d, last_error=%v",
-				req.internalRequest.RawAPIFormat, routeRound-1, requestModel, len(allAttempts), lastErr)
+		// 零进展快速失败（预算2）：上一轮完整跑完但零真实转发，所有渠道当前不可用。
+		// shouldFastFail 读上一轮状态，必须在 markRoundStart 重置 roundAppended 之前调用——
+		// 原实现「先重置后检查」使该条件恒为 false，零进展时仍空转 maxRouteRetries 轮。
+		if budget.shouldFastFail(routeRound) {
+			log.Warnf("[%s] all channels unavailable (no real progress in round R%d), failing fast: model=%s, forwarded=%d, decisions=%d, last_error=%v",
+				req.internalRequest.RawAPIFormat, routeRound-1, requestModel, budget.forwardedBase, len(allAttempts), lastErr)
 			goto exhausted
 		}
+		budget.markRoundStart()
 
 		routeIter := balancer.NewIterator(group, req.apiKeyID, requestModel, parseExcludedChannels(req.c.GetString("excluded_channels")))
 		req.iter = routeIter
 
 		for routeIter.Next() {
-			if reachedMaxTotalAttempts(routeIter) {
+			if budget.reachedMaxForwarded(routeIter) {
 				lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
 				goto exhausted
 			}
@@ -1562,7 +1544,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
 			for keyRound := 1; keyRound <= maxKeyRetriesPerRoute; keyRound++ {
-				if reachedMaxTotalAttempts(routeIter) {
+				if budget.reachedMaxForwarded(routeIter) {
 					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
 					goto exhausted
 				}
@@ -1792,15 +1774,14 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 		// 轮次正常结束：把本轮迭代器的全部决策记录累加到 allAttempts（用于日志/metrics），
 		// 并把本轮真实转发次数累加到 forwardedBase，供下一轮的最大总尝试次数检查。
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
-		lastRoundForwarded = routeIter.ForwardedAttempts()
-		roundAppended = true
+		budget.markRoundEnd(routeIter)
 	}
 
 exhausted:
 	// 若 exhausted 由轮次中途触发（达到最大总尝试次数），当前迭代器的决策记录尚未累加，
 	// 这里补齐最新的记录，保证 relay log 能完整展示冷却/熔断跳过与真实失败的链路
 	// （见 issue #95 改动2/6）。正常结束的轮次已通过上方累加语句并入，不重复追加。
-	if !roundAppended && req.iter != nil {
+	if !budget.roundCompleted() && req.iter != nil {
 		allAttempts = append(allAttempts, req.iter.Attempts()...)
 	}
 	req.metrics.Save(false, lastErr, allAttempts)
