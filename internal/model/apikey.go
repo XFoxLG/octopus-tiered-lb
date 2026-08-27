@@ -3,8 +3,8 @@ package model
 type APIKey struct {
 	ID                     int     `json:"id" gorm:"primaryKey"`
 	Name                   string  `json:"name" gorm:"not null"`
-	APIKey                 string  `json:"api_key" gorm:"not null;uniqueIndex;size:512"`              // 加密密文（enc: 前缀）；存量哈希值不可逆，标记需重生
-	APIKeyHash             string  `json:"-" gorm:"not null;uniqueIndex;size:64;column:api_key_hash"` // SHA-256(明文)，确定性查找列，不返回前端
+	APIKey                 string  `json:"api_key" gorm:"not null;uniqueIndex;size:512"`                         // 加密密文（enc: 前缀）；存量哈希值不可逆，标记需重生
+	APIKeyHash             string  `json:"-" gorm:"not null;uniqueIndex;size:64;column:api_key_hash;default:''"` // SHA-256(明文)，确定性查找列，不返回前端
 	Enabled                bool    `json:"enabled" gorm:"default:true"`
 	ExpireAt               int64   `json:"expire_at,omitempty"`
 	MaxCost                float64 `json:"max_cost,omitempty"`
