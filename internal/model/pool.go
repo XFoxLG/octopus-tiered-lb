@@ -11,7 +11,7 @@ type AccountPool struct {
 	ID          int    `json:"id" gorm:"primaryKey"`
 	Name        string `json:"name" gorm:"size:128;uniqueIndex;not null"`
 	Description string `json:"description" gorm:"size:512"`
-	// Strategy 调度策略：ewma（默认，错误率+TTFT 加权）/ round_robin / random / least_loaded（最小荷载比）。
+	// Strategy 调度策略：ewma（默认，错误率+TTFT 加权）/ round_robin / random / least_loaded（最小荷载比）/ tiered_adaptive（运行时健康分层+层内 EWMA）。
 	Strategy           string    `json:"strategy" gorm:"type:varchar(32);not null;default:'ewma'"`
 	DefaultConcurrency int       `json:"default_concurrency" gorm:"default:1"`
 	CooldownBaseSec    int       `json:"cooldown_base_sec" gorm:"default:300"`

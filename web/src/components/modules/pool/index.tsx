@@ -152,6 +152,7 @@ function PoolList({ onSelect }: { onSelect: (pool: AccountPool) => void }) {
                                     <SelectItem value="round_robin">Round Robin</SelectItem>
                                     <SelectItem value="random">Random</SelectItem>
                                     <SelectItem value="least_loaded">Least Loaded</SelectItem>
+                                    <SelectItem value="tiered_adaptive">Tiered Adaptive</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>

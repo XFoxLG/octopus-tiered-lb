@@ -38,7 +38,7 @@ func CreatePool(pool *model.AccountPool) error {
 		pool.Strategy = "ewma"
 	}
 	switch pool.Strategy {
-	case "ewma", "round_robin", "random", "least_loaded":
+	case "ewma", "round_robin", "random", "least_loaded", "tiered_adaptive":
 	default:
 		return errors.New("unsupported pool strategy")
 	}
