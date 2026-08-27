@@ -91,6 +91,31 @@ export function SettingRetry() {
                     </div>
                 ))}
             </div>
+            <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex flex-col gap-1">
+                    <span className="text-sm font-medium">{t('retry.truncation.label')}</span>
+                    <span className="text-xs text-muted-foreground">{t('retry.truncation.hint')}</span>
+                </div>
+                <Switch
+                    checked={values[SettingKey.RetryTruncationEnabled] === 'true'}
+                    onCheckedChange={(checked) => {
+                        const value = checked ? 'true' : 'false';
+                        setValues((prev) => ({ ...prev, [SettingKey.RetryTruncationEnabled]: value }));
+                        setSetting.mutate(
+                            { key: SettingKey.RetryTruncationEnabled, value },
+                            {
+                                onSuccess: () => {
+                                    toast.success(t('saved'));
+                                    initialValues.current = {
+                                        ...initialValues.current,
+                                        [SettingKey.RetryTruncationEnabled]: value,
+                                    };
+                                },
+                            },
+                        );
+                    }}
+                />
+            </div>
 
             <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="min-w-0 flex flex-col gap-1">

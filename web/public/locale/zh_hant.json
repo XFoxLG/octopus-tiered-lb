@@ -1481,6 +1481,10 @@
         "label": "空輸出自動重試",
         "hint": "當上游回傳成功但輸出為空（非串流：CompletionTokens=0 且無內容；串流：無任何有效資料塊）時自動重試。"
       },
+      "truncation": {
+        "label": "截斷自動重試",
+        "hint": "當上游回傳成功但內容被 max_tokens 掐斷（finish_reason=length，回覆只有半截）時換 Key/渠道重發。預設關閉：正常寫滿 token 上限的長回覆場景會被誤傷，按需開啟。"
+      },
       "keySelectionStrategy": {
         "label": "Key 選擇策略",
         "hint": "渠道多 Key 選擇的預設策略。「成本」優先選累計成本最低的 Key；「可用度」優先選可用度最高的 Key（出錯降分、成功/時間恢復）；「速度」優先選 TPS（每秒輸出 token 數）最高的 Key（僅記錄成功請求，EMA 平滑）；「優先級」優先選數字更大的 Key。渠道可單獨覆蓋此設定。",

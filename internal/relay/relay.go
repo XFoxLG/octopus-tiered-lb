@@ -430,6 +430,20 @@ func (ra *relayAttempt) attempt() attemptResult {
 			Err:      fwdErr,
 			Decision: RetryDecision{Scope: ScopeSameChannel, Reason: "empty output, try another key", Code: statusCode, IsError: true},
 		}
+	}		Decision: RetryDecision{Scope: ScopeSameChannel, Reason: "empty output, try another key", Code: statusCode, IsError: true},
+		}
+	}
+	// 截断输出重试：非流式 200 但 finish_reason=length（被 max_tokens 掐断成半截）。
+	// 与空输出同语义：不计渠道失败统计/熔断（内容质量问题而非渠道故障），
+	// 占用一次 Key 级重试名额，用完后换下一渠道；受 maxTotalAttempts 预算保护。
+	if errors.Is(fwdErr, errTruncatedOutput) {
+		span.End(dbmodel.AttemptFailed, statusCode, "truncated output, retrying")
+		return attemptResult{
+			Success:  false,
+			Written:  false,
+			Err:      fwdErr,
+			Decision: RetryDecision{Scope: ScopeSameChannel, Reason: "truncated output, try another key", Code: statusCode, IsError: true},
+		}
 	}
 
 	// 检查是否已写入流式响应
@@ -1096,14 +1110,25 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 					// buffer 策略：reasoning-only chunk 被暂存到 reasoningBuffer，未写入客户端（Written()=false），
 					// 可以安全重试。immediate 策略：reasoning 已发送，不可重试（只记录日志）。
 					// 仅当启用空输出重试且使用 buffer 策略时触发重试。
-					if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent {
-						log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
+					// 截断观测：reasoning-only 流以 length 断尾（推理吃光 token 未产出可见内容）时，
+						// 由空输出路径重试兜底；日志带上 finish_reason 便于排查。
+						if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent {
+						if ra.streamFinishReason == "length" {
+							log.Infof("channel %s returned empty stream truncated by max_tokens (finish_reason=length), will retry", ra.channel.Name)
+						} else {
+							log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
+						}
 						if ra.streamSession != nil {
 							ra.streamSession.Finish(nil)
 						}
 						return errEmptyOutput
 					}
-					if !shouldBuffer && !hasVisibleContent {
+					// 内容已写给客户端后才发现 finish_reason=length：协议上不可重试
+						//（客户端已收到半截）。仅记录可观测日志，为后续续写方案提供数据点。
+						if hasVisibleContent && ra.streamFinishReason == "length" {
+							log.Warnf("channel %s stream truncated by max_tokens (finish_reason=length) with partial content already delivered; not retryable mid-stream", ra.channel.Name)
+						}
+						if !shouldBuffer && !hasVisibleContent {
 						log.Warnf("channel %s returned empty stream (immediate strategy, no retry)", ra.channel.Name)
 					}
 					return nil
@@ -1266,6 +1291,14 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 
 	hasVisible := streamChunkHasVisibleContent(internalStream)
 
+	// 记录 terminal chunk 的 finish_reason（截断检测用，见 handleStream 结束判定）。
+	for i := range internalStream.Choices {
+		if fr := internalStream.Choices[i].FinishReason; fr != nil && strings.TrimSpace(*fr) != "" {
+			ra.streamFinishReason = strings.TrimSpace(*fr)
+			break
+		}
+	}
+
 	// 输出结果关键词拦截（流式）
 	filterCfg := ra.getResponseFilterConfig()
 	if blocked, keyword := applyResponseFilter(internalStream, filterCfg); blocked {
@@ -1314,6 +1347,15 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 	if isRetryEmptyOutputEnabled() && isEmptyOutputResponse(internalResponse) {
 		log.Infof("channel %s returned empty output (no visible content), will retry", ra.channel.Name)
 		return errEmptyOutput
+	}	if isRetryEmptyOutputEnabled() && isEmptyOutputResponse(internalResponse) {
+		log.Infof("channel %s returned empty output (no visible content), will retry", ra.channel.Name)
+		return errEmptyOutput
+	}
+	// 截断检测：上游返回 200 且有内容，但 finish_reason=length（被 max_tokens 掐断）。
+	// 与空输出互斥（先判空再判截断），仅缓冲可重试场景生效——此处为非流式，天然未写客户端。
+	if isRetryTruncationEnabled() && isTruncatedOutput(internalResponse) {
+		log.Infof("channel %s returned truncated output (finish_reason=length), will retry", ra.channel.Name)
+		return errTruncatedOutput
 	}
 
 	inResponse, err := ra.inAdapter.TransformResponse(ctx, internalResponse)

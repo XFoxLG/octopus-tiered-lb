@@ -42,7 +42,10 @@ const (
 	maxErrorBodyBytes       = 64 << 10 // 64 KiB — upstream error responses should be concise
 )
 
-var errEmptyOutput = errors.New("upstream returned empty output (no visible content)")
+var (
+	errEmptyOutput     = errors.New("upstream returned empty output (no visible content)")
+	errTruncatedOutput = errors.New("upstream returned truncated output (finish_reason=length)")
+)
 
 func init() {
 	if raw := strings.TrimSpace(os.Getenv(strings.ToUpper(conf.APP_NAME) + "_RELAY_MAX_SSE_EVENT_SIZE")); raw != "" {
@@ -99,6 +102,17 @@ func isRetryEmptyOutputEnabled() bool {
 	v, err := setting.GetBool(dbmodel.SettingKeyRetryEmptyOutput)
 	if err != nil {
 		return true // 默认启用
+	}
+	return v
+}
+// isRetryTruncationEnabled 返回是否启用截断重试（默认关闭）。
+// 当上游返回 200 且 finish_reason=length/max_tokens（回复被 token 上限掐断成半截）时
+// 换 Key/渠道重发。截断是内容质量问题而非渠道故障，与空输出重试同路径但独立开关：
+// 正常写满 max_tokens 的场景（如超长摘要）不该被误伤，故默认关闭按需开启。
+func isRetryTruncationEnabled() bool {
+	v, err := setting.GetBool(dbmodel.SettingKeyRetryTruncationEnabled)
+	if err != nil {
+		return false // 默认关闭
 	}
 	return v
 }
@@ -164,6 +178,22 @@ func isEmptyOutputResponse(resp *model.InternalLLMResponse) bool {
 		}
 	}
 	return true
+}
+// isTruncatedOutput 判断响应是否被 max_tokens 截断：
+// 任一 Choice 的 FinishReason 为 "length"（各平台 inbound 转换层已把 Gemini
+// max_tokens、Anthropic max_tokens 统一映射为 OpenAI 语义的 "length"）。
+// 空响应不在此判定——那属于 isEmptyOutputResponse 的职责，两条路径互斥：
+// 先空输出后截断的顺序由调用方保证（relay.go 先判空再判截断）。
+func isTruncatedOutput(resp *model.InternalLLMResponse) bool {
+	if resp == nil {
+		return false
+	}
+	for _, choice := range resp.Choices {
+		if choice.FinishReason != nil && strings.EqualFold(strings.TrimSpace(*choice.FinishReason), "length") {
+			return true
+		}
+	}
+	return false
 }
 
 // streamChunkHasVisibleContent 检查流式 chunk（Delta）是否包含可见内容。
@@ -254,7 +284,11 @@ type relayAttempt struct {
 	// chunk 上重复读取 setting 并解析关键词 JSON。通过 getResponseFilterConfig
 	// 懒加载，仅在首次需要时计算一次。
 	filterCfg *responseFilterConfig
-}
+
+	// streamFinishReason 记录流式响应 terminal chunk 携带的 finish_reason（空表示未见）。
+	// 流正常结束时用于截断检测（finish_reason=length → 可重试），避免为此改动
+	// transformStreamData 的签名。
+	streamFinishReason string
 
 // getResponseFilterConfig 返回本次尝试的响应过滤配置，仅加载一次并缓存。
 func (ra *relayAttempt) getResponseFilterConfig() responseFilterConfig {

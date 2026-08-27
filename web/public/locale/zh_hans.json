@@ -1481,6 +1481,10 @@
         "label": "空输出自动重试",
         "hint": "当上游返回成功但输出为空（非流式：CompletionTokens=0 且无内容；流式：无任何有效数据块）时自动重试。"
       },
+      "truncation": {
+        "label": "截断自动重试",
+        "hint": "当上游返回成功但内容被 max_tokens 掐断（finish_reason=length，回复只有半截）时换 Key/渠道重发。默认关闭：正常写满 token 上限的长回复场景会被误伤，按需开启。"
+      },
       "keySelectionStrategy": {
         "label": "Key 选择策略",
         "hint": "渠道多 Key 选择的默认策略。「成本」优先选累计成本最低的 Key；「可用度」优先选可用度最高的 Key（出错降分、成功/时间恢复）；「速度」优先选 TPS（每秒输出 token 数）最高的 Key（仅记录成功请求，EMA 平滑）；「优先级」优先选数字更大的 Key。渠道可单独覆盖此设置。",

@@ -1525,6 +1525,10 @@
         "label": "Retry on empty output",
         "hint": "Automatically retry when the upstream returns success but output is empty (non-streaming: CompletionTokens=0 and no content; streaming: no valid data chunks)."
       },
+      "truncation": {
+        "label": "Retry on truncated output",
+        "hint": "Automatically retry on another key/channel when the upstream returns success but the reply was cut off by max_tokens (finish_reason=length, half an answer). Off by default: replies that legitimately fill the token cap would be re-sent needlessly. Enable only if needed."
+      },
       "keySelectionStrategy": {
         "label": "Key selection strategy",
         "hint": "Default strategy for choosing among multiple keys in a channel. 'cost' picks the lowest-cost key; 'availability' picks the highest-availability key (penalized on errors, recovers on success/time); 'speed' picks the fastest key by EMA-smoothed TPS (tokens/sec, from successful requests); 'priority' picks the key with the higher priority number first. Channels can override this individually.",
