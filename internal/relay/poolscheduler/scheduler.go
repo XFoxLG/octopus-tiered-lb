@@ -510,6 +510,8 @@ func selectByStrategy(candidates []model.PoolAccount, poolID int) model.PoolAcco
 		return candidates[rand.IntN(len(candidates))]
 	case "least_loaded":
 		return selectByLeastLoaded(candidates, poolID)
+	case "tiered_adaptive":
+		return selectByTieredAdaptive(candidates, poolID)
 	default: // "ewma"
 		return selectByEWMA(candidates, poolID)
 	}
@@ -539,30 +541,66 @@ func selectByLeastLoaded(candidates []model.PoolAccount, poolID int) model.PoolA
 	return candidates[bestIdx]
 }
 
+// ewmaScoreOf 返回账号当前 EWMA 综合得分：错误率权重 0.7 + 归一化 TTFT 权重 0.3，
+// 再叠加 weight/priority 减分 tiebreaker。分数越低越优。无统计视为 0。
+func ewmaScoreOf(candidate model.PoolAccount, poolID int) float64 {
+	key := statsKey(poolID, candidate.ID)
+	score := 0.0
+	if val, ok := globalPoolStats.Load(key); ok {
+		stats := val.(*accountStats)
+		stats.mu.Lock()
+		score = stats.errorRate*0.7 + (stats.ttftMs/10000.0)*0.3
+		stats.mu.Unlock()
+	}
+	// weight 先于 priority 作为 tiebreaker：权重越高得分越低（越容易选中）。
+	score -= float64(candidate.Weight) * 0.001
+	// priority 作为第二 tiebreaker：高优先级减分。
+	score -= float64(candidate.Priority) * 0.001
+	return score
+}
+
 func selectByEWMA(candidates []model.PoolAccount, poolID int) model.PoolAccount {
 	bestIdx := 0
 	bestScore := math.MaxFloat64
 	for i := range candidates {
-		key := statsKey(poolID, candidates[i].ID)
-		score := 0.0
-		if val, ok := globalPoolStats.Load(key); ok {
-			stats := val.(*accountStats)
-			stats.mu.Lock()
-			// 综合得分：错误率权重 0.7 + 归一化 TTFT 权重 0.3。
-			// 分数越低越优。
-			score = stats.errorRate*0.7 + (stats.ttftMs/10000.0)*0.3
-			stats.mu.Unlock()
-		}
-		// weight 先于 priority 作为 tiebreaker：权重越高得分越低（越容易选中）。
-		score -= float64(candidates[i].Weight) * 0.001
-		// priority 作为第二 tiebreaker：高优先级减分。
-		score -= float64(candidates[i].Priority) * 0.001
+		score := ewmaScoreOf(candidates[i], poolID)
 		if score < bestScore {
 			bestScore = score
 			bestIdx = i
 		}
 	}
 	return candidates[bestIdx]
+}
+
+// tieredHealthyErrorRate 划分健康层/观察层的错误率阈值（EWMA，α=0.3）。
+// 含义：1 次失败把全新账号抬到 0.3（沉入观察层），连续 2 次成功恢复健康层（0.21→0.147）。
+const tieredHealthyErrorRate = 0.15
+
+// selectByTieredAdaptive 运行时自适应分层调度：
+// 先按 EWMA 错误率把候选分为健康层/观察层，健康层内用 EWMA 打分选择；
+// 健康层为空时回退全量 EWMA（保证永远有返回）。冷却/过载账号已在候选过滤阶段排除，
+// 分层解决的是"静态熔断未触发但持续轻微失败"的账号——动态降级、EWMA 恢复后自动回升。
+func selectByTieredAdaptive(candidates []model.PoolAccount, poolID int) model.PoolAccount {
+	healthy := make([]model.PoolAccount, 0, len(candidates))
+	for i := range candidates {
+		key := statsKey(poolID, candidates[i].ID)
+		if val, ok := globalPoolStats.Load(key); ok {
+			stats := val.(*accountStats)
+			stats.mu.Lock()
+			isHealthy := stats.errorRate <= tieredHealthyErrorRate
+			stats.mu.Unlock()
+			if isHealthy {
+				healthy = append(healthy, candidates[i])
+			}
+			continue
+		}
+		// 无统计视为健康（新账号冷启动可被选中，与 ewma 策略 0 分语义一致）。
+		healthy = append(healthy, candidates[i])
+	}
+	if len(healthy) == 0 {
+		return selectByEWMA(candidates, poolID)
+	}
+	return selectByEWMA(healthy, poolID)
 }
 
 func acquireSlot(poolID, accountID int) {

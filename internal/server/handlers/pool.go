@@ -159,7 +159,7 @@ func updatePool(c *gin.Context) {
 	}
 	if req.Strategy != "" {
 		switch req.Strategy {
-		case "ewma", "round_robin", "random", "least_loaded":
+		case "ewma", "round_robin", "random", "least_loaded", "tiered_adaptive":
 			updates["strategy"] = req.Strategy
 		default:
 			resp.Error(c, http.StatusBadRequest, "unsupported pool strategy")
