@@ -50,6 +50,7 @@ export const SettingKey = {
     PlanProviderRefreshInterval: 'plan_provider_refresh_interval',
     RelayMaxTotalAttempts: 'relay_max_total_attempts',
     RetryEmptyOutput: 'retry_empty_output',
+    RetryTruncationEnabled: 'retry_truncation_enabled',
     RateLimitHoldEnabled: 'rate_limit_hold_enabled',
     RateLimitHoldInterval: 'rate_limit_hold_interval',
     RateLimitHoldMaxWait: 'rate_limit_hold_max_wait',
