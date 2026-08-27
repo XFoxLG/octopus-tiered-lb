@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/conf"
@@ -300,11 +301,25 @@ func (s RetryScope) String() string {
 
 // RetryDecision 重试决策，包含决策范围、原因和状态码
 type RetryDecision struct {
-	Scope   RetryScope // 决策范围
-	Reason  string     // 决策原因（日志用）
-	Code    int        // HTTP 状态码（0 表示非 HTTP 错误）
-	IsError bool       // 是否是错误（非成功）
+	Scope          RetryScope     // 决策范围
+	Reason         string         // 决策原因（日志用）
+	Code           int            // HTTP 状态码（0 表示非 HTTP 错误）
+	IsError        bool           // 是否是错误（非成功）
+	RateLimitScope RateLimitScope // 429 的影响范围；其它状态码为 Unknown
+	RetryAfter     time.Duration  // 上游 Retry-After 建议等待时间
 }
+
+// RateLimitScope distinguishes a credential-local 429 from an exhausted
+// channel/account pool. Keeping this metadata separate from RetryScope lets a
+// 429 remain same-channel retryable without forcing every 429 through the
+// ordinary circuit breaker.
+type RateLimitScope int
+
+const (
+	RateLimitScopeUnknown RateLimitScope = iota
+	RateLimitScopeKey
+	RateLimitScopeChannel
+)
 
 // String 返回决策的描述字符串，用于日志
 func (d RetryDecision) String() string {
@@ -398,11 +413,19 @@ func classifyHTTPError(statusCode int, err error) RetryDecision {
 
 	// 429 Rate Limited: 该 key 被限，换 key（cooldown 机制也会生效）
 	case statusCode == 429:
+		rateLimitScope := RateLimitScopeKey
+		reason := "rate limited, try another key"
+		if isChannelWideRateLimitError(err) {
+			rateLimitScope = RateLimitScopeChannel
+			reason = "rate limited, channel capacity exhausted"
+		}
 		return RetryDecision{
-			Scope:   ScopeSameChannel,
-			Reason:  "rate limited, try another key",
-			Code:    statusCode,
-			IsError: true,
+			Scope:          ScopeSameChannel,
+			Reason:         reason,
+			Code:           statusCode,
+			IsError:        true,
+			RateLimitScope: rateLimitScope,
+			RetryAfter:     retryAfterFromError(err),
 		}
 
 	// 500 Internal Server Error: 上游服务问题，换候选

@@ -51,15 +51,49 @@ func getRatelimitCooldown() time.Duration {
 	return time.Duration(v) * time.Second
 }
 
+func getAuthErrorCooldown() time.Duration {
+	v, err := setting.GetInt(model.SettingKeyAuthErrorCooldown)
+	if err != nil || v < 0 {
+		return 300 * time.Second
+	}
+	return time.Duration(v) * time.Second
+}
+
+func getServerErrorCooldown() time.Duration {
+	v, err := setting.GetInt(model.SettingKeyServerErrorCooldown)
+	if err != nil || v < 0 {
+		return 30 * time.Second
+	}
+	return time.Duration(v) * time.Second
+}
+
+// keyCooldownDuration keeps credential errors, rate limits and upstream
+// failures independent. The legacy ratelimit_cooldown setting now applies to
+// 429 only; otherwise reducing it to improve rate-limit recovery would also
+// release invalid credentials and make their errors repeat.
+func keyCooldownDuration(statusCode int, retryAfter time.Duration) time.Duration {
+	var cooldown time.Duration
+	switch {
+	case statusCode == 429:
+		cooldown = getRatelimitCooldown()
+	case statusCode == 401 || statusCode == 403:
+		cooldown = getAuthErrorCooldown()
+	case statusCode == 408 || statusCode >= 500:
+		cooldown = getServerErrorCooldown()
+	default:
+		return 0
+	}
+	if retryAfter > cooldown {
+		cooldown = retryAfter
+	}
+	return cooldown
+}
+
 // IsKeyOnCooldown 检查某个 (channelID, keyID, modelName) 是否处于冷却中。
 // 冷却时长来自 SettingKeyRatelimitCooldown（默认 300s）。
 // modelName 为空时直接放行——后台任务（拉模型/探测）不携带模型语义，不应被冷却。
 func IsKeyOnCooldown(channelID, keyID int, modelName string) bool {
 	if strings.TrimSpace(modelName) == "" {
-		return false
-	}
-	cooldown := getRatelimitCooldown()
-	if cooldown <= 0 {
 		return false
 	}
 	// Redis 后端：EXISTS 语义，TTL 过期由 Redis 保证。降级（err/未找到）回退内存。
@@ -89,13 +123,20 @@ func IsKeyOnCooldown(channelID, keyID int, modelName string) bool {
 }
 
 // RecordKeyCooldown 记录某 (channelID, keyID, modelName) 的冷却。
-// 仅 statusCode >= 400 才记录（与原 ChannelKey.StatusCode 判断条件一致）。
-// 冷却时长来自 SettingKeyRatelimitCooldown（默认 300s）。
+// 保留此签名供后台/测试调用；需要尊重 Retry-After 时使用
+// RecordKeyCooldownWithRetryAfter。
 func RecordKeyCooldown(channelID, keyID int, modelName string, statusCode int) {
-	if statusCode < 400 || strings.TrimSpace(modelName) == "" || keyID == 0 {
+	RecordKeyCooldownWithRetryAfter(channelID, keyID, modelName, statusCode, 0)
+}
+
+// RecordKeyCooldownWithRetryAfter records only status classes that represent a
+// reusable credential/upstream failure. 400/404 and other request-specific
+// errors do not quarantine a key.
+func RecordKeyCooldownWithRetryAfter(channelID, keyID int, modelName string, statusCode int, retryAfter time.Duration) {
+	if strings.TrimSpace(modelName) == "" || keyID == 0 {
 		return
 	}
-	cooldown := getRatelimitCooldown()
+	cooldown := keyCooldownDuration(statusCode, retryAfter)
 	if cooldown <= 0 {
 		return
 	}

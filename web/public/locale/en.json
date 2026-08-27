@@ -1497,9 +1497,36 @@
         "placeholder": "Enter route retries"
       },
       "ratelimitCooldown": {
-        "label": "Key cooldown (seconds)",
-        "hint": "After a channel key returns an upstream error (e.g. 429 rate limit, 401/403 auth failure), the key is skipped for this cooldown period. Set to 0 to disable cooldown.",
+        "label": "429 key cooldown (seconds)",
+        "hint": "After one key returns 429, skip that key for this period; a longer upstream Retry-After is honored. Set to 0 to disable local 429 cooldown.",
         "placeholder": "Enter cooldown seconds"
+      },
+      "authErrorCooldown": {
+        "label": "401/403 key isolation (seconds)",
+        "hint": "Temporarily isolate a key after an authentication or permission failure, independently of the shorter 429 cooldown. Set to 0 to disable.",
+        "placeholder": "300"
+      },
+      "serverErrorCooldown": {
+        "label": "408/5xx key cooldown (seconds)",
+        "hint": "Temporarily skip a key after an upstream timeout or server error; persistent channel failures are still handled by the circuit breaker. Set to 0 to disable.",
+        "placeholder": "30"
+      },
+      "rateLimitChannel": {
+        "threshold": {
+          "label": "Channel-level 429 threshold",
+          "hint": "Open a short channel quarantine after this many 429s for the same channel and model in the window. This detects exhausted account pools rather than one limited key.",
+          "placeholder": "2"
+        },
+        "window": {
+          "label": "Channel 429 window (seconds)",
+          "hint": "Time window used to aggregate channel-level 429s.",
+          "placeholder": "30"
+        },
+        "cooldown": {
+          "label": "Channel 429 cooldown (seconds)",
+          "hint": "Temporarily skip a channel after channel-level limiting; a longer upstream Retry-After is honored.",
+          "placeholder": "30"
+        }
       },
       "maxTotalAttempts": {
         "label": "Max total attempts",
@@ -1524,6 +1551,10 @@
       "emptyOutput": {
         "label": "Retry on empty output",
         "hint": "Automatically retry when the upstream returns success but output is empty (non-streaming: CompletionTokens=0 and no content; streaming: no valid data chunks)."
+      },
+      "truncation": {
+        "label": "Retry on truncated output",
+        "hint": "Automatically retry on another key/channel when the upstream returns success but the reply was cut off by max_tokens (finish_reason=length, half an answer). Off by default: replies that legitimately fill the token cap would be re-sent needlessly. Enable only if needed."
       },
       "keySelectionStrategy": {
         "label": "Key selection strategy",

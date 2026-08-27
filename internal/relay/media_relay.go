@@ -205,10 +205,20 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "model not found in channel")
 				continue
 			}
+			if rateLimited, remaining := balancer.IsChannelRateLimited(channel.ID, resolvedModel); rateLimited {
+				message := "channel rate limit active"
+				if remaining > 0 {
+					message = fmt.Sprintf("channel rate limit active, remaining cooldown: %ds", int(remaining.Seconds()))
+				}
+				routeIter.Skip(channel.ID, 0, channel.Name, message)
+				lastErr = fmt.Errorf("channel %s is temporarily rate limited", channel.Name)
+				continue
+			}
 
 			// 渠道内 Key 级重试
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
+		keyRetryLoop:
 			for keyRound := 1; keyRound <= maxKeyRetriesPerRoute; keyRound++ {
 				if maxTotalAttempts > 0 && len(allAttempts) >= maxTotalAttempts {
 					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
@@ -272,7 +282,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				// key 冷却按 (channelID, keyID, model) 维度记录（见 issue #94），不再写整 key 共享的
 				// StatusCode/LastUseTimeStamp —— 那样会让某模型 429 拖累该 key 上其他模型。
 				if statusCode >= 400 {
-					balancer.RecordKeyCooldown(channel.ID, usedKey.ID, resolvedModel, statusCode)
+					balancer.RecordKeyCooldownWithRetryAfter(channel.ID, usedKey.ID, resolvedModel, statusCode, retryAfterFromError(fwdErr))
 				}
 				// 可用度衰减：按错误类型加权，仅 availability 策略生效。
 				balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, false)
@@ -285,6 +295,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 						RequestSuccess: 1,
 					})
 					balancer.RecordSuccess(channel.ID, usedKey.ID, resolvedModel)
+					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModel)
 					balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, true)
 					balancer.RecordAutoSuccess(channel.ID, resolvedModel)
 					balancer.RecordAutoLatency(channel.ID, resolvedModel, span.Duration().Milliseconds())
@@ -311,6 +322,19 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordAutoFailure(channel.ID, resolvedModel)
 				}
+				if decision.Code == http.StatusTooManyRequests {
+					channelRateLimited, remaining := balancer.RecordChannelRateLimit(
+						channel.ID,
+						usedKey.ID,
+						resolvedModel,
+						decision.RateLimitScope == RateLimitScopeChannel,
+						decision.RetryAfter,
+					)
+					if channelRateLimited {
+						log.Warnf("media channel rate limit opened: channel=%s model=%s remaining=%s",
+							channel.Name, resolvedModel, remaining.Round(time.Second))
+					}
+				}
 
 				if decision.IsError {
 					log.Warnf("media relay: channel %s failed on key %d: %v (decision: %s)",
@@ -332,18 +356,27 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					return
 				case ScopeSameChannel:
 					lastErr = fwdErr
+					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
+					if decision.Code == http.StatusTooManyRequests {
+						if channelRateLimited, _ := balancer.IsChannelRateLimited(channel.ID, resolvedModel); channelRateLimited {
+							break keyRetryLoop
+						}
+						if channel.PoolID == 0 && channel.GetChannelKeyExcludingWithCooldown(failedKeyIDs, resolvedModel, ratelimitCooldown).ChannelKey != "" {
+							continue
+						}
+					}
 					// 可选：429 时在当前渠道内延时重试，而不是立刻换 Key/渠道。
 					// 默认关闭，保持历史「马上 failover」行为。
 					if shouldHoldOnRateLimit(rateLimitHoldCfg, decision) {
-						if canContinueRateLimitHold(rateLimitHoldCfg, rateLimitHoldWaited) {
-							// 上方已写 key 冷却；hold 再试前清掉，避免间隔到期后仍被跳过。
-							balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModel)
-							if !waitRateLimitHold(c.Request.Context(), rateLimitHoldCfg, channel.Name, rateLimitHoldWaited) {
+						if waitFor, canWait := rateLimitHoldWaitDuration(rateLimitHoldCfg, decision, rateLimitHoldWaited); canWait {
+							if !waitRateLimitHoldFor(c.Request.Context(), rateLimitHoldCfg, channel.Name, rateLimitHoldWaited, waitFor) {
 								lastErr = c.Request.Context().Err()
 								log.Infof("request context canceled during rate limit hold, stopping media key retry")
 								goto mediaExhausted
 							}
-							rateLimitHoldWaited += rateLimitHoldCfg.Interval
+							balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModel)
+							failedKeyIDs = failedKeyIDs[:len(failedKeyIDs)-1]
+							rateLimitHoldWaited += waitFor
 							if rateLimitHoldWaited > rateLimitHoldCfg.MaxWait {
 								rateLimitHoldWaited = rateLimitHoldCfg.MaxWait
 							}
@@ -352,14 +385,12 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 							continue
 						}
 						// 等待预算耗尽：结束本渠道，转下一渠道。
-						failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-						break
+						break keyRetryLoop
 					}
-					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
 				case ScopeNextChannel:
 					lastErr = fwdErr
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-					break
+					break keyRetryLoop
 				default:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
@@ -618,8 +649,7 @@ func forwardMediaRequestJSON(
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(io.LimitReader(response.Body, 4*1024))
-		return response.StatusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(respBody))
+		return response.StatusCode, readUpstreamHTTPError(response, maxErrorBodyBytes)
 	}
 
 	// Stream response back to client
@@ -686,8 +716,7 @@ func forwardMediaRequestMultipart(
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(io.LimitReader(response.Body, 4*1024))
-		return response.StatusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(respBody))
+		return response.StatusCode, readUpstreamHTTPError(response, maxErrorBodyBytes)
 	}
 
 	if isMediaSSEResponse(response) {
