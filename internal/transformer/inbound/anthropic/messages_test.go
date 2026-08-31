@@ -181,6 +181,72 @@ func TestMessagesInboundPromptBlockStreamTerminatesWithoutText(t *testing.T) {
 	}
 }
 
+func TestMessagesInboundStreamRendersProviderFailureAsErrorEvent(t *testing.T) {
+	inbound := &MessagesInbound{}
+	streamPayload, err := inbound.TransformStream(context.Background(), &model.InternalLLMResponse{
+		Object: "chat.completion.chunk",
+		Termination: model.TerminationMetadata{
+			Cause:  model.TerminationCauseError,
+			Detail: "upstream response failed",
+		},
+	})
+	if err != nil {
+		t.Fatalf("TransformStream() error = %v", err)
+	}
+
+	streamText := string(streamPayload)
+	if !strings.Contains(streamText, "event:error") {
+		t.Fatalf("provider failure lacks Anthropic error event: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"type":"error"`) || !strings.Contains(streamText, `"type":"api_error"`) {
+		t.Fatalf("provider failure has invalid Anthropic error payload: %s", streamText)
+	}
+	if strings.Contains(streamText, `"stop_reason":"refusal"`) || strings.Contains(streamText, `"type":"message_stop"`) {
+		t.Fatalf("provider failure was incorrectly rendered as a model refusal: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"request_id":null`) {
+		t.Fatalf("provider failure lacks Anthropic null request_id: %s", streamText)
+	}
+}
+
+func TestMessagesInboundStreamRendersErrorFinishReasonAsErrorEvent(t *testing.T) {
+	finishReason := "error"
+	inbound := &MessagesInbound{}
+	streamPayload, err := inbound.TransformStream(context.Background(), &model.InternalLLMResponse{
+		Object: "chat.completion.chunk",
+		Choices: []model.Choice{{
+			FinishReason: &finishReason,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("TransformStream() error = %v", err)
+	}
+
+	streamText := string(streamPayload)
+	if !strings.Contains(streamText, "event:error") || !strings.Contains(streamText, `"type":"api_error"`) {
+		t.Fatalf("error finish reason lacks Anthropic error event: %s", streamText)
+	}
+	if strings.Contains(streamText, `"stop_reason":"refusal"`) || strings.Contains(streamText, `"type":"message_stop"`) {
+		t.Fatalf("error finish reason was rendered as a model terminal: %s", streamText)
+	}
+}
+
+func TestMessagesInboundRendersTransportInterruptionAsErrorEvent(t *testing.T) {
+	inbound := &MessagesInbound{}
+	streamPayload, err := inbound.TransformStreamInterruption(context.Background(), context.DeadlineExceeded)
+	if err != nil {
+		t.Fatalf("TransformStreamInterruption() error = %v", err)
+	}
+
+	streamText := string(streamPayload)
+	if !strings.Contains(streamText, "event:error") || !strings.Contains(streamText, `"type":"api_error"`) {
+		t.Fatalf("transport interruption lacks Anthropic API error envelope: %s", streamText)
+	}
+	if !strings.Contains(streamText, "context deadline exceeded") {
+		t.Fatalf("transport interruption message missing: %s", streamText)
+	}
+}
+
 func TestMessagesInboundAggregationPreservesResponseTermination(t *testing.T) {
 	inbound := &MessagesInbound{
 		streamChunks: []*model.InternalLLMResponse{{

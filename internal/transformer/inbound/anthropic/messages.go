@@ -490,6 +490,9 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 	if stream.Usage != nil {
 		i.lastUsage = i.convertUsage(stream.Usage)
 	}
+	if termination, providerFailure := streamProviderFailure(stream); providerFailure {
+		return transformAnthropicStreamProviderFailure(termination)
+	}
 
 	var events [][]byte
 
@@ -924,11 +927,18 @@ func resolveAnthropicStopReason(termination model.TerminationMetadata, finishRea
 			return "model_context_window_exceeded", nil, true
 		case model.TerminationCausePauseTurn:
 			return "pause_turn", nil, true
-		default:
-			// Anthropic has no native stop_reason for every provider error or
-			// safety filter. `refusal` is the closest standard non-success state;
-			// it is intentionally never rewritten as end_turn.
+		case model.TerminationCauseContentFilter,
+			model.TerminationCauseRecitation,
+			model.TerminationCausePromptBlocked,
+			model.TerminationCauseRefusal:
+			// Anthropic has no stop_reason for every policy state. `refusal` is
+			// the closest non-success outcome for actual safety/refusal cases.
 			return "refusal", nil, true
+		default:
+			// Provider failures are emitted as native Anthropic `error` stream
+			// events instead of being misrepresented as a model refusal. For a
+			// non-stream response, omit stop_reason rather than invent one.
+			return "", nil, false
 		}
 	}
 
@@ -949,9 +959,96 @@ func resolveAnthropicStopReason(termination model.TerminationMetadata, finishRea
 		return "model_context_window_exceeded", nil, true
 	case "stop_sequence":
 		return "stop_sequence", nil, true
-	default:
+	case "content_filter":
 		return "refusal", nil, true
+	default:
+		return "", nil, false
 	}
+}
+
+func streamProviderFailure(stream *model.InternalLLMResponse) (model.TerminationMetadata, bool) {
+	if stream == nil {
+		return model.TerminationMetadata{}, false
+	}
+	if stream.Termination.Cause.IsProviderFailure() {
+		return stream.Termination, true
+	}
+	for _, choice := range stream.Choices {
+		if choice.Termination.Cause.IsProviderFailure() {
+			return choice.Termination, true
+		}
+		if choice.FinishReason == nil {
+			continue
+		}
+
+		providerReason := strings.TrimSpace(*choice.FinishReason)
+		if providerReason == "" {
+			continue
+		}
+		switch strings.ToLower(providerReason) {
+		case "stop",
+			"length",
+			"tool_calls",
+			"function_call",
+			"content_filter",
+			"refusal",
+			"pause_turn",
+			"model_context_window_exceeded",
+			"stop_sequence":
+			continue
+		case "error":
+			return model.TerminationMetadata{
+				Cause:          model.TerminationCauseError,
+				ProviderReason: providerReason,
+			}, true
+		default:
+			// An unrecognized terminal reason must not become a synthetic
+			// Anthropic refusal or a clean message_stop.
+			return model.TerminationMetadata{
+				Cause:          model.TerminationCauseUnknown,
+				ProviderReason: providerReason,
+			}, true
+		}
+	}
+	return model.TerminationMetadata{}, false
+}
+
+func transformAnthropicStreamProviderFailure(termination model.TerminationMetadata) ([]byte, error) {
+	message := strings.TrimSpace(termination.Detail)
+	if message == "" {
+		message = "upstream response failed before completion"
+	}
+	return formatAnthropicStreamError(message)
+}
+
+// TransformStreamInterruption renders a relay-owned interruption using the
+// Anthropic streaming error envelope. This is intentionally separate from a
+// model refusal: an upstream/proxy failure is not a decision made by Claude.
+func (i *MessagesInbound) TransformStreamInterruption(ctx context.Context, streamErr error) ([]byte, error) {
+	message := "upstream stream interrupted"
+	if streamErr != nil && strings.TrimSpace(streamErr.Error()) != "" {
+		message = streamErr.Error()
+	}
+	return formatAnthropicStreamError(message)
+}
+
+func formatAnthropicStreamError(message string) ([]byte, error) {
+	payload := struct {
+		Type      string       `json:"type"`
+		Error     ErrorDetail  `json:"error"`
+		RequestID *string      `json:"request_id"`
+	}{
+		Type: "error",
+		Error: ErrorDetail{
+			Type:    "api_error",
+			Message: message,
+		},
+	}
+	data, err := transformer.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Anthropic stream error: %w", err)
+	}
+	return formatSSEEvent("error", data), nil
 }
 
 // GetInternalResponse returns the complete internal response for logging, statistics, etc.

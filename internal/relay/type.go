@@ -44,11 +44,12 @@ const (
 )
 
 var (
-	errEmptyOutput           = errors.New("upstream returned empty output (no visible content)")
-	errTruncatedOutput       = errors.New("upstream returned truncated output (finish_reason=length)")
-	errMissingStreamTerminal = errors.New("upstream stream ended without a terminal event")
-	errFirstVisibleOutputTimeout = errors.New("upstream stream did not produce visible output before timeout")
-	errStreamIdleTimeout         = errors.New("upstream stream became idle after visible output")
+	errEmptyOutput                = errors.New("upstream returned empty output (no visible content)")
+	errTruncatedOutput            = errors.New("upstream returned truncated output (finish_reason=length)")
+	errMissingStreamTerminal      = errors.New("upstream stream ended without a terminal event")
+	errProviderTerminalFailure    = errors.New("upstream provider reported a terminal failure")
+	errFirstVisibleOutputTimeout  = errors.New("upstream stream did not produce visible output before timeout")
+	errStreamIdleTimeout          = errors.New("upstream stream became idle after visible output")
 )
 
 func init() {
@@ -210,6 +211,22 @@ func responseHasProviderRefusal(resp *model.InternalLLMResponse) bool {
 	return false
 }
 
+func responseProviderFailure(resp *model.InternalLLMResponse) (model.TerminationMetadata, bool) {
+	if resp == nil {
+		return model.TerminationMetadata{}, false
+	}
+	if resp.Termination.Cause.IsProviderFailure() {
+		return resp.Termination, true
+	}
+	for _, choice := range resp.Choices {
+		termination := terminationForChoice(choice)
+		if termination.Cause.IsProviderFailure() {
+			return termination, true
+		}
+	}
+	return model.TerminationMetadata{}, false
+}
+
 // responseHasNonCacheableTermination prevents incomplete, failed, and
 // provider-blocked outcomes from entering the semantic cache as if they were
 // successful assistant answers. The internal metadata is intentionally absent
@@ -255,6 +272,12 @@ func isEmptyOutputResponse(resp *model.InternalLLMResponse) bool {
 	// Deliberate safety/rejection outcomes can be empty by design. Retrying
 	// them on another key or proxy is both ineffective and potentially abusive.
 	if responseHasProviderRefusal(resp) {
+		return false
+	}
+	// Explicit failures and unknown terminal reasons are not model-generated
+	// empty answers. Keeping this guard here as well as in handleResponse makes
+	// the no-replay invariant hold for every caller of isEmptyOutputResponse.
+	if _, providerFailure := responseProviderFailure(resp); providerFailure {
 		return false
 	}
 	// 必须是 chat 响应（有 Choices），embedding 不适用
@@ -385,6 +408,11 @@ type relayAttempt struct {
 	// that actually emitted a provider-level terminal marker.
 	streamSawTerminalEvent bool
 
+	// streamOutputCommitted is set as soon as a payload enters the replay
+	// session or is written downstream. Gin's Writer only observes the latter,
+	// so this closes the retry hole for disconnected replay-session owners.
+	streamOutputCommitted bool
+
 	// streamSawExplicitTerminalEvent records a stream-wide terminal marker such
 	// as [DONE], an Anthropic message_stop event, or a response-level terminal
 	// status. Per-choice finish reasons are tracked separately because a
@@ -409,6 +437,33 @@ func (ra *relayAttempt) getResponseFilterConfig() responseFilterConfig {
 		ra.filterCfg = &cfg
 	}
 	return *ra.filterCfg
+}
+
+func (ra *relayAttempt) markStreamOutputCommitted() {
+	if ra != nil {
+		ra.streamOutputCommitted = true
+	}
+}
+
+func (ra *relayAttempt) streamOutputWasCommitted() bool {
+	if ra == nil {
+		return false
+	}
+	return ra.streamOutputCommitted || (ra.c != nil && ra.c.Writer.Written())
+}
+
+func providerTerminalFailureError(termination model.TerminationMetadata) error {
+	detail := strings.TrimSpace(termination.Detail)
+	if detail == "" {
+		detail = strings.TrimSpace(termination.ProviderReason)
+	}
+	if detail == "" {
+		detail = string(termination.Cause)
+	}
+	if detail == "" {
+		detail = "unknown"
+	}
+	return fmt.Errorf("%w: %s", errProviderTerminalFailure, detail)
 }
 
 // attemptResult 封装单次尝试的结果

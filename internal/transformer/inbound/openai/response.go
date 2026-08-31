@@ -228,6 +228,37 @@ func (i *ResponseInbound) enqueueEvent(ev *ResponsesStreamEvent) []byte {
 	return formatSSEData(data)
 }
 
+// TransformStreamInterruption renders a relay-owned transport interruption as
+// the native Responses streaming `error` event. It deliberately does not
+// pretend that a partial response became `response.completed` or
+// `response.incomplete`: no provider supplied such a terminal state.
+func (i *ResponseInbound) TransformStreamInterruption(ctx context.Context, streamErr error) ([]byte, error) {
+	message := "upstream stream interrupted"
+	if streamErr != nil && strings.TrimSpace(streamErr.Error()) != "" {
+		message = streamErr.Error()
+	}
+
+	payload := struct {
+		Type           string  `json:"type"`
+		Code           string  `json:"code"`
+		Message        string  `json:"message"`
+		Param          *string `json:"param"`
+		SequenceNumber int     `json:"sequence_number"`
+	}{
+		Type:           "error",
+		Code:           "upstream_stream_interrupted",
+		Message:        message,
+		SequenceNumber: i.sequenceNumber,
+	}
+	i.sequenceNumber++
+
+	data, err := transformer.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal Responses stream error: %w", err)
+	}
+	return formatSSEData(data), nil
+}
+
 func (i *ResponseInbound) handleReasoningContent(content *string) [][]byte {
 	var events [][]byte
 

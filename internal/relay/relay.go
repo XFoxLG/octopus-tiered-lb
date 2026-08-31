@@ -38,6 +38,38 @@ import (
 var errClientDisconnected = errors.New("client disconnected")
 var errResponseFilterBlocked = errors.New("response filter blocked by keyword")
 
+// streamInterruptionRenderer is intentionally optional. Each inbound protocol
+// can supply its native streaming error frame without widening the shared
+// transformer interface or forcing legacy adapters to implement new behavior.
+type streamInterruptionRenderer interface {
+	TransformStreamInterruption(context.Context, error) ([]byte, error)
+}
+
+func (ra *relayAttempt) renderStreamInterruption(ctx context.Context, streamErr error) []byte {
+	if renderer, ok := ra.inAdapter.(streamInterruptionRenderer); ok {
+		payload, err := renderer.TransformStreamInterruption(ctx, streamErr)
+		if err == nil && len(payload) > 0 {
+			return payload
+		}
+		if err != nil {
+			log.Warnf("failed to render protocol-native stream interruption: %v", err)
+		}
+	}
+
+	// Chat Completions has no standard error terminal after a stream has
+	// started. Preserve its broad client compatibility with an SSE error event
+	// and a conventional OpenAI-shaped error object rather than fabricating a
+	// finish_reason or a successful [DONE] marker.
+	payload, _ := jsonAPI.Marshal(map[string]any{
+		"error": map[string]string{
+			"message": streamErr.Error(),
+			"type":    "api_error",
+			"code":    "stream_interrupted",
+		},
+	})
+	return []byte("event: error\ndata: " + string(payload) + "\n\n")
+}
+
 func resolveRequestedUpstreamModel(requestModel string) (string, bool) {
 	trimmed := strings.TrimSpace(requestModel)
 	if trimmed == "" {
@@ -406,7 +438,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 		span.End(dbmodel.AttemptFailed, statusCode, "client disconnected")
 		return attemptResult{
 			Success:  false,
-			Written:  ra.c.Writer.Written(),
+			Written:  ra.streamOutputWasCommitted(),
 			Err:      fwdErr,
 			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "client disconnected", Code: statusCode},
 		}
@@ -449,7 +481,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 	}
 
 	// 检查是否已写入流式响应
-	written := ra.c.Writer.Written()
+	written := ra.streamOutputWasCommitted()
 
 	// 使用错误分类驱动决策
 	decision := ClassifyRelayError(statusCode, fwdErr, written)
@@ -938,10 +970,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			// bytes are retryable. Keep the session open so the next key/channel
 			// attempt can continue the same client-visible stream instead of
 			// closing it before the retry loop runs.
-			if retErr != nil && !ra.c.Writer.Written() && !hasDownstreamOutput &&
-				(errors.Is(retErr, errEmptyOutput) ||
-					errors.Is(retErr, errMissingStreamTerminal) ||
-					errors.Is(retErr, errFirstVisibleOutputTimeout)) {
+			if retErr != nil && !hasDownstreamOutput && !ra.streamOutputWasCommitted() {
 				return
 			}
 			ra.streamSession.Finish(retErr)
@@ -991,6 +1020,57 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		}
 		clientDisconnectLogged = true
 		log.Warnf(clientDisconnectedLogMessage)
+	}
+	markStreamOutputCommitted := func() {
+		hasDownstreamOutput = true
+		ra.markStreamOutputCommitted()
+	}
+	streamOutputWasCommitted := func() bool {
+		return hasDownstreamOutput || ra.streamOutputWasCommitted()
+	}
+	streamFailureEventWritten := false
+	emitStreamInterruption := func(streamErr error, force bool) {
+		if !force && !streamOutputWasCommitted() {
+			return
+		}
+		if streamFailureEventWritten {
+			return
+		}
+
+		payload := ra.renderStreamInterruption(ctx, streamErr)
+		if ra.streamSession != nil {
+			sessionEvents := ra.streamSession.AddPayload(payload)
+			// A replayable native error event is the terminal state. Finish with
+			// nil so reconnectors do not receive the same error twice through
+			// serveRelayStreamSession's generic session-error fallback.
+			markStreamOutputCommitted()
+			streamFailureEventWritten = true
+			if !clientDisconnected {
+				for _, event := range sessionEvents {
+					if _, err := ra.c.Writer.Write(formatRelaySSEEvent(event.Sequence, event.Payload)); err != nil {
+						markClientDisconnected()
+						logClientDisconnected()
+						break
+					}
+					ra.c.Writer.Flush()
+				}
+			}
+			ra.streamSession.Finish(nil)
+			return
+		}
+
+		if !clientDisconnected {
+			if _, err := ra.c.Writer.Write(payload); err != nil {
+				markClientDisconnected()
+				logClientDisconnected()
+			} else {
+				ra.c.Writer.Flush()
+			}
+		}
+		// A forced error without a writable client is still terminal for this
+		// request; do not replay the original generation against another route.
+		markStreamOutputCommitted()
+		streamFailureEventWritten = true
 	}
 
 	type sseReadResult struct {
@@ -1111,6 +1191,49 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		defer clientGoneTicker.Stop()
 	}
 
+	finishAcceptedTerminal := func() error {
+		// A provider refusal, prompt block, pause_turn, or context exhaustion
+		// must be delivered as-is rather than retried with the identical
+		// request. Other empty buffered streams remain eligible for the
+		// existing no-output retry policy.
+		canReplayEmptyOutput := !ra.streamTermination.HasCause() ||
+			(!ra.streamTermination.Cause.IsProviderFailure() &&
+				ra.streamTermination.Cause.AllowsIdenticalReplay() &&
+				!ra.streamTermination.Cause.IsProviderRefusal())
+		if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent && canReplayEmptyOutput {
+			if ra.streamTermination.Cause == model.TerminationCauseTokenLimit || ra.streamFinishReason == "length" {
+				log.Infof("channel %s returned empty stream truncated by max_tokens, will retry", ra.channel.Name)
+			} else {
+				log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
+			}
+			return errEmptyOutput
+		}
+
+		// When a terminal response is intentionally empty or empty-retry is
+		// disabled, flush its buffered protocol frames. Otherwise strict
+		// clients would receive neither the terminal event nor an error.
+		if !hasVisibleContent && len(reasoningBuffer) > 0 {
+			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+		}
+		reasoningBuffer = nil
+		reasoningBufferBytes = 0
+
+		if ra.streamSession != nil {
+			ra.streamSession.Finish(nil)
+		}
+		log.Infof("stream end")
+
+		// 内容已写给客户端后才发现 token limit：协议上不可重试
+		//（客户端已收到半截）。仅记录可观测日志。
+		if hasVisibleContent && ra.streamTermination.Cause == model.TerminationCauseTokenLimit {
+			log.Warnf("channel %s stream truncated by max_tokens with partial content already delivered; not retryable mid-stream", ra.channel.Name)
+		}
+		if !shouldBuffer && !hasVisibleContent {
+			log.Warnf("channel %s returned empty stream (immediate strategy, no retry)", ra.channel.Name)
+		}
+		return nil
+	}
+
 	for {
 		var (
 			r                                  sseReadResult
@@ -1170,13 +1293,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				if err := response.Body.Close(); err != nil {
 					log.Warnf("failed to close response body on stream idle timeout: %v", err)
 				}
-				if !clientDisconnected {
-					writeSSEErrorEvent(ra.c.Writer, idleErr.Error())
-					ra.c.Writer.Flush()
-				}
-				if ra.streamSession != nil {
-					ra.streamSession.Finish(idleErr)
-				}
+				emitStreamInterruption(idleErr, false)
 				return idleErr
 			}
 		case <-heartbeatTicker.C:
@@ -1196,10 +1313,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			// results channel 被 SSE reader goroutine 关闭。
 			// 需要区分正常结束（上游 EOF）和异常中断（ctx 取消/超时）。
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				if ra.streamSession != nil {
-					ra.streamSession.Finish(ctxErr)
-				}
-				return fmt.Errorf("stream interrupted: %w", ctxErr)
+				interruptedErr := fmt.Errorf("stream interrupted: %w", ctxErr)
+				emitStreamInterruption(interruptedErr, false)
+				return interruptedErr
 			}
 			logClientDisconnected()
 
@@ -1208,62 +1324,47 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			// response has been committed to this client or replay session.
 			if !ra.streamSawTerminalEvent || ra.hasUnfinishedObservedStreamChoices() {
 				log.Warnf("channel %s stream ended without a terminal event", ra.channel.Name)
-				streamOutputCommitted := ra.c.Writer.Written() || hasDownstreamOutput
-				if streamOutputCommitted {
-					if !clientDisconnected {
-						writeSSEErrorEvent(ra.c.Writer, errMissingStreamTerminal.Error())
-						ra.c.Writer.Flush()
-					}
-					if ra.streamSession != nil {
-						ra.streamSession.Finish(errMissingStreamTerminal)
-					}
-				}
+				emitStreamInterruption(errMissingStreamTerminal, false)
 				return errMissingStreamTerminal
 			}
-
-			// A provider refusal, prompt block, pause_turn, or context exhaustion
-			// must be delivered as-is rather than retried with the identical
-			// request. Other empty buffered streams remain eligible for the
-			// existing no-output retry policy.
-			canReplayEmptyOutput := !ra.streamTermination.HasCause() ||
-				(ra.streamTermination.Cause.AllowsIdenticalReplay() && !ra.streamTermination.Cause.IsProviderRefusal())
-			if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent && canReplayEmptyOutput {
-				if ra.streamTermination.Cause == model.TerminationCauseTokenLimit || ra.streamFinishReason == "length" {
-					log.Infof("channel %s returned empty stream truncated by max_tokens, will retry", ra.channel.Name)
-				} else {
-					log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
+			if ra.streamTermination.Cause.IsProviderFailure() {
+				providerErr := providerTerminalFailureError(ra.streamTermination)
+				if len(reasoningBuffer) > 0 {
+					writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+					reasoningBuffer = nil
+					reasoningBufferBytes = 0
+					if ra.streamOutputWasCommitted() {
+						hasDownstreamOutput = true
+					}
 				}
-				return errEmptyOutput
+				if streamOutputWasCommitted() {
+					// A protocol-native terminal failure was already delivered by
+					// the inbound adapter. Reconnectors replay that frame rather
+					// than receiving an additional synthetic error event.
+					if ra.streamSession != nil {
+						ra.streamSession.Finish(nil)
+					}
+				} else {
+					emitStreamInterruption(providerErr, true)
+				}
+				return providerErr
 			}
 
-			// When a terminal response is intentionally empty or empty-retry is
-			// disabled, flush its buffered protocol frames. Otherwise strict
-			// clients would receive neither the terminal event nor an error.
-			if !hasVisibleContent && len(reasoningBuffer) > 0 {
-				writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
-			}
-			reasoningBuffer = nil
-			reasoningBufferBytes = 0
-
-			if ra.streamSession != nil {
-				ra.streamSession.Finish(nil)
-			}
-			log.Infof("stream end")
-
-			// 内容已写给客户端后才发现 token limit：协议上不可重试
-			//（客户端已收到半截）。仅记录可观测日志。
-			if hasVisibleContent && ra.streamTermination.Cause == model.TerminationCauseTokenLimit {
-				log.Warnf("channel %s stream truncated by max_tokens with partial content already delivered; not retryable mid-stream", ra.channel.Name)
-			}
-			if !shouldBuffer && !hasVisibleContent {
-				log.Warnf("channel %s returned empty stream (immediate strategy, no retry)", ra.channel.Name)
-			}
-			return nil
+			return finishAcceptedTerminal()
 		}
 		if r.err != nil {
+			if ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && !ra.streamTermination.Cause.IsProviderFailure() {
+				// Once a provider terminal state has already been accepted, a
+				// later socket error cannot rewrite that completed/policy outcome
+				// into a second client-visible failure.
+				log.Warnf("channel %s stream read failed after terminal event: %v", ra.channel.Name, r.err)
+				return finishAcceptedTerminal()
+			}
 			logClientDisconnected()
 			logRelayErrorfByContext(r.err, "failed to read event: %v", r.err)
-			return fmt.Errorf("failed to read stream event: %w", r.err)
+			readErr := fmt.Errorf("failed to read stream event: %w", r.err)
+			emitStreamInterruption(readErr, false)
+			return readErr
 		}
 		resetStreamIdleTimer()
 
@@ -1286,11 +1387,14 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 							"code":    "content_blocked",
 						},
 					})
-					ra.streamSession.AddPayload(errPayload)
+					if len(ra.streamSession.AddPayload(errPayload)) > 0 {
+						markStreamOutputCommitted()
+					}
 					ra.streamSession.Finish(nil)
 				} else if !clientDisconnected {
 					writeSSEErrorEvent(ra.c.Writer, filterCfg.ErrorMessage)
 					ra.c.Writer.Flush()
+					markStreamOutputCommitted()
 				}
 				if closeErr := response.Body.Close(); closeErr != nil {
 					log.Warnf("failed to close response body on response filter block: %v", closeErr)
@@ -1313,7 +1417,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				return firstVisibleOutputTimeoutError()
 			}
 		}
+		terminalProviderFailure := ra.streamTermination.Cause.IsProviderFailure()
 		if len(data) == 0 {
+			if terminalProviderFailure {
+				providerErr := providerTerminalFailureError(ra.streamTermination)
+				emitStreamInterruption(providerErr, true)
+				return providerErr
+			}
 			continue
 		}
 		if chunkHasVisible && firstVisibleOutputPending {
@@ -1326,7 +1436,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		// issue #155：根据策略决定是否缓冲 reasoning chunks。
 		// buffer 策略：暂存到 buffer，待可见内容到达后统一 flush（安全重试但 CF 可能超时）
 		// immediate 策略：立即发送所有 chunks（实时体验但空输出不可重试）
-		if shouldBuffer && !chunkHasVisible && !hasVisibleContent {
+		if shouldBuffer && !chunkHasVisible && !hasVisibleContent && !terminalProviderFailure {
 			// 软上限：累计字节超过 maxReasoningBufferBytes 时丢弃当前 buffer，避免
 			// 长 reasoning-only 流内存无界增长。丢弃而非 flush 以保持空输出重试安全性
 			// （hasVisibleContent 保持 false，仍可重试）。8 MiB reasoning-only 已属异常。
@@ -1342,7 +1452,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		// 可见内容到达，先 flush 暂存的 reasoning buffer
 		if len(reasoningBuffer) > 0 {
 			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
-			if ra.streamSession != nil || !clientDisconnected {
+			if ra.streamOutputWasCommitted() {
 				hasDownstreamOutput = true
 			}
 			reasoningBuffer = nil
@@ -1354,18 +1464,27 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 		if ra.streamSession != nil {
 			sessionEvents := ra.streamSession.AddPayload(data)
-			hasDownstreamOutput = true
+			if len(sessionEvents) > 0 {
+				markStreamOutputCommitted()
+			}
 			if clientDisconnected {
 				logClientDisconnected()
-				continue
-			}
-			for _, event := range sessionEvents {
-				if _, err := ra.c.Writer.Write(formatRelaySSEEvent(event.Sequence, event.Payload)); err != nil {
-					markClientDisconnected()
-					logClientDisconnected()
-					break
+			} else {
+				for _, event := range sessionEvents {
+					if _, err := ra.c.Writer.Write(formatRelaySSEEvent(event.Sequence, event.Payload)); err != nil {
+						markClientDisconnected()
+						logClientDisconnected()
+						break
+					}
+					ra.c.Writer.Flush()
 				}
-				ra.c.Writer.Flush()
+			}
+			if terminalProviderFailure {
+				// The inbound adapter already emitted its protocol-compatible
+				// terminal failure. Finish the replay session without appending a
+				// second generic error event, but return an error for health/stats.
+				ra.streamSession.Finish(nil)
+				return providerTerminalFailureError(ra.streamTermination)
 			}
 			continue
 		}
@@ -1377,10 +1496,16 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		if _, err := ra.c.Writer.Write(data); err != nil {
 			markClientDisconnected()
 			logClientDisconnected()
+			if terminalProviderFailure {
+				return providerTerminalFailureError(ra.streamTermination)
+			}
 			continue
 		}
-		hasDownstreamOutput = true
+		markStreamOutputCommitted()
 		ra.c.Writer.Flush()
+		if terminalProviderFailure {
+			return providerTerminalFailureError(ra.streamTermination)
+		}
 	}
 }
 
@@ -1392,6 +1517,9 @@ func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected 
 	for _, data := range buffer {
 		if ra.streamSession != nil {
 			sessionEvents := ra.streamSession.AddPayload(data)
+			if len(sessionEvents) > 0 {
+				ra.markStreamOutputCommitted()
+			}
 			if *clientDisconnected {
 				// Keep buffered terminal/reasoning events replayable even when the
 				// original connection disappeared before they could be written.
@@ -1420,6 +1548,7 @@ func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected 
 			logClientDisconnected()
 			return
 		}
+		ra.markStreamOutputCommitted()
 		ra.c.Writer.Flush()
 	}
 }
@@ -1555,6 +1684,14 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform response: %v", err)
 		return fmt.Errorf("failed to transform inbound response: %w", err)
+	}
+	if termination, providerFailure := responseProviderFailure(internalResponse); providerFailure {
+		// The wire body remains protocol-compatible (for example, a Responses
+		// object with status=failed or a Chat completion with length). Returning
+		// an internal error afterwards prevents relay health, metrics, and cache
+		// layers from treating that provider-declared failure as success.
+		ra.c.Data(http.StatusOK, "application/json", inResponse)
+		return providerTerminalFailureError(termination)
 	}
 
 	if !responseHasNonCacheableTermination(internalResponse) {

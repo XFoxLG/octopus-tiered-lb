@@ -82,9 +82,11 @@ func (c TerminationCause) IsIncomplete() bool {
 	case TerminationCauseTokenLimit,
 		TerminationCauseContextExhausted,
 		TerminationCausePauseTurn,
+		TerminationCauseMalformedToolCall,
 		TerminationCauseMissingTerminal,
 		TerminationCauseTransportInterrupted,
-		TerminationCauseError:
+		TerminationCauseError,
+		TerminationCauseUnknown:
 		return true
 	default:
 		return false
@@ -112,10 +114,30 @@ func (c TerminationCause) IsProviderRefusal() bool {
 // resuming with prior assistant content rather than starting over.
 func (c TerminationCause) AllowsIdenticalReplay() bool {
 	switch c {
-	case TerminationCauseContextExhausted, TerminationCausePauseTurn:
+	case TerminationCauseContextExhausted,
+		TerminationCausePauseTurn,
+		TerminationCauseMalformedToolCall,
+		TerminationCauseUnknown:
 		return false
 	default:
 		return true
+	}
+}
+
+// IsProviderFailure reports terminal upstream outcomes that are neither a
+// complete model turn nor a deliberate model refusal. Relay uses this to avoid
+// recording a provider-declared failure as a successful request after it has
+// been delivered to the client.
+func (c TerminationCause) IsProviderFailure() bool {
+	switch c {
+	case TerminationCauseMalformedToolCall,
+		TerminationCauseError,
+		TerminationCauseMissingTerminal,
+		TerminationCauseTransportInterrupted,
+		TerminationCauseUnknown:
+		return true
+	default:
+		return false
 	}
 }
 

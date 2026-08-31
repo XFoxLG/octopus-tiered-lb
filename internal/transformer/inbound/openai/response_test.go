@@ -76,6 +76,31 @@ func TestResponseInboundTransformStreamEmitsFailedForError(t *testing.T) {
 	}
 }
 
+func TestResponseInboundRendersTransportInterruptionAsErrorEvent(t *testing.T) {
+	inbound := &ResponseInbound{sequenceNumber: 4}
+	streamPayload, err := inbound.TransformStreamInterruption(context.Background(), context.DeadlineExceeded)
+	if err != nil {
+		t.Fatalf("TransformStreamInterruption() error = %v", err)
+	}
+
+	streamText := string(streamPayload)
+	if !strings.Contains(streamText, `"type":"error"`) {
+		t.Fatalf("transport interruption lacks error event: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"code":"upstream_stream_interrupted"`) {
+		t.Fatalf("transport interruption lacks error code: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"param":null`) {
+		t.Fatalf("transport interruption lacks null parameter: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"sequence_number":4`) {
+		t.Fatalf("transport interruption sequence = %s, want 4", streamText)
+	}
+	if inbound.sequenceNumber != 5 {
+		t.Fatalf("next sequence number = %d, want 5", inbound.sequenceNumber)
+	}
+}
+
 func TestResponseInboundPromptBlockStreamStaysEmptyAndIncomplete(t *testing.T) {
 	inbound := &ResponseInbound{}
 	streamPayload, err := inbound.TransformStream(context.Background(), &model.InternalLLMResponse{
