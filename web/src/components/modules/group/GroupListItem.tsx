@@ -162,6 +162,7 @@ function EditDialogContent({
                             mode: group.mode,
                             first_token_time_out: group.first_token_time_out ?? 0,
                             attempt_time_out: group.attempt_time_out ?? 0,
+                            stream_idle_timeout: group.stream_idle_timeout ?? 0,
                             session_keep_time: group.session_keep_time ?? 0,
                             members: editMembers,
                         }}
@@ -697,6 +698,8 @@ export function GroupListItem({ group }: { group: Group }) {
                 values.first_token_time_out ?? 0;
             const nextAttemptTimeOut =
                 values.attempt_time_out ?? 0;
+            const nextStreamIdleTimeout =
+                values.stream_idle_timeout ?? 0;
             const nextSessionKeepTime =
                 values.session_keep_time ?? 0;
 
@@ -735,6 +738,11 @@ export function GroupListItem({ group }: { group: Group }) {
             )
                 payload.attempt_time_out = nextAttemptTimeOut;
             if (
+                nextStreamIdleTimeout !==
+                (group.stream_idle_timeout ?? 0)
+            )
+                payload.stream_idle_timeout = nextStreamIdleTimeout;
+            if (
                 nextSessionKeepTime !==
                 (group.session_keep_time ?? 0)
             )
@@ -765,6 +773,7 @@ export function GroupListItem({ group }: { group: Group }) {
             group.endpoint_type,
             group.first_token_time_out,
             group.attempt_time_out,
+            group.stream_idle_timeout,
             group.session_keep_time,
             group.id,
             group.items,

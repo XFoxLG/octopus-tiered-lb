@@ -108,7 +108,8 @@ func (o *ResponseOutbound) TransformStream(ctx context.Context, eventData []byte
 	// Handle [DONE] marker
 	if bytes.HasPrefix(eventData, []byte("[DONE]")) {
 		return &model.InternalLLMResponse{
-			Object: "[DONE]",
+			Object:           "[DONE]",
+			SawTerminalEvent: true,
 		}, nil
 	}
 
@@ -222,34 +223,48 @@ func (o *ResponseOutbound) TransformStream(ctx context.Context, eventData []byte
 		}
 
 	case "response.completed":
+		resp.SawTerminalEvent = true
+		termination := model.TerminationMetadata{
+			Cause:          model.TerminationCauseComplete,
+			ProviderReason: "completed",
+		}
 		if streamEvent.Response != nil {
-			var finishReason *string
-			if streamEvent.Response.Status != nil {
-				switch *streamEvent.Response.Status {
-				case "completed":
-					finishReason = lo.ToPtr("stop")
-				case "incomplete":
-					finishReason = lo.ToPtr("length")
-				case "failed":
-					finishReason = lo.ToPtr("error")
+			termination = responsesTerminationForStatus(
+				streamEvent.Response.Status,
+				streamEvent.Response.IncompleteDetails,
+				streamEvent.Response.Error,
+			)
+			if !termination.HasCause() {
+				termination = model.TerminationMetadata{
+					Cause:          model.TerminationCauseComplete,
+					ProviderReason: "completed",
 				}
-			}
-			resp.Choices = []model.Choice{
-				{
-					Index:        0,
-					FinishReason: finishReason,
-				},
 			}
 			if streamEvent.Response.Usage != nil {
 				resp.Usage = convertResponsesUsage(streamEvent.Response.Usage)
 			}
 		}
-
-	case "response.failed", "response.incomplete", "error":
+		resp.Termination = termination
 		resp.Choices = []model.Choice{
 			{
 				Index:        0,
-				FinishReason: lo.ToPtr("error"),
+				FinishReason: convertResponsesFinishReason(termination.Cause),
+				Termination:  termination,
+			},
+		}
+
+	case "response.incomplete", "response.failed", "error":
+		resp.SawTerminalEvent = true
+		termination := terminationForResponsesStreamEvent(&streamEvent)
+		if streamEvent.Response != nil && streamEvent.Response.Usage != nil {
+			resp.Usage = convertResponsesUsage(streamEvent.Response.Usage)
+		}
+		resp.Termination = termination
+		resp.Choices = []model.Choice{
+			{
+				Index:        0,
+				FinishReason: convertResponsesFinishReason(termination.Cause),
+				Termination:  termination,
 			},
 		}
 
@@ -400,14 +415,21 @@ type ResponsesReasoning struct {
 
 // ResponsesResponse represents the OpenAI Responses API response format.
 type ResponsesResponse struct {
-	Object    string          `json:"object"`
-	ID        string          `json:"id"`
-	Model     string          `json:"model"`
-	CreatedAt int64           `json:"created_at"`
-	Output    []ResponsesItem `json:"output"`
-	Status    *string         `json:"status,omitempty"`
-	Usage     *ResponsesUsage `json:"usage,omitempty"`
-	Error     *ResponsesError `json:"error,omitempty"`
+	Object            string                       `json:"object"`
+	ID                string                       `json:"id"`
+	Model             string                       `json:"model"`
+	CreatedAt         int64                        `json:"created_at"`
+	Output            []ResponsesItem              `json:"output"`
+	Status            *string                      `json:"status,omitempty"`
+	IncompleteDetails *ResponsesIncompleteDetails  `json:"incomplete_details,omitempty"`
+	Usage             *ResponsesUsage              `json:"usage,omitempty"`
+	Error             *ResponsesError              `json:"error,omitempty"`
+}
+
+// ResponsesIncompleteDetails explains why a Responses API result ended before
+// completion. The most common reason is "max_tokens".
+type ResponsesIncompleteDetails struct {
+	Reason string `json:"reason,omitempty"`
 }
 
 type ResponsesUsage struct {
@@ -423,7 +445,7 @@ type ResponsesUsage struct {
 }
 
 type ResponsesError struct {
-	Code    int    `json:"code"`
+	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
 }
 
@@ -730,6 +752,7 @@ func convertToLLMResponseFromResponses(resp *ResponsesResponse) *model.InternalL
 		Model:   resp.Model,
 		Created: resp.CreatedAt,
 	}
+	result.Termination = responsesTerminationForStatus(resp.Status, resp.IncompleteDetails, resp.Error)
 
 	var (
 		contentParts     []model.MessageContentPart
@@ -781,12 +804,14 @@ func convertToLLMResponseFromResponses(resp *ResponsesResponse) *model.InternalL
 		}
 	}
 
+	choiceTermination := result.Termination
 	choice := model.Choice{
 		Index: 0,
 		Message: &model.Message{
 			Role:      "assistant",
 			ToolCalls: toolCalls,
 		},
+		Termination: choiceTermination,
 	}
 
 	// Set reasoning content if present
@@ -816,24 +841,128 @@ func convertToLLMResponseFromResponses(resp *ResponsesResponse) *model.InternalL
 		}
 	}
 
-	// Set finish reason based on status
-	if len(toolCalls) > 0 {
-		choice.FinishReason = lo.ToPtr("tool_calls")
-	} else if resp.Status != nil {
-		switch *resp.Status {
-		case "completed":
-			choice.FinishReason = lo.ToPtr("stop")
-		case "failed":
-			choice.FinishReason = lo.ToPtr("error")
-		case "incomplete":
-			choice.FinishReason = lo.ToPtr("length")
-		}
+	// A completed Responses result containing function calls is a tool-call turn
+	// for Chat Completions clients. Do not override an actual incomplete/failed
+	// status, which can contain a partial tool call that is not safe to execute.
+	if len(toolCalls) > 0 && (choiceTermination.Cause == model.TerminationCauseUnspecified || choiceTermination.Cause == model.TerminationCauseComplete) {
+		choice.Termination.Cause = model.TerminationCauseToolCall
+	}
+	choice.FinishReason = convertResponsesFinishReason(choice.Termination.Cause)
+
+	if result.Termination.Cause == model.TerminationCauseUnspecified && choice.Termination.Cause == model.TerminationCauseToolCall {
+		result.Termination = choice.Termination
 	}
 
 	result.Choices = []model.Choice{choice}
 	result.Usage = convertResponsesUsage(resp.Usage)
 
 	return result
+}
+
+func terminationForResponsesStreamEvent(streamEvent *ResponsesStreamEvent) model.TerminationMetadata {
+	if streamEvent == nil {
+		return model.TerminationMetadata{
+			Cause:          model.TerminationCauseError,
+			ProviderReason: "error",
+		}
+	}
+
+	if streamEvent.Response != nil {
+		termination := responsesTerminationForStatus(
+			streamEvent.Response.Status,
+			streamEvent.Response.IncompleteDetails,
+			streamEvent.Response.Error,
+		)
+		if termination.HasCause() {
+			return termination
+		}
+		if streamEvent.Response.Error != nil {
+			return model.TerminationMetadata{
+				Cause:          model.TerminationCauseError,
+				ProviderReason: streamEvent.Type,
+				Detail:         streamEvent.Response.Error.Message,
+			}
+		}
+	}
+
+	switch streamEvent.Type {
+	case "response.incomplete":
+		return model.TerminationMetadata{
+			Cause:          model.TerminationCauseTokenLimit,
+			ProviderReason: "incomplete",
+		}
+	case "response.failed", "error":
+		return model.TerminationMetadata{
+			Cause:          model.TerminationCauseError,
+			ProviderReason: streamEvent.Type,
+			Detail:         streamEvent.Message,
+		}
+	default:
+		return model.TerminationMetadata{
+			Cause:          model.TerminationCauseUnknown,
+			ProviderReason: streamEvent.Type,
+		}
+	}
+}
+
+func responsesTerminationForStatus(status *string, incompleteDetails *ResponsesIncompleteDetails, responseError *ResponsesError) model.TerminationMetadata {
+	if status == nil {
+		return model.TerminationMetadata{}
+	}
+
+	termination := model.TerminationMetadata{
+		ProviderReason: *status,
+	}
+
+	switch strings.ToLower(strings.TrimSpace(*status)) {
+	case "completed":
+		termination.Cause = model.TerminationCauseComplete
+	case "incomplete":
+		termination.Cause = model.TerminationCauseTokenLimit
+		if incompleteDetails != nil {
+			termination.Detail = incompleteDetails.Reason
+			switch strings.ToLower(strings.TrimSpace(incompleteDetails.Reason)) {
+			case "content_filter", "safety":
+				termination.Cause = model.TerminationCauseContentFilter
+			case "context_length_exceeded", "model_context_window_exceeded":
+				termination.Cause = model.TerminationCauseContextExhausted
+			}
+		}
+	case "failed":
+		termination.Cause = model.TerminationCauseError
+		if responseError != nil {
+			termination.Detail = responseError.Message
+		}
+	case "cancelled", "canceled":
+		termination.Cause = model.TerminationCauseTransportInterrupted
+	case "queued", "in_progress":
+		return model.TerminationMetadata{}
+	default:
+		termination.Cause = model.TerminationCauseUnknown
+	}
+
+	return termination
+}
+
+func convertResponsesFinishReason(cause model.TerminationCause) *string {
+	switch cause {
+	case model.TerminationCauseUnspecified:
+		return nil
+	case model.TerminationCauseComplete, model.TerminationCauseStopSequence:
+		return lo.ToPtr("stop")
+	case model.TerminationCauseToolCall:
+		return lo.ToPtr("tool_calls")
+	case model.TerminationCauseContentFilter,
+		model.TerminationCauseRecitation,
+		model.TerminationCausePromptBlocked,
+		model.TerminationCauseRefusal:
+		return lo.ToPtr("content_filter")
+	default:
+		// Chat Completions does not expose a general failure finish_reason.
+		// `length` is the standard conservative indication that the visible
+		// result is not known to be a complete assistant turn.
+		return lo.ToPtr("length")
+	}
 }
 
 func convertResponsesUsage(usage *ResponsesUsage) *model.Usage {

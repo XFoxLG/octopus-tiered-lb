@@ -124,10 +124,18 @@ func (o *MessagesOutbound) TransformResponse(ctx context.Context, response *http
 }
 
 func (o *MessagesOutbound) TransformStream(ctx context.Context, eventData []byte) (*model.InternalLLMResponse, error) {
-	// Handle [DONE] marker
-	if bytes.HasPrefix(eventData, []byte("[DONE]")) || len(eventData) == 0 {
+	// Empty SSE events can be heartbeats or metadata-only frames. They are not
+	// evidence that the upstream completed, which matters for missing-terminal
+	// detection in the relay.
+	if len(eventData) == 0 {
+		return nil, nil
+	}
+
+	// Handle [DONE] marker.
+	if bytes.HasPrefix(eventData, []byte("[DONE]")) {
 		return &model.InternalLLMResponse{
-			Object: "[DONE]",
+			Object:           "[DONE]",
+			SawTerminalEvent: true,
 		}, nil
 	}
 
@@ -521,6 +529,28 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 		resp.Object = "chat.completion"
 	}
 
+	// Gemini reports a prompt-level block without generating any candidate. It
+	// must remain distinct from an ordinary empty response so the relay does not
+	// retry a deliberate safety decision on another credential or channel.
+	if geminiResp.PromptFeedback != nil && len(geminiResp.Candidates) == 0 {
+		blockReason := strings.TrimSpace(geminiResp.PromptFeedback.BlockReason)
+		termination := model.TerminationMetadata{
+			ProviderReason: blockReason,
+			BlockReason:    blockReason,
+		}
+		if blockReason != "" && !strings.EqualFold(blockReason, "BLOCK_REASON_UNSPECIFIED") {
+			termination.Cause = model.TerminationCausePromptBlocked
+		} else {
+			// Prompt feedback with no candidate is still a terminal provider
+			// outcome. An omitted/unspecified reason is not safe to relabel as a
+			// natural empty completion or store in the semantic cache.
+			termination.Cause = model.TerminationCauseUnknown
+			termination.Detail = "prompt feedback contained no candidate or block reason"
+		}
+		resp.Termination = termination
+		resp.SawTerminalEvent = true
+	}
+
 	// Convert candidates to choices
 	for _, candidate := range geminiResp.Candidates {
 		choice := model.Choice{
@@ -529,8 +559,14 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 
 		// Convert finish reason
 		if candidate.FinishReason != nil {
-			reason := convertGeminiFinishReason(*candidate.FinishReason)
-			choice.FinishReason = &reason
+			termination, sawTerminalEvent := geminiTerminationForFinishReason(*candidate.FinishReason)
+			choice.Termination = termination
+			resp.SawTerminalEvent = resp.SawTerminalEvent || sawTerminalEvent
+
+			if termination.HasCause() {
+				reason := convertGeminiFinishReason(termination.Cause)
+				choice.FinishReason = &reason
+			}
 		}
 
 		// Convert content
@@ -613,6 +649,12 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 					reason := "tool_calls"
 					choice.FinishReason = &reason
 				}
+				// A function-call delta is not itself a stream terminator. Only a
+				// complete non-stream response can safely infer tool-call completion
+				// from the presence of a tool call alone.
+				if !isStream && !choice.Termination.HasCause() {
+					choice.Termination.Cause = model.TerminationCauseToolCall
+				}
 			}
 
 			if isStream {
@@ -655,17 +697,63 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 	return resp
 }
 
-func convertGeminiFinishReason(reason string) string {
-	switch reason {
+// geminiTerminationForFinishReason translates Gemini's provider-specific enum
+// into internal policy metadata. The second return value is intentionally
+// separate from the cause: FINISH_REASON_UNSPECIFIED is not evidence that a
+// streaming response ended, even though the field itself is present.
+func geminiTerminationForFinishReason(providerReason string) (model.TerminationMetadata, bool) {
+	termination := model.TerminationMetadata{
+		ProviderReason: providerReason,
+	}
+
+	switch strings.ToUpper(strings.TrimSpace(providerReason)) {
+	case "", "FINISH_REASON_UNSPECIFIED":
+		return termination, false
 	case "STOP":
-		return "stop"
+		termination.Cause = model.TerminationCauseComplete
 	case "MAX_TOKENS":
-		return "length"
-	case "SAFETY":
-		return "content_filter"
-	case "RECITATION":
-		return "content_filter"
+		termination.Cause = model.TerminationCauseTokenLimit
+	case "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "MODEL_ARMOR":
+		termination.Cause = model.TerminationCauseContentFilter
+	case "RECITATION", "IMAGE_RECITATION":
+		termination.Cause = model.TerminationCauseRecitation
+	case "LANGUAGE":
+		// Gemini reports an unsupported-language condition, not a model refusal.
+		// Keep it observable instead of conflating it with a policy decision.
+		termination.Cause = model.TerminationCauseUnknown
+	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL":
+		termination.Cause = model.TerminationCauseMalformedToolCall
+	case "NO_IMAGE":
+		termination.Cause = model.TerminationCauseError
 	default:
+		// OTHER and future Gemini enum members remain observable through
+		// ProviderReason rather than being silently mislabeled as a clean stop.
+		termination.Cause = model.TerminationCauseUnknown
+	}
+
+	return termination, true
+}
+
+func convertGeminiFinishReason(cause model.TerminationCause) string {
+	switch cause {
+	case model.TerminationCauseTokenLimit,
+		model.TerminationCausePauseTurn,
+		model.TerminationCauseContextExhausted,
+		model.TerminationCauseMalformedToolCall,
+		model.TerminationCauseError,
+		model.TerminationCauseUnknown:
+		return "length"
+	case model.TerminationCauseContentFilter,
+		model.TerminationCauseRecitation,
+		model.TerminationCausePromptBlocked,
+		model.TerminationCauseRefusal:
+		return "content_filter"
+	case model.TerminationCauseToolCall:
+		return "tool_calls"
+	default:
+		// OpenAI Chat Completions has no faithful wire equivalent for every
+		// Gemini reason. The internal Termination field retains the exact reason
+		// while this preserves the adapter's established client-facing fallback.
 		return "stop"
 	}
 }

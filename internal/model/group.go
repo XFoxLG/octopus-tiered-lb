@@ -19,11 +19,17 @@ type Group struct {
 	OutboundFormat    string    `json:"outbound_format,omitempty" gorm:"not null;default:''"` // 出站格式: "" (auto), "chat", "responses", "messages", "chat_only", "responses_only", "messages_only", "passthrough", "raw" (原始穿透（信息体）: 保留原始请求体与请求路径，仅改写 model)
 	Mode              GroupMode `json:"mode" gorm:"not null"`
 	MatchRegex        string    `json:"match_regex"`
-	FirstTokenTimeOut int       `json:"first_token_time_out"` // 单个渠道首个Token响应超时时间(秒)
+	// FirstTokenTimeOut is the maximum time to wait for the first visible
+	// client-facing output in a streaming response. Metadata, role-only, and
+	// reasoning-only frames do not satisfy this timer. Zero disables it.
+	FirstTokenTimeOut int `json:"first_token_time_out"`
 	// AttemptTimeOut 单次转发尝试的超时时间（秒），0 = 不启用（issue #122）。
 	// 覆盖整个转发过程（HTTP 请求 + 响应读取），流式和非流式均生效。
 	// 超时后自动视为错误，按现有重试策略切换到下一个渠道。
-	AttemptTimeOut  int         `json:"attempt_time_out" gorm:"column:attempt_time_out;default:0"`
+	AttemptTimeOut int `json:"attempt_time_out" gorm:"column:attempt_time_out;default:0"`
+	// StreamIdleTimeout is the maximum allowed silence after visible streaming
+	// output begins. Zero disables the watchdog for backwards compatibility.
+	StreamIdleTimeout int `json:"stream_idle_timeout" gorm:"column:stream_idle_timeout;default:0"`
 	SessionKeepTime int         `json:"session_keep_time"`   // 会话保持时间(秒) 0 为禁用
 	Condition       string      `json:"condition,omitempty"` // 条件路由 JSON：[{"key":"model","op":"contains","value":"gpt-4"}]
 	Items           []GroupItem `json:"items,omitempty" gorm:"foreignKey:GroupID"`
@@ -66,6 +72,7 @@ type GroupUpdateRequest struct {
 	Condition               *string                  `json:"condition,omitempty"`                 // 仅在条件变更时发送
 	FirstTokenTimeOut       *int                     `json:"first_token_time_out,omitempty"`      // 仅在超时变更时发送(秒)
 	AttemptTimeOut          *int                     `json:"attempt_time_out,omitempty"`          // 仅在转发超时变更时发送(秒)
+	StreamIdleTimeout       *int                     `json:"stream_idle_timeout,omitempty"`       // 仅在流式空闲超时变更时发送(秒)
 	SessionKeepTime         *int                     `json:"session_keep_time,omitempty"`         // 仅在会话保持时间变更时发送(秒)
 	ReasoningBufferStrategy *string                  `json:"reasoning_buffer_strategy,omitempty"` // 仅在推理缓冲策略变更时发送
 	ItemsToAdd              []GroupItemAddRequest    `json:"items_to_add,omitempty"`              // 新增的 items

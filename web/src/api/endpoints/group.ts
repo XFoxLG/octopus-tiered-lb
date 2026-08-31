@@ -42,6 +42,9 @@ export interface Group {
     match_regex: string;
     first_token_time_out: number;
     attempt_time_out: number;
+    // Optional during mixed-version rollout: an older backend may not expose
+    // the new per-group watchdog setting yet. Callers normalize it to zero.
+    stream_idle_timeout?: number;
     session_keep_time: number;
     condition: string;
     items: GroupItem[];
@@ -373,6 +376,7 @@ export interface CreateGroupRequest {
     match_regex: string;
     first_token_time_out: number;
     attempt_time_out: number;
+    stream_idle_timeout: number;
     session_keep_time: number;
     condition: string;
     items: GroupItem[];
@@ -394,6 +398,7 @@ export interface GroupUpdateRequest {
     condition?: string;
     first_token_time_out?: number;
     attempt_time_out?: number;
+    stream_idle_timeout?: number;
     session_keep_time?: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     items_to_add?: GroupItemAddRequest[];

@@ -3,6 +3,8 @@ package anthropic
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/lingyuins/octopus/internal/transformer"
 
 	"github.com/lingyuins/octopus/internal/transformer/model"
@@ -24,6 +26,8 @@ type MessagesInbound struct {
 	modelName                 string
 	contentIndex              int64
 	stopReason                *string
+	stopSequence              *string
+	lastUsage                 *Usage
 	toolCallIndices           map[int]bool // Track which tool call indices we've seen
 	inputToken                int64
 
@@ -341,6 +345,9 @@ func (i *MessagesInbound) TransformResponse(ctx context.Context, response *model
 		Type:  "message",
 		Role:  "assistant",
 		Model: response.Model,
+		// Anthropic requires content to be an array even when a prompt-level
+		// safety block prevented the provider from producing any candidate.
+		Content: []MessageContentBlock{},
 	}
 
 	// Convert choices to content blocks
@@ -443,21 +450,16 @@ func (i *MessagesInbound) TransformResponse(ctx context.Context, response *model
 			resp.Content = contentBlocks
 		}
 
-		// Convert finish reason
-		if choice.FinishReason != nil {
-			switch *choice.FinishReason {
-			case "stop":
-				stopReason := "end_turn"
-				resp.StopReason = &stopReason
-			case "length":
-				stopReason := "max_tokens"
-				resp.StopReason = &stopReason
-			case "tool_calls":
-				stopReason := "tool_use"
-				resp.StopReason = &stopReason
-			default:
-				resp.StopReason = choice.FinishReason
-			}
+		if stopReason, stopSequence, hasTermination := resolveAnthropicStopReason(choice.Termination, choice.FinishReason); hasTermination {
+			resp.StopReason = &stopReason
+			resp.StopSequence = stopSequence
+		}
+	}
+
+	if resp.StopReason == nil && response.Termination.HasCause() {
+		if stopReason, stopSequence, hasTermination := resolveAnthropicStopReason(response.Termination, nil); hasTermination {
+			resp.StopReason = &stopReason
+			resp.StopSequence = stopSequence
 		}
 	}
 
@@ -485,6 +487,9 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 
 	// Store the chunk for aggregation
 	i.streamChunks = append(i.streamChunks, stream)
+	if stream.Usage != nil {
+		i.lastUsage = i.convertUsage(stream.Usage)
+	}
 
 	var events [][]byte
 
@@ -504,8 +509,8 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 			InputTokens:  i.inputToken,
 			OutputTokens: 1,
 		}
-		if stream.Usage != nil {
-			usage = i.convertUsage(stream.Usage)
+		if i.lastUsage != nil {
+			usage = i.lastUsage
 		}
 
 		startEvent := StreamEvent{
@@ -789,9 +794,11 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 			}
 		}
 
-		// Handle finish reason
-		if choice.FinishReason != nil && !i.hasFinished {
-			i.hasFinished = true
+		// Handle finish reason. Internal termination metadata takes precedence
+		// over the OpenAI-shaped fallback so native Anthropic clients retain
+		// pause_turn, refusal, stop_sequence, and context-window semantics.
+		if (choice.FinishReason != nil || choice.Termination.HasCause()) && !i.hasFinished {
+			i.setStreamTermination(choice.Termination, choice.FinishReason)
 
 			// Only emit content_block_stop if a content block is currently open
 			if i.hasTextContentStarted || i.hasThinkingContentStarted || i.hasToolContentStarted {
@@ -806,38 +813,35 @@ func (i *MessagesInbound) TransformStream(ctx context.Context, stream *model.Int
 				events = append(events, formatSSEEvent("content_block_stop", data))
 			}
 
-			// Convert finish reason to Anthropic format
-			var stopReason string
-			switch *choice.FinishReason {
-			case "stop":
-				stopReason = "end_turn"
-			case "length":
-				stopReason = "max_tokens"
-			case "tool_calls":
-				stopReason = "tool_use"
-			default:
-				stopReason = "end_turn"
-			}
-
-			// Store the stop reason, but don't generate message_delta yet
-			// We'll wait for the usage chunk to combine them
-			i.stopReason = &stopReason
 		}
 	}
 
-	// Handle usage chunk after finish_reason
-	if stream.Usage != nil && i.hasFinished && !i.messageStopped {
+	// Gemini can report a prompt-level safety block without producing a choice.
+	// It is still a terminal response and must not leave an Anthropic client
+	// waiting indefinitely for message_delta/message_stop.
+	if !i.hasFinished && stream.Termination.HasCause() {
+		i.setStreamTermination(stream.Termination, nil)
+	}
+
+	// Emit terminal events as soon as a terminal reason arrives. Some proxy
+	// chains drop the trailing usage frame, and waiting for it leaves strict
+	// Anthropic clients without message_delta/message_stop. Use the latest real
+	// usage if one was observed; otherwise omit usage rather than invent it.
+	if i.hasFinished && !i.messageStopped {
 		msgDeltaEvent := StreamEvent{
 			Type: "message_delta",
 		}
 
 		if i.stopReason != nil {
 			msgDeltaEvent.Delta = &StreamDelta{
-				StopReason: i.stopReason,
+				StopReason:   i.stopReason,
+				StopSequence: i.stopSequence,
 			}
 		}
 
-		msgDeltaEvent.Usage = i.convertUsage(stream.Usage)
+		if i.lastUsage != nil {
+			msgDeltaEvent.Usage = i.lastUsage
+		}
 
 		data, err := transformer.Marshal(msgDeltaEvent)
 		if err != nil {
@@ -886,6 +890,70 @@ func (i *MessagesInbound) convertUsage(usage *model.Usage) *Usage {
 	return anthropicUsage
 }
 
+func (i *MessagesInbound) setStreamTermination(termination model.TerminationMetadata, finishReason *string) {
+	stopReason, stopSequence, hasTermination := resolveAnthropicStopReason(termination, finishReason)
+	if !hasTermination {
+		return
+	}
+
+	i.hasFinished = true
+	i.stopReason = &stopReason
+	i.stopSequence = stopSequence
+}
+
+// resolveAnthropicStopReason renders the canonical internal termination into
+// the native Anthropic vocabulary. Provider metadata always wins over an
+// OpenAI-shaped fallback finish_reason so protocol conversion does not erase
+// pause_turn, stop_sequence, refusal, or context exhaustion.
+func resolveAnthropicStopReason(termination model.TerminationMetadata, finishReason *string) (string, *string, bool) {
+	if termination.HasCause() {
+		switch termination.Cause {
+		case model.TerminationCauseComplete:
+			return "end_turn", nil, true
+		case model.TerminationCauseStopSequence:
+			if termination.StopSequence == "" {
+				return "stop_sequence", nil, true
+			}
+			stopSequence := termination.StopSequence
+			return "stop_sequence", &stopSequence, true
+		case model.TerminationCauseToolCall:
+			return "tool_use", nil, true
+		case model.TerminationCauseTokenLimit:
+			return "max_tokens", nil, true
+		case model.TerminationCauseContextExhausted:
+			return "model_context_window_exceeded", nil, true
+		case model.TerminationCausePauseTurn:
+			return "pause_turn", nil, true
+		default:
+			// Anthropic has no native stop_reason for every provider error or
+			// safety filter. `refusal` is the closest standard non-success state;
+			// it is intentionally never rewritten as end_turn.
+			return "refusal", nil, true
+		}
+	}
+
+	if finishReason == nil {
+		return "", nil, false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(*finishReason)) {
+	case "stop":
+		return "end_turn", nil, true
+	case "length":
+		return "max_tokens", nil, true
+	case "tool_calls", "function_call":
+		return "tool_use", nil, true
+	case "pause_turn":
+		return "pause_turn", nil, true
+	case "model_context_window_exceeded":
+		return "model_context_window_exceeded", nil, true
+	case "stop_sequence":
+		return "stop_sequence", nil, true
+	default:
+		return "refusal", nil, true
+	}
+}
+
 // GetInternalResponse returns the complete internal response for logging, statistics, etc.
 // For streaming: aggregates all stored stream chunks into a complete response
 // For non-streaming: returns the stored response
@@ -926,6 +994,12 @@ func (i *MessagesInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 		// Capture usage from the last chunk that has it
 		if chunk.Usage != nil {
 			result.Usage = chunk.Usage
+		}
+		if chunk.SawTerminalEvent {
+			result.SawTerminalEvent = true
+		}
+		if chunk.Termination.HasCause() {
+			result.Termination = chunk.Termination
 		}
 
 		for _, choice := range chunk.Choices {
@@ -977,6 +1051,9 @@ func (i *MessagesInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 			// Capture finish reason
 			if choice.FinishReason != nil {
 				existingChoice.FinishReason = choice.FinishReason
+			}
+			if choice.Termination.HasCause() {
+				existingChoice.Termination = choice.Termination
 			}
 
 			// Capture logprobs

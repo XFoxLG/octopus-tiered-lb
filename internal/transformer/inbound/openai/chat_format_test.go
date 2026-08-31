@@ -83,6 +83,72 @@ func TestChatInboundTransformStreamEmptyChoicesIsArray(t *testing.T) {
 	}
 }
 
+func TestChatInboundMaterializesPromptBlockAsTerminalChoice(t *testing.T) {
+	promptBlockedResponse := &model.InternalLLMResponse{
+		ID:      "resp-id",
+		Object:  "chat.completion",
+		Created: 1,
+		Model:   "gemini-test",
+		Termination: model.TerminationMetadata{
+			Cause:          model.TerminationCausePromptBlocked,
+			ProviderReason: "SAFETY",
+		},
+	}
+
+	responseInbound := &ChatInbound{}
+	responsePayload, err := responseInbound.TransformResponse(context.Background(), promptBlockedResponse)
+	if err != nil {
+		t.Fatalf("TransformResponse() error = %v", err)
+	}
+	if !strings.Contains(string(responsePayload), `"finish_reason":"content_filter"`) {
+		t.Fatalf("TransformResponse() missing content_filter terminal choice: %s", responsePayload)
+	}
+	if len(promptBlockedResponse.Choices) != 0 {
+		t.Fatal("TransformResponse() mutated no-candidate provider response")
+	}
+
+	streamInbound := &ChatInbound{}
+	promptBlockedStream := *promptBlockedResponse
+	promptBlockedStream.Object = "chat.completion.chunk"
+	streamPayload, err := streamInbound.TransformStream(context.Background(), &promptBlockedStream)
+	if err != nil {
+		t.Fatalf("TransformStream() error = %v", err)
+	}
+	streamText := string(streamPayload)
+	if !strings.Contains(streamText, `"finish_reason":"content_filter"`) {
+		t.Fatalf("TransformStream() missing content_filter terminal choice: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"delta":{}`) && !strings.Contains(streamText, `"delta":{"content":null}`) {
+		t.Fatalf("TransformStream() terminal choice lacks empty delta: %s", streamText)
+	}
+	if len(promptBlockedStream.Choices) != 0 {
+		t.Fatal("TransformStream() mutated no-candidate provider response")
+	}
+}
+
+func TestChatInboundAggregationPreservesResponseTermination(t *testing.T) {
+	inbound := &ChatInbound{
+		streamChunks: []*model.InternalLLMResponse{{
+			Object:           "chat.completion.chunk",
+			SawTerminalEvent: true,
+			Termination: model.TerminationMetadata{
+				Cause: model.TerminationCausePromptBlocked,
+			},
+		}},
+	}
+
+	response, err := inbound.GetInternalResponse(context.Background())
+	if err != nil {
+		t.Fatalf("GetInternalResponse() error = %v", err)
+	}
+	if response == nil || response.Termination.Cause != model.TerminationCausePromptBlocked {
+		t.Fatalf("response termination = %#v, want prompt_blocked", response)
+	}
+	if !response.SawTerminalEvent {
+		t.Fatal("response-level terminal marker was lost during aggregation")
+	}
+}
+
 func TestChatInboundTransformStreamDeltaChunkPreserved(t *testing.T) {
 	// A normal content delta chunk must still serialize its delta payload.
 	inbound := &ChatInbound{}

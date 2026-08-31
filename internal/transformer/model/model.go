@@ -733,6 +733,22 @@ type InternalLLMResponse struct {
 
 	// Error is the error information, will present if request to llm service failed with status >= 400.
 	Error *ResponseError `json:"error,omitempty"`
+
+	// Termination carries response-level termination detail decoded by the
+	// outbound adapter, such as a prompt-level block that arrives with no
+	// choices at all. Excluded from JSON: it informs relay policy and logging
+	// only, and never changes what the client receives.
+	Termination TerminationMetadata `json:"-"`
+
+	// SawTerminalEvent records whether a protocol-level terminal marker was
+	// actually observed for this response, for example an OpenAI [DONE], an
+	// Anthropic message_delta, or a Gemini candidate carrying a finishReason.
+	//
+	// This is deliberately separate from FinishReason. An empty finish reason
+	// cannot distinguish "the stream never declared an ending" from "the
+	// ending declared no reason", and only the former indicates a silently
+	// truncated stream.
+	SawTerminalEvent bool `json:"-"`
 }
 
 func (r *InternalLLMResponse) ClearHelpFields() {
@@ -776,6 +792,11 @@ type Choice struct {
 	FinishReason *string `json:"finish_reason,omitempty"`
 
 	Logprobs *LogprobsContent `json:"logprobs,omitempty"`
+
+	// Termination preserves provider-specific termination detail for this
+	// candidate. It is internal-only so existing client-facing response payloads
+	// remain byte-for-byte compatible.
+	Termination TerminationMetadata `json:"-"`
 }
 
 // LogprobsContent represents logprobs information.

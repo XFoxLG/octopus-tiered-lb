@@ -2,8 +2,10 @@ package anthropic
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/lingyuins/octopus/internal/transformer"
 	"github.com/lingyuins/octopus/internal/transformer/model"
 )
 
@@ -67,5 +69,137 @@ func TestMessagesInboundGetInternalResponsePreservesSparseChoiceIndexes(t *testi
 	}
 	if resp.Choices[1].Message == nil || resp.Choices[1].Message.Content.Content == nil || *resp.Choices[1].Message.Content.Content != second {
 		t.Fatalf("GetInternalResponse() second content = %+v, want %q", resp.Choices[1].Message, second)
+	}
+}
+
+func TestMessagesInboundTransformStreamFinishesWithoutUsage(t *testing.T) {
+	finishReason := "length"
+	inbound := &MessagesInbound{}
+	streamPayload, err := inbound.TransformStream(context.Background(), &model.InternalLLMResponse{
+		Object: "chat.completion.chunk",
+		Choices: []model.Choice{{
+			Index:        0,
+			FinishReason: &finishReason,
+			Termination: model.TerminationMetadata{
+				Cause: model.TerminationCausePauseTurn,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("transform stream: %v", err)
+	}
+
+	streamText := string(streamPayload)
+	if !strings.Contains(streamText, `"type":"message_delta"`) {
+		t.Fatalf("stream payload lacks message_delta: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"stop_reason":"pause_turn"`) {
+		t.Fatalf("stream payload lacks pause_turn: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"type":"message_stop"`) {
+		t.Fatalf("stream payload lacks message_stop: %s", streamText)
+	}
+}
+
+func TestMessagesInboundTransformResponsePreservesStopSequence(t *testing.T) {
+	finishReason := "stop"
+	inbound := &MessagesInbound{}
+	responsePayload, err := inbound.TransformResponse(context.Background(), &model.InternalLLMResponse{
+		Object: "chat.completion",
+		Choices: []model.Choice{{
+			Index:        0,
+			FinishReason: &finishReason,
+			Termination: model.TerminationMetadata{
+				Cause:        model.TerminationCauseStopSequence,
+				StopSequence: "<END>",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("transform response: %v", err)
+	}
+
+	var anthropicResponse Message
+	if err := transformer.Unmarshal(responsePayload, &anthropicResponse); err != nil {
+		t.Fatalf("decode response payload: %v", err)
+	}
+	if anthropicResponse.StopReason == nil || *anthropicResponse.StopReason != "stop_sequence" {
+		t.Fatalf("stop reason = %v, want stop_sequence", anthropicResponse.StopReason)
+	}
+	if anthropicResponse.StopSequence == nil || *anthropicResponse.StopSequence != "<END>" {
+		t.Fatalf("stop sequence = %v, want <END>", anthropicResponse.StopSequence)
+	}
+}
+
+func TestMessagesInboundPromptBlockUsesEmptyContentArray(t *testing.T) {
+	inbound := &MessagesInbound{}
+	responsePayload, err := inbound.TransformResponse(context.Background(), &model.InternalLLMResponse{
+		ID:     "msg_1",
+		Model:  "gemini-test",
+		Object: "chat.completion",
+		Termination: model.TerminationMetadata{
+			Cause: model.TerminationCausePromptBlocked,
+		},
+	})
+	if err != nil {
+		t.Fatalf("TransformResponse() error = %v", err)
+	}
+
+	responseText := string(responsePayload)
+	if !strings.Contains(responseText, `"content":[]`) {
+		t.Fatalf("prompt-blocked response content = %s, want empty array", responseText)
+	}
+	if strings.Contains(responseText, `"content":null`) {
+		t.Fatalf("prompt-blocked response contains invalid null content: %s", responseText)
+	}
+	if !strings.Contains(responseText, `"stop_reason":"refusal"`) {
+		t.Fatalf("prompt-blocked response missing refusal stop reason: %s", responseText)
+	}
+}
+
+func TestMessagesInboundPromptBlockStreamTerminatesWithoutText(t *testing.T) {
+	inbound := &MessagesInbound{}
+	streamPayload, err := inbound.TransformStream(context.Background(), &model.InternalLLMResponse{
+		Object: "chat.completion.chunk",
+		Termination: model.TerminationMetadata{
+			Cause: model.TerminationCausePromptBlocked,
+		},
+	})
+	if err != nil {
+		t.Fatalf("TransformStream() error = %v", err)
+	}
+
+	streamText := string(streamPayload)
+	if !strings.Contains(streamText, `"type":"message_start"`) {
+		t.Fatalf("prompt-blocked stream lacks message_start: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"type":"message_delta"`) || !strings.Contains(streamText, `"stop_reason":"refusal"`) {
+		t.Fatalf("prompt-blocked stream lacks refusal terminal delta: %s", streamText)
+	}
+	if !strings.Contains(streamText, `"type":"message_stop"`) {
+		t.Fatalf("prompt-blocked stream lacks message_stop: %s", streamText)
+	}
+}
+
+func TestMessagesInboundAggregationPreservesResponseTermination(t *testing.T) {
+	inbound := &MessagesInbound{
+		streamChunks: []*model.InternalLLMResponse{{
+			Object:           "chat.completion.chunk",
+			SawTerminalEvent: true,
+			Termination: model.TerminationMetadata{
+				Cause: model.TerminationCausePromptBlocked,
+			},
+		}},
+	}
+
+	response, err := inbound.GetInternalResponse(context.Background())
+	if err != nil {
+		t.Fatalf("GetInternalResponse() error = %v", err)
+	}
+	if response == nil || response.Termination.Cause != model.TerminationCausePromptBlocked {
+		t.Fatalf("response termination = %#v, want prompt_blocked", response)
+	}
+	if !response.SawTerminalEvent {
+		t.Fatal("response-level terminal marker was lost during aggregation")
 	}
 }

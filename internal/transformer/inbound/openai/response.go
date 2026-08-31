@@ -21,6 +21,7 @@ type ResponseInbound struct {
 	hasContentPartStarted   bool
 	hasFinished             bool
 	responseCompleted       bool
+	termination             model.TerminationMetadata
 
 	// Response metadata
 	responseID string
@@ -158,14 +159,20 @@ func (i *ResponseInbound) TransformStream(ctx context.Context, stream *model.Int
 			events = append(events, i.handleToolCalls(choice.Delta.ToolCalls)...)
 		}
 
-		// Handle finish reason
-		if choice.FinishReason != nil && !i.hasFinished {
-			i.hasFinished = true
+		// The canonical termination metadata is more precise than a Chat
+		// Completions fallback finish_reason, especially for incomplete and
+		// failed Responses API turns.
+		if (choice.FinishReason != nil || choice.Termination.HasCause()) && !i.hasFinished {
+			i.setStreamTermination(choice.Termination, choice.FinishReason)
 
 			// Close any open content parts and output items
 			events = append(events, i.closeCurrentContentPart()...)
 			events = append(events, i.closeCurrentOutputItem()...)
 		}
+	}
+
+	if !i.hasFinished && stream.Termination.HasCause() {
+		i.setStreamTermination(stream.Termination, nil)
 	}
 
 	// Handle response completion once both finish_reason has arrived and we have
@@ -175,19 +182,21 @@ func (i *ResponseInbound) TransformStream(ctx context.Context, stream *model.Int
 	if i.hasFinished && !i.responseCompleted {
 		i.responseCompleted = true
 
-		status := "completed"
+		terminalEventType, status, incompleteDetails, responseError := responsesTerminalEventForTermination(i.termination)
 		response := &ResponsesResponse{
-			Object:    "response",
-			ID:        i.responseID,
-			Model:     i.model,
-			CreatedAt: i.createdAt,
-			Status:    &status,
-			Output:    []ResponsesItem{},
-			Usage:     convertUsageToResponses(i.usage),
+			Object:            "response",
+			ID:                i.responseID,
+			Model:             i.model,
+			CreatedAt:         i.createdAt,
+			Status:            &status,
+			IncompleteDetails: incompleteDetails,
+			Output:            []ResponsesItem{},
+			Usage:             convertUsageToResponses(i.usage),
+			Error:             responseError,
 		}
 
 		events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
-			Type:     "response.completed",
+			Type:     terminalEventType,
 			Response: response,
 		}))
 	}
@@ -619,6 +628,12 @@ func (i *ResponseInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 		if chunk.Usage != nil {
 			result.Usage = chunk.Usage
 		}
+		if chunk.SawTerminalEvent {
+			result.SawTerminalEvent = true
+		}
+		if chunk.Termination.HasCause() {
+			result.Termination = chunk.Termination
+		}
 
 		for _, choice := range chunk.Choices {
 			existingChoice, exists := choicesMap[choice.Index]
@@ -669,6 +684,9 @@ func (i *ResponseInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 			// Capture finish reason
 			if choice.FinishReason != nil {
 				existingChoice.FinishReason = choice.FinishReason
+			}
+			if choice.Termination.HasCause() {
+				existingChoice.Termination = choice.Termination
 			}
 
 			// Capture logprobs
@@ -881,14 +899,19 @@ type ResponsesReasoning struct {
 // Response types
 
 type ResponsesResponse struct {
-	Object    string          `json:"object"`
-	ID        string          `json:"id"`
-	Model     string          `json:"model"`
-	CreatedAt int64           `json:"created_at"`
-	Output    []ResponsesItem `json:"output"`
-	Status    *string         `json:"status,omitempty"`
-	Usage     *ResponsesUsage `json:"usage,omitempty"`
-	Error     *ResponsesError `json:"error,omitempty"`
+	Object            string                      `json:"object"`
+	ID                string                      `json:"id"`
+	Model             string                      `json:"model"`
+	CreatedAt         int64                       `json:"created_at"`
+	Output            []ResponsesItem             `json:"output"`
+	Status            *string                     `json:"status,omitempty"`
+	IncompleteDetails *ResponsesIncompleteDetails `json:"incomplete_details,omitempty"`
+	Usage             *ResponsesUsage             `json:"usage,omitempty"`
+	Error             *ResponsesError             `json:"error,omitempty"`
+}
+
+type ResponsesIncompleteDetails struct {
+	Reason string `json:"reason,omitempty"`
 }
 
 type ResponsesUsage struct {
@@ -904,7 +927,7 @@ type ResponsesUsage struct {
 }
 
 type ResponsesError struct {
-	Code    int    `json:"code"`
+	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
 }
 
@@ -929,6 +952,72 @@ type ResponsesContentPart struct {
 	Type        string                `json:"type"`
 	Text        *string               `json:"text,omitempty"`
 	Annotations []ResponsesAnnotation `json:"annotations,omitempty"`
+}
+
+func (i *ResponseInbound) setStreamTermination(termination model.TerminationMetadata, finishReason *string) {
+	if termination.HasCause() {
+		i.termination = termination
+		i.hasFinished = true
+		return
+	}
+
+	i.termination = terminationForChatFinishReason(finishReason)
+	i.hasFinished = i.termination.HasCause()
+}
+
+func terminationForChatFinishReason(finishReason *string) model.TerminationMetadata {
+	if finishReason == nil {
+		return model.TerminationMetadata{}
+	}
+
+	termination := model.TerminationMetadata{
+		ProviderReason: *finishReason,
+	}
+	switch strings.ToLower(strings.TrimSpace(*finishReason)) {
+	case "stop":
+		termination.Cause = model.TerminationCauseComplete
+	case "length":
+		termination.Cause = model.TerminationCauseTokenLimit
+	case "tool_calls", "function_call":
+		termination.Cause = model.TerminationCauseToolCall
+	case "content_filter":
+		termination.Cause = model.TerminationCauseContentFilter
+	case "error":
+		termination.Cause = model.TerminationCauseError
+	default:
+		termination.Cause = model.TerminationCauseUnknown
+	}
+	return termination
+}
+
+func responsesTerminalEventForTermination(termination model.TerminationMetadata) (string, string, *ResponsesIncompleteDetails, *ResponsesError) {
+	switch termination.Cause {
+	case model.TerminationCauseComplete,
+		model.TerminationCauseStopSequence,
+		model.TerminationCauseToolCall,
+		model.TerminationCauseRefusal:
+		return "response.completed", "completed", nil, nil
+	case model.TerminationCauseTokenLimit,
+		model.TerminationCauseContextExhausted,
+		model.TerminationCausePauseTurn:
+		return "response.incomplete", "incomplete", &ResponsesIncompleteDetails{
+			Reason: "max_tokens",
+		}, nil
+	case model.TerminationCauseContentFilter,
+		model.TerminationCauseRecitation,
+		model.TerminationCausePromptBlocked:
+		return "response.incomplete", "incomplete", &ResponsesIncompleteDetails{
+			Reason: "content_filter",
+		}, nil
+	default:
+		message := strings.TrimSpace(termination.Detail)
+		if message == "" {
+			message = "upstream response failed before completion"
+		}
+		return "response.failed", "failed", nil, &ResponsesError{
+			Message: message,
+		}
+	}
 }
 
 // Conversion functions
@@ -1243,13 +1332,17 @@ func convertToolsToInternal(tools []ResponsesTool) ([]model.Tool, error) {
 }
 
 func convertToResponsesAPIResponse(resp *model.InternalLLMResponse) *ResponsesResponse {
+	termination := terminationForInternalResponse(resp)
+	_, responseStatus, incompleteDetails, responseError := responsesTerminalEventForTermination(termination)
 	result := &ResponsesResponse{
-		Object:    "response",
-		ID:        resp.ID,
-		Model:     resp.Model,
-		CreatedAt: resp.Created,
-		Output:    make([]ResponsesItem, 0),
-		Status:    lo.ToPtr("completed"),
+		Object:            "response",
+		ID:                resp.ID,
+		Model:             resp.Model,
+		CreatedAt:         resp.Created,
+		Output:            make([]ResponsesItem, 0),
+		Status:            &responseStatus,
+		IncompleteDetails: incompleteDetails,
+		Error:             responseError,
 	}
 
 	// Convert usage
@@ -1353,23 +1446,13 @@ func convertToResponsesAPIResponse(resp *model.InternalLLMResponse) *ResponsesRe
 			}
 		}
 
-		// Set status based on finish reason
-		if choice.FinishReason != nil {
-			switch *choice.FinishReason {
-			case "stop":
-				result.Status = lo.ToPtr("completed")
-			case "length":
-				result.Status = lo.ToPtr("incomplete")
-			case "tool_calls":
-				result.Status = lo.ToPtr("completed")
-			case "error":
-				result.Status = lo.ToPtr("failed")
-			}
-		}
 	}
 
-	// If no output items, create empty message
-	if len(result.Output) == 0 {
+	// Preserve a provider-level no-candidate terminal result as output: [].
+	// Creating an empty assistant message here would falsely claim that a model
+	// output item existed when a prompt block stopped generation before it began.
+	hasResponseLevelNoCandidateTermination := len(resp.Choices) == 0 && resp.Termination.HasCause()
+	if len(result.Output) == 0 && !hasResponseLevelNoCandidateTermination {
 		emptyText := ""
 		result.Output = []ResponsesItem{
 			{
@@ -1384,12 +1467,36 @@ func convertToResponsesAPIResponse(resp *model.InternalLLMResponse) *ResponsesRe
 						},
 					},
 				},
-				Status: lo.ToPtr("completed"),
+				Status: result.Status,
 			},
 		}
 	}
 
 	return result
+}
+
+func terminationForInternalResponse(response *model.InternalLLMResponse) model.TerminationMetadata {
+	if response == nil {
+		return model.TerminationMetadata{
+			Cause:          model.TerminationCauseError,
+			ProviderReason: "missing_response",
+		}
+	}
+	if response.Termination.HasCause() {
+		return response.Termination
+	}
+	for _, choice := range response.Choices {
+		if choice.Termination.HasCause() {
+			return choice.Termination
+		}
+		if choice.FinishReason != nil {
+			return terminationForChatFinishReason(choice.FinishReason)
+		}
+	}
+
+	return model.TerminationMetadata{
+		Cause: model.TerminationCauseComplete,
+	}
 }
 
 func convertUsageToResponses(usage *model.Usage) *ResponsesUsage {

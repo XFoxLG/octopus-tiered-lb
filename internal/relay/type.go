@@ -44,8 +44,11 @@ const (
 )
 
 var (
-	errEmptyOutput     = errors.New("upstream returned empty output (no visible content)")
-	errTruncatedOutput = errors.New("upstream returned truncated output (finish_reason=length)")
+	errEmptyOutput           = errors.New("upstream returned empty output (no visible content)")
+	errTruncatedOutput       = errors.New("upstream returned truncated output (finish_reason=length)")
+	errMissingStreamTerminal = errors.New("upstream stream ended without a terminal event")
+	errFirstVisibleOutputTimeout = errors.New("upstream stream did not produce visible output before timeout")
+	errStreamIdleTimeout         = errors.New("upstream stream became idle after visible output")
 )
 
 func init() {
@@ -161,12 +164,97 @@ func messageHasVisibleContent(msg *model.Message) bool {
 	return false
 }
 
+// terminationForChoice returns provider-decoded metadata when available and
+// otherwise derives only the standard OpenAI-shaped fallback. This lets relay
+// policy make safe decisions for both upgraded adapters and legacy channels.
+func terminationForChoice(choice model.Choice) model.TerminationMetadata {
+	if choice.Termination.HasCause() {
+		return choice.Termination
+	}
+	if choice.FinishReason == nil {
+		return model.TerminationMetadata{}
+	}
+
+	termination := model.TerminationMetadata{
+		ProviderReason: *choice.FinishReason,
+	}
+	switch strings.ToLower(strings.TrimSpace(*choice.FinishReason)) {
+	case "stop":
+		termination.Cause = model.TerminationCauseComplete
+	case "length":
+		termination.Cause = model.TerminationCauseTokenLimit
+	case "tool_calls", "function_call":
+		termination.Cause = model.TerminationCauseToolCall
+	case "content_filter":
+		termination.Cause = model.TerminationCauseContentFilter
+	case "error":
+		termination.Cause = model.TerminationCauseError
+	default:
+		termination.Cause = model.TerminationCauseUnknown
+	}
+	return termination
+}
+
+func responseHasProviderRefusal(resp *model.InternalLLMResponse) bool {
+	if resp == nil {
+		return false
+	}
+	if resp.Termination.Cause.IsProviderRefusal() {
+		return true
+	}
+	for _, choice := range resp.Choices {
+		if terminationForChoice(choice).Cause.IsProviderRefusal() {
+			return true
+		}
+	}
+	return false
+}
+
+// responseHasNonCacheableTermination prevents incomplete, failed, and
+// provider-blocked outcomes from entering the semantic cache as if they were
+// successful assistant answers. The internal metadata is intentionally absent
+// from wire JSON, so checking it before serialization is essential.
+func responseHasNonCacheableTermination(resp *model.InternalLLMResponse) bool {
+	if resp == nil {
+		return false
+	}
+	if terminationPreventsSemanticCache(resp.Termination) {
+		return true
+	}
+	for _, choice := range resp.Choices {
+		if terminationPreventsSemanticCache(terminationForChoice(choice)) {
+			return true
+		}
+	}
+	return false
+}
+
+func terminationPreventsSemanticCache(termination model.TerminationMetadata) bool {
+	if !termination.HasCause() {
+		return false
+	}
+
+	switch termination.Cause {
+	case model.TerminationCauseComplete,
+		model.TerminationCauseStopSequence,
+		model.TerminationCauseToolCall:
+		return false
+	default:
+		return true
+	}
+}
+
 // isEmptyOutputResponse 判断非流式响应是否为"空输出"：
 // 所有 Choices 的 Message 均无可见内容（无文本、无工具调用、无多模态、无音频）。
 // 不依赖 CompletionTokens 判断——推理模型可能消耗大量 reasoning tokens
 // 但 CompletionTokens > 0 却不产生任何可见内容（issue #155）。
 func isEmptyOutputResponse(resp *model.InternalLLMResponse) bool {
 	if resp == nil {
+		return false
+	}
+	// Deliberate safety/rejection outcomes can be empty by design. Retrying
+	// them on another key or proxy is both ineffective and potentially abusive.
+	if responseHasProviderRefusal(resp) {
 		return false
 	}
 	// 必须是 chat 响应（有 Choices），embedding 不适用
@@ -189,8 +277,11 @@ func isTruncatedOutput(resp *model.InternalLLMResponse) bool {
 	if resp == nil {
 		return false
 	}
+	if resp.Termination.Cause == model.TerminationCauseTokenLimit {
+		return true
+	}
 	for _, choice := range resp.Choices {
-		if choice.FinishReason != nil && strings.EqualFold(strings.TrimSpace(*choice.FinishReason), "length") {
+		if terminationForChoice(choice).Cause == model.TerminationCauseTokenLimit {
 			return true
 		}
 	}
@@ -286,10 +377,29 @@ type relayAttempt struct {
 	// 懒加载，仅在首次需要时计算一次。
 	filterCfg *responseFilterConfig
 
-	// streamFinishReason 记录流式响应 terminal chunk 携带的 finish_reason（空表示未见）。
-	// 流正常结束时用于截断检测（finish_reason=length → 可重试），避免为此改动
-	// transformStreamData 的签名。
+	// streamFinishReason is retained for legacy log messages. Canonical policy
+	// decisions use streamTermination instead.
 	streamFinishReason string
+
+	// streamSawTerminalEvent distinguishes a clean transport EOF from a stream
+	// that actually emitted a provider-level terminal marker.
+	streamSawTerminalEvent bool
+
+	// streamSawExplicitTerminalEvent records a stream-wide terminal marker such
+	// as [DONE], an Anthropic message_stop event, or a response-level terminal
+	// status. Per-choice finish reasons are tracked separately because a
+	// multi-choice stream may finish one choice while another remains incomplete.
+	streamSawExplicitTerminalEvent bool
+
+	// streamObservedChoiceIndexes and streamFinishedChoiceIndexes protect
+	// multi-choice streams from being accepted as complete when only one choice
+	// provided a finish reason before the upstream closed.
+	streamObservedChoiceIndexes map[int]struct{}
+	streamFinishedChoiceIndexes map[int]struct{}
+
+	// streamTermination records the most recent terminal cause decoded from the
+	// upstream stream. It is internal-only and never serialized to clients.
+	streamTermination model.TerminationMetadata
 }
 
 // getResponseFilterConfig 返回本次尝试的响应过滤配置，仅加载一次并缓存。
@@ -393,6 +503,18 @@ func ClassifyRelayError(statusCode int, err error, written bool) RetryDecision {
 		return RetryDecision{
 			Scope:   ScopeAbortAll,
 			Reason:  "stream response already written before failure",
+			Code:    statusCode,
+			IsError: true,
+		}
+	}
+
+	// A clean EOF with no provider terminal marker is a proxy/upstream stream
+	// failure. Before any downstream bytes are written it is safe to rotate the
+	// credential once, then let the normal route loop try another channel.
+	if errors.Is(err, errMissingStreamTerminal) {
+		return RetryDecision{
+			Scope:   ScopeSameChannel,
+			Reason:  "upstream stream ended without terminal event",
 			Code:    statusCode,
 			IsError: true,
 		}
