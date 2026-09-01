@@ -845,6 +845,7 @@ export function GroupListItem({ group }: { group: Group }) {
             mode: group.mode,
             first_token_time_out: group.first_token_time_out ?? 0,
             attempt_time_out: group.attempt_time_out ?? 0,
+            stream_idle_timeout: group.stream_idle_timeout ?? 0,
             session_keep_time: group.session_keep_time ?? 0,
             members: nextMembers,
         };
@@ -862,6 +863,7 @@ export function GroupListItem({ group }: { group: Group }) {
         group.endpoint_type,
         group.first_token_time_out,
         group.attempt_time_out,
+        group.stream_idle_timeout,
         group.id,
         group.match_regex,
         group.mode,

@@ -576,6 +576,7 @@ export function GroupCard({ group }: { group: Group }) {
             mode: group.mode,
             first_token_time_out: group.first_token_time_out ?? 0,
             attempt_time_out: group.attempt_time_out ?? 0,
+            stream_idle_timeout: group.stream_idle_timeout ?? 0,
             session_keep_time: group.session_keep_time ?? 0,
             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
             members: nextMembers,
@@ -587,7 +588,7 @@ export function GroupCard({ group }: { group: Group }) {
             handledTestCompletionRef.current = null;
             toast.success(t('toast.removedFailedModels'));
         });
-    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.id, group.match_regex, group.mode, group.name, group.session_keep_time, group.reasoning_buffer_strategy, handleSubmitEdit, members, t, testProgress?.results]);
+    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.id, group.match_regex, group.mode, group.name, group.session_keep_time, group.reasoning_buffer_strategy, handleSubmitEdit, members, t, testProgress?.results]);
 
     const failedTestResults = useMemo(
         () => (testProgress?.done ? (testProgress.results ?? []).filter((result) => !result.passed) : []),
