@@ -188,6 +188,11 @@ func terminationForChoice(choice model.Choice) model.TerminationMetadata {
 		termination.Cause = model.TerminationCauseToolCall
 	case "content_filter":
 		termination.Cause = model.TerminationCauseContentFilter
+	case "refusal":
+		// Some OpenAI-compatible providers emit "refusal" as a chat
+		// finish_reason; treat it the same as the canonical model refusal so
+		// relay policy keeps it out of empty-output retries.
+		termination.Cause = model.TerminationCauseRefusal
 	case "error":
 		termination.Cause = model.TerminationCauseError
 	default:
