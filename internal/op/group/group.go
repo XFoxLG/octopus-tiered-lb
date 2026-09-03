@@ -761,6 +761,16 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		selectFields = append(selectFields, "session_keep_time")
 		updates.SessionKeepTime = *req.SessionKeepTime
 	}
+	if req.SortStrategy != nil {
+		selectFields = append(selectFields, "sort_strategy")
+		strategy := strings.ToLower(strings.TrimSpace(*req.SortStrategy))
+		switch strategy {
+		case "", "non_relay_balance", "non_relay_multiplier", "multiplier_balance", "balance_only":
+		default:
+			return nil, fmt.Errorf("invalid sort strategy: must be empty, non_relay_balance, non_relay_multiplier, multiplier_balance or balance_only")
+		}
+		updates.SortStrategy = strategy
+	}
 	if req.Condition != nil {
 		selectFields = append(selectFields, "condition")
 		updates.Condition = strings.TrimSpace(*req.Condition)

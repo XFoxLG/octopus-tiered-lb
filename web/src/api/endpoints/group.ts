@@ -54,6 +54,7 @@ export interface Group {
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     param_override?: string;
     custom_header?: { header_key: string; header_value: string }[];
+    sort_strategy?: string; // "" | "non_relay_balance" | "non_relay_multiplier" | "multiplier_balance" | "balance_only"
 }
 
 export interface GroupTestResult {

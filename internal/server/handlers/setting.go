@@ -19,6 +19,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/backup"
 	"github.com/lingyuins/octopus/internal/op/dbmigration"
 	notifop "github.com/lingyuins/octopus/internal/op/notification"
+	grp "github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/ops"
 	stg "github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/server/auth"
@@ -152,6 +153,12 @@ func setSetting(c *gin.Context) {
 		task.Update(string(setting.Key), time.Duration(hours)*time.Hour)
 	case model.SettingKeyLogLevel:
 		log.SetLevel(setting.Value)
+	case model.SettingKeyDefaultMultiplierCap:
+		// 倍率上限变更后重算阻断（Seller 移植）。失败只告警：设置已持久化，
+		// 不应让客户端误以为没保存。
+		if _, _, err := grp.EnforceMultiplierCap(c.Request.Context()); err != nil {
+			log.Warnf("enforce multiplier cap failed after setting %s: %v", setting.Key, err)
+		}
 	case model.SettingKeyRelayLogKeepEnabled:
 		// 独立日志库模式下：关闭日志则断开日志库连接，开启则重连。
 		// 共用主库时为空操作。失败仅记录，不影响设置已持久化的事实。

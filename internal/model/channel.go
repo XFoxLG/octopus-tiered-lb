@@ -98,6 +98,9 @@ type Channel struct {
 	RequestRewrite       *RequestRewriteConfig `json:"request_rewrite" gorm:"serializer:json"`
 	Stats                *StatsChannel         `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
 	MatchRegex           *string               `json:"match_regex"`
+	// IsReserve 备用渠道标记（Seller 移植）。排序策略 non_relay_* 把备用渠道排后：
+	// 非备用按余额/倍率正常排，备用统一沉底。false=常规，true=备用。
+	IsReserve bool `json:"is_reserve" gorm:"default:false"`
 	// KeyHealthPassed 记录最近一次定时 Key 巡检是否全部通过（issue #142）。
 	// nil = 从未巡检；true = 全部通过；false = 存在失败。前端据此对失败渠道标灰。
 	KeyHealthPassed *bool `json:"key_health_passed,omitempty" gorm:"column:key_health_passed"`
@@ -191,6 +194,7 @@ type ChannelUpdateRequest struct {
 	RequestRewrite       *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
 	MatchRegex           *string                `json:"match_regex,omitempty"`
 	PoolID               *int                   `json:"pool_id,omitempty"`
+	IsReserve            *bool                  `json:"is_reserve,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`
 	KeysToUpdate []ChannelKeyUpdateRequest `json:"keys_to_update,omitempty"`

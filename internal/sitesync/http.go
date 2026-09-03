@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/lingyuins/octopus/internal/client"
@@ -368,7 +370,44 @@ func parseGroupObject(item map[string]any) (model.SiteUserGroup, bool) {
 	if strings.TrimSpace(groupKey) == "" {
 		return model.SiteUserGroup{}, false
 	}
-	return model.SiteUserGroup{GroupKey: strings.TrimSpace(groupKey), Name: strings.TrimSpace(groupName)}, true
+	group := model.SiteUserGroup{GroupKey: strings.TrimSpace(groupKey), Name: strings.TrimSpace(groupName)}
+	// 分组倍率解析（Seller 移植）：只采信明确的倍率字段，未提供=未知（nil，不写 known=false，
+	// 落库时保持 NULL，由判定侧视同 false）。0 表示免费分组，是合法倍率。
+	if multiplier := parseOptionalSiteGroupMultiplier(
+		item["rate_multiplier"], item["group_multiplier"], item["multiplier"], item["ratio"], item["rate"],
+	); multiplier != nil {
+		known := true
+		group.Multiplier = multiplier
+		group.MultiplierKnown = &known
+	}
+	return group, true
+}
+
+// parseOptionalSiteGroupMultiplier 按优先级取第一个合法的倍率值（Seller 移植）。
+// 合法=非负有限数（含 0=免费）。全部非法/缺失返回 nil（=未知）。
+func parseOptionalSiteGroupMultiplier(values ...any) *float64 {
+	for _, value := range values {
+		var multiplier float64
+		var valid bool
+		switch typed := value.(type) {
+ 		case float64:
+ 			multiplier, valid = typed, true
+ 		case int:
+ 			multiplier, valid = float64(typed), true
+ 		case int64:
+ 			multiplier, valid = float64(typed), true
+ 		case string:
+ 			trimmed := strings.TrimSpace(typed)
+ 			if trimmed != "" {
+ 				parsed, err := strconv.ParseFloat(trimmed, 64)
+ 				multiplier, valid = parsed, err == nil
+ 			}
+ 		}
+ 		if valid && multiplier >= 0 && !math.IsNaN(multiplier) && !math.IsInf(multiplier, 0) {
+ 			return &multiplier
+ 		}
+ 	}
+ 	return nil
 }
 
 func isIgnorableGroupMapKey(key string) bool {

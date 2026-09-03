@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -46,6 +47,9 @@ const (
 	SettingKeyCustomErrorRules                   SettingKey = "custom_error_rules"                       // 自定义错误透传规则（JSON 数组，见 relay.CustomErrorRule），按渠道类型+错误码/关键词改写最终错误呈现
 	SettingKeyRelayLogMaxContentSizeMB           SettingKey = "relay_log_max_content_size_mb"            // 单条日志请求与响应正文合计上限（MiB），超限整条跳过，-1=不限
 	SettingKeyRelayLogMemoryLogMaxDimidiateTimes SettingKey = "relay_log_memory_log_max_dimidiate_times" // 仅内存日志模式下折半次数阈值，达到后主动 GC 一次，-1=关闭
+	SettingKeyDefaultGroupLoadBalance            SettingKey = "default_group_load_balance"               // 默认分组负载均衡模式（空=不强制覆盖各分组现有模式，Seller 移植）
+	SettingKeyDefaultGroupSortStrategy           SettingKey = "default_group_sort_strategy"              // 默认分组排序策略（空=non_relay_balance，Seller 移植）
+	SettingKeyDefaultMultiplierCap               SettingKey = "default_multiplier_cap"                   // 默认分组倍率上限（0=不限制，Seller 移植）
 	SettingKeyReasoningBufferStrategy            SettingKey = "reasoning_buffer_strategy"               // 推理内容缓冲策略：buffer(缓冲) | immediate(立即)，默认 buffer（issue #155）
 	SettingKeyRateLimitHoldEnabled               SettingKey = "rate_limit_hold_enabled"                 // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
 	SettingKeyRateLimitHoldInterval              SettingKey = "rate_limit_hold_interval"                // 429 渠道内延时重试间隔（秒）
@@ -165,6 +169,9 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyCustomErrorRules, Value: "[]"},                  // 默认无自定义错误透传规则
 		{Key: SettingKeyRelayLogMaxContentSizeMB, Value: "2"},           // 默认单条日志正文上限 2MiB
 		{Key: SettingKeyRelayLogMemoryLogMaxDimidiateTimes, Value: "15"}, // 默认折半 15 次后主动 GC 一次
+		{Key: SettingKeyDefaultGroupLoadBalance, Value: ""},             // 为空时不覆盖各分组现有模式
+		{Key: SettingKeyDefaultGroupSortStrategy, Value: ""},            // 为空时使用 non_relay_balance
+		{Key: SettingKeyDefaultMultiplierCap, Value: "0"},               // 0 表示不限制
 		{Key: SettingKeyReasoningBufferStrategy, Value: "buffer"},        // 默认缓冲策略：安全重试但可能 CF 超时
 		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},            // 默认关闭：429 仍立即换 Key/渠道
 		{Key: SettingKeyRateLimitHoldInterval, Value: "10"},              // 默认每 10 秒重试一次
@@ -389,6 +396,35 @@ func (s *Setting) Validate() error {
 		v, err := strconv.Atoi(strings.TrimSpace(s.Value))
 		if err != nil || v < 1 {
 			return fmt.Errorf("relay log memory log max dimidiate times must be -1 or a positive integer")
+		}
+		return nil
+	case SettingKeyDefaultGroupLoadBalance:
+		// 空串合法（=不强制覆盖各分组现有模式）。非空必须是已知 GroupMode 名。
+		if strings.TrimSpace(s.Value) == "" {
+			return nil
+		}
+		switch strings.ToLower(strings.TrimSpace(s.Value)) {
+		case "round_robin", "random", "failover", "weighted", "auto":
+		default:
+			return fmt.Errorf("default group load balance must be round_robin, random, failover, weighted, auto or empty")
+		}
+		return nil
+	case SettingKeyDefaultGroupSortStrategy:
+		// 空串合法（=non_relay_balance）。非空必须是已知排序策略名。
+		if strings.TrimSpace(s.Value) == "" {
+			return nil
+		}
+		switch strings.ToLower(strings.TrimSpace(s.Value)) {
+		case "non_relay_balance", "non_relay_multiplier", "multiplier_balance", "balance_only":
+		default:
+			return fmt.Errorf("default group sort strategy must be non_relay_balance, non_relay_multiplier, multiplier_balance, balance_only or empty")
+		}
+		return nil
+	case SettingKeyDefaultMultiplierCap:
+		// 0=不限制；其余必须是非负有限数（Seller 语义：仅 known=true 且超 cap 才拦）。
+		capValue, err := strconv.ParseFloat(strings.TrimSpace(s.Value), 64)
+		if err != nil || math.IsNaN(capValue) || math.IsInf(capValue, 0) || capValue < 0 {
+			return fmt.Errorf("default multiplier cap must be a finite non-negative number")
 		}
 		return nil
 	case SettingKeyCustomRetryableCodes:
