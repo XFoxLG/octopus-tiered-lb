@@ -82,6 +82,11 @@ func init() {
 				Handle(testChannelModel),
 		).
 		AddRoute(
+			router.NewRoute("/test-model-sync", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(testChannelModelSync),
+		).
+		AddRoute(
 			router.NewRoute("/group/list", http.MethodGet).
 				Handle(listChannelGroup),
 		).
@@ -359,6 +364,63 @@ func testChannelModel(c *gin.Context) {
 		return
 	}
 	resp.Success(c, progress)
+}
+
+// testChannelModelSync 对单个渠道上的单个模型发起一次同步真实调用并阻塞返回。
+// 与异步 /test-model（返回进度 ID，前端轮询）不同，本接口直接返回
+// helper.ChannelModelSyncProbeResult。渠道来源二选一：
+//   - channel_id：测已保存到 DB 的渠道（key 不经前端回传）；
+//   - channel：测新建弹窗里未保存的临时渠道。
+// 模型必须在渠道已选模型集合（model + custom_model）内；endpoint_type 为空默认 chat。
+func testChannelModelSync(c *gin.Context) {
+	var req struct {
+		ChannelID    *int           `json:"channel_id,omitempty"`
+		Channel      *model.Channel `json:"channel,omitempty"`
+		Model        string         `json:"model" binding:"required"`
+		KeyIndex     int            `json:"key_index,omitempty"`
+		EndpointType string         `json:"endpoint_type,omitempty"`
+		TimeoutMS    int64          `json:"timeout_ms,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+
+	hasID := req.ChannelID != nil && *req.ChannelID > 0
+	hasChannel := req.Channel != nil
+	if (hasID && hasChannel) || (!hasID && !hasChannel) {
+		resp.Error(c, http.StatusBadRequest, "exactly one of channel_id or channel is required")
+		return
+	}
+
+	var channel *model.Channel
+	if hasID {
+		stored, err := ch.Get(*req.ChannelID, c.Request.Context())
+		if err != nil {
+			resp.Error(c, http.StatusNotFound, "channel not found")
+			return
+		}
+		channel = stored
+	} else {
+		channel = req.Channel
+	}
+
+	if !helper.ChannelModelInSelectedModels(channel, req.Model) {
+		resp.Error(c, http.StatusBadRequest, "model is not in channel's selected models")
+		return
+	}
+
+	timeout := 30 * time.Second
+	if req.TimeoutMS > 0 {
+		timeout = time.Duration(req.TimeoutMS) * time.Millisecond
+	}
+
+	result, err := helper.TestChannelModelSync(c.Request.Context(), channel, req.Model, req.KeyIndex, req.EndpointType, timeout)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, result)
 }
 
 type channelRequestPayload struct {
