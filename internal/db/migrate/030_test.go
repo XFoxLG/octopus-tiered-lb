@@ -97,6 +97,11 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := addStreamIdleTimeoutToGroups(db); err != nil {
 		t.Fatalf("addStreamIdleTimeoutColumn: %v", err)
 	}
+	// Run migration 054 to add param_override/custom_header columns
+	// (test uses latest model.Group which includes these fields)
+	if err := addGroupRequestOptions(db); err != nil {
+		t.Fatalf("addGroupRequestOptions: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

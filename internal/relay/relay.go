@@ -649,7 +649,7 @@ func (ra *relayAttempt) forward() (int, error) {
 	// 跳过 param_override 与改写引擎，避免请求体被二次加工。
 	if ra.adapterType != outbound.OutboundTypePassthrough && ra.adapterType != outbound.OutboundTypeRaw {
 		var err error
-		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutbound(ra.channel, ra.internalRequest, ra.groupEndpointType)
+		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutbound(ra.channel, ra.internalRequest, ra.groupEndpointType, ra.group)
 		if err != nil {
 			log.Warnf("failed to prepare outbound request data: %v", err)
 			return 0, fmt.Errorf("failed to prepare outbound request data: %w", err)
@@ -929,6 +929,20 @@ func (ra *relayAttempt) copyHeaders(outboundRequest *http.Request, effectiveRewr
 	}
 	if len(ra.channel.CustomHeader) > 0 {
 		for _, header := range ra.channel.CustomHeader {
+			outboundRequest.Header.Set(header.HeaderKey, header.HeaderValue)
+		}
+	}
+
+	// 分组级自定义请求头（XyzenSun 移植）：只补客户端与渠道均未设置的键，
+	// 同名时渠道覆盖分组（渠道头已在上方先应用）。
+	if ra.group != nil {
+		for _, header := range ra.group.CustomHeader {
+			if strings.TrimSpace(header.HeaderKey) == "" {
+				continue
+			}
+			if _, exists := outboundRequest.Header[http.CanonicalHeaderKey(header.HeaderKey)]; exists {
+				continue
+			}
 			outboundRequest.Header.Set(header.HeaderKey, header.HeaderValue)
 		}
 	}

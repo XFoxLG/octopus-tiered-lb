@@ -48,6 +48,13 @@ type Group struct {
 	// "" = 使用全局设置；"buffer" = 缓冲直到可见内容（安全重试但 CF 可能超时）；
 	// "immediate" = 立即流式发送（实时体验但空输出不可重试）。
 	ReasoningBufferStrategy string `json:"reasoning_buffer_strategy,omitempty" gorm:"column:reasoning_buffer_strategy;default:'';size:20"`
+	// ParamOverride 分组级请求参数覆盖（JSON object 字符串，XyzenSun 移植）。
+	// 与渠道级 ParamOverride 同语义（白名单字段、客户端优先）；优先级：客户端 > 渠道 > 分组。
+	// nil/空串 = 未配置。
+	ParamOverride *string `json:"param_override,omitempty"`
+	// CustomHeader 分组级自定义请求头（XyzenSun 移植）。
+	// 先于渠道级 CustomHeader 应用，同名时渠道覆盖分组。
+	CustomHeader []CustomHeader `json:"custom_header,omitempty" gorm:"serializer:json"`
 }
 
 type GroupItem struct {
@@ -75,6 +82,8 @@ type GroupUpdateRequest struct {
 	StreamIdleTimeout       *int                     `json:"stream_idle_timeout,omitempty"`       // 仅在流式空闲超时变更时发送(秒)
 	SessionKeepTime         *int                     `json:"session_keep_time,omitempty"`         // 仅在会话保持时间变更时发送(秒)
 	ReasoningBufferStrategy *string                  `json:"reasoning_buffer_strategy,omitempty"` // 仅在推理缓冲策略变更时发送
+	ParamOverride           *string                  `json:"param_override,omitempty"`            // 仅在参数覆盖变更时发送（JSON object 字符串）
+	CustomHeader            *[]CustomHeader          `json:"custom_header,omitempty"`             // 仅在自定义请求头变更时发送
 	ItemsToAdd              []GroupItemAddRequest    `json:"items_to_add,omitempty"`              // 新增的 items
 	ItemsToUpdate           []GroupItemUpdateRequest `json:"items_to_update,omitempty"`           // 更新的 items (priority 变更)
 	ItemsToDelete           []int                    `json:"items_to_delete,omitempty"`           // 删除的 item IDs

@@ -52,6 +52,8 @@ export interface Group {
     last_test_all_failed?: boolean;
     last_test_at?: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
+    param_override?: string;
+    custom_header?: { header_key: string; header_value: string }[];
 }
 
 export interface GroupTestResult {

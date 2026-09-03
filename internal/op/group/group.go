@@ -2,6 +2,7 @@ package group
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -626,6 +627,11 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	if group.StreamIdleTimeout < 0 {
 		return fmt.Errorf("stream idle timeout must be non-negative")
 	}
+	if group.ParamOverride != nil {
+		if err := validateGroupParamOverride(*group.ParamOverride); err != nil {
+			return err
+		}
+	}
 	group.Category = strings.TrimSpace(group.Category)
 	group.EndpointType = model.NormalizeEndpointType(group.EndpointType)
 	group.EndpointProvider = strings.ToLower(strings.TrimSpace(group.EndpointProvider))
@@ -637,6 +643,20 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	}
 	groupCache.Set(group.ID, normalizeGroup(*group))
 	RebuildIndexes()
+	return nil
+}
+
+// validateGroupParamOverride 校验分组级 param_override 格式：必须是 JSON object。
+// 空白视为未配置，直接通过；语义校验（白名单字段）由 relay 层按现有渠道逻辑处理。
+func validateGroupParamOverride(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return fmt.Errorf("param_override must be a valid JSON object: %w", err)
+	}
 	return nil
 }
 
@@ -722,6 +742,17 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 			return nil, fmt.Errorf("invalid reasoning buffer strategy: must be empty, 'buffer', or 'immediate'")
 		}
 		updates.ReasoningBufferStrategy = strategy
+	}
+	if req.ParamOverride != nil {
+		if err := validateGroupParamOverride(*req.ParamOverride); err != nil {
+			return nil, err
+		}
+		selectFields = append(selectFields, "param_override")
+		updates.ParamOverride = req.ParamOverride
+	}
+	if req.CustomHeader != nil {
+		selectFields = append(selectFields, "custom_header")
+		updates.CustomHeader = *req.CustomHeader
 	}
 
 	if len(selectFields) > 0 {

@@ -9,7 +9,7 @@ import (
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
-func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *transmodel.InternalLLMRequest, groupEndpointType string) (*transmodel.InternalLLMRequest, *rewrite.EffectiveConfig, error) {
+func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *transmodel.InternalLLMRequest, groupEndpointType string, group *appmodel.Group) (*transmodel.InternalLLMRequest, *rewrite.EffectiveConfig, error) {
 	if channel == nil {
 		return nil, nil, fmt.Errorf("channel is nil")
 	}
@@ -33,49 +33,78 @@ func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *trans
 		target = rewritten
 	}
 
-	applyParamOverride(channel, target)
+	applyParamOverride(channel, group, target)
 	attachRelayGroupEndpointMetadata(target, groupEndpointType)
 	return target, effectiveRewrite, nil
 }
 
-// applyParamOverride merges channel-level param_override JSON into the outbound request.
+// applyParamOverride merges group-level and channel-level param_override JSON
+// into the outbound request (XyzenSun 移植：分组先合并，渠道覆盖同名键）。
 // Only overrides fields that are not already set by the client request (client takes precedence).
-func applyParamOverride(channel *appmodel.Channel, request *transmodel.InternalLLMRequest) {
-	if channel == nil || channel.ParamOverride == nil || *channel.ParamOverride == "" {
-		return
-	}
+func applyParamOverride(channel *appmodel.Channel, group *appmodel.Group, request *transmodel.InternalLLMRequest) {
 	if request == nil {
 		return
 	}
-
-	var overrides map[string]RawMessage
-	if err := jsonAPI.Unmarshal([]byte(*channel.ParamOverride), &overrides); err != nil {
+	var groupOverrides, channelOverrides map[string]RawMessage
+	if group != nil && group.ParamOverride != nil && *group.ParamOverride != "" {
+		if err := jsonAPI.Unmarshal([]byte(*group.ParamOverride), &groupOverrides); err != nil {
+			log.Warnf("param_override: invalid JSON for group %d: %v", group.ID, err)
+		}
+	}
+	if channel == nil || channel.ParamOverride == nil || *channel.ParamOverride == "" {
+		if len(groupOverrides) == 0 {
+			return
+		}
+	} else if err := jsonAPI.Unmarshal([]byte(*channel.ParamOverride), &channelOverrides); err != nil {
 		log.Warnf("param_override: invalid JSON for channel %d: %v", channel.ID, err)
+		if len(groupOverrides) == 0 {
+			return
+		}
+	}
+
+	mergeParamOverrideField(groupOverrides, channelOverrides, "max_tokens", &request.MaxTokens)
+	mergeParamOverrideField(groupOverrides, channelOverrides, "max_completion_tokens", &request.MaxCompletionTokens)
+	mergeParamOverrideFloatField(groupOverrides, channelOverrides, "temperature", &request.Temperature)
+	mergeParamOverrideFloatField(groupOverrides, channelOverrides, "top_p", &request.TopP)
+}
+
+// mergeParamOverrideField 按「客户端 > 渠道 > 分组」优先级填充 int64 指针字段。
+// 仅当 request 字段为 nil（客户端未设置）时才用覆盖值；渠道值优先于分组值。
+func mergeParamOverrideField(groupOverrides, channelOverrides map[string]RawMessage, key string, target **int64) {
+	if target == nil || *target != nil {
 		return
 	}
+	if v, ok := channelOverrides[key]; ok {
+		var val int64
+		if err := jsonAPI.Unmarshal(v, &val); err == nil {
+			*target = &val
+			return
+		}
+	}
+	if v, ok := groupOverrides[key]; ok {
+		var val int64
+		if err := jsonAPI.Unmarshal(v, &val); err == nil {
+			*target = &val
+		}
+	}
+}
 
-	if v, ok := overrides["max_tokens"]; ok && request.MaxTokens == nil {
-		var val int64
-		if err := jsonAPI.Unmarshal(v, &val); err == nil {
-			request.MaxTokens = &val
-		}
+// mergeParamOverrideFloatField 按「客户端 > 渠道 > 分组」优先级填充 float64 指针字段。
+func mergeParamOverrideFloatField(groupOverrides, channelOverrides map[string]RawMessage, key string, target **float64) {
+	if target == nil || *target != nil {
+		return
 	}
-	if v, ok := overrides["max_completion_tokens"]; ok && request.MaxCompletionTokens == nil {
-		var val int64
-		if err := jsonAPI.Unmarshal(v, &val); err == nil {
-			request.MaxCompletionTokens = &val
-		}
-	}
-	if v, ok := overrides["temperature"]; ok && request.Temperature == nil {
+	if v, ok := channelOverrides[key]; ok {
 		var val float64
 		if err := jsonAPI.Unmarshal(v, &val); err == nil {
-			request.Temperature = &val
+			*target = &val
+			return
 		}
 	}
-	if v, ok := overrides["top_p"]; ok && request.TopP == nil {
+	if v, ok := groupOverrides[key]; ok {
 		var val float64
 		if err := jsonAPI.Unmarshal(v, &val); err == nil {
-			request.TopP = &val
+			*target = &val
 		}
 	}
 }
