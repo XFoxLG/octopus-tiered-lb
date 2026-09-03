@@ -193,10 +193,12 @@ func TestTerminationForChoiceDerivesRefusalFallback(t *testing.T) {
 	if termination.Cause != model.TerminationCauseRefusal {
 		t.Fatalf("finish_reason=%q derived cause=%q, want refusal", finishReason, termination.Cause)
 	}
-	if !isEmptyOutputResponse(&model.InternalLLMResponse{
+	// Refusal is a deliberate model outcome: an empty refusal response must
+	// not be retried as empty output (same guard as provider-decoded refusal).
+	if isEmptyOutputResponse(&model.InternalLLMResponse{
 		Choices: []model.Choice{{FinishReason: &finishReason}},
 	}) {
-		t.Fatal("refusal fallback must not disable empty-output retry guard")
+		t.Fatal("refusal fallback must keep empty-output retry guard")
 	}
 }
 
