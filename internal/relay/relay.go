@@ -285,11 +285,20 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 
 	// 获取通道分组
 	group, err := grp.GroupGetEnabledMapByEndpoint(endpointType, requestModel, operationCtx)
+	directChannel := false
 	if err != nil {
-		lastErr = err
-		log.Infof("model not found: model=%s endpoint_type=%s reason=%v", requestModel, endpointType, err)
-		resp.Error(c, http.StatusNotFound, "model not found")
-		return
+		// 指定渠道路由（XyzenSun direct-channel 移植）：分组不存在且模型含 `/` 时，
+		// 按首个 `/` 切分为 channelName/modelName，构造虚拟单候选分组走主流程。
+		// 分组优先：完整字符串能匹配分组时永远走分组，不进直连。
+		virtualGroup, ok := resolveDirectChannelGroup(requestModel, endpointType)
+		if !ok {
+			lastErr = err
+			log.Infof("model not found: model=%s endpoint_type=%s reason=%v", requestModel, endpointType, err)
+			resp.Error(c, http.StatusNotFound, "model not found")
+			return
+		}
+		group = virtualGroup
+		directChannel = true
 	}
 	if !apiKeyAllowsGroupCategory(c.GetString("allowed_group_categories"), group.Category) {
 		lastErr = fmt.Errorf("group category not allowed for api key: category=%s", group.Category)
@@ -369,6 +378,12 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	maxRouteRetries := getMaxRouteRetries()
 	ratelimitCooldown := getRatelimitCooldown()
 	maxTotalAttempts := getMaxTotalAttempts()
+	if directChannel {
+		// 指定渠道路由只尝试所指定渠道一次：无 Key 级重试、无路由轮次。
+		maxKeyRetriesPerRoute = 1
+		maxRouteRetries = 1
+		maxTotalAttempts = 1
+	}
 
 	if inflightEnabled {
 		result, sfErr, shared := relayInflightGroup.Do(inflightKey, func() (any, error) {
