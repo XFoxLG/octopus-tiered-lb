@@ -124,6 +124,7 @@ function EditDialogContent({
                             mode: group.mode,
                             first_token_time_out: group.first_token_time_out ?? 0,
                             attempt_time_out: group.attempt_time_out ?? 0,
+                            stream_idle_timeout: group.stream_idle_timeout ?? 0,
                             session_keep_time: group.session_keep_time ?? 0,
                             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
                             members: editMembers,
@@ -493,6 +494,7 @@ export function GroupCard({ group }: { group: Group }) {
         const nextCondition = values.condition.trim();
         const nextFirstTokenTimeOut = values.first_token_time_out ?? 0;
         const nextAttemptTimeOut = values.attempt_time_out ?? 0;
+        const nextStreamIdleTimeout = values.stream_idle_timeout ?? 0;
         const nextSessionKeepTime = values.session_keep_time ?? 0;
         const nextReasoningBufferStrategy = (values.reasoning_buffer_strategy ?? '').trim();
 
@@ -505,6 +507,7 @@ export function GroupCard({ group }: { group: Group }) {
         if (nextCondition !== (group.condition ?? '')) payload.condition = nextCondition;
         if (nextFirstTokenTimeOut !== (group.first_token_time_out ?? 0)) payload.first_token_time_out = nextFirstTokenTimeOut;
         if (nextAttemptTimeOut !== (group.attempt_time_out ?? 0)) payload.attempt_time_out = nextAttemptTimeOut;
+        if (nextStreamIdleTimeout !== (group.stream_idle_timeout ?? 0)) payload.stream_idle_timeout = nextStreamIdleTimeout;
         if (nextSessionKeepTime !== (group.session_keep_time ?? 0)) payload.session_keep_time = nextSessionKeepTime;
         if (nextReasoningBufferStrategy !== ((group.reasoning_buffer_strategy ?? '').trim())) payload.reasoning_buffer_strategy = nextReasoningBufferStrategy;
         if (items_to_add.length) payload.items_to_add = items_to_add;
@@ -523,7 +526,7 @@ export function GroupCard({ group }: { group: Group }) {
             },
             onError,
         });
-    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.session_keep_time, group.reasoning_buffer_strategy, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
+    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.session_keep_time, group.reasoning_buffer_strategy, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
 
     const resolvedMode = MODE_LABELS[group.mode] ? group.mode : GroupMode.Auto;
 
@@ -573,6 +576,7 @@ export function GroupCard({ group }: { group: Group }) {
             mode: group.mode,
             first_token_time_out: group.first_token_time_out ?? 0,
             attempt_time_out: group.attempt_time_out ?? 0,
+            stream_idle_timeout: group.stream_idle_timeout ?? 0,
             session_keep_time: group.session_keep_time ?? 0,
             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
             members: nextMembers,
@@ -584,7 +588,7 @@ export function GroupCard({ group }: { group: Group }) {
             handledTestCompletionRef.current = null;
             toast.success(t('toast.removedFailedModels'));
         });
-    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.id, group.match_regex, group.mode, group.name, group.session_keep_time, group.reasoning_buffer_strategy, handleSubmitEdit, members, t, testProgress?.results]);
+    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.id, group.match_regex, group.mode, group.name, group.session_keep_time, group.reasoning_buffer_strategy, handleSubmitEdit, members, t, testProgress?.results]);
 
     const failedTestResults = useMemo(
         () => (testProgress?.done ? (testProgress.results ?? []).filter((result) => !result.passed) : []),

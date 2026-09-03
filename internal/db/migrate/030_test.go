@@ -92,6 +92,11 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := addReasoningBufferStrategyToGroups(db); err != nil {
 		t.Fatalf("addReasoningBufferStrategyColumn: %v", err)
 	}
+	// Run migration 053 to add stream_idle_timeout column
+	// (test uses latest model.Group which includes this field)
+	if err := addStreamIdleTimeoutToGroups(db); err != nil {
+		t.Fatalf("addStreamIdleTimeoutColumn: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

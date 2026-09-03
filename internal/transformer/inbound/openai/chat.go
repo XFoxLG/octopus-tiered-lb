@@ -27,7 +27,8 @@ func (i *ChatInbound) TransformResponse(ctx context.Context, response *model.Int
 	// Store the response for later retrieval
 	i.storedResponse = response
 
-	body, err := transformer.Marshal(response)
+	responseForWire := materializeResponseTerminationForChat(response, false)
+	body, err := transformer.Marshal(responseForWire)
 	if err != nil {
 		return nil, err
 	}
@@ -41,6 +42,7 @@ func (i *ChatInbound) TransformStream(ctx context.Context, stream *model.Interna
 
 	// Store the chunk for aggregation
 	i.streamChunks = append(i.streamChunks, stream)
+	streamForWire := materializeResponseTerminationForChat(stream, true)
 
 	var body []byte
 	var err error
@@ -51,16 +53,59 @@ func (i *ChatInbound) TransformStream(ctx context.Context, stream *model.Interna
 	// or null choices[0].delta as a protocol violation and throw. Since
 	// model.Choice.Delta is omitempty, stream chunks are serialized through a
 	// dedicated type that always emits both fields per the OpenAI SSE spec.
-	if stream.Object == "chat.completion.chunk" {
-		body, err = marshalChatChunk(stream)
+	if streamForWire.Object == "chat.completion.chunk" {
+		body, err = marshalChatChunk(streamForWire)
 	} else {
-		body, err = transformer.Marshal(stream)
+		body, err = transformer.Marshal(streamForWire)
 	}
 
 	if err != nil {
 		return nil, err
 	}
 	return []byte("data: " + string(body) + "\n\n"), nil
+}
+
+// materializeResponseTerminationForChat renders a response-level terminal
+// state as the standard Chat Completions terminal choice. Some providers, such
+// as Gemini prompt blocks, return no candidate at all. The metadata is kept
+// internal, so without this compatibility frame legacy clients would receive
+// an empty or omitted choices array and could not distinguish a policy block
+// from a successful empty answer.
+func materializeResponseTerminationForChat(response *model.InternalLLMResponse, streaming bool) *model.InternalLLMResponse {
+	if response == nil || len(response.Choices) > 0 || !response.Termination.HasCause() {
+		return response
+	}
+
+	responseForWire := *response
+	finishReason := chatFinishReasonForTermination(response.Termination.Cause)
+	choice := model.Choice{
+		Index:        0,
+		FinishReason: &finishReason,
+		Termination:  response.Termination,
+	}
+	if !streaming {
+		choice.Message = &model.Message{Role: "assistant"}
+	}
+	responseForWire.Choices = []model.Choice{choice}
+	return &responseForWire
+}
+
+func chatFinishReasonForTermination(cause model.TerminationCause) string {
+	switch cause {
+	case model.TerminationCauseComplete, model.TerminationCauseStopSequence:
+		return "stop"
+	case model.TerminationCauseToolCall:
+		return "tool_calls"
+	case model.TerminationCauseContentFilter,
+		model.TerminationCauseRecitation,
+		model.TerminationCausePromptBlocked,
+		model.TerminationCauseRefusal:
+		return "content_filter"
+	default:
+		// Chat Completions exposes no general failed status. `length` remains
+		// the least misleading legacy signal for an incomplete answer.
+		return "length"
+	}
 }
 
 // streamChoice renders a chat.completion.chunk choice. The Delta field shadows
@@ -138,6 +183,12 @@ func (i *ChatInbound) GetInternalResponse(ctx context.Context) (*model.InternalL
 		if chunk.Usage != nil {
 			result.Usage = chunk.Usage
 		}
+		if chunk.SawTerminalEvent {
+			result.SawTerminalEvent = true
+		}
+		if chunk.Termination.HasCause() {
+			result.Termination = chunk.Termination
+		}
 
 		for _, choice := range chunk.Choices {
 			existingChoice, exists := choicesMap[choice.Index]
@@ -204,6 +255,9 @@ func (i *ChatInbound) GetInternalResponse(ctx context.Context) (*model.InternalL
 			// Capture finish reason
 			if choice.FinishReason != nil {
 				existingChoice.FinishReason = choice.FinishReason
+			}
+			if choice.Termination.HasCause() {
+				existingChoice.Termination = choice.Termination
 			}
 
 			// Capture logprobs

@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"testing"
 
 	"github.com/lingyuins/octopus/internal/transformer/model"
@@ -67,5 +68,55 @@ func TestNormalizeOpenAICompatReasoningEffort_PreservesExtendedLevels(t *testing
 		if got := normalizeOpenAICompatReasoningEffort(in); got != want {
 			t.Fatalf("normalizeOpenAICompatReasoningEffort(%q)=%q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestResponseOutboundTransformStreamPreservesIncompleteDetails(t *testing.T) {
+	outbound := &ResponseOutbound{}
+	internalResponse, err := outbound.TransformStream(context.Background(), []byte(`{
+		"type":"response.incomplete",
+		"response":{
+			"id":"resp_1",
+			"model":"gpt-test",
+			"status":"incomplete",
+			"incomplete_details":{"reason":"max_tokens"}
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("transform incomplete response: %v", err)
+	}
+	if internalResponse == nil || !internalResponse.SawTerminalEvent {
+		t.Fatalf("terminal response = %#v, want terminal response", internalResponse)
+	}
+	if internalResponse.Termination.Cause != model.TerminationCauseTokenLimit {
+		t.Fatalf("response cause = %q, want %q", internalResponse.Termination.Cause, model.TerminationCauseTokenLimit)
+	}
+	if internalResponse.Termination.Detail != "max_tokens" {
+		t.Fatalf("incomplete detail = %q, want max_tokens", internalResponse.Termination.Detail)
+	}
+	if len(internalResponse.Choices) != 1 || internalResponse.Choices[0].FinishReason == nil || *internalResponse.Choices[0].FinishReason != "length" {
+		t.Fatalf("choices = %#v, want one length terminal choice", internalResponse.Choices)
+	}
+}
+
+func TestResponseOutboundTransformStreamPreservesFailure(t *testing.T) {
+	outbound := &ResponseOutbound{}
+	internalResponse, err := outbound.TransformStream(context.Background(), []byte(`{
+		"type":"response.failed",
+		"response":{
+			"id":"resp_1",
+			"model":"gpt-test",
+			"status":"failed",
+			"error":{"code":"server_error","message":"upstream failed"}
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("transform failed response: %v", err)
+	}
+	if internalResponse == nil || internalResponse.Termination.Cause != model.TerminationCauseError {
+		t.Fatalf("response = %#v, want error termination", internalResponse)
+	}
+	if internalResponse.Termination.Detail != "upstream failed" {
+		t.Fatalf("failure detail = %q, want upstream failed", internalResponse.Termination.Detail)
 	}
 }

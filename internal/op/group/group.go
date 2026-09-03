@@ -623,6 +623,9 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	if group.Name == "" {
 		return fmt.Errorf("group name is required")
 	}
+	if group.StreamIdleTimeout < 0 {
+		return fmt.Errorf("stream idle timeout must be non-negative")
+	}
 	group.Category = strings.TrimSpace(group.Category)
 	group.EndpointType = model.NormalizeEndpointType(group.EndpointType)
 	group.EndpointProvider = strings.ToLower(strings.TrimSpace(group.EndpointProvider))
@@ -696,6 +699,13 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 	if req.AttemptTimeOut != nil {
 		selectFields = append(selectFields, "attempt_time_out")
 		updates.AttemptTimeOut = *req.AttemptTimeOut
+	}
+	if req.StreamIdleTimeout != nil {
+		if *req.StreamIdleTimeout < 0 {
+			return nil, fmt.Errorf("stream idle timeout must be non-negative")
+		}
+		selectFields = append(selectFields, "stream_idle_timeout")
+		updates.StreamIdleTimeout = *req.StreamIdleTimeout
 	}
 	if req.SessionKeepTime != nil {
 		selectFields = append(selectFields, "session_keep_time")

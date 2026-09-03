@@ -31,6 +31,7 @@ export type GroupEditorValues = {
     mode: GroupMode;
     first_token_time_out: number;
     attempt_time_out: number;
+    stream_idle_timeout: number;
     session_keep_time: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     members: SelectedMember[];
@@ -299,6 +300,7 @@ export function GroupEditor({
     const [mode, setMode] = useState<GroupMode>((initial?.mode ?? GroupMode.Auto) as GroupMode);
     const [firstTokenTimeOut, setFirstTokenTimeOut] = useState<number>(initial?.first_token_time_out ?? 0);
     const [attemptTimeOut, setAttemptTimeOut] = useState<number>(initial?.attempt_time_out ?? 0);
+    const [streamIdleTimeout, setStreamIdleTimeout] = useState<number>(initial?.stream_idle_timeout ?? 0);
     const [sessionKeepTime, setSessionKeepTime] = useState<number>(initial?.session_keep_time ?? 0);
     const [reasoningBufferStrategy, setReasoningBufferStrategy] = useState<string>(initial?.reasoning_buffer_strategy ?? '');
     const [condition, setCondition] = useState(initial?.condition ?? '');
@@ -391,6 +393,7 @@ export function GroupEditor({
             mode,
             first_token_time_out: firstTokenTimeOut,
             attempt_time_out: attemptTimeOut,
+            stream_idle_timeout: streamIdleTimeout,
             session_keep_time: sessionKeepTime,
             condition,
             reasoning_buffer_strategy: reasoningBufferStrategy,
@@ -657,6 +660,39 @@ export function GroupEditor({
                                             }
                                             const n = Number.parseInt(raw, 10);
                                             setAttemptTimeOut(Number.isFinite(n) && n > 0 ? n : 0);
+                                        }}
+                                        className="h-10 rounded-lg text-sm md:h-11"
+                                    />
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="group-stream-idle-timeout">
+                                        {t('form.streamIdleTimeout')}
+                                        <TooltipProvider>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    {t('form.streamIdleTimeoutHint')}
+                                                </TooltipContent>
+                                            </Tooltip>
+                                        </TooltipProvider>
+                                    </FieldLabel>
+                                    <Input
+                                        id="group-stream-idle-timeout"
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={0}
+                                        step={1}
+                                        value={String(streamIdleTimeout)}
+                                        onChange={(event) => {
+                                            const rawValue = event.target.value;
+                                            if (rawValue.trim() === '') {
+                                                setStreamIdleTimeout(0);
+                                                return;
+                                            }
+                                            const timeoutSeconds = Number.parseInt(rawValue, 10);
+                                            setStreamIdleTimeout(Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0);
                                         }}
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />

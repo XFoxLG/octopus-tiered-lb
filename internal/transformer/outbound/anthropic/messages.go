@@ -119,7 +119,8 @@ func (o *MessageOutbound) TransformStream(ctx context.Context, eventData []byte)
 	// Handle [DONE] marker
 	if bytes.HasPrefix(eventData, []byte("[DONE]")) {
 		return &model.InternalLLMResponse{
-			Object: "[DONE]",
+			Object:           "[DONE]",
+			SawTerminalEvent: true,
 		}, nil
 	}
 
@@ -248,6 +249,10 @@ func (o *MessageOutbound) TransformStream(ctx context.Context, eventData []byte)
 		}
 
 	case "message_delta":
+		// message_delta is Anthropic's protocol-level terminal update. It is
+		// terminal even when a non-conforming upstream omitted stop_reason.
+		resp.SawTerminalEvent = true
+
 		if streamEvent.Usage != nil {
 			usage := convertAnthropicUsage(streamEvent.Usage)
 			if o.streamUsage != nil {
@@ -275,16 +280,21 @@ func (o *MessageOutbound) TransformStream(ctx context.Context, eventData []byte)
 		}
 
 		if streamEvent.Delta != nil && streamEvent.Delta.StopReason != nil {
-			finishReason := convertStopReason(streamEvent.Delta.StopReason)
+			termination := anthropicTerminationForStopReason(
+				streamEvent.Delta.StopReason,
+				streamEvent.Delta.StopSequence,
+			)
 			resp.Choices = []model.Choice{
 				{
 					Index:        0,
-					FinishReason: finishReason,
+					FinishReason: convertAnthropicFinishReason(termination.Cause),
+					Termination:  termination,
 				},
 			}
 		}
 
 	case "message_stop":
+		resp.SawTerminalEvent = true
 		resp.Choices = []model.Choice{}
 		if o.streamUsage != nil {
 			resp.Usage = o.streamUsage
@@ -867,10 +877,16 @@ func convertToLLMResponse(resp *anthropicModel.Message) *model.InternalLLMRespon
 		ReasoningSignature: thinkingSignature,
 	}
 
+	termination := anthropicTerminationForStopReason(resp.StopReason, resp.StopSequence)
 	choice := model.Choice{
 		Index:        0,
 		Message:      message,
-		FinishReason: convertStopReason(resp.StopReason),
+		FinishReason: convertAnthropicFinishReason(termination.Cause),
+		Termination:  termination,
+	}
+	if len(toolCalls) > 0 && !choice.Termination.HasCause() {
+		choice.Termination.Cause = model.TerminationCauseToolCall
+		choice.FinishReason = lo.ToPtr("tool_calls")
 	}
 
 	result.Choices = []model.Choice{choice}
@@ -879,24 +895,58 @@ func convertToLLMResponse(resp *anthropicModel.Message) *model.InternalLLMRespon
 	return result
 }
 
-func convertStopReason(stopReason *string) *string {
+func anthropicTerminationForStopReason(stopReason, stopSequence *string) model.TerminationMetadata {
+	termination := model.TerminationMetadata{}
 	if stopReason == nil {
-		return nil
+		return termination
 	}
 
-	switch *stopReason {
+	termination.ProviderReason = *stopReason
+	if stopSequence != nil {
+		termination.StopSequence = *stopSequence
+	}
+
+	switch strings.ToLower(strings.TrimSpace(*stopReason)) {
 	case "end_turn":
-		return lo.ToPtr("stop")
+		termination.Cause = model.TerminationCauseComplete
 	case "max_tokens":
-		return lo.ToPtr("length")
-	case "stop_sequence", "pause_turn":
-		return lo.ToPtr("stop")
+		termination.Cause = model.TerminationCauseTokenLimit
+	case "stop_sequence":
+		termination.Cause = model.TerminationCauseStopSequence
 	case "tool_use":
-		return lo.ToPtr("tool_calls")
+		termination.Cause = model.TerminationCauseToolCall
+	case "pause_turn":
+		termination.Cause = model.TerminationCausePauseTurn
+	case "model_context_window_exceeded":
+		termination.Cause = model.TerminationCauseContextExhausted
 	case "refusal":
+		termination.Cause = model.TerminationCauseRefusal
+	default:
+		termination.Cause = model.TerminationCauseUnknown
+	}
+
+	return termination
+}
+
+func convertAnthropicFinishReason(cause model.TerminationCause) *string {
+	switch cause {
+	case model.TerminationCauseUnspecified:
+		return nil
+	case model.TerminationCauseComplete, model.TerminationCauseStopSequence:
+		return lo.ToPtr("stop")
+	case model.TerminationCauseToolCall:
+		return lo.ToPtr("tool_calls")
+	case model.TerminationCauseContentFilter,
+		model.TerminationCauseRecitation,
+		model.TerminationCausePromptBlocked,
+		model.TerminationCauseRefusal:
 		return lo.ToPtr("content_filter")
 	default:
-		return stopReason
+		// Chat Completions cannot faithfully encode pause_turn, context
+		// exhaustion, malformed tool calls, or future provider reasons. `length`
+		// is the standard conservative signal for a response that is not known to
+		// be complete; the exact cause remains in Termination.
+		return lo.ToPtr("length")
 	}
 }
 
