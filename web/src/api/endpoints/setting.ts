@@ -53,6 +53,8 @@ export const SettingKey = {
     RetryTruncationEnabled: 'retry_truncation_enabled',
     CustomRetryableCodes: 'custom_retryable_codes',
     CustomErrorRules: 'custom_error_rules',
+    RelayLogMaxContentSizeMB: 'relay_log_max_content_size_mb',
+    RelayLogMemoryLogMaxDimidiateTimes: 'relay_log_memory_log_max_dimidiate_times',
     RateLimitHoldEnabled: 'rate_limit_hold_enabled',
     RateLimitHoldInterval: 'rate_limit_hold_interval',
     RateLimitHoldMaxWait: 'rate_limit_hold_max_wait',

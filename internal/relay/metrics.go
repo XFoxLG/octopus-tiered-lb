@@ -387,6 +387,13 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		relayLog.Error = err.Error()
 	}
 
+	// 单条日志正文上限（XyzenSun 移植）：请求与响应正文合计超限则整条跳过，
+	// 避免超大 body（如长上下文原文）打爆日志库与内存。-1=不限。
+	if relaylog.RelayLogContentExceedsLimit(int64(len(relayLog.RequestContent)+len(relayLog.ResponseContent)), relaylog.GetRelayLogMaxContentSizeMB()) {
+		log.Warnf("relay log skipped: content size=%d bytes exceeds limit", len(relayLog.RequestContent)+len(relayLog.ResponseContent))
+		return
+	}
+
 	if logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
 		log.Warnf("failed to save relay log: %v", logErr)
 	}
