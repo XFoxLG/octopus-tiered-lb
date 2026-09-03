@@ -2100,6 +2100,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				currentAttempts := append(allAttempts, req.iter.Attempts()...)
 				if result.Success {
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
+					// 离群窗口：记录成功样本（与熔断器同级证据）。
+					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
 					if poolAccount != nil {
 						poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, true, 0, 0)
 						poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
@@ -2140,6 +2142,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				if channel.PoolID == 0 && (result.Decision.Scope == ScopeNextChannel || result.Decision.Scope == ScopeAbortAll) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModelName)
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
+					// 离群窗口：记录失败样本（与熔断器同级，避免 adapter 降级误触发）。
+					balancer.OutlierReport(channel.ID, false, result.Decision.Code, time.Now())
 				}
 
 				// Client disconnected — stop all retries immediately without

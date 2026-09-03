@@ -296,6 +296,8 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					})
 					balancer.RecordSuccess(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModel)
+					// 离群窗口：记录成功样本（与熔断器同级）。
+					balancer.OutlierReport(channel.ID, true, statusCode, time.Now())
 					balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, true)
 					balancer.RecordAutoSuccess(channel.ID, resolvedModel)
 					balancer.RecordAutoLatency(channel.ID, resolvedModel, span.Duration().Milliseconds())
@@ -321,6 +323,8 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				if decision.Scope == ScopeNextChannel || decision.Scope == ScopeAbortAll {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordAutoFailure(channel.ID, resolvedModel)
+					// 离群窗口：记录失败样本（与熔断器同级）。
+					balancer.OutlierReport(channel.ID, false, decision.Code, time.Now())
 				}
 				if decision.Code == http.StatusTooManyRequests {
 					channelRateLimited, remaining := balancer.RecordChannelRateLimit(
