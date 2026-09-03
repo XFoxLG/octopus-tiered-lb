@@ -51,6 +51,8 @@ export const SettingKey = {
     RelayMaxTotalAttempts: 'relay_max_total_attempts',
     RetryEmptyOutput: 'retry_empty_output',
     RetryTruncationEnabled: 'retry_truncation_enabled',
+    CustomRetryableCodes: 'custom_retryable_codes',
+    CustomErrorRules: 'custom_error_rules',
     RateLimitHoldEnabled: 'rate_limit_hold_enabled',
     RateLimitHoldInterval: 'rate_limit_hold_interval',
     RateLimitHoldMaxWait: 'rate_limit_hold_max_wait',

@@ -483,6 +483,19 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// 检查是否已写入流式响应
 	written := ra.streamOutputWasCommitted()
 
+	// 确定性失败豁免（Sub2API #3857 语义）：上游已声明这是确定性失败
+	//（如 context_length_exceeded、content_filter、refusal），对同一请求重发
+	//必然得到同一结果。直接终态，不进入默认分类，更不被自定义重试白名单覆盖。
+	if termination, ok := terminalCauseFromError(fwdErr); ok && customErrorIsDeterministicFailure(termination) {
+		span.End(dbmodel.AttemptFailed, statusCode, "deterministic provider failure, no retry")
+		return attemptResult{
+			Success:  false,
+			Written:  written,
+			Err:      fwdErr,
+			Decision: RetryDecision{Scope: ScopeNone, Reason: "deterministic provider failure, no retry", Code: statusCode, IsError: true},
+		}
+	}
+
 	// 使用错误分类驱动决策
 	decision := ClassifyRelayError(statusCode, fwdErr, written)
 
@@ -839,7 +852,7 @@ func clientErrorType(statusCode int) string {
 //  2. 有上游纯文本 body → 包成 OpenAI 兼容 {"error":{...}}，状态码仍用上游；
 //  3. 没有可用 body → 合成最小 OpenAI 兼容错误；
 //  4. 非 HTTP 错误 / 无效状态 → 回退 BadGateway。
-func writeClientTerminalError(c *gin.Context, statusCode int, err error) {
+func writeClientTerminalError(c *gin.Context, channelType outbound.OutboundType, statusCode int, err error) {
 	if c == nil || c.Writer.Written() {
 		return
 	}
@@ -852,6 +865,16 @@ func writeClientTerminalError(c *gin.Context, statusCode int, err error) {
 	bodyText := strings.TrimSpace(detail)
 	if prefix := fmt.Sprintf("%d: ", statusCode); strings.HasPrefix(bodyText, prefix) {
 		bodyText = strings.TrimSpace(bodyText[len(prefix):])
+	}
+
+	// 自定义错误透传规则（Sub2API 风格）：在原样透传之前查表。
+	// 命中则按规则改写最终状态码与 message；未命中走下方默认透传逻辑。
+	// 规则只改呈现，不改重试决策（决策已在 attempt() 中确定），也不伪造成功。
+	if rule := matchCustomErrorRule(getCustomErrorRules(), channelType, statusCode, detail); rule != nil {
+		if outStatus, outMessage, ok := resolveCustomErrorPresentation(rule, statusCode, detail); ok {
+			writeCustomErrorPresentation(c, outStatus, outMessage)
+			return
+		}
 	}
 
 	if bodyText != "" && bodyText != "response body too large" {
@@ -2124,7 +2147,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					req.metrics.Save(false, lastErr, currentAttempts)
 					// 400 类客户端错误不再重试，把上游错误体原样回给下游，
 					// 避免吞成 502 导致客户端无法识别 context_length_exceeded。
-					writeClientTerminalError(req.c, result.Decision.Code, result.Err)
+					writeClientTerminalError(req.c, channel.Type, result.Decision.Code, result.Err)
 					return nil, result.Err
 				case ScopeAbortAll:
 					lastErr = result.Err

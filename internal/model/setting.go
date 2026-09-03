@@ -42,6 +42,8 @@ const (
 	SettingKeyRelayMaxTotalAttempts              SettingKey = "relay_max_total_attempts"                // 所有候选渠道的最大决策纪录次数，0/负数回退到内置默认上限（issue #192）
 	SettingKeyRetryEmptyOutput                   SettingKey = "retry_empty_output"                      // 输出为空(无可见内容)时自动重试，流式与非流式均适用（issue #106/#155）
 	SettingKeyRetryTruncationEnabled             SettingKey = "retry_truncation_enabled"                // 输出被 max_tokens 截断(finish_reason=length)时自动重试，默认关闭
+	SettingKeyCustomRetryableCodes               SettingKey = "custom_retryable_codes"                   // 自定义可重试上游状态码（逗号分隔，如 "418,499"），命中则强制进入换 Key/换渠道重试
+	SettingKeyCustomErrorRules                   SettingKey = "custom_error_rules"                       // 自定义错误透传规则（JSON 数组，见 relay.CustomErrorRule），按渠道类型+错误码/关键词改写最终错误呈现
 	SettingKeyReasoningBufferStrategy            SettingKey = "reasoning_buffer_strategy"               // 推理内容缓冲策略：buffer(缓冲) | immediate(立即)，默认 buffer（issue #155）
 	SettingKeyRateLimitHoldEnabled               SettingKey = "rate_limit_hold_enabled"                 // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
 	SettingKeyRateLimitHoldInterval              SettingKey = "rate_limit_hold_interval"                // 429 渠道内延时重试间隔（秒）
@@ -157,6 +159,8 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRelayMaxTotalAttempts, Value: "0"},               // 0 回退到内置默认上限（issue #192 防止 attempts 无限膨胀）
 		{Key: SettingKeyRetryEmptyOutput, Value: "true"},                 // 默认启用空输出重试
 		{Key: SettingKeyRetryTruncationEnabled, Value: "false"},          // 默认关闭截断重试（按需在设置页开启）
+		{Key: SettingKeyCustomRetryableCodes, Value: ""},                // 默认无自定义可重试码
+		{Key: SettingKeyCustomErrorRules, Value: "[]"},                  // 默认无自定义错误透传规则
 		{Key: SettingKeyReasoningBufferStrategy, Value: "buffer"},        // 默认缓冲策略：安全重试但可能 CF 超时
 		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},            // 默认关闭：429 仍立即换 Key/渠道
 		{Key: SettingKeyRateLimitHoldInterval, Value: "10"},              // 默认每 10 秒重试一次
@@ -364,6 +368,36 @@ func (s *Setting) Validate() error {
 	case SettingKeyRelayLogQueueDropPolicy:
 		if s.Value != "disabled" && s.Value != "oldest" && s.Value != "newest" {
 			return fmt.Errorf("relay log queue drop policy must be disabled, oldest or newest")
+		}
+		return nil
+	case SettingKeyCustomRetryableCodes:
+		// 空串合法（=未配置，保持默认分类）。非空必须是逗号分隔的 100-599 状态码。
+		if strings.TrimSpace(s.Value) == "" {
+			return nil
+		}
+		for _, part := range strings.Split(s.Value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			code, err := strconv.Atoi(part)
+			if err != nil || code < 100 || code > 599 {
+				return fmt.Errorf("custom retryable codes must be comma-separated HTTP status codes (100-599)")
+			}
+		}
+		return nil
+	case SettingKeyCustomErrorRules:
+		// 空串与空数组都合法（=未配置）。非空必须是 JSON 数组，元素结构由
+		// relay.CustomErrorRule 定义；此处只做形状校验，语义校验归解析函数。
+		if strings.TrimSpace(s.Value) == "" {
+			return nil
+		}
+		var rules []map[string]any
+		if err := json.Unmarshal([]byte(s.Value), &rules); err != nil {
+			return fmt.Errorf("custom error rules must be a JSON array: %w", err)
+		}
+		if rules == nil {
+			return fmt.Errorf("custom error rules must be a JSON array")
 		}
 		return nil
 	case SettingKeyProxyURL, SettingKeySemanticCacheEmbeddingBaseURL, SettingKeyAIRouteBaseURL:

@@ -458,17 +458,10 @@ func (ra *relayAttempt) streamOutputWasCommitted() bool {
 }
 
 func providerTerminalFailureError(termination model.TerminationMetadata) error {
-	detail := strings.TrimSpace(termination.Detail)
-	if detail == "" {
-		detail = strings.TrimSpace(termination.ProviderReason)
-	}
-	if detail == "" {
-		detail = string(termination.Cause)
-	}
-	if detail == "" {
-		detail = "unknown"
-	}
-	return fmt.Errorf("%w: %s", errProviderTerminalFailure, detail)
+	// Cause 编码进 error 链（terminalFailureError），让 attempt() 能用
+	// errors.As 取出 Cause，对确定性失败跳过自定义重试白名单。
+	// 文案与旧实现逐字一致，保持 errors.Is(errProviderTerminalFailure) 兼容。
+	return &terminalFailureError{termination: termination}
 }
 
 // attemptResult 封装单次尝试的结果
@@ -582,6 +575,18 @@ func ClassifyRelayError(statusCode int, err error, written bool) RetryDecision {
 
 	// HTTP 错误：根据状态码分类
 	if statusCode > 0 {
+		// 自定义可重试码（Sub2API 风格）：命中则强制进入换 Key/换渠道重试，
+		// 覆盖默认分类。已在上游被 written 中止的不受影响（该分支已提前返回）。
+		// 注意：确定性失败由调用方在 ClassifyRelayError 之前排除，这里只做
+		// 纯状态码查表，保持函数可单测、无外部依赖。
+		if getCustomRetryableCodes()[statusCode] {
+			return RetryDecision{
+				Scope:   ScopeSameChannel,
+				Reason:  fmt.Sprintf("custom retryable status code %d", statusCode),
+				Code:    statusCode,
+				IsError: true,
+			}
+		}
 		return classifyHTTPError(statusCode, err)
 	}
 
