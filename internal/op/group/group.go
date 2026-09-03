@@ -660,6 +660,36 @@ func validateGroupParamOverride(raw string) error {
 	return nil
 }
 
+// ApplyToolsProbeResult 按证据层级把 tools 探测结论回填到 group_items（Seller 移植）。
+//   - executed：强 true 证据，覆盖所有非 true 行；
+//   - accepted / required_unsupported：弱 true 证据，只写当前为 NULL 的行（不覆盖任何 false）；
+//   - unsupported：≥2 确认 false，覆盖所有非 false 行；
+//   - pending / required_ignored / unknown：不判定，不写列。
+func ApplyToolsProbeResult(channelID int, modelName string, result model.ToolsProbeResult, keyID *int, probedAt int64) error {
+	if channelID <= 0 || strings.TrimSpace(modelName) == "" {
+		return nil
+	}
+	base := db.GetDB().Model(&model.GroupItem{}).Where("channel_id = ? AND model_name = ?", channelID, modelName)
+	updates := map[string]any{
+		"supports_tools_probe_key_id": keyID,
+		"supports_tools_probed_at":    probedAt,
+		"supports_tools_source":       result.Source,
+	}
+	switch result.State {
+	case model.ToolsProbeStateExecuted:
+		updates["supports_tools"] = true
+		return base.Where("supports_tools IS NULL OR supports_tools = ?", false).Updates(updates).Error
+	case model.ToolsProbeStateAccepted, model.ToolsProbeStateRequiredUnsupported:
+		updates["supports_tools"] = true
+		return base.Where("supports_tools IS NULL").Updates(updates).Error
+	case model.ToolsProbeStateUnsupported:
+		updates["supports_tools"] = false
+		return base.Where("supports_tools IS NULL OR supports_tools = ?", true).Updates(updates).Error
+	default:
+		return nil
+	}
+}
+
 func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Group, error) {
 	group, ok := groupCache.Get(req.ID)
 	if !ok {

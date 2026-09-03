@@ -64,6 +64,14 @@ type GroupItem struct {
 	ModelName string `json:"model_name" gorm:"not null;index:idx_group_channel_model,unique;size:191"`
 	Priority  int    `json:"priority"`
 	Weight    int    `json:"weight"`
+	// SupportsTools 渠道×模型 tools 支持结论（Seller 移植）。nil=未探测。
+	SupportsTools *bool `json:"supports_tools,omitempty"`
+	// SupportsToolsProbeKeyID 探测使用的 key ID（多 key 渠道审计用）。
+	SupportsToolsProbeKeyID *int `json:"supports_tools_probe_key_id,omitempty"`
+	// SupportsToolsProbedAt 最近探测/反馈时间。
+	SupportsToolsProbedAt *int64 `json:"supports_tools_probed_at,omitempty"`
+	// SupportsToolsSource 结论来源：probe/manual/manual-required-fallback。
+	SupportsToolsSource string `json:"supports_tools_source,omitempty" gorm:"default:'';size:32"`
 }
 
 // GroupUpdateRequest 分组更新请求 - 仅包含变更的数据

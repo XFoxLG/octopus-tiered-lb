@@ -12,6 +12,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
+	grp "github.com/lingyuins/octopus/internal/op/group"
 	st "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -85,6 +86,11 @@ func init() {
 			router.NewRoute("/test-model-sync", http.MethodPost).
 				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
 				Handle(testChannelModelSync),
+		).
+		AddRoute(
+			router.NewRoute("/tools-probe", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(testChannelToolsProbe),
 		).
 		AddRoute(
 			router.NewRoute("/group/list", http.MethodGet).
@@ -419,6 +425,48 @@ func testChannelModelSync(c *gin.Context) {
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
+	}
+	resp.Success(c, result)
+}
+
+// testChannelToolsProbe 对已保存渠道上的单个模型发起一次 tools 能力探测并回填结论。
+// tool_choice: ""=auto；"required"=手动判别。pending/unknown 等不判定状态只返回、不写列。
+func testChannelToolsProbe(c *gin.Context) {
+	var req struct {
+		ChannelID  int    `json:"channel_id" binding:"required"`
+		Model      string `json:"model" binding:"required"`
+		ToolChoice string `json:"tool_choice,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+
+	channel, err := ch.Get(req.ChannelID, c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, "channel not found")
+		return
+	}
+
+	toolChoice := strings.TrimSpace(req.ToolChoice)
+	if toolChoice != "required" {
+		toolChoice = ""
+	}
+	result, err := helper.TestToolsSupport(c.Request.Context(), channel, req.Model, toolChoice)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	var keyID *int
+	for i := range channel.Keys {
+		if channel.Keys[i].Enabled && strings.TrimSpace(channel.Keys[i].ChannelKey) != "" {
+			id := channel.Keys[i].ID
+			keyID = &id
+			break
+		}
+	}
+	if err := grp.ApplyToolsProbeResult(channel.ID, strings.TrimSpace(req.Model), result, keyID, time.Now().Unix()); err != nil {
+		log.Warnf("tools probe backfill failed (channel=%d model=%s): %v", channel.ID, req.Model, err)
 	}
 	resp.Success(c, result)
 }
