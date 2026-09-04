@@ -128,6 +128,11 @@ function EditDialogContent({
                             stream_idle_timeout: group.stream_idle_timeout ?? 0,
                             session_keep_time: group.session_keep_time ?? 0,
                             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
+                            default_reasoning_effort: group.default_reasoning_effort ?? '',
+                            reasoning_force_override: group.reasoning_force_override ?? false,
+                            sort_strategy: group.sort_strategy ?? '',
+                            param_override: group.param_override ?? '',
+                            custom_header: group.custom_header ?? [],
                             members: editMembers,
                         }}
                         submitText={t('detail.actions.save')}
@@ -498,6 +503,11 @@ export function GroupCard({ group }: { group: Group }) {
         const nextStreamIdleTimeout = values.stream_idle_timeout ?? 0;
         const nextSessionKeepTime = values.session_keep_time ?? 0;
         const nextReasoningBufferStrategy = (values.reasoning_buffer_strategy ?? '').trim();
+        const nextDefaultReasoningEffort = (values.default_reasoning_effort ?? '').trim();
+        const nextReasoningForceOverride = values.reasoning_force_override ?? false;
+        const nextSortStrategy = (values.sort_strategy ?? '').trim();
+        const nextParamOverride = (values.param_override ?? '').trim();
+        const nextCustomHeader = values.custom_header ?? [];
 
         if (nextName && nextName !== group.name) payload.name = nextName;
         if (nextEndpointType !== normalizeEndpointType(group.endpoint_type)) payload.endpoint_type = nextEndpointType;
@@ -511,6 +521,11 @@ export function GroupCard({ group }: { group: Group }) {
         if (nextStreamIdleTimeout !== (group.stream_idle_timeout ?? 0)) payload.stream_idle_timeout = nextStreamIdleTimeout;
         if (nextSessionKeepTime !== (group.session_keep_time ?? 0)) payload.session_keep_time = nextSessionKeepTime;
         if (nextReasoningBufferStrategy !== ((group.reasoning_buffer_strategy ?? '').trim())) payload.reasoning_buffer_strategy = nextReasoningBufferStrategy;
+        if (nextDefaultReasoningEffort !== ((group.default_reasoning_effort ?? '').trim())) payload.default_reasoning_effort = nextDefaultReasoningEffort;
+        if (nextReasoningForceOverride !== (group.reasoning_force_override ?? false)) payload.reasoning_force_override = nextReasoningForceOverride;
+        if (nextSortStrategy !== ((group.sort_strategy ?? '').trim())) payload.sort_strategy = nextSortStrategy;
+        if (nextParamOverride !== ((group.param_override ?? '').trim())) payload.param_override = nextParamOverride;
+        if (JSON.stringify(nextCustomHeader) !== JSON.stringify(group.custom_header ?? [])) payload.custom_header = nextCustomHeader;
         if (items_to_add.length) payload.items_to_add = items_to_add;
         if (items_to_update.length) payload.items_to_update = items_to_update;
         if (items_to_delete.length) payload.items_to_delete = items_to_delete;
@@ -527,7 +542,7 @@ export function GroupCard({ group }: { group: Group }) {
             },
             onError,
         });
-    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.session_keep_time, group.reasoning_buffer_strategy, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
+    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.session_keep_time, group.reasoning_buffer_strategy, group.default_reasoning_effort, group.reasoning_force_override, group.sort_strategy, group.param_override, group.custom_header, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
 
     const resolvedMode = MODE_LABELS[group.mode] ? group.mode : GroupMode.Auto;
 

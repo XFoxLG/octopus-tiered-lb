@@ -38,6 +38,9 @@ export type GroupEditorValues = {
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     default_reasoning_effort?: string; // "" | minimal | low | medium | high | xhigh | max
     reasoning_force_override?: boolean;
+    sort_strategy?: string; // "" | non_relay_balance | non_relay_multiplier | multiplier_balance | balance_only
+    param_override?: string; // JSON object string
+    custom_header?: { header_key: string; header_value: string }[];
     members: SelectedMember[];
 };
 
@@ -309,6 +312,9 @@ export function GroupEditor({
     const [reasoningBufferStrategy, setReasoningBufferStrategy] = useState<string>(initial?.reasoning_buffer_strategy ?? '');
     const [defaultReasoningEffort, setDefaultReasoningEffort] = useState<string>(initial?.default_reasoning_effort ?? '');
     const [reasoningForceOverride, setReasoningForceOverride] = useState<boolean>(initial?.reasoning_force_override ?? false);
+    const [sortStrategy, setSortStrategy] = useState<string>(initial?.sort_strategy ?? '');
+    const [paramOverride, setParamOverride] = useState<string>(initial?.param_override ?? '');
+    const [customHeaders, setCustomHeaders] = useState<{ header_key: string; header_value: string }[]>(initial?.custom_header ?? []);
     const [condition, setCondition] = useState(initial?.condition ?? '');
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(dedupeSelectedMembers(initial?.members ?? []));
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
@@ -405,6 +411,9 @@ export function GroupEditor({
             reasoning_buffer_strategy: reasoningBufferStrategy,
             default_reasoning_effort: defaultReasoningEffort,
             reasoning_force_override: reasoningForceOverride,
+            sort_strategy: sortStrategy,
+            param_override: paramOverride,
+            custom_header: customHeaders.filter((header) => header.header_key.trim() !== ''),
             members: dedupeSelectedMembers(selectedMembers),
         });
     };
@@ -760,6 +769,94 @@ export function GroupEditor({
                         />
                         <span>{t('form.reasoningForceOverride.enable')}</span>
                     </label>
+                </Field>
+                <Field>
+                    <FieldLabel htmlFor="group-sort-strategy">
+                        {t('form.sortStrategy.label')}
+                        <Hint text={t('form.sortStrategy.hint')} />
+                    </FieldLabel>
+                    <select
+                        id="group-sort-strategy"
+                        value={sortStrategy}
+                        onChange={(e) => setSortStrategy(e.target.value)}
+                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
+                    >
+                        <option value="">{t('form.sortStrategy.useGlobal')}</option>
+                        <option value="non_relay_balance">{t('form.sortStrategy.nonRelayBalance')}</option>
+                        <option value="non_relay_multiplier">{t('form.sortStrategy.nonRelayMultiplier')}</option>
+                        <option value="multiplier_balance">{t('form.sortStrategy.multiplierBalance')}</option>
+                        <option value="balance_only">{t('form.sortStrategy.balanceOnly')}</option>
+                    </select>
+                </Field>
+                <Field>
+                    <FieldLabel htmlFor="group-param-override">
+                        {t('form.paramOverride.label')}
+                        <Hint text={t('form.paramOverride.hint')} />
+                    </FieldLabel>
+                    <textarea
+                        id="group-param-override"
+                        value={paramOverride}
+                        onChange={(e) => setParamOverride(e.target.value)}
+                        rows={3}
+                        placeholder='{"temperature": 0.7}'
+                        className="w-full rounded-lg border border-border/40 bg-card px-3 py-2 font-mono text-xs shadow-sm transition-[border-color,box-shadow] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:text-sm"
+                    />
+                </Field>
+                <Field className="md:col-span-2">
+                    <div className="mb-1.5 flex items-center justify-between">
+                        <FieldLabel htmlFor="group-custom-header-key" className="mb-0">
+                            {t('form.customHeader.label')}
+                            <Hint text={t('form.customHeader.hint')} />
+                        </FieldLabel>
+                        <button
+                            type="button"
+                            onClick={() => setCustomHeaders([...customHeaders, { header_key: '', header_value: '' }])}
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/8"
+                        >
+                            <Plus className="size-3.5" />
+                            {t('form.customHeader.add')}
+                        </button>
+                    </div>
+                    {customHeaders.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">{t('form.customHeader.empty')}</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {customHeaders.map((header, index) => (
+                                <div key={index} className="flex items-center gap-2">
+                                    <Input
+                                        value={header.header_key}
+                                        onChange={(e) => {
+                                            const next = [...customHeaders];
+                                            next[index] = { ...header, header_key: e.target.value };
+                                            setCustomHeaders(next);
+                                        }}
+                                        placeholder={t('form.customHeader.keyPlaceholder')}
+                                        className="h-9 flex-1 rounded-lg text-sm"
+                                        aria-label={t('form.customHeader.keyPlaceholder')}
+                                    />
+                                    <Input
+                                        value={header.header_value}
+                                        onChange={(e) => {
+                                            const next = [...customHeaders];
+                                            next[index] = { ...header, header_value: e.target.value };
+                                            setCustomHeaders(next);
+                                        }}
+                                        placeholder={t('form.customHeader.valuePlaceholder')}
+                                        className="h-9 flex-[1.6] rounded-lg text-sm"
+                                        aria-label={t('form.customHeader.valuePlaceholder')}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setCustomHeaders(customHeaders.filter((_, i) => i !== index))}
+                                        className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-destructive/8 hover:text-destructive"
+                                        aria-label={t('form.customHeader.remove')}
+                                    >
+                                        <Trash2 className="size-4" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </Field>
                                 <Field className="md:col-span-2">
                                     <FieldLabel htmlFor="group-condition">

@@ -1561,7 +1561,38 @@
         "label": "强制覆盖显式关闭",
         "hint": "开启后，连客户端明确要求「关闭思考」（reasoning_effort=none 或 thinking disabled）的请求也会补上默认思考档位；客户端已发送具体档位的请求不受影响。",
         "enable": "覆盖客户端的显式关闭"
-      }
+      },
+      "sortStrategy": {
+        "label": "成员排序策略",
+        "hint": "分组内成员的排序方式，只改写候选顺序，不影响路由模式。留空跟随全局默认（non_relay_balance）。",
+        "useGlobal": "跟随全局默认",
+        "nonRelayBalance": "非中转优先 + 均衡",
+        "nonRelayMultiplier": "非中转优先 + 低倍率优先",
+        "multiplierBalance": "低倍率优先 + 均衡",
+        "balanceOnly": "仅均衡"
+      },
+      "paramOverride": {
+        "label": "参数覆盖（JSON）",
+        "hint": "分组级请求参数覆盖，JSON object。仅覆盖 max_tokens / max_completion_tokens / temperature / top_p，且客户端已设置的值优先。优先级：客户端 > 渠道 > 分组。",
+        "placeholder": "{\"temperature\": 0.7}"
+      },
+      "customHeader": {
+        "label": "自定义请求头",
+        "hint": "分组级自定义请求头，先于渠道级应用，同名时渠道覆盖分组。穿透模式不生效。",
+        "add": "添加请求头",
+        "empty": "暂无自定义请求头",
+        "keyPlaceholder": "Header 名称",
+        "valuePlaceholder": "Header 值",
+        "remove": "删除此请求头"
+      },
+      "runHealthProbe": "运行健康拨测（standard 模式，遇首个成功即停）",
+      "healthProbeStatus": {
+        "running": "拨测中",
+        "success": "拨测通过",
+        "partial": "部分通过",
+        "failed": "拨测失败"
+      },
+      "healthProbeDuration": "耗时 {ms} ms"
     },
     "autoStrategy": {
       "title": "智能选择策略",

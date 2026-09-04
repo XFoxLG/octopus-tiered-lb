@@ -17,6 +17,79 @@ export interface GroupItem {
     weight: number;
 }
 
+// ---- 分组健康检查快照（Seller 移植，backend /api/v1/group/health/*）----
+
+export type GroupHealthRunStatus = 'running' | 'success' | 'partial' | 'failed';
+
+export interface GroupHealthAttempt {
+    group_item_id: number;
+    channel_id: number;
+    channel_name: string;
+    model_name: string;
+    status: 'success' | 'failed' | 'skipped';
+    http_status: number;
+    duration_ms: number;
+    error_message: string;
+}
+
+export interface GroupHealthSnapshot {
+    id: number;
+    group_id: number;
+    status: GroupHealthRunStatus;
+    probe_mode: string;
+    request_model: string;
+    started_at: string;
+    finished_at?: string;
+    duration_ms: number;
+    message: string;
+    attempts?: GroupHealthAttempt[];
+}
+
+export function useRunGroupHealth() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ groupId, probeMode }: { groupId: number; probeMode?: 'standard' | 'full' }) => {
+            return apiClient.post<GroupHealthSnapshot>(`/api/v1/group/health/run/${groupId}`, {
+                probe_mode: probeMode ?? 'standard',
+            });
+        },
+        onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: ['analytics', 'group-health'] });
+        },
+    });
+}
+
+export function useGroupHealthLatest(groupId: number | undefined, enabled = true) {
+    return useQuery({
+        queryKey: ['group-health-latest', groupId],
+        queryFn: async () => apiClient.get<GroupHealthSnapshot>(`/api/v1/group/health/latest/${groupId}`),
+        enabled: enabled && typeof groupId === 'number' && groupId > 0,
+        refetchInterval: REFETCH_INTERVAL_DEFAULT,
+    });
+}
+
+// ---- 单条 tools 能力探测（Seller 移植，backend /api/v1/channel/tools-probe）----
+
+export type ToolsProbeVerdict = 'accepted' | 'pending' | 'unsupported' | 'executed' | 'required_ignored' | 'unknown';
+
+export interface ToolsProbeResponse {
+    verdict: ToolsProbeVerdict;
+    http_status: number;
+    message?: string;
+}
+
+export function useChannelToolsProbe() {
+    return useMutation({
+        mutationFn: async ({ channelId, model, toolChoice }: { channelId: number; model: string; toolChoice?: '' | 'required' }) => {
+            return apiClient.post<ToolsProbeResponse>('/api/v1/channel/tools-probe', {
+                channel_id: channelId,
+                model,
+                tool_choice: toolChoice ?? '',
+            });
+        },
+    });
+}
+
 /**
  * 分组模式
  */
@@ -391,6 +464,9 @@ export interface CreateGroupRequest {
     reasoning_buffer_strategy?: string;
     default_reasoning_effort?: string;
     reasoning_force_override?: boolean;
+    sort_strategy?: string;
+    param_override?: string;
+    custom_header?: { header_key: string; header_value: string }[];
 }
 
 /**

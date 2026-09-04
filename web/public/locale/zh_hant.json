@@ -1561,7 +1561,38 @@
         "label": "強制覆蓋明確關閉",
         "hint": "開啟後，連用戶端明確要求「關閉思考」（reasoning_effort=none 或 thinking disabled）的請求也會補上預設思考檔位；用戶端已發送具體檔位的請求不受影響。",
         "enable": "覆蓋用戶端的明確關閉"
-      }
+      },
+      "sortStrategy": {
+        "label": "成員排序策略",
+        "hint": "分組內成員的排序方式，只改寫候選順序，不影響路由模式。留空跟隨全域預設（non_relay_balance）。",
+        "useGlobal": "跟隨全域預設",
+        "nonRelayBalance": "非中轉優先 + 均衡",
+        "nonRelayMultiplier": "非中轉優先 + 低倍率優先",
+        "multiplierBalance": "低倍率優先 + 均衡",
+        "balanceOnly": "僅均衡"
+      },
+      "paramOverride": {
+        "label": "參數覆蓋（JSON）",
+        "hint": "分組級請求參數覆蓋，JSON object。僅覆蓋 max_tokens / max_completion_tokens / temperature / top_p，且用戶端已設定的值優先。優先級：用戶端 > 渠道 > 分組。",
+        "placeholder": "{\"temperature\": 0.7}"
+      },
+      "customHeader": {
+        "label": "自訂請求標頭",
+        "hint": "分組級自訂請求標頭，先於渠道級應用，同名時渠道覆蓋分組。穿透模式不生效。",
+        "add": "新增請求標頭",
+        "empty": "暫無自訂請求標頭",
+        "keyPlaceholder": "標頭名稱",
+        "valuePlaceholder": "標頭值",
+        "remove": "刪除此請求標頭"
+      },
+      "runHealthProbe": "執行健康撥測（standard 模式，遇首個成功即停）",
+      "healthProbeStatus": {
+        "running": "撥測中",
+        "success": "撥測通過",
+        "partial": "部分通過",
+        "failed": "撥測失敗"
+      },
+      "healthProbeDuration": "耗時 {ms} ms"
     },
     "autoStrategy": {
       "title": "智慧選擇策略",
