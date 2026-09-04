@@ -83,6 +83,25 @@ func init() {
 			router.NewRoute("/price-category/delete", http.MethodPost).
 				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
 				Handle(deletePriceCategory),
+		).
+		AddRoute(
+			router.NewRoute("/price-schedule/list", http.MethodGet).
+				Handle(listPriceSchedules),
+		).
+		AddRoute(
+			router.NewRoute("/price-schedule/create", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
+				Handle(createPriceSchedule),
+		).
+		AddRoute(
+			router.NewRoute("/price-schedule/update", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
+				Handle(updatePriceSchedule),
+		).
+		AddRoute(
+			router.NewRoute("/price-schedule/delete", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
+				Handle(deletePriceSchedule),
 		)
 	router.NewGroupRouter("/v1").
 		Use(middleware.APIKeyAuth()).
@@ -164,6 +183,13 @@ func listLLM(c *gin.Context) {
 	if err != nil {
 		resp.InternalError(c)
 		return
+	}
+	// 只读填充峰谷计费标识（不入库），供前端模型列表展示徽章。
+	// 规则驱动：命中启用的峰谷计费规则即标注，不再依赖内置白名单。
+	for i := range models {
+		if llm.PriceScheduleMatch(models[i].Name) != nil {
+			models[i].BillingSchedule = "deepseek_v4"
+		}
 	}
 	resp.Success(c, models)
 }
@@ -300,6 +326,58 @@ func deletePriceCategory(c *gin.Context) {
 		return
 	}
 	if err := llm.DeletePriceCategory(req.ID, c.Request.Context()); err != nil {
+		resp.InternalError(c)
+		return
+	}
+	resp.Success(c, nil)
+}
+
+func listPriceSchedules(c *gin.Context) {
+	rows, err := llm.ListPriceSchedules(c.Request.Context())
+	if err != nil {
+		resp.InternalError(c)
+		return
+	}
+	resp.Success(c, rows)
+}
+
+func createPriceSchedule(c *gin.Context) {
+	var s model.ModelPriceSchedule
+	if err := c.ShouldBindJSON(&s); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	created, err := llm.CreatePriceSchedule(s, c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, created)
+}
+
+func updatePriceSchedule(c *gin.Context) {
+	var s model.ModelPriceSchedule
+	if err := c.ShouldBindJSON(&s); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	updated, err := llm.UpdatePriceSchedule(s, c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp.Success(c, updated)
+}
+
+func deletePriceSchedule(c *gin.Context) {
+	var req struct {
+		ID uint `json:"id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := llm.DeletePriceSchedule(req.ID, c.Request.Context()); err != nil {
 		resp.InternalError(c)
 		return
 	}

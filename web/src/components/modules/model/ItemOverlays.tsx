@@ -66,6 +66,9 @@ type ModelEditOverlayProps = {
     onChange: (next: EditValues) => void;
     onCancel: () => void;
     onSave: () => void;
+    // peakBilling 为 true 时在价格输入上方显示 DeepSeek 峰谷计费说明
+    // （目录价为高峰价，空闲减半）。可选，默认不显示。
+    peakBilling?: boolean;
 };
 
 export function ModelEditOverlay({
@@ -77,6 +80,7 @@ export function ModelEditOverlay({
     onChange,
     onCancel,
     onSave,
+    peakBilling = false,
 }: ModelEditOverlayProps) {
     const t = useTranslations('model.overlay');
     return (
@@ -94,6 +98,11 @@ export function ModelEditOverlay({
                 </h3>
 
                 <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+                    {peakBilling && (
+                        <p className="col-span-2 mb-1 text-[0.62rem] leading-relaxed text-amber-600 dark:text-amber-400 sm:text-[0.68rem]">
+                            {t('peakBillingHint')}
+                        </p>
+                    )}
                     <label className="grid gap-1 text-[0.68rem] text-muted-foreground sm:gap-1.5 sm:text-xs">
                         {t('input')}
                         <Input

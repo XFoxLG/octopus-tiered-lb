@@ -2553,7 +2553,7 @@
         "videoLabel": "視頻接口類型",
         "videoHint": "選擇視頻接口類型，保存後由後端自動改寫視頻透傳請求救徑。",
         "imageLabel": "圖片接口類型",
-        "imageHint": "選擇圖片接口類型，保存後由後端自動改寫圖片透傳 JSON（如 Agnes 會把頂層 response_format 移入 extra_body）。",
+        "imageHint": "選擇圖片接口類型，保存後由後端自動改寫圖片透傳 JSON（如 Agnes 會把頂層 response_format 移入 extra_body）；透傳（信息體）會保留客戶端原始請求體與請求路徑，僅改寫模型名。",
         "audioSpeechLabel": "語音合成接口類型",
         "audioSpeechHint": "選擇語音合成接口類型，保存後由後端自動改寫 TTS 請求格式和路徑。"
       },
@@ -2691,7 +2691,9 @@
       "averageLatency": "平均延遲",
       "successRate": "成功率",
       "expand": "展開詳情",
-      "collapse": "收起詳情"
+      "collapse": "收起詳情",
+      "billingWindowBadge": "峰谷 · 空閒×0.5",
+      "billingWindowHint": "DeepSeek 峰谷計費：工作日高峰 9–12 / 14–18，其餘時段減半；週末全天按空閒價"
     },
     "detail": {
       "pricing": "價格資訊",
@@ -2713,7 +2715,8 @@
       "cacheRead": "快取讀取",
       "cacheWrite": "快取寫入",
       "save": "儲存",
-      "priceHint": "價格單位：美元 / 百萬 tokens"
+      "priceHint": "價格單位：美元 / 百萬 tokens",
+      "peakBillingHint": "以上為高峰價，北京 9–12 / 14–18 按此計費，其餘時段減半。"
     },
     "capabilities": {
       "title": "模型能力",
@@ -2770,6 +2773,53 @@
       "toastSaved": "價格分類已儲存",
       "toastDeleted": "價格分類已刪除",
       "priceHint": "價格單位：美元/百萬 tokens",
+      "missing": "缺失",
+      "actions": "操作",
+      "cancel": "取消",
+      "toastError": "操作失敗"
+    },
+    "peakSchedule": {
+      "title": "峰谷計費",
+      "description": "為匹配的模型按北京時間的窗口提供高峰/空閒差異化定價。按優先級匹配，首個命中生效；空閒價 = 高峰價 × 倍率。",
+      "add": "添加規則",
+      "edit": "編輯規則",
+      "delete": "刪除",
+      "confirmDeleteTitle": "刪除規則",
+      "confirmDelete": "確認刪除該峰谷計費規則？此操作不可撤銷。",
+      "name": "名稱",
+      "namePlaceholder": "例如 deepseek-v4-flash（唯一，小寫）",
+      "ruleType": "規則類型",
+      "ruleValue": "規則值",
+      "ruleValuePlaceholder": "例如 deepseek-v4-flash 或 provider/",
+      "exact": "精確匹配",
+      "prefix": "前綴",
+      "contains": "包含",
+      "input": "高峰輸入",
+      "output": "高峰輸出",
+      "cacheRead": "高峰緩存讀取",
+      "cacheWrite": "高峰緩存寫入",
+      "offPeakMul": "空閒倍率",
+      "offPeakMulHint": "空閒價 = 高峰價 × 倍率（官方 DeepSeek 為 0.5）。",
+      "window": "高峰時段",
+      "windowHint": "北京時間。起始=結束視為無效時段；兩段都無效則全天空閒。",
+      "window1Start": "時段1 開始",
+      "window1End": "時段1 結束",
+      "window2Start": "時段2 開始",
+      "window2End": "時段2 結束",
+      "noWindow": "全天空閒",
+      "weekendOffPeak": "週末全天按空閒價",
+      "weekendOffPeakHint": "北京時間週六、週日全天統一按空閒價計費，不再區分高峰時段（DeepSeek 官方 2026-08-23 起）。",
+      "weekendOffPeakBadge": "週末空閒",
+      "sortOrder": "優先級",
+      "sortOrderHint": "數值越小越先匹配。",
+      "enabled": "啟用",
+      "save": "保存規則",
+      "saving": "保存中…",
+      "deleting": "刪除中…",
+      "empty": "暫無峰谷計費規則，添加一個以按時段計費。",
+      "toastSaved": "峰谷計費規則已保存",
+      "toastDeleted": "峰谷計費規則已刪除",
+      "priceHint": "價格單位：美元/百萬 tokens（高峰價）",
       "missing": "缺失",
       "actions": "操作",
       "cancel": "取消",
@@ -2876,7 +2926,12 @@
         "codex": "Codex"
       },
       "reasoningChars": "思考",
-      "reasoningCharsUnit": "字"
+      "reasoningCharsUnit": "字",
+
+      "reasoningTokensUnit": "字",
+      "billingWindowPeak": "高峰",
+      "billingWindowOffPeak": "空閒",
+      "billingWindowHint": "DeepSeek 峰谷計費：工作日高峰 9–12 / 14–18，空閒減半；週末全天按空閒價"
     },
     "view": {
       "relay": "轉發日誌",

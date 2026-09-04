@@ -49,6 +49,7 @@ export const VIDEO_ENDPOINT_PROVIDER_OPTIONS = [
 export const IMAGE_ENDPOINT_PROVIDER_OPTIONS = [
     { label: 'Auto', value: '' },
     { label: 'Agnes', value: 'agnes' },
+    { label: '透传（信息体）', value: 'raw' },
 ] as const;
 
 export const AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS = [

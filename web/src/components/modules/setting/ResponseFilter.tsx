@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ShieldAlert, ListFilter, AlertTriangle, MessageSquareWarning, Ban, Replace } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -178,7 +179,14 @@ export function SettingResponseFilter() {
             <div className="space-y-3 rounded-lg border border-border/30 bg-card p-4">
                 <div className="flex items-center gap-3">
                     <AlertTriangle className="h-5 w-5 text-muted-foreground" />
-                    <span className="text-sm font-medium">{t('responseFilter.action.label')}</span>
+                    <span className="text-sm font-medium">
+                        {t('responseFilter.action.label')}
+                        <Hint
+                            text={action === 'block'
+                                ? t('responseFilter.action.blockHint')
+                                : t('responseFilter.action.replaceHint')}
+                        />
+                    </span>
                 </div>
                 <div className="flex gap-2 pl-8">
                     <Button
@@ -202,11 +210,6 @@ export function SettingResponseFilter() {
                         {t('responseFilter.action.replace')}
                     </Button>
                 </div>
-                <p className="pl-8 text-xs text-muted-foreground">
-                    {action === 'block'
-                        ? t('responseFilter.action.blockHint')
-                        : t('responseFilter.action.replaceHint')}
-                </p>
             </div>
 
             {/* 关键词列表 */}
@@ -266,7 +269,10 @@ export function SettingResponseFilter() {
                 <div className="space-y-3 rounded-lg border border-border/30 bg-card p-4">
                     <div className="flex items-center gap-3">
                         <MessageSquareWarning className="h-5 w-5 text-muted-foreground" />
-                        <span className="text-sm font-medium">{t('responseFilter.errorMessage.label')}</span>
+                        <span className="text-sm font-medium">
+                            {t('responseFilter.errorMessage.label')}
+                            <Hint text={t('responseFilter.errorMessage.hint')} />
+                        </span>
                     </div>
                     <Input
                         value={errorMessage}
@@ -275,9 +281,6 @@ export function SettingResponseFilter() {
                         placeholder={t('responseFilter.errorMessage.placeholder')}
                         className="ml-8 w-[calc(100%-2rem)] rounded-xl"
                     />
-                    <p className="pl-8 text-xs text-muted-foreground">
-                        {t('responseFilter.errorMessage.hint')}
-                    </p>
                 </div>
             )}
         </div>

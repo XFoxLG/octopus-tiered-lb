@@ -5,6 +5,7 @@ import { Info, Tag, Github, AlertTriangle, Download, Loader2 } from 'lucide-reac
 import { APP_VERSION, GITHUB_REPO } from '@/lib/info';
 import { useLatestInfo, useNowVersion, useUpdateCore } from '@/api/endpoints/update';
 import { Button } from '@/components/ui/button';
+import { Hint } from '@/components/ui/hint';
 import { toast } from '@/components/common/Toast';
 import { isOctopusCacheName, isFontCacheName, SW_MESSAGE_TYPE } from '@/lib/sw';
 
@@ -134,9 +135,7 @@ export function SettingInfo() {
                         <div className="flex-1 space-y-1 min-w-0">
                             <p className="text-sm text-destructive font-medium">
                                 {t('info.versionMismatch')}
-                            </p>
-                            <p className="text-xs text-muted-foreground break-words">
-                                {t('info.versionMismatchHint', { frontend: APP_VERSION, backend: backendNowVersion })}
+                                <Hint text={t('info.versionMismatchHint', { frontend: APP_VERSION, backend: backendNowVersion })} />
                             </p>
                         </div>
                     </div>
@@ -161,9 +160,7 @@ export function SettingInfo() {
                         <div className="flex-1 space-y-1 min-w-0">
                             <p className="text-sm text-primary font-medium">
                                 {t('info.newVersionAvailable')}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                                {t('info.newVersionAvailableHint')}
+                                <Hint text={t('info.newVersionAvailableHint')} />
                             </p>
                         </div>
                     </div>

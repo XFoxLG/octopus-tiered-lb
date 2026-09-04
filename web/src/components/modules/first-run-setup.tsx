@@ -13,6 +13,7 @@ import { toast } from '@/components/common/Toast';
 import Logo from '@/components/modules/logo';
 import { Button } from '@/components/ui/button';
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
+import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { ParticleBackground } from '@/components/nature';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -176,7 +177,10 @@ export function FirstRunSetup() {
                   </Field>
 
                   <Field>
-                    <FieldLabel className="text-xs font-semibold text-muted-foreground/70 ml-1" htmlFor="bootstrap-password">{t('form.password')}</FieldLabel>
+                    <FieldLabel className="text-xs font-semibold text-muted-foreground/70 ml-1" htmlFor="bootstrap-password">
+                      {t('form.password')}
+                      <Hint text={t('form.passwordHint')} />
+                    </FieldLabel>
                     <Input
                       id="bootstrap-password"
                       type="password"
@@ -187,7 +191,6 @@ export function FirstRunSetup() {
                       disabled={isPending}
                       required
                     />
-                    <FieldDescription className="ml-1 mt-1 text-muted-foreground/60">{t('form.passwordHint')}</FieldDescription>
                   </Field>
 
                   <p className="text-sm text-muted-foreground/70 ml-1">

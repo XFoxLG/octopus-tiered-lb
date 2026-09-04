@@ -96,14 +96,18 @@ func TestLLMPriceDeleteFromDBWithNoPrice_SkipsManualModels(t *testing.T) {
 	}
 }
 
-// TestLLMPriceRefreshExistingModels_FallbackToPresetThenZero 验证"同步价格"刷新
+// TestLLMPriceRefreshExistingModels_NoPresetWritesZero 验证"同步价格"刷新
 // 已有模型时的价格解析顺序：
-//  1. 外部价格文件命中 → 用外部价格
-//  2. 外部未命中 → 回落托底价格（presets_manual.go，deepseek-v4-flash 属托底条目）
-//  3. 均未命中 → 写 0
+//  1. 内置预设命中 -> 用预设价格
+//  2. 均未命中 -> 写 0
 //
-// 依赖真实 presets_manual.go 内容（与 price 包 TestDeepSeekV4PresetPrices 一致）。
-func TestLLMPriceRefreshExistingModels_FallbackToPresetThenZero(t *testing.T) {
+// 峰谷计费规则（model_price_schedules）由 EffectiveLLMPrice 在计费时应用，
+// 不再参与同步刷新的 DB 写价。
+// 断言用 deepseek-chat（presets.go 内置、presets_manual.go 移除后仍在的条目）
+// 而非 deepseek-v4-flash：presets.go 由 release 脚本从 models.dev 重新生成，
+// 其内容随上游变动，不能作为断言依赖；deepseek-v4-flash 等是否被预设收录
+// 与本测试的解析顺序无关。
+func TestLLMPriceRefreshExistingModels_NoPresetWritesZero(t *testing.T) {
 	setupHelperDB(t)
 
 	llmCache := llm.GetCache()
@@ -116,9 +120,8 @@ func TestLLMPriceRefreshExistingModels_FallbackToPresetThenZero(t *testing.T) {
 		}
 	}()
 
-	// deepseek-v4-flash：托底价格存在（presets_manual.go），旧值故意设为 0
-	// 以便断言刷新后写入托底价。
-	llmCache.Set("deepseek-v4-flash", model.LLMPrice{})
+	// deepseek-chat：presets.go 内置条目，旧值故意设为 0 以便断言刷新后写入预设价。
+	llmCache.Set("deepseek-chat", model.LLMPrice{})
 	// 完全未知的模型：外部与托底均未命中，刷新后应写 0。
 	llmCache.Set("totally-unknown-model-xyz", model.LLMPrice{Input: 9, Output: 9, CacheRead: 9, CacheWrite: 9})
 
@@ -126,14 +129,14 @@ func TestLLMPriceRefreshExistingModels_FallbackToPresetThenZero(t *testing.T) {
 		t.Fatalf("LLMPriceRefreshExistingModels() error = %v", err)
 	}
 
-	// 托底命中：deepseek-v4-flash 应被写入 presets_manual.go 中的价格。
-	got, err := llm.Get("deepseek-v4-flash")
+	// 预设命中：deepseek-chat 刷新后应写入非 0 的预设价。峰谷计费由规则表
+	// （model_price_schedules）在 EffectiveLLMPrice 运行时应用，与 DB 价格无关。
+	got, err := llm.Get("deepseek-chat")
 	if err != nil {
-		t.Fatalf("llm.Get(deepseek-v4-flash) error = %v", err)
+		t.Fatalf("llm.Get(deepseek-chat) error = %v", err)
 	}
-	want := model.LLMPrice{Input: 0.14, Output: 0.28, CacheRead: 0.0028, CacheWrite: 0}
-	if got != want {
-		t.Fatalf("deepseek-v4-flash price = %+v, want preset %+v", got, want)
+	if got.Input == 0 {
+		t.Fatalf("deepseek-chat price = %+v, want non-zero preset price (presets.go)", got)
 	}
 
 	// 均未命中：应写 0。

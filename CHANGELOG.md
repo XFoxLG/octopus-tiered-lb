@@ -7,25 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.6.0] - 2026-08-28
+
 ### 🚀 Features
-- **Pool (号池对齐 sub2api)**: 号池账号管理全量重写--平台分段选择器（anthropic/openai/gemini/grok/volcengine/custom）、per-platform 凭据类型（oauth/apikey/cookie/upstream）、OAuth 两步登录（4 平台 PKCE 回调）、结构化凭据表单、编辑、测试、额度/用量展示、批量导入、token 自动刷新。号池账号现在直接绑模型（调度按模型过滤候选），`base_url` 在中转链路生效（此前为死字段）。凭据 AES-GCM 加密存储，返回前端脱敏。新增 `server.external_url` 配置项（OAuth 回调地址，重启生效）与号池 token 刷新/额度同步两个定时任务设置项。
-- **Group/Relay**: 分组出站格式新增「原始穿透（信息体）」（`raw`）——保留客户端原始请求体与原始请求路径原样转发上游，唯一改写请求体中的 `model` 字段为分组解析后的上游模型名，不做格式转换或回退。
-- **Log**: show effective outbound reasoning effort and upstream reasoning tokens on log cards (hidden when empty; field toggles default on).
-- **Log**: when official reasoning tokens are absent, fall back to thinking text character count (UTF-8 runes) and display as "思考 XXt" / "思考 XX字".
-- **Backup (issue #158)**: 数据导入性能优化——大表分批插入（每批 1000 行），避免单次超大事务超时/内存溢出；导入大小上限从 64 MB 提升至 256 MB，前端导入页增加大小提示。
-- **Relay/Setting (issue #153)**: 「429 限流渠道内延时重试」补全可用性——三项设置（开关/重试间隔/总等待上限）接入设置页重试面板，此前仅有后端实现、面板无入口，只能改数据库开启。媒体端点（图片/音频/嵌入等）链路同步接入 hold，此前仅 LLM 链路生效。
+- **Price (PR #245)**: DeepSeek 峰谷计费规则表化（作者 @EscapeA）--新增 `model_price_schedules` 规则表与管理端配置入口（模型广场 -> 价格分类 -> 峰谷计费卡片）：规则匹配（exact/prefix/contains）+ 高峰四价（USD/1M tokens）+ 空闲倍率 + 双高峰时段（北京时间，与 stats_timezone/容器 TZ 解耦）+ 周末全天按空闲价开关（官方 2026-08-23 起规则）+ 优先级。计费热路径 `EffectiveLLMPrice` 规则驱动（内存 `atomic.Pointer` 快照，不查 DB）；启动时表空自动 seed 官方美元高峰价（flash $0.44/$1.32、pro $1.32/$3.96，空闲 ×0.5），升级平滑过渡；`presets_manual.go` 静态平价删除。
+- **Relay/Log**: relay 计费改按请求开始时刻的峰谷窗口计价；relay_logs 新增 `billing_window` 列（peak/offpeak），日志列表/详情展示「高峰/空闲」徽章（缓存路径与 DB 路径 Select 列一致，不会顶出后消失）。
+- **Model**: 模型列表新增 `billing_schedule` 只读标识，命中峰谷规则的模型卡片显示「峰谷」徽章；手动价格编辑浮层提示目录价为高峰价。
+- **Media**: 图片接口支持透传（信息体）端点类型--`endpoint_provider=raw` 保留客户端原始请求体（仅改写模型名）与原始请求路径、查询串，与对话分组出站格式 `raw` 语义一致；multipart 端点（images/edits 等）兼容 JSON 入站（非 multipart Content-Type 回落 JSON 提取转发，适配 SenseNova 编辑接口）；前端图片接口类型下拉新增「透传（信息体）」选项，三语文案同步。
 
 ### 🐛 Bug Fixes
-- **Group/Relay**: Anthropic 入站请求现在会正确应用分组出站格式（`messages` / `messages_only` 等）；此前 `isLLMRequestFormat` 漏判 Anthropic Messages，导致强制退回渠道原生 OpenAI Chat。
-- **Passthrough**: 原始透传会把分组解析后的上游模型名写回请求体 `model` 字段，不再把分组名原样发给上游。
-- **Relay**: 上游 400 类客户端错误（如 `context_length_exceeded`）不再被 adapter 回退链路改写成换渠道，也不再吞成管理端 502；原样把上游状态码与错误体回给下游，便于 omp 等客户端识别溢出并自动压缩上下文。
-- **Transformer**: Anthropic streaming now attaches usage on `message_delta` chunks so relay logs keep input/output tokens when `message_stop` is missing.
-- **Transformer**: preserve OpenAI `reasoning_effort` values `minimal`/`xhigh`/`max` instead of collapsing them to `high`; Anthropic/Gemini budget mapping now covers `xhigh`/`max`.
-- **Relay**: 429 延时重试的等待改为可被客户端断连中断（`waitRateLimitHold` + `select ctx.Done()`），此前 `executeRelay` 内联裸 `time.Sleep`，客户端在等待窗口内断开仍会睡满整个间隔才醒；同时移除内联逻辑与 `rate_limit_hold.go` 中同语义 helper 的重复实现。
-- **Channel (issue #182)**: 恢复渠道更新接口白名单补丁中 9 个高级设置字段的持久化分支（`auto_sync`/`skip_model_test`/`disposable`/`expire_at`/`notif_channel_id`/`key_selection_strategy`/`auto_group`/`custom_header`/`pool_id`），此前编辑已有渠道时这些字段返回 200 但静默不落库（v2.4.1 起回归，由 #147 代理模式重构误删 8 个分支引入，`pool_id` 为号池提交遗漏）。
-- **Relay/Log (issue #192)**: 修复所有渠道均不可用（key 全冷却/熔断）时 `relay_logs.attempts` 无上限膨胀、单条日志可达数百 MB 的问题。`relay_max_total_attempts` 由「0 = 不限制」改为「0 回退到内置默认上限（约 64）」，且上限改按决策纪录总数（含冷却/熔断跳过）计算而非仅真实转发——此前仅统计转发次数导致该场景下上限形同虚设；新增路由轮次快速失败（某一轮无任何真实转发即停止重试）；持久化前将 attempts 截断到最多 256 条（chat 与 media 路径一致），从根上避免数据库爆炸。
-- **Backup (issue #199)**: 修复导入 JSON 后禁用渠道/Key 被恢复为启用状态——`Channel.Enabled` / `ChannelKey.Enabled` 去掉 `gorm:"default:true"`，避免 GORM `Create` 把零值 `false` 替换成默认值 `true`，导入完整恢复时 `enabled=false` 原样写入 INSERT。
-- **Docker (issue #198)**: 修复容器更新后无限循环重启——`OCTOPUS_INITIAL_ADMIN_USERNAME`/`PASSWORD` 是首次初始化用的 env，但每次容器重启时内存 `adminCache` 为空，`bootstrapFromEnv` 直接调 `BootstrapCreate`，DB 已有管理员即返回 `ErrBootstrapAlreadySetUp`，被 `cmd/start.go` 当致命错误 → 进程退出 → Docker 重启 → 死循环。现在把该错误当幂等 no-op（已有账号优先生效），与 HTTP 首次初始化端点（409 Conflict）行为一致；同时删除重复的 `deleteLegacyAdmin`。
+- **Client (PR #246)**: 修复 HTTP 代理模式下 SSRF DNS-pin 误拼代理端口导致必超时（作者 @lolicin）--`SafeDialContext` 此前无条件把拨号地址的 host 替换为 context 里钉入的上游安全 IP，而 HTTP(S) 代理路径下 `DialContext` 收到的 addr 是代理服务器地址，导致连到「上游IP:代理端口」（如 `104.21.86.180:7890`）超时。现在 `SafeDialContext` 仅在直连路径注入，HTTP(S) 代理保留默认拨号由代理端解析上游域名；SSRF 地址校验完整保留，一处修复覆盖 relay/media/系统代理/号池全部走 HTTP 代理的入口。
+- **Price**: 同步价格刷新不再回盖 DeepSeek 峰谷预设（峰谷价格由规则表运行时计算，不经 DB）；峰谷计费相关测试断言不依赖 `presets.go` 内容（其由 release 脚本从 models.dev 重新生成，内容随上游变动）。
 
 ## [v2.4.0] - 2026-07-15
 

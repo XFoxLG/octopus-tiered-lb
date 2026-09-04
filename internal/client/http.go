@@ -237,10 +237,12 @@ func clonedDefaultTransport() (*http.Transport, error) {
 	cloned.MaxIdleConns = httpMaxIdleConns
 	cloned.MaxIdleConnsPerHost = httpMaxIdleConnsPerHost
 	cloned.IdleConnTimeout = httpIdleConnTimeout
-	// SafeDialContext 从 context 读校验时钉入的安全 IP（AssertSafeRequestWithPin），
-	// 直连该 IP 杜绝 DNS rebinding；未携带时回退默认拨号。socks/ss/vmess 代理路径
-	// 自设 DialContext 覆盖此值，代理拨号不受影响（前置 AssertSafeHost 已校验目标）。
-	cloned.DialContext = xurl.SafeDialContext
+	// 此处不再无条件注入 SafeDialContext：SafeDialContext 会读 context 里
+	// AssertSafeRequestWithPin 钉入的上游安全 IP，并把拨号地址的 host 替换为它。
+	// HTTP 代理路径里 DialContext 收到的 addr 是「代理服务器地址」而非上游地址，
+	// 若沿用 SafeDialContext 会把上游 IP 拼上代理端口（上游IP:7890）导致拨号目标
+	// 错误、必超时。故仅直连路径在 newHTTPClientNoProxyWithTimeout 中注入；
+	// socks/ss/vmess 代理路径在各自分支自设 DialContext 覆盖。
 	return cloned, nil
 }
 
@@ -254,6 +256,9 @@ func newHTTPClientNoProxyWithTimeout(timeout time.Duration) (*http.Client, error
 		return nil, err
 	}
 	cloned.Proxy = nil
+	// 直连场景注入 SafeDialContext：从 context 读 AssertSafeRequestWithPin 钉入的
+	// 安全 IP，直连该 IP 彻底消除 DNS rebinding 窗口；未携带时回退默认拨号。
+	cloned.DialContext = xurl.SafeDialContext
 	return &http.Client{Transport: cloned, Timeout: timeout}, nil
 }
 
@@ -274,6 +279,9 @@ func newHTTPClientCustomProxyWithTimeout(proxyURLStr string, timeout time.Durati
 
 	switch proxyURL.Scheme {
 	case "http", "https":
+		// HTTP(S) 代理由代理端解析并连接上游域名，客户端只需连到代理地址。
+		// 这里保留 clonedDefaultTransport 的默认 DialContext（不注入 SafeDialContext），
+		// 避免上游钉住的 IP 被拼到代理地址上导致拨号目标错误。
 		cloned.Proxy = http.ProxyURL(proxyURL)
 	case "socks", "socks5":
 		socksDialer, err := proxy.FromURL(proxyURL, proxy.Direct)

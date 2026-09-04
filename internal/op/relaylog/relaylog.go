@@ -816,7 +816,7 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 					"input_tokens", "output_tokens", "semantic_cache_hit", "cache_read_tokens",
 					"reasoning_effort", "reasoning_tokens", "reasoning_chars",
 					"ftut", "use_time",
-					"cost", "error", "attempts", "total_attempts", "is_test")
+					"cost", "billing_window", "error", "attempts", "total_attempts", "is_test")
 			if filter.StartTime != nil {
 				query = query.Where("time >= ?", *filter.StartTime)
 			}

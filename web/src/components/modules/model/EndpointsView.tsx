@@ -8,6 +8,7 @@ import { useModelCapabilities, type ModelCapability } from '@/api/endpoints/mode
 import { LoadingState } from '@/components/common/LoadingState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import { getModelIcon } from '@/lib/model-icons';
 import { cn } from '@/lib/utils';
 import {
@@ -165,6 +166,7 @@ export function EndpointsView() {
                         <h2 className="flex items-center gap-2 text-lg font-bold text-card-foreground">
                             <Waypoints className="size-5" />
                             {t('title')}
+                            <Hint text={t('hint')} />
                         </h2>
                         <span className="rounded-full bg-muted/60 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
                             {t('endpointCount', { count: groups.length })}
@@ -181,7 +183,6 @@ export function EndpointsView() {
                         />
                     </div>
                 </div>
-                <p className="mt-3 text-xs text-muted-foreground">{t('hint')}</p>
             </section>
 
             {groups.length === 0 ? (

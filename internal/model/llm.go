@@ -16,6 +16,9 @@ type LLMInfo struct {
 	// 手动设置的价格不参与"同步价格"刷新（不会被同步源未命中的 0 覆盖），
 	// 也不被"删 0 价格模型"任务自动删除。同步/自动来源的模型保持 false。
 	PriceManual bool `json:"price_manual" gorm:"column:price_manual;default:false"`
+	// BillingSchedule 只读标识：模型是否套 DeepSeek 峰谷计费（"deepseek_v4" 或空）。
+	// 仅用于前端展示徽章，不入库（gorm:"-"），由列表 handler 组装时填充。
+	BillingSchedule string `json:"billing_schedule" gorm:"-"`
 }
 
 // ChannelUpstreamPrice 是投影渠道从上游站点同步到的展示用定价。

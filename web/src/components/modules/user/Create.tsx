@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Hint } from '@/components/ui/hint';
 import {
     MorphingDialogClose,
     MorphingDialogDescription,
@@ -80,7 +81,10 @@ export function CreateDialogContent() {
                         </Field>
 
                         <Field>
-                            <FieldLabel htmlFor="user-create-password" className="text-sm sm:text-base">{t('create.password')}</FieldLabel>
+                            <FieldLabel htmlFor="user-create-password" className="text-sm sm:text-base">
+                                {t('create.password')}
+                                <Hint text={t('create.passwordHint')} />
+                            </FieldLabel>
                             <Input
                                 id="user-create-password"
                                 type="password"
@@ -89,7 +93,6 @@ export function CreateDialogContent() {
                                 placeholder={t('create.passwordPlaceholder')}
                                 className="rounded-xl h-11 sm:h-10"
                             />
-                            <p className="text-xs text-muted-foreground mt-1.5">{t('create.passwordHint')}</p>
                         </Field>
 
                         <Field>

@@ -2604,7 +2604,7 @@
         "videoLabel": "Video API Type",
         "videoHint": "Select the video API type. The backend will automatically rewrite the video passthrough request path after saving.",
         "imageLabel": "Image API Type",
-        "imageHint": "Select the image API type. The backend will automatically rewrite the image passthrough JSON after saving (e.g. Agnes moves the top-level response_format into extra_body).",
+        "imageHint": "Select the image API type. The backend will automatically rewrite the image passthrough JSON after saving (e.g. Agnes moves the top-level response_format into extra_body). Passthrough (payload) keeps the client's original request body and request path, only rewriting the model name.",
         "audioSpeechLabel": "TTS API Type",
         "audioSpeechHint": "Select the TTS API type. The backend will automatically rewrite the TTS request format and path after saving."
       },
@@ -2735,7 +2735,9 @@
       "averageLatency": "Average Latency",
       "successRate": "Success Rate",
       "expand": "Expand details",
-      "collapse": "Collapse details"
+      "collapse": "Collapse details",
+      "billingWindowBadge": "Peak/Off-peak ×0.5",
+      "billingWindowHint": "DeepSeek peak billing: weekday peaks 9–12 / 14–18, off-peak half price; weekends all-day off-peak"
     },
     "detail": {
       "pricing": "Pricing",
@@ -2757,7 +2759,8 @@
       "cacheRead": "Cache Read",
       "cacheWrite": "Cache Write",
       "save": "Save",
-      "priceHint": "Price unit: USD / 1M tokens"
+      "priceHint": "Price unit: USD / 1M tokens",
+      "peakBillingHint": "Above are PEAK prices. Off-peak (9–12 / 14–18 outside) is charged at half."
     },
     "capabilities": {
       "title": "Model Capabilities",
@@ -2814,6 +2817,53 @@
       "toastSaved": "Price category saved",
       "toastDeleted": "Price category deleted",
       "priceHint": "Price unit: USD per million tokens",
+      "missing": "Missing",
+      "actions": "Actions",
+      "cancel": "Cancel",
+      "toastError": "Operation failed"
+    },
+    "peakSchedule": {
+      "title": "Peak/Off-peak Billing",
+      "description": "Match models by rules and bill by Beijing-time windows (peak vs off-peak). First match by priority wins; off-peak = peak × multiplier.",
+      "add": "Add Rule",
+      "edit": "Edit Rule",
+      "delete": "Delete",
+      "confirmDeleteTitle": "Delete Rule",
+      "confirmDelete": "Delete this billing schedule? This cannot be undone.",
+      "name": "Name",
+      "namePlaceholder": "e.g. deepseek-v4-flash (unique, lowercase)",
+      "ruleType": "Rule Type",
+      "ruleValue": "Rule Value",
+      "ruleValuePlaceholder": "e.g. deepseek-v4-flash or provider/",
+      "exact": "Exact",
+      "prefix": "Prefix",
+      "contains": "Contains",
+      "input": "Peak Input",
+      "output": "Peak Output",
+      "cacheRead": "Peak Cache Read",
+      "cacheWrite": "Peak Cache Write",
+      "offPeakMul": "Off-peak Multiplier",
+      "offPeakMulHint": "Off-peak price = peak × multiplier (DeepSeek official: 0.5).",
+      "window": "Peak Windows",
+      "windowHint": "Beijing time. Start=end means disabled; all disabled = off-peak all day.",
+      "window1Start": "Window 1 Start",
+      "window1End": "Window 1 End",
+      "window2Start": "Window 2 Start",
+      "window2End": "Window 2 End",
+      "noWindow": "All-day off-peak",
+      "weekendOffPeak": "Weekend off-peak",
+      "weekendOffPeakHint": "Beijing-time Saturday & Sunday are billed at off-peak price all day, no peak windows (official since 2026-08-23).",
+      "weekendOffPeakBadge": "Weekend off-peak",
+      "sortOrder": "Priority",
+      "sortOrderHint": "Lower matches first.",
+      "enabled": "Enabled",
+      "save": "Save Rule",
+      "saving": "Saving…",
+      "deleting": "Deleting…",
+      "empty": "No billing schedules yet. Add one to enable time-based billing.",
+      "toastSaved": "Billing schedule saved",
+      "toastDeleted": "Billing schedule deleted",
+      "priceHint": "Price unit: USD / 1M tokens (peak price)",
       "missing": "Missing",
       "actions": "Actions",
       "cancel": "Cancel",
@@ -2920,7 +2970,12 @@
         "codex": "Codex"
       },
       "reasoningChars": "Reasoning",
-      "reasoningCharsUnit": " chars"
+      "reasoningCharsUnit": " chars",
+
+      "reasoningTokensUnit": " tokens",
+      "billingWindowPeak": "Peak",
+      "billingWindowOffPeak": "Off-peak",
+      "billingWindowHint": "DeepSeek peak/off-peak billing"
     },
     "view": {
       "relay": "Relay Logs",

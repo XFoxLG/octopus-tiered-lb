@@ -46,5 +46,12 @@ func llmRefreshCache(ctx context.Context) error {
 	if err := llm.RefreshCache(ctx); err != nil {
 		return err
 	}
-	return llm.RefreshPriceCategoryCache(ctx)
+	if err := llm.RefreshPriceCategoryCache(ctx); err != nil {
+		return err
+	}
+	// 峰谷计费规则：表空时 seed 默认规则（平滑过渡），随后加载缓存。
+	if err := llm.SeedPriceSchedules(ctx); err != nil {
+		return err
+	}
+	return llm.RefreshPriceScheduleCache(ctx)
 }

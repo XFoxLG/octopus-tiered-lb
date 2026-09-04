@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Database, Download, Upload, AlertTriangle, Loader2, Check, X, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/common/Toast';
@@ -155,8 +156,10 @@ export function SettingBackup() {
 
                 <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0 flex-1">
-                        <div className="text-sm text-muted-foreground">{t('backup.export.includeLogs')}</div>
-                        {includeLogs && <div className="text-[11px] text-muted-foreground/70 break-words">{t('backup.export.includeLogsHint')}</div>}
+                        <div className="text-sm text-muted-foreground">
+                            {t('backup.export.includeLogs')}
+                            <Hint text={includeLogs ? t('backup.export.includeLogsHint') : undefined} />
+                        </div>
                     </div>
                     <Switch checked={includeLogs} onCheckedChange={setIncludeLogs} />
                 </div>
@@ -279,8 +282,10 @@ export function SettingBackup() {
                 <div className="grid grid-cols-1 gap-3">
                     <div className="flex items-center justify-between gap-4 rounded-lg border border-border/30 p-3">
                         <div className="min-w-0 flex-1">
-                            <div className="text-sm text-muted-foreground">{t('backup.migration.migrateLogs')}</div>
-                            <div className="text-[11px] text-muted-foreground/70 break-words">{t('backup.migration.migrateLogsHint')}</div>
+                            <div className="text-sm text-muted-foreground">
+                                {t('backup.migration.migrateLogs')}
+                                <Hint text={t('backup.migration.migrateLogsHint')} />
+                            </div>
                         </div>
                         <Switch checked={migrateLogs} onCheckedChange={setMigrateLogs} />
                     </div>
@@ -323,7 +328,10 @@ export function SettingBackup() {
 
             {/* 导入 */}
             <div className="space-y-3 rounded-lg border-border/30 bg-card p-3 sm:p-4 shadow-sm">
-                <div className="text-sm font-semibold text-card-foreground">{t('backup.import.title')}</div>
+                <div className="text-sm font-semibold text-card-foreground">
+                    {t('backup.import.title')}
+                    <Hint text={t('backup.import.sizeHint')} />
+                </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm text-muted-foreground">{t('backup.import.mode.label')}</div>
@@ -365,7 +373,6 @@ export function SettingBackup() {
                     onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
                     className="rounded-xl w-full"
                 />
-                <div className="text-xs text-muted-foreground">{t('backup.import.sizeHint')}</div>
 
                 <Button
                     type="button"

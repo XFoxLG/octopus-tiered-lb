@@ -12,6 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import {
     MorphingDialog,
     MorphingDialogClose,
@@ -122,8 +123,8 @@ export function ChannelGroupManagerPanel({
                     <div className="inline-flex items-center gap-2 rounded-full border border-primary/12 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
                         <FolderTree className="size-3.5" />
                         {t('title')}
+                        <Hint text={t('hint')} />
                     </div>
-                    <p className="text-xs leading-5 text-muted-foreground">{t('hint')}</p>
                 </div>
                 {!isCreating ? (
                     <Button

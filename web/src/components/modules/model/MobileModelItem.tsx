@@ -8,6 +8,7 @@ import { useUpdateModel, useDeleteModel, type ModelMarketItem } from '@/api/endp
 import { getModelIcon } from '@/lib/model-icons';
 import { toast } from '@/components/common/Toast';
 import { ModelDeleteOverlay, ModelEditOverlay } from './ItemOverlays';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { createPortal } from 'react-dom';
 import { CopyIconButton } from '@/components/common/CopyButton';
@@ -178,6 +179,15 @@ export const MobileModelItem = memo(function MobileModelItem({ model, latencyUni
                         <span className="inline-flex shrink-0 items-center rounded-full border border-primary/12 bg-card px-1.5 py-px text-[0.58rem] font-semibold text-primary">
                             {providerLabel}
                         </span>
+                        {model.billing_schedule === 'deepseek_v4' && (
+                            <Badge
+                                variant="outline"
+                                className="shrink-0 text-[0.58rem] px-1.5 py-px border-amber-400/50 text-amber-500 dark:text-amber-400"
+                                title={t('card.billingWindowHint')}
+                            >
+                                {t('card.billingWindowBadge')}
+                            </Badge>
+                        )}
                         <InlineMetric icon={Waves} value={requestCount.toLocaleString()} color={brandColor} />
                         <InlineMetric icon={RadioTower} value={String(model.channel_count)} color={brandColor} />
                         <InlineMetric icon={KeyRound} value={String(model.enabled_key_count)} color={brandColor} />
@@ -369,6 +379,7 @@ export const MobileModelItem = memo(function MobileModelItem({ model, latencyUni
                                         onChange={setEditValues}
                                         onCancel={handleCancelEdit}
                                         onSave={handleSaveEdit}
+                                        peakBilling={model.billing_schedule === 'deepseek_v4'}
                                     />
                                 </div>
                             </div>

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Cloud, Download, Loader2, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/common/Toast';
@@ -134,8 +135,10 @@ export function SettingWebDAV() {
             {/* Enable toggle */}
             <div className="flex items-center justify-between gap-4">
                 <div>
-                    <div className="text-sm font-medium text-card-foreground">{t('webdav.enabled')}</div>
-                    <div className="text-xs text-muted-foreground">{t('webdav.enabledHint')}</div>
+                    <div className="text-sm font-medium text-card-foreground">
+                        {t('webdav.enabled')}
+                        <Hint text={t('webdav.enabledHint')} />
+                    </div>
                 </div>
                 <Switch checked={enabled} onCheckedChange={setEnabled} />
             </div>

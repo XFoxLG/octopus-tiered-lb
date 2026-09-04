@@ -6,6 +6,7 @@ import { RotateCcw } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Hint } from '@/components/ui/hint';
 import { SettingKey, useSettingList, useSetSetting } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
 import { RETRY_FIELDS } from './runtime-settings';
@@ -73,10 +74,10 @@ export function SettingRetry() {
                         className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between"
                     >
                         <div className="min-w-0 flex flex-col gap-1">
-                            <span className="text-sm font-medium">{t(field.labelKey)}</span>
-                            {field.hintKey ? (
-                                <span className="text-xs text-muted-foreground">{t(field.hintKey)}</span>
-                            ) : null}
+                            <span className="text-sm font-medium">
+                                {t(field.labelKey)}
+                                <Hint text={field.hintKey ? t(field.hintKey) : undefined} />
+                            </span>
                         </div>
                         <Input
                             type="number"
@@ -119,8 +120,10 @@ export function SettingRetry() {
 
             <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="min-w-0 flex flex-col gap-1">
-                    <span className="text-sm font-medium">{t('retry.emptyOutput.label')}</span>
-                    <span className="text-xs text-muted-foreground">{t('retry.emptyOutput.hint')}</span>
+                    <span className="text-sm font-medium">
+                        {t('retry.emptyOutput.label')}
+                        <Hint text={t('retry.emptyOutput.hint')} />
+                    </span>
                 </div>
                 <Switch
                     checked={values[SettingKey.RetryEmptyOutput] === 'true'}
@@ -145,8 +148,10 @@ export function SettingRetry() {
             <div className="space-y-4 rounded-lg border-border/30 bg-card p-4 shadow-sm">
                 <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0 flex flex-col gap-1">
-                        <span className="text-sm font-medium">{t('retry.rateLimitHold.label')}</span>
-                        <span className="text-xs text-muted-foreground">{t('retry.rateLimitHold.hint')}</span>
+                        <span className="text-sm font-medium">
+                            {t('retry.rateLimitHold.label')}
+                            <Hint text={t('retry.rateLimitHold.hint')} />
+                        </span>
                     </div>
                     <Switch
                         checked={values[SettingKey.RateLimitHoldEnabled] === 'true'}
@@ -174,8 +179,10 @@ export function SettingRetry() {
             </div>
             <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="min-w-0 flex flex-col gap-1">
-                    <span className="text-sm font-medium">{t('retry.keySelectionStrategy.label')}</span>
-                    <span className="text-xs text-muted-foreground">{t('retry.keySelectionStrategy.hint')}</span>
+                    <span className="text-sm font-medium">
+                        {t('retry.keySelectionStrategy.label')}
+                        <Hint text={t('retry.keySelectionStrategy.hint')} />
+                    </span>
                 </div>
                 <Select
                     value={values[SettingKey.KeySelectionStrategy] || 'cost'}
@@ -209,8 +216,10 @@ export function SettingRetry() {
 
             <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="min-w-0 flex flex-col gap-1">
-                    <span className="text-sm font-medium">{t('retry.reasoningBufferStrategy.label')}</span>
-                    <span className="text-xs text-muted-foreground">{t('retry.reasoningBufferStrategy.hint')}</span>
+                    <span className="text-sm font-medium">
+                        {t('retry.reasoningBufferStrategy.label')}
+                        <Hint text={t('retry.reasoningBufferStrategy.hint')} />
+                    </span>
                 </div>
                 <Select
                     value={values[SettingKey.ReasoningBufferStrategy] || 'buffer'}
@@ -242,8 +251,10 @@ export function SettingRetry() {
             {/* 高 QPS 内存优化（日志队列丢弃策略 + 流重连功能开关） */}
             <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="min-w-0 flex flex-col gap-1">
-                    <span className="text-sm font-medium">{t('retry.logQueueDropPolicy.label')}</span>
-                    <span className="text-xs text-muted-foreground">{t('retry.logQueueDropPolicy.hint')}</span>
+                    <span className="text-sm font-medium">
+                        {t('retry.logQueueDropPolicy.label')}
+                        <Hint text={t('retry.logQueueDropPolicy.hint')} />
+                    </span>
                 </div>
                 <Select
                     value={values[SettingKey.RelayLogQueueDropPolicy] || 'oldest'}
@@ -275,8 +286,10 @@ export function SettingRetry() {
             </div>
             <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="min-w-0 flex flex-col gap-1">
-                    <span className="text-sm font-medium">{t('retry.streamReplay.label')}</span>
-                    <span className="text-xs text-muted-foreground">{t('retry.streamReplay.hint')}</span>
+                    <span className="text-sm font-medium">
+                        {t('retry.streamReplay.label')}
+                        <Hint text={t('retry.streamReplay.hint')} />
+                    </span>
                 </div>
                 <Switch
                     checked={values[SettingKey.StreamSessionReplayEnabled] === 'true'}
@@ -302,8 +315,10 @@ export function SettingRetry() {
             <div className="space-y-4 rounded-lg border-border/30 bg-card p-4 shadow-sm">
                 <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0 flex flex-col gap-1">
-                        <span className="text-sm font-medium">{t('retry.keyHealth.label')}</span>
-                        <span className="text-xs text-muted-foreground">{t('retry.keyHealth.hint')}</span>
+                        <span className="text-sm font-medium">
+                            {t('retry.keyHealth.label')}
+                            <Hint text={t('retry.keyHealth.hint')} />
+                        </span>
                     </div>
                     <Switch
                         checked={values[SettingKey.KeyHealthCheckEnabled] === 'true'}

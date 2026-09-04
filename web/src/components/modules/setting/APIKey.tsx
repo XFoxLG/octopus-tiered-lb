@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { KeyRound, Plus, Loader, Trash2, Check, X, Info, CalendarDays, Pencil, Maximize2, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
@@ -395,6 +396,7 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
                     {!isEditing && (
                         <span className="text-[10px] text-muted-foreground/70">({t('apiKey.form.optional')})</span>
                     )}
+                    <Hint text={!isEditing ? t('apiKey.form.customKeyHint') : undefined} />
                 </span>
                 <div className="flex items-center gap-0 rounded-xl border border-border bg-muted/20 overflow-hidden transition-colors focus-within:border-primary/40">
                     <span className="shrink-0 px-3 text-sm font-mono text-muted-foreground select-none">sk-octopus-</span>
@@ -407,9 +409,6 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
                         disabled={isPending}
                     />
                 </div>
-                {!isEditing && (
-                    <span className="text-[11px] text-muted-foreground/70">{t('apiKey.form.customKeyHint')}</span>
-                )}
             </label>
 
             <div className="grid gap-1 text-xs text-muted-foreground @lg:col-span-2">
@@ -457,7 +456,10 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
             </div>
 
             <div className="grid gap-1 text-xs text-muted-foreground @lg:col-span-2">
-                {t('apiKey.form.maxTokens')}
+                <span className="flex items-center gap-1.5">
+                    {t('apiKey.form.maxTokens')}
+                    <Hint text={t('apiKey.form.maxTokensHint')} />
+                </span>
                 <div className="flex items-center gap-2">
                     <div className="relative flex-1">
                         <Input
@@ -491,7 +493,6 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
                         {t('apiKey.form.unlimited')}
                     </button>
                 </div>
-                <span className="text-[11px] text-muted-foreground/70">{t('apiKey.form.maxTokensHint')}</span>
             </div>
 
             <div className="grid gap-1 text-xs text-muted-foreground">
@@ -609,7 +610,10 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
             </div>
 
             <div className="grid gap-1 @lg:col-span-2">
-                <div className="text-xs text-muted-foreground">{t('apiKey.form.supportedModels')}</div>
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {t('apiKey.form.supportedModels')}
+                    <Hint text={t('apiKey.form.modelsHint')} />
+                </span>
                 <div className="max-h-40 overflow-auto rounded-xl p-2">
                     {availableModels.length === 0 ? (
                         <div className="text-xs text-muted-foreground py-2 text-center">
@@ -642,11 +646,13 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
                         </div>
                     )}
                 </div>
-                <div className="text-[11px] text-muted-foreground/80">{t('apiKey.form.modelsHint')}</div>
             </div>
 
             <div className="grid gap-1 @lg:col-span-2">
-                <div className="text-xs text-muted-foreground">{t('apiKey.form.allowedGroupCategories')}</div>
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {t('apiKey.form.allowedGroupCategories')}
+                    <Hint text={t('apiKey.form.groupCategoriesHint')} />
+                </span>
                 <div className="max-h-32 overflow-auto rounded-xl p-2">
                     {availableGroupCategories.length === 0 ? (
                         <div className="text-xs text-muted-foreground py-2 text-center">
@@ -679,11 +685,13 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
                         </div>
                     )}
                 </div>
-                <div className="text-[11px] text-muted-foreground/80">{t('apiKey.form.groupCategoriesHint')}</div>
             </div>
 
             <div className="grid gap-1 @lg:col-span-2">
-                <div className="text-xs text-muted-foreground">{t('apiKey.form.excludedChannels')}</div>
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {t('apiKey.form.excludedChannels')}
+                    <Hint text={t('apiKey.form.excludedChannelsHint')} />
+                </span>
                 <div className="max-h-40 overflow-auto rounded-xl p-2">
                     {channels.length === 0 ? (
                         <div className="text-xs text-muted-foreground py-2 text-center">
@@ -716,7 +724,6 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
                         </div>
                     )}
                 </div>
-                <div className="text-[11px] text-muted-foreground/80">{t('apiKey.form.excludedChannelsHint')}</div>
             </div>
 
             <div className="flex items-center justify-between pt-1 @lg:col-span-2">

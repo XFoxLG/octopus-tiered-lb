@@ -7,6 +7,7 @@ import { SettingKey, useSetSetting, useSettingList } from '@/api/endpoints/setti
 import { toast } from '@/components/common/Toast';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { Hint } from '@/components/ui/hint';
 
 const defaultSettingValues: Record<string, string> = {
     [SettingKey.SemanticCacheEnabled]: 'false',
@@ -188,7 +189,10 @@ export function SettingSemanticCache() {
                 <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0 flex items-center gap-3">
                         <Clock3 className="h-5 w-5 text-muted-foreground" />
-                        <span className="text-sm font-medium">{t('semanticCache.ttl.label')}</span>
+                        <span className="text-sm font-medium">
+                            {t('semanticCache.ttl.label')}
+                            <Hint text={t('semanticCache.ttl.hint')} />
+                        </span>
                     </div>
                     <Input
                         type="number"
@@ -200,16 +204,16 @@ export function SettingSemanticCache() {
                         className="w-full rounded-xl md:w-72"
                     />
                 </div>
-                <p className="pl-8 text-xs text-muted-foreground">
-                    {t('semanticCache.ttl.hint')}
-                </p>
             </div>
 
             <div className="space-y-2 rounded-lg border border-border/30 bg-card p-4">
                 <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0 flex items-center gap-3">
                         <Percent className="h-5 w-5 text-muted-foreground" />
-                        <span className="text-sm font-medium">{t('semanticCache.threshold.label')}</span>
+                        <span className="text-sm font-medium">
+                            {t('semanticCache.threshold.label')}
+                            <Hint text={t('semanticCache.threshold.hint')} />
+                        </span>
                     </div>
                     <Input
                         type="number"
@@ -222,16 +226,16 @@ export function SettingSemanticCache() {
                         className="w-full rounded-xl md:w-72"
                     />
                 </div>
-                <p className="pl-8 text-xs text-muted-foreground">
-                    {t('semanticCache.threshold.hint')}
-                </p>
             </div>
 
             <div className="space-y-2 rounded-lg border border-border/30 bg-card p-4">
                 <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0 flex items-center gap-3">
                         <HardDrive className="h-5 w-5 text-muted-foreground" />
-                        <span className="text-sm font-medium">{t('semanticCache.maxEntries.label')}</span>
+                        <span className="text-sm font-medium">
+                            {t('semanticCache.maxEntries.label')}
+                            <Hint text={t('semanticCache.maxEntries.hint')} />
+                        </span>
                     </div>
                     <Input
                         type="number"
@@ -243,9 +247,6 @@ export function SettingSemanticCache() {
                         className="w-full rounded-xl md:w-72"
                     />
                 </div>
-                <p className="pl-8 text-xs text-muted-foreground">
-                    {t('semanticCache.maxEntries.hint')}
-                </p>
             </div>
 
             <div className="space-y-5 rounded-lg border border-border/30 bg-card p-5">
@@ -320,7 +321,10 @@ export function SettingSemanticCache() {
                     <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <div className="min-w-0 flex items-center gap-3">
                             <Clock3 className="h-5 w-5 text-muted-foreground" />
-                            <span className="text-sm font-medium">{t('semanticCache.timeoutSeconds.label')}</span>
+                            <span className="text-sm font-medium">
+                                {t('semanticCache.timeoutSeconds.label')}
+                                <Hint text={t('semanticCache.timeoutSeconds.hint')} />
+                            </span>
                         </div>
                         <Input
                             type="number"
@@ -337,9 +341,6 @@ export function SettingSemanticCache() {
                             className="w-full rounded-xl md:w-72"
                         />
                     </div>
-                    <p className="pl-8 text-xs text-muted-foreground">
-                        {t('semanticCache.timeoutSeconds.hint')}
-                    </p>
                 </div>
             </div>
         </div>
