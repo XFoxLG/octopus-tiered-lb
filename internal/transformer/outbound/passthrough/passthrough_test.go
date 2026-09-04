@@ -147,6 +147,59 @@ func TestTransformRequestKeepsBodyWhenModelUnchanged(t *testing.T) {
 	}
 }
 
+// rewritePassthroughModel 必须只替换顶层 "model" 值字节，其余字节（字段顺序、
+// 空白、嵌套 model）原样保留，否则提示缓存因前缀非字节一致而失效。
+func TestRewritePassthroughModelPreservesByteStability(t *testing.T) {
+	raw := []byte("{\n  \"messages\": [{\"role\": \"user\", \"content\": \"hi\", \"model\": \"nested-keep\"}],\n  \"model\" :  \"group-name\" ,\n  \"custom\": true\n}")
+	got, err := rewritePassthroughModel(raw, "upstream-model")
+	if err != nil {
+		t.Fatalf("rewritePassthroughModel error: %v", err)
+	}
+	want := "{\n  \"messages\": [{\"role\": \"user\", \"content\": \"hi\", \"model\": \"nested-keep\"}],\n  \"model\" :  \"upstream-model\" ,\n  \"custom\": true\n}"
+	if string(got) != want {
+		t.Fatalf("byte stability broken:\n got %s\nwant %s", string(got), want)
+	}
+}
+
+// 缺顶层 model 时只在对象头部插入，其余字节不动；嵌套 model 不得被改写。
+func TestRewritePassthroughModelInsertsWithoutTouchingRest(t *testing.T) {
+	raw := []byte(`{"messages":[{"model":"nested-keep"}],"custom":1}`)
+	got, err := rewritePassthroughModel(raw, "upstream-model")
+	if err != nil {
+		t.Fatalf("rewritePassthroughModel error: %v", err)
+	}
+	want := `{"model":"upstream-model","messages":[{"model":"nested-keep"}],"custom":1}`
+	if string(got) != want {
+		t.Fatalf("insert broken:\n got %s\nwant %s", string(got), want)
+	}
+}
+
+// 转义引号与 unicode 转义的 model 值必须整体替换，不能截断。
+func TestRewritePassthroughModelHandlesEscapedValue(t *testing.T) {
+	raw := []byte(`{"model":"a\"b\\c","custom":true}`)
+	got, err := rewritePassthroughModel(raw, "upstream-model")
+	if err != nil {
+		t.Fatalf("rewritePassthroughModel error: %v", err)
+	}
+	want := `{"model":"upstream-model","custom":true}`
+	if string(got) != want {
+		t.Fatalf("escaped value broken:\n got %s\nwant %s", string(got), want)
+	}
+}
+
+// 非对象体（数组/标量/非法 JSON）保持原样，不报错。
+func TestRewritePassthroughModelKeepsNonObjectBody(t *testing.T) {
+	for _, raw := range []string{`[1,2]`, `"just-a-string"`, `not json`} {
+		got, err := rewritePassthroughModel([]byte(raw), "upstream-model")
+		if err != nil {
+			t.Fatalf("rewritePassthroughModel(%q) error: %v", raw, err)
+		}
+		if string(got) != raw {
+			t.Fatalf("non-object body changed: got %s want %s", string(got), raw)
+		}
+	}
+}
+
 func TestTransformRequestPreservePathUsesRawPath(t *testing.T) {
 	raw := []byte(`{"model":"group-name","messages":[{"role":"user","content":"hello"}],"max_tokens":32,"custom":true}`)
 	stream := true

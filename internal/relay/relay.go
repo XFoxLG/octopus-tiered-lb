@@ -285,11 +285,20 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 
 	// 获取通道分组
 	group, err := grp.GroupGetEnabledMapByEndpoint(endpointType, requestModel, operationCtx)
+	directChannel := false
 	if err != nil {
-		lastErr = err
-		log.Infof("model not found: model=%s endpoint_type=%s reason=%v", requestModel, endpointType, err)
-		resp.Error(c, http.StatusNotFound, "model not found")
-		return
+		// 指定渠道路由（XyzenSun direct-channel 移植）：分组不存在且模型含 `/` 时，
+		// 按首个 `/` 切分为 channelName/modelName，构造虚拟单候选分组走主流程。
+		// 分组优先：完整字符串能匹配分组时永远走分组，不进直连。
+		virtualGroup, ok := resolveDirectChannelGroup(requestModel, endpointType)
+		if !ok {
+			lastErr = err
+			log.Infof("model not found: model=%s endpoint_type=%s reason=%v", requestModel, endpointType, err)
+			resp.Error(c, http.StatusNotFound, "model not found")
+			return
+		}
+		group = virtualGroup
+		directChannel = true
 	}
 	if !apiKeyAllowsGroupCategory(c.GetString("allowed_group_categories"), group.Category) {
 		lastErr = fmt.Errorf("group category not allowed for api key: category=%s", group.Category)
@@ -369,6 +378,12 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	maxRouteRetries := getMaxRouteRetries()
 	ratelimitCooldown := getRatelimitCooldown()
 	maxTotalAttempts := getMaxTotalAttempts()
+	if directChannel {
+		// 指定渠道路由只尝试所指定渠道一次：无 Key 级重试、无路由轮次。
+		maxKeyRetriesPerRoute = 1
+		maxRouteRetries = 1
+		maxTotalAttempts = 1
+	}
 
 	if inflightEnabled {
 		result, sfErr, shared := relayInflightGroup.Do(inflightKey, func() (any, error) {
@@ -482,6 +497,19 @@ func (ra *relayAttempt) attempt() attemptResult {
 
 	// 检查是否已写入流式响应
 	written := ra.streamOutputWasCommitted()
+
+	// 确定性失败豁免（Sub2API #3857 语义）：上游已声明这是确定性失败
+	//（如 context_length_exceeded、content_filter、refusal），对同一请求重发
+	//必然得到同一结果。直接终态，不进入默认分类，更不被自定义重试白名单覆盖。
+	if termination, ok := terminalCauseFromError(fwdErr); ok && customErrorIsDeterministicFailure(termination) {
+		span.End(dbmodel.AttemptFailed, statusCode, "deterministic provider failure, no retry")
+		return attemptResult{
+			Success:  false,
+			Written:  written,
+			Err:      fwdErr,
+			Decision: RetryDecision{Scope: ScopeNone, Reason: "deterministic provider failure, no retry", Code: statusCode, IsError: true},
+		}
+	}
 
 	// 使用错误分类驱动决策
 	decision := ClassifyRelayError(statusCode, fwdErr, written)
@@ -636,7 +664,7 @@ func (ra *relayAttempt) forward() (int, error) {
 	// 跳过 param_override 与改写引擎，避免请求体被二次加工。
 	if ra.adapterType != outbound.OutboundTypePassthrough && ra.adapterType != outbound.OutboundTypeRaw {
 		var err error
-		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutbound(ra.channel, ra.internalRequest, ra.groupEndpointType)
+		requestForOutbound, effectiveRewrite, err = prepareInternalRequestForOutbound(ra.channel, ra.internalRequest, ra.groupEndpointType, ra.group)
 		if err != nil {
 			log.Warnf("failed to prepare outbound request data: %v", err)
 			return 0, fmt.Errorf("failed to prepare outbound request data: %w", err)
@@ -839,7 +867,7 @@ func clientErrorType(statusCode int) string {
 //  2. 有上游纯文本 body → 包成 OpenAI 兼容 {"error":{...}}，状态码仍用上游；
 //  3. 没有可用 body → 合成最小 OpenAI 兼容错误；
 //  4. 非 HTTP 错误 / 无效状态 → 回退 BadGateway。
-func writeClientTerminalError(c *gin.Context, statusCode int, err error) {
+func writeClientTerminalError(c *gin.Context, channelType outbound.OutboundType, statusCode int, err error) {
 	if c == nil || c.Writer.Written() {
 		return
 	}
@@ -852,6 +880,16 @@ func writeClientTerminalError(c *gin.Context, statusCode int, err error) {
 	bodyText := strings.TrimSpace(detail)
 	if prefix := fmt.Sprintf("%d: ", statusCode); strings.HasPrefix(bodyText, prefix) {
 		bodyText = strings.TrimSpace(bodyText[len(prefix):])
+	}
+
+	// 自定义错误透传规则（Sub2API 风格）：在原样透传之前查表。
+	// 命中则按规则改写最终状态码与 message；未命中走下方默认透传逻辑。
+	// 规则只改呈现，不改重试决策（决策已在 attempt() 中确定），也不伪造成功。
+	if rule := matchCustomErrorRule(getCustomErrorRules(), channelType, statusCode, detail); rule != nil {
+		if outStatus, outMessage, ok := resolveCustomErrorPresentation(rule, statusCode, detail); ok {
+			writeCustomErrorPresentation(c, outStatus, outMessage)
+			return
+		}
 	}
 
 	if bodyText != "" && bodyText != "response body too large" {
@@ -906,6 +944,20 @@ func (ra *relayAttempt) copyHeaders(outboundRequest *http.Request, effectiveRewr
 	}
 	if len(ra.channel.CustomHeader) > 0 {
 		for _, header := range ra.channel.CustomHeader {
+			outboundRequest.Header.Set(header.HeaderKey, header.HeaderValue)
+		}
+	}
+
+	// 分组级自定义请求头（XyzenSun 移植）：只补客户端与渠道均未设置的键，
+	// 同名时渠道覆盖分组（渠道头已在上方先应用）。
+	if ra.group != nil {
+		for _, header := range ra.group.CustomHeader {
+			if strings.TrimSpace(header.HeaderKey) == "" {
+				continue
+			}
+			if _, exists := outboundRequest.Header[http.CanonicalHeaderKey(header.HeaderKey)]; exists {
+				continue
+			}
 			outboundRequest.Header.Set(header.HeaderKey, header.HeaderValue)
 		}
 	}
@@ -2063,6 +2115,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				currentAttempts := append(allAttempts, req.iter.Attempts()...)
 				if result.Success {
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
+					// 离群窗口：记录成功样本（与熔断器同级证据）。
+					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
 					if poolAccount != nil {
 						poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, true, 0, 0)
 						poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
@@ -2103,6 +2157,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				if channel.PoolID == 0 && (result.Decision.Scope == ScopeNextChannel || result.Decision.Scope == ScopeAbortAll) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModelName)
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
+					// 离群窗口：记录失败样本（与熔断器同级，避免 adapter 降级误触发）。
+					balancer.OutlierReport(channel.ID, false, result.Decision.Code, time.Now())
 				}
 
 				// Client disconnected — stop all retries immediately without
@@ -2124,7 +2180,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					req.metrics.Save(false, lastErr, currentAttempts)
 					// 400 类客户端错误不再重试，把上游错误体原样回给下游，
 					// 避免吞成 502 导致客户端无法识别 context_length_exceeded。
-					writeClientTerminalError(req.c, result.Decision.Code, result.Err)
+					writeClientTerminalError(req.c, channel.Type, result.Decision.Code, result.Err)
 					return nil, result.Err
 				case ScopeAbortAll:
 					lastErr = result.Err

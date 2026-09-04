@@ -2,6 +2,7 @@ package group
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -626,6 +627,11 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	if group.StreamIdleTimeout < 0 {
 		return fmt.Errorf("stream idle timeout must be non-negative")
 	}
+	if group.ParamOverride != nil {
+		if err := validateGroupParamOverride(*group.ParamOverride); err != nil {
+			return err
+		}
+	}
 	group.Category = strings.TrimSpace(group.Category)
 	group.EndpointType = model.NormalizeEndpointType(group.EndpointType)
 	group.EndpointProvider = strings.ToLower(strings.TrimSpace(group.EndpointProvider))
@@ -638,6 +644,50 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	groupCache.Set(group.ID, normalizeGroup(*group))
 	RebuildIndexes()
 	return nil
+}
+
+// validateGroupParamOverride 校验分组级 param_override 格式：必须是 JSON object。
+// 空白视为未配置，直接通过；语义校验（白名单字段）由 relay 层按现有渠道逻辑处理。
+func validateGroupParamOverride(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return fmt.Errorf("param_override must be a valid JSON object: %w", err)
+	}
+	return nil
+}
+
+// ApplyToolsProbeResult 按证据层级把 tools 探测结论回填到 group_items（Seller 移植）。
+//   - executed：强 true 证据，覆盖所有非 true 行；
+//   - accepted / required_unsupported：弱 true 证据，只写当前为 NULL 的行（不覆盖任何 false）；
+//   - unsupported：≥2 确认 false，覆盖所有非 false 行；
+//   - pending / required_ignored / unknown：不判定，不写列。
+func ApplyToolsProbeResult(channelID int, modelName string, result model.ToolsProbeResult, keyID *int, probedAt int64) error {
+	if channelID <= 0 || strings.TrimSpace(modelName) == "" {
+		return nil
+	}
+	base := db.GetDB().Model(&model.GroupItem{}).Where("channel_id = ? AND model_name = ?", channelID, modelName)
+	updates := map[string]any{
+		"supports_tools_probe_key_id": keyID,
+		"supports_tools_probed_at":    probedAt,
+		"supports_tools_source":       result.Source,
+	}
+	switch result.State {
+	case model.ToolsProbeStateExecuted:
+		updates["supports_tools"] = true
+		return base.Where("supports_tools IS NULL OR supports_tools = ?", false).Updates(updates).Error
+	case model.ToolsProbeStateAccepted, model.ToolsProbeStateRequiredUnsupported:
+		updates["supports_tools"] = true
+		return base.Where("supports_tools IS NULL").Updates(updates).Error
+	case model.ToolsProbeStateUnsupported:
+		updates["supports_tools"] = false
+		return base.Where("supports_tools IS NULL OR supports_tools = ?", true).Updates(updates).Error
+	default:
+		return nil
+	}
 }
 
 func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Group, error) {
@@ -711,6 +761,16 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		selectFields = append(selectFields, "session_keep_time")
 		updates.SessionKeepTime = *req.SessionKeepTime
 	}
+	if req.SortStrategy != nil {
+		selectFields = append(selectFields, "sort_strategy")
+		strategy := strings.ToLower(strings.TrimSpace(*req.SortStrategy))
+		switch strategy {
+		case "", "non_relay_balance", "non_relay_multiplier", "multiplier_balance", "balance_only":
+		default:
+			return nil, fmt.Errorf("invalid sort strategy: must be empty, non_relay_balance, non_relay_multiplier, multiplier_balance or balance_only")
+		}
+		updates.SortStrategy = strategy
+	}
 	if req.Condition != nil {
 		selectFields = append(selectFields, "condition")
 		updates.Condition = strings.TrimSpace(*req.Condition)
@@ -722,6 +782,17 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 			return nil, fmt.Errorf("invalid reasoning buffer strategy: must be empty, 'buffer', or 'immediate'")
 		}
 		updates.ReasoningBufferStrategy = strategy
+	}
+	if req.ParamOverride != nil {
+		if err := validateGroupParamOverride(*req.ParamOverride); err != nil {
+			return nil, err
+		}
+		selectFields = append(selectFields, "param_override")
+		updates.ParamOverride = req.ParamOverride
+	}
+	if req.CustomHeader != nil {
+		selectFields = append(selectFields, "custom_header")
+		updates.CustomHeader = *req.CustomHeader
 	}
 
 	if len(selectFields) > 0 {

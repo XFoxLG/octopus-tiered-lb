@@ -42,6 +42,8 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"DELETE /api/v1/channel/group/delete/:id":                                        {},
 	"POST /api/v1/group/auto-group":                                                  {},
 	"POST /api/v1/group/purge-unavailable":                                           {},
+	"POST /api/v1/group/sort":                                                        {},
+	"POST /api/v1/group/apply-defaults":                                              {},
 	"POST /api/v1/group/create":                                                      {},
 	"POST /api/v1/group/update":                                                      {},
 	"DELETE /api/v1/group/delete-all":                                                {},

@@ -43,6 +43,18 @@ func List(ctx context.Context) ([]model.Channel, error) {
 	return channels, nil
 }
 
+// GetByName 按渠道名精确查找已启用的渠道（指定渠道路由用）。
+// 名称比较严格区分大小写且不 trim，与 XyzenSun direct-channel ADR 一致。
+func GetByName(name string) (*model.Channel, error) {
+	for _, cached := range chCache.GetAll() {
+		if cached.Name == name {
+			channel := cached
+			return &channel, nil
+		}
+	}
+	return nil, fmt.Errorf("channel not found")
+}
+
 // encryptChannelKeysForDB 将渠道 Key 加密（enc: 前缀）以便落库。
 // 调用方负责保证加密后不把密文写回运行时缓存；落库完成后应恢复明文。
 func encryptChannelKeysForDB(keys []model.ChannelKey) error {
@@ -462,6 +474,10 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 	if req.MatchRegex != nil {
 		selectFields = append(selectFields, "match_regex")
 		updates.MatchRegex = req.MatchRegex
+	}
+	if req.IsReserve != nil {
+		selectFields = append(selectFields, "is_reserve")
+		updates.IsReserve = *req.IsReserve
 	}
 
 	if len(selectFields) > 0 {

@@ -124,6 +124,19 @@ func persistSyncSnapshot(ctx context.Context, accountID int, snapshot *syncSnaps
 			snapshot.groups[i].GroupKey = model.NormalizeSiteGroupKey(snapshot.groups[i].GroupKey)
 			if existing, ok := existingGroupMap[snapshot.groups[i].GroupKey]; ok {
 				snapshot.groups[i].ProjectionDisabled = existing.ProjectionDisabled
+				// 分组倍率 keep-block（Seller 移植）：站点停发倍率时保留旧数值但 known 降 false
+				//（保留数值但按暂定放行）；policy 阻断状态保留，由 EnforceMultiplierCap 重算。
+				if snapshot.groups[i].Multiplier == nil && existing.Multiplier != nil {
+					multiplier := *existing.Multiplier
+					snapshot.groups[i].Multiplier = &multiplier
+					if snapshot.groups[i].MultiplierKnown == nil {
+						known := false
+						snapshot.groups[i].MultiplierKnown = &known
+					}
+				}
+				snapshot.groups[i].PolicyBlocked = existing.PolicyBlocked
+				snapshot.groups[i].PolicyBlockReason = existing.PolicyBlockReason
+				snapshot.groups[i].PolicyBlockedAt = existing.PolicyBlockedAt
 			}
 		}
 		mergedTokens := mergePersistedSiteTokens(accountID, existingTokens, snapshot.tokens, now)

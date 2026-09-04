@@ -70,6 +70,16 @@ func init() {
 			router.NewRoute("/delete/:id", http.MethodDelete).
 				Use(middleware.RequirePermission(auth.PermGroupsWrite)).
 				Handle(deleteGroup),
+		).
+		AddRoute(
+			router.NewRoute("/sort", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermGroupsWrite)).
+				Handle(sortGroupItems),
+		).
+		AddRoute(
+			router.NewRoute("/apply-defaults", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermGroupsWrite)).
+				Handle(applyGroupDefaults),
 		)
 	// AddRoute(
 	// 	router.NewRoute("/auto-add-item", http.MethodPost).
@@ -323,6 +333,36 @@ func purgeUnavailableGroupItems(c *gin.Context) {
 	resp.Success(c, result)
 }
 
+// sortGroupItems 按各自分组 sort_strategy（空则跟随全局）重排成员并回写 priority。
+// 请求体 {"group_ids":[...]}，空数组=全部的分组成员为空直接返回 0，不报错。
+func sortGroupItems(c *gin.Context) {
+	var req struct {
+		GroupIDs []int `json:"group_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	sorted, err := grp.SortGroupsByStrategy(req.GroupIDs, c.Request.Context())
+	if err != nil {
+		log.Errorf("sort group items failed: %v", err)
+		resp.InternalError(c)
+		return
+	}
+	resp.Success(c, gin.H{"sorted_count": sorted})
+}
+
+// applyGroupDefaults 一键应用分组默认：负载模式全量覆盖 + 全部分组重排 + 倍率上限阻断重算。
+func applyGroupDefaults(c *gin.Context) {
+	result, err := grp.ApplyGroupDefaults(c.Request.Context())
+	if err != nil {
+		log.Errorf("apply group defaults failed: %v", err)
+		resp.InternalError(c)
+		return
+	}
+	resp.Success(c, result)
+}
+
 // func autoAddGroupItem(c *gin.Context) {
 // 	var req struct {
 // 		ID int `json:"id"`
@@ -351,6 +391,7 @@ type groupListResponseItem struct {
 	OutboundFormat    string            `json:"outbound_format,omitempty"`
 	Mode              model.GroupMode   `json:"mode"`
 	MatchRegex        string            `json:"match_regex"`
+	SortStrategy      string            `json:"sort_strategy,omitempty"`
 	FirstTokenTimeOut int               `json:"first_token_time_out"`
 	AttemptTimeOut    int               `json:"attempt_time_out"`
 	StreamIdleTimeout int               `json:"stream_idle_timeout"`
@@ -380,6 +421,7 @@ func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
 			OutboundFormat:    group.OutboundFormat,
 			Mode:              group.Mode,
 			MatchRegex:        group.MatchRegex,
+			SortStrategy:      group.SortStrategy,
 			FirstTokenTimeOut: group.FirstTokenTimeOut,
 			AttemptTimeOut:    group.AttemptTimeOut,
 			StreamIdleTimeout: group.StreamIdleTimeout,

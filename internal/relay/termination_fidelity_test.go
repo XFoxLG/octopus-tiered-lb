@@ -181,6 +181,27 @@ func TestIsEmptyOutputResponseDoesNotRetryProviderFailure(t *testing.T) {
 	}
 }
 
+func TestTerminationForChoiceDerivesRefusalFallback(t *testing.T) {
+	// Legacy OpenAI-compatible channels deliver plain wire strings without
+	// provider-decoded Termination metadata. A "refusal" finish_reason must
+	// still map onto the canonical refusal cause so empty-output retry policy
+	// stays out of the way of deliberate model rejections.
+	finishReason := "refusal"
+	termination := terminationForChoice(model.Choice{
+		FinishReason: &finishReason,
+	})
+	if termination.Cause != model.TerminationCauseRefusal {
+		t.Fatalf("finish_reason=%q derived cause=%q, want refusal", finishReason, termination.Cause)
+	}
+	// Refusal is a deliberate model outcome: an empty refusal response must
+	// not be retried as empty output (same guard as provider-decoded refusal).
+	if isEmptyOutputResponse(&model.InternalLLMResponse{
+		Choices: []model.Choice{{FinishReason: &finishReason}},
+	}) {
+		t.Fatal("refusal fallback must keep empty-output retry guard")
+	}
+}
+
 func TestResponseHasNonCacheableTerminationRejectsPromptBlock(t *testing.T) {
 	promptBlockedResponse := &model.InternalLLMResponse{
 		Termination: model.TerminationMetadata{

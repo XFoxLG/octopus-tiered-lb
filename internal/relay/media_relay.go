@@ -296,6 +296,8 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					})
 					balancer.RecordSuccess(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModel)
+					// 离群窗口：记录成功样本（与熔断器同级）。
+					balancer.OutlierReport(channel.ID, true, statusCode, time.Now())
 					balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, true)
 					balancer.RecordAutoSuccess(channel.ID, resolvedModel)
 					balancer.RecordAutoLatency(channel.ID, resolvedModel, span.Duration().Milliseconds())
@@ -321,6 +323,8 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				if decision.Scope == ScopeNextChannel || decision.Scope == ScopeAbortAll {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordAutoFailure(channel.ID, resolvedModel)
+					// 离群窗口：记录失败样本（与熔断器同级）。
+					balancer.OutlierReport(channel.ID, false, decision.Code, time.Now())
 				}
 				if decision.Code == http.StatusTooManyRequests {
 					channelRateLimited, remaining := balancer.RecordChannelRateLimit(
@@ -347,7 +351,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
 					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP)
 					// 与 LLM relay 一致：客户端错误原样回给下游，不吞成 502。
-					writeClientTerminalError(c, decision.Code, fwdErr)
+					writeClientTerminalError(c, channel.Type, decision.Code, fwdErr)
 					return
 				case ScopeAbortAll:
 					lastErr = fwdErr

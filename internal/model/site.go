@@ -212,6 +212,17 @@ type SiteUserGroup struct {
 	SiteAccountID      int    `json:"site_account_id" gorm:"uniqueIndex:idx_site_account_group;not null"`
 	GroupKey           string `json:"group_key" gorm:"size:128;uniqueIndex:idx_site_account_group;not null"`
 	Name               string `json:"name"`
+	// Multiplier 上游分组倍率（Seller 移植）。nil=站点未提供/未知。
+	Multiplier *float64 `json:"group_multiplier,omitempty"`
+	// MultiplierKnown 倍率可信度（Seller 移植）：true=真实倍率，false=暂定/未知，nil=未知（视同 false）。
+	// 排序与倍率上限判定只采信 known=true 的值，其余按 1x 放行。
+	MultiplierKnown *bool `json:"multiplier_known,omitempty"`
+	// PolicyBlocked 倍率上限阻断（Seller 移植）：known=true 且倍率超 cap 时由 EnforceMultiplierCap 置 true。
+	PolicyBlocked bool `json:"policy_blocked" gorm:"default:false;index"`
+	// PolicyBlockReason 阻断原因（机器可读短语，如 "multiplier exceeds cap (2 > 1.5)"）。
+	PolicyBlockReason string `json:"policy_block_reason"`
+	// PolicyBlockedAt 阻断时间，解阻时置空。
+	PolicyBlockedAt *time.Time `json:"policy_blocked_at"`
 	RawPayload         string `json:"raw_payload"`
 	ProjectionDisabled bool   `json:"projection_disabled" gorm:"default:false"`
 }

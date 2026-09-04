@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -42,6 +43,13 @@ const (
 	SettingKeyRelayMaxTotalAttempts              SettingKey = "relay_max_total_attempts"                // 所有候选渠道的最大决策纪录次数，0/负数回退到内置默认上限（issue #192）
 	SettingKeyRetryEmptyOutput                   SettingKey = "retry_empty_output"                      // 输出为空(无可见内容)时自动重试，流式与非流式均适用（issue #106/#155）
 	SettingKeyRetryTruncationEnabled             SettingKey = "retry_truncation_enabled"                // 输出被 max_tokens 截断(finish_reason=length)时自动重试，默认关闭
+	SettingKeyCustomRetryableCodes               SettingKey = "custom_retryable_codes"                   // 自定义可重试上游状态码（逗号分隔，如 "418,499"），命中则强制进入换 Key/换渠道重试
+	SettingKeyCustomErrorRules                   SettingKey = "custom_error_rules"                       // 自定义错误透传规则（JSON 数组，见 relay.CustomErrorRule），按渠道类型+错误码/关键词改写最终错误呈现
+	SettingKeyRelayLogMaxContentSizeMB           SettingKey = "relay_log_max_content_size_mb"            // 单条日志请求与响应正文合计上限（MiB），超限整条跳过，-1=不限
+	SettingKeyRelayLogMemoryLogMaxDimidiateTimes SettingKey = "relay_log_memory_log_max_dimidiate_times" // 仅内存日志模式下折半次数阈值，达到后主动 GC 一次，-1=关闭
+	SettingKeyDefaultGroupLoadBalance            SettingKey = "default_group_load_balance"               // 默认分组负载均衡模式（空=不强制覆盖各分组现有模式，Seller 移植）
+	SettingKeyDefaultGroupSortStrategy           SettingKey = "default_group_sort_strategy"              // 默认分组排序策略（空=non_relay_balance，Seller 移植）
+	SettingKeyDefaultMultiplierCap               SettingKey = "default_multiplier_cap"                   // 默认分组倍率上限（0=不限制，Seller 移植）
 	SettingKeyReasoningBufferStrategy            SettingKey = "reasoning_buffer_strategy"               // 推理内容缓冲策略：buffer(缓冲) | immediate(立即)，默认 buffer（issue #155）
 	SettingKeyRateLimitHoldEnabled               SettingKey = "rate_limit_hold_enabled"                 // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
 	SettingKeyRateLimitHoldInterval              SettingKey = "rate_limit_hold_interval"                // 429 渠道内延时重试间隔（秒）
@@ -157,6 +165,13 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRelayMaxTotalAttempts, Value: "0"},               // 0 回退到内置默认上限（issue #192 防止 attempts 无限膨胀）
 		{Key: SettingKeyRetryEmptyOutput, Value: "true"},                 // 默认启用空输出重试
 		{Key: SettingKeyRetryTruncationEnabled, Value: "false"},          // 默认关闭截断重试（按需在设置页开启）
+		{Key: SettingKeyCustomRetryableCodes, Value: ""},                // 默认无自定义可重试码
+		{Key: SettingKeyCustomErrorRules, Value: "[]"},                  // 默认无自定义错误透传规则
+		{Key: SettingKeyRelayLogMaxContentSizeMB, Value: "2"},           // 默认单条日志正文上限 2MiB
+		{Key: SettingKeyRelayLogMemoryLogMaxDimidiateTimes, Value: "15"}, // 默认折半 15 次后主动 GC 一次
+		{Key: SettingKeyDefaultGroupLoadBalance, Value: ""},             // 为空时不覆盖各分组现有模式
+		{Key: SettingKeyDefaultGroupSortStrategy, Value: ""},            // 为空时使用 non_relay_balance
+		{Key: SettingKeyDefaultMultiplierCap, Value: "0"},               // 0 表示不限制
 		{Key: SettingKeyReasoningBufferStrategy, Value: "buffer"},        // 默认缓冲策略：安全重试但可能 CF 超时
 		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},            // 默认关闭：429 仍立即换 Key/渠道
 		{Key: SettingKeyRateLimitHoldInterval, Value: "10"},              // 默认每 10 秒重试一次
@@ -364,6 +379,82 @@ func (s *Setting) Validate() error {
 	case SettingKeyRelayLogQueueDropPolicy:
 		if s.Value != "disabled" && s.Value != "oldest" && s.Value != "newest" {
 			return fmt.Errorf("relay log queue drop policy must be disabled, oldest or newest")
+		}
+		return nil
+	case SettingKeyRelayLogMaxContentSizeMB:
+		// -1=不限；其余必须是非负整数（0 表示任何带正文的日志都跳过）。
+		v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+		if err != nil || v < -1 {
+			return fmt.Errorf("relay log max content size must be -1 or a non-negative integer (MiB)")
+		}
+		return nil
+	case SettingKeyRelayLogMemoryLogMaxDimidiateTimes:
+		// -1=关闭周期性 GC；其余必须是正整数（折半计数阈值）。
+		if strings.TrimSpace(s.Value) == "-1" {
+			return nil
+		}
+		v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+		if err != nil || v < 1 {
+			return fmt.Errorf("relay log memory log max dimidiate times must be -1 or a positive integer")
+		}
+		return nil
+	case SettingKeyDefaultGroupLoadBalance:
+		// 空串合法（=不强制覆盖各分组现有模式）。非空必须是已知 GroupMode 名。
+		if strings.TrimSpace(s.Value) == "" {
+			return nil
+		}
+		switch strings.ToLower(strings.TrimSpace(s.Value)) {
+		case "round_robin", "random", "failover", "weighted", "auto":
+		default:
+			return fmt.Errorf("default group load balance must be round_robin, random, failover, weighted, auto or empty")
+		}
+		return nil
+	case SettingKeyDefaultGroupSortStrategy:
+		// 空串合法（=non_relay_balance）。非空必须是已知排序策略名。
+		if strings.TrimSpace(s.Value) == "" {
+			return nil
+		}
+		switch strings.ToLower(strings.TrimSpace(s.Value)) {
+		case "non_relay_balance", "non_relay_multiplier", "multiplier_balance", "balance_only":
+		default:
+			return fmt.Errorf("default group sort strategy must be non_relay_balance, non_relay_multiplier, multiplier_balance, balance_only or empty")
+		}
+		return nil
+	case SettingKeyDefaultMultiplierCap:
+		// 0=不限制；其余必须是非负有限数（Seller 语义：仅 known=true 且超 cap 才拦）。
+		capValue, err := strconv.ParseFloat(strings.TrimSpace(s.Value), 64)
+		if err != nil || math.IsNaN(capValue) || math.IsInf(capValue, 0) || capValue < 0 {
+			return fmt.Errorf("default multiplier cap must be a finite non-negative number")
+		}
+		return nil
+	case SettingKeyCustomRetryableCodes:
+		// 空串合法（=未配置，保持默认分类）。非空必须是逗号分隔的 100-599 状态码。
+		if strings.TrimSpace(s.Value) == "" {
+			return nil
+		}
+		for _, part := range strings.Split(s.Value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			code, err := strconv.Atoi(part)
+			if err != nil || code < 100 || code > 599 {
+				return fmt.Errorf("custom retryable codes must be comma-separated HTTP status codes (100-599)")
+			}
+		}
+		return nil
+	case SettingKeyCustomErrorRules:
+		// 空串与空数组都合法（=未配置）。非空必须是 JSON 数组，元素结构由
+		// relay.CustomErrorRule 定义；此处只做形状校验，语义校验归解析函数。
+		if strings.TrimSpace(s.Value) == "" {
+			return nil
+		}
+		var rules []map[string]any
+		if err := json.Unmarshal([]byte(s.Value), &rules); err != nil {
+			return fmt.Errorf("custom error rules must be a JSON array: %w", err)
+		}
+		if rules == nil {
+			return fmt.Errorf("custom error rules must be a JSON array")
 		}
 		return nil
 	case SettingKeyProxyURL, SettingKeySemanticCacheEmbeddingBaseURL, SettingKeyAIRouteBaseURL:

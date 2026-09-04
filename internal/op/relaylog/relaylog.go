@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"github.com/lingyuins/octopus/internal/utils/json"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,80 @@ import (
 const relayLogMaxSize = 200
 const relayLogMaxSizeNoDB = 200 // 当不保存到数据库时，允许更大的缓存用于实时查询
 const relayLogStreamTokenTTL = 5 * time.Minute
+
+// DefaultRelayLogMaxContentSizeMB 是单条日志正文上限默认值（MiB）。
+const DefaultRelayLogMaxContentSizeMB = 2
+
+// DefaultRelayLogMemoryLogMaxDimidiateTimes 是仅内存模式下折半次数阈值默认值。
+const DefaultRelayLogMemoryLogMaxDimidiateTimes = 15
+
+// memoryLogDimidiateTimes 记录仅内存模式下日志折半发生的次数；
+// 达到阈值后主动调用一次 runtime.GC，及时回收旧日志正文占用的堆内存。
+// 计数更新复用 relayLogCacheLock，无需额外加锁。
+var memoryLogDimidiateTimes int
+
+// GetRelayLogMaxContentSizeMB 读取单条日志正文上限（MiB），-1=不限。
+// 读取失败或非法值回退默认值。
+func GetRelayLogMaxContentSizeMB() int {
+	v, err := setting.GetInt(model.SettingKeyRelayLogMaxContentSizeMB)
+	if err != nil || v < -1 {
+		return DefaultRelayLogMaxContentSizeMB
+	}
+	return v
+}
+
+// RelayLogContentExceedsLimit 报告正文合计字节数是否超限。-1 表示不限。
+func RelayLogContentExceedsLimit(contentSize int64, maxContentSizeMB int) bool {
+	if maxContentSizeMB == -1 {
+		return false
+	}
+	const bytesPerMiB = 1024 * 1024
+	return contentSize > int64(maxContentSizeMB)*bytesPerMiB
+}
+
+// getMemoryLogMaxDimidiateTimes 读取折半 GC 阈值，-1=关闭。非法值回退默认值。
+func getMemoryLogMaxDimidiateTimes() int {
+	v, err := setting.GetInt(model.SettingKeyRelayLogMemoryLogMaxDimidiateTimes)
+	if err != nil {
+		return DefaultRelayLogMemoryLogMaxDimidiateTimes
+	}
+	if v == -1 {
+		return -1
+	}
+	if v < 1 {
+		return DefaultRelayLogMemoryLogMaxDimidiateTimes
+	}
+	return v
+}
+
+// halveMemoryLogCache 保留最新一半日志并重建底层数组。
+// 必须用 make+copy 而不是 reslice，否则旧底层数组仍被引用，
+// 被淘汰日志的 Request/ResponseContent 大字段无法释放。
+// 调用方必须持有 relayLogCacheLock。返回是否发生了折半。
+func halveMemoryLogCache(maxSize int) bool {
+	keepSize := maxSize / 2
+	if len(relayLogCache) <= keepSize {
+		return false
+	}
+	newCache := make([]model.RelayLog, keepSize, maxSize)
+	copy(newCache, relayLogCache[len(relayLogCache)-keepSize:])
+	relayLogCache = newCache
+	return true
+}
+
+// noteMemoryLogDimidiate 记录一次折半，达到阈值时返回 true（调用方在锁外 GC）。
+func noteMemoryLogDimidiate() bool {
+	maxTimes := getMemoryLogMaxDimidiateTimes()
+	if maxTimes == -1 {
+		return false
+	}
+	memoryLogDimidiateTimes++
+	if memoryLogDimidiateTimes > maxTimes {
+		memoryLogDimidiateTimes = 0
+		return true
+	}
+	return false
+}
 
 var relayLogCache = make([]model.RelayLog, 0, relayLogMaxSize)
 var relayLogCacheLock sync.Mutex
@@ -267,7 +342,13 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 	}
 
 	relayLogCacheLock.Lock()
-	defer relayLogCacheLock.Unlock()
+	needMemoryLogGC := false
+	// GC 必须在锁外触发，避免阻塞日志热路径。
+	defer func() {
+		if needMemoryLogGC {
+			runtime.GC()
+		}
+	}()
 
 	// 应用队列丢弃策略，防止高 QPS 下内存无界增长（见 issue OOM 诊断报告）。
 	if len(relayLogCache) >= maxSize {
@@ -284,10 +365,10 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 				triggerFlush()
 				return nil
 			}
-			// 不保存到数据库时，保留最近一半
-			keepSize := maxSize / 2
-			if len(relayLogCache) > keepSize {
-				relayLogCache = relayLogCache[len(relayLogCache)-keepSize:]
+			// 不保存到数据库时，保留最近一半并重建底层数组，
+			// 否则旧数组仍引用被淘汰日志的大字段，内存无法回收。
+			if halveMemoryLogCache(maxSize) {
+				needMemoryLogGC = noteMemoryLogDimidiate()
 			}
 		case "oldest":
 			// 丢弃最旧日志（推荐：保留最新的诊断数据）
@@ -295,6 +376,7 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 		case "newest":
 			// 丢弃最新日志（保留历史序列完整性，但可能丢失最新错误）
 			// 不追加新日志，直接返回
+			relayLogCacheLock.Unlock()
 			return nil
 		default:
 			// 未知策略，回退到丢弃最旧
@@ -303,6 +385,7 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 	}
 
 	relayLogCache = append(relayLogCache, relayLog)
+	relayLogCacheLock.Unlock()
 	return nil
 }
 
@@ -375,11 +458,12 @@ func RelayLogSaveDBTask(ctx context.Context) error {
 	}
 
 	relayLogCacheLock.Lock()
-	if len(relayLogCache) > relayLogMaxSizeNoDB {
-		keepSize := relayLogMaxSizeNoDB / 2
-		relayLogCache = relayLogCache[len(relayLogCache)-keepSize:]
-	}
+	needMemoryLogGC := halveMemoryLogCache(relayLogMaxSizeNoDB) && noteMemoryLogDimidiate()
 	relayLogCacheLock.Unlock()
+	// GC 在锁外触发，避免阻塞定时任务。
+	if needMemoryLogGC {
+		runtime.GC()
+	}
 
 	return nil
 }

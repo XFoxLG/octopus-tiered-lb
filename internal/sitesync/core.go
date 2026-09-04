@@ -8,6 +8,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
+	grp "github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -46,6 +47,13 @@ func SyncAccount(ctx context.Context, accountID int) (*model.SiteSyncResult, err
 
 	if err := persistSyncSnapshot(ctx, account.ID, snapshot); err != nil {
 		return nil, sanitizeSiteError(err)
+	}
+
+	// 同步后无条件重算倍率上限阻断（Seller 移植）：不依赖后续投影成败，
+	// 否则停发倍率的 known=false 行永远不被处理、policy_blocked 卡死。失败只告警，
+	// 不阻断同步主流程（阻断是成本控制，非同步正确性）。
+	if _, _, err := grp.EnforceMultiplierCap(ctx); err != nil {
+		log.Warnf("site sync account %d: enforce multiplier cap failed: %v", account.ID, err)
 	}
 
 	channelIDs, err := ProjectAccount(ctx, account.ID)
