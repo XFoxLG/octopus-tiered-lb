@@ -1545,6 +1545,22 @@
         "hint": "控制推理 token（思考過程）的串流發送方式。「緩衝」策略等待可見內容到達後再發送推理內容（可安全重試，但長時間推理可能觸發 Cloudflare/Nginx 逾時）；「立即」策略即時發送推理塊（即時思考展示，但空輸出無法重試）。",
         "buffer": "緩衝（可重試，CF 逾時風險）",
         "immediate": "立即（即時，無重試）"
+      },
+      "defaultReasoningEffort": {
+        "label": "預設思考強度",
+        "hint": "用戶端請求未攜帶任何思考參數時，本分組自動補上所選思考檔位；用戶端已發送的檔位或「關閉思考」一律尊重。僅對支援思考的對話模型生效。",
+        "off": "關閉（不注入）",
+        "minimal": "minimal（最省）",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max（最強）"
+      },
+      "reasoningForceOverride": {
+        "label": "強制覆蓋明確關閉",
+        "hint": "開啟後，連用戶端明確要求「關閉思考」（reasoning_effort=none 或 thinking disabled）的請求也會補上預設思考檔位；用戶端已發送具體檔位的請求不受影響。",
+        "enable": "覆蓋用戶端的明確關閉"
       }
     },
     "autoStrategy": {

@@ -1589,6 +1589,22 @@
         "hint": "Controls how reasoning tokens (thinking process) are streamed. 'buffer' waits for visible content before sending reasoning (safe retry, but may trigger Cloudflare/Nginx timeouts on long reasoning). 'immediate' sends reasoning chunks instantly (real-time thinking display, but empty-output retry is unavailable).",
         "buffer": "Buffer (safe retry, CF timeout risk)",
         "immediate": "Immediate (real-time, no retry)"
+      },
+      "defaultReasoningEffort": {
+        "label": "Default reasoning effort",
+        "hint": "When a client request carries no reasoning parameters at all, this group fills in the selected effort level. Levels and explicit 'off' choices sent by the client are always respected. Only applies to chat models that support reasoning.",
+        "off": "Off (no injection)",
+        "minimal": "minimal (cheapest)",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max (strongest)"
+      },
+      "reasoningForceOverride": {
+        "label": "Force override explicit off",
+        "hint": "When enabled, even requests that explicitly disable thinking (reasoning_effort=none or thinking disabled) get the default effort level injected. Requests that sent a concrete level are never rewritten.",
+        "enable": "Override client's explicit off"
       }
     },
     "autoStrategy": {

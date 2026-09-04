@@ -53,6 +53,11 @@ export interface Group {
     last_test_at?: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     param_override?: string;
+    // 分组默认思考档位（Sub2API 参考，本仓库裁剪版）。
+    // "" = 不注入；minimal/low/medium/high/xhigh/max = 补上默认档位。
+    default_reasoning_effort?: string;
+    // true 时连客户端显式关闭（none / thinking disabled）也补上默认档位。
+    reasoning_force_override?: boolean;
     custom_header?: { header_key: string; header_value: string }[];
     sort_strategy?: string; // "" | "non_relay_balance" | "non_relay_multiplier" | "multiplier_balance" | "balance_only"
 }
@@ -384,6 +389,8 @@ export interface CreateGroupRequest {
     condition: string;
     items: GroupItem[];
     reasoning_buffer_strategy?: string;
+    default_reasoning_effort?: string;
+    reasoning_force_override?: boolean;
 }
 
 /**
@@ -404,6 +411,8 @@ export interface GroupUpdateRequest {
     stream_idle_timeout?: number;
     session_keep_time?: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
+    default_reasoning_effort?: string;
+    reasoning_force_override?: boolean;
     items_to_add?: GroupItemAddRequest[];
     items_to_update?: GroupItemUpdateRequest[];
     items_to_delete?: number[];

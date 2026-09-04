@@ -20,6 +20,17 @@ func (i *ChatInbound) TransformRequest(ctx context.Context, body []byte) (*model
 		return nil, err
 	}
 	request.RawAPIFormat = model.APIFormatOpenAIChatCompletion
+	// Presence probe: the internal model keeps reasoning_effort as a plain
+	// string, so an omitted key and an explicit "none" both unmarshal to a
+	// non-empty/empty pair we cannot tell apart afterwards. Re-scan the raw
+	// body with a pointer-typed shadow struct to record whether the client
+	// expressed any reasoning intent (including "none").
+	var reasoningProbe struct {
+		ReasoningEffort *string `json:"reasoning_effort"`
+	}
+	if err := transformer.Unmarshal(body, &reasoningProbe); err == nil && reasoningProbe.ReasoningEffort != nil {
+		request.ReasoningExplicit = true
+	}
 	return &request, nil
 }
 

@@ -151,26 +151,6 @@ func (o *MessagesOutbound) TransformStream(ctx context.Context, eventData []byte
 
 // Helper functions
 
-// reasoningToThinkingBudget maps reasoning effort levels to thinking budget in tokens
-// https://ai.google.dev/gemini-api/docs/thinking
-func reasoningToThinkingBudget(effort string) int32 {
-	switch strings.ToLower(effort) {
-	case "low":
-		return 1024
-	case "medium":
-		return 4096
-	case "high":
-		return 24576
-	case "xhigh":
-		return 49152
-	case "max":
-		return 65536
-	default:
-		// 防御性：未知值走动态
-		return -1
-	}
-}
-
 func audioTypeToMimeType(format string) string {
 	switch format {
 	case "wav":
@@ -355,13 +335,22 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 		hasConfig = true
 	}
 
-	if request.ReasoningEffort != "" {
-		budget := reasoningToThinkingBudget(request.ReasoningEffort)
-
-		config.ThinkingConfig = &model.GeminiThinkingConfig{
-			ThinkingBudget:  &budget,
-			IncludeThoughts: true,
+	// 思考参数按模型家族钳制（Seller 移植 budget.go）：
+	// 2.5 系用 thinkingBudget 并钳制合法区间（Pro 拒绝 0），3.x 拒绝
+	// thinkingBudget、改用 thinkingLevel 并按子家族钳制档位；
+	// Flash-Lite 视为无思考家族，ThinkingConfig 整体省略。
+	decision := resolveThinkingConfig(request.Model, request.ReasoningBudget, request.ReasoningEffort, request.AdaptiveThinking)
+	if decision.Supported {
+		thinkingConfig := &model.GeminiThinkingConfig{
+			IncludeThoughts: decision.IncludeThoughts,
 		}
+		if decision.UseLevel {
+			thinkingConfig.ThinkingLevel = decision.Level
+		} else {
+			budget := decision.Budget
+			thinkingConfig.ThinkingBudget = &budget
+		}
+		config.ThinkingConfig = thinkingConfig
 		hasConfig = true
 	}
 

@@ -164,6 +164,9 @@ function EditDialogContent({
                             attempt_time_out: group.attempt_time_out ?? 0,
                             stream_idle_timeout: group.stream_idle_timeout ?? 0,
                             session_keep_time: group.session_keep_time ?? 0,
+                            reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
+                            default_reasoning_effort: group.default_reasoning_effort ?? '',
+                            reasoning_force_override: group.reasoning_force_override ?? false,
                             members: editMembers,
                         }}
                         submitText={t('detail.actions.save')}
@@ -747,6 +750,21 @@ export function GroupListItem({ group }: { group: Group }) {
                 (group.session_keep_time ?? 0)
             )
                 payload.session_keep_time = nextSessionKeepTime;
+            const nextDefaultReasoningEffort = (
+                values.default_reasoning_effort ?? ''
+            );
+            const nextReasoningForceOverride =
+                values.reasoning_force_override ?? false;
+            if (
+                nextDefaultReasoningEffort !==
+                (group.default_reasoning_effort ?? '')
+            )
+                payload.default_reasoning_effort = nextDefaultReasoningEffort;
+            if (
+                nextReasoningForceOverride !==
+                (group.reasoning_force_override ?? false)
+            )
+                payload.reasoning_force_override = nextReasoningForceOverride;
             if (items_to_add.length) payload.items_to_add = items_to_add;
             if (items_to_update.length)
                 payload.items_to_update = items_to_update;
@@ -769,10 +787,12 @@ export function GroupListItem({ group }: { group: Group }) {
         [
             group.category,
             group.condition,
+            group.default_reasoning_effort,
             group.endpoint_provider,
             group.endpoint_type,
             group.first_token_time_out,
             group.attempt_time_out,
+            group.reasoning_force_override,
             group.stream_idle_timeout,
             group.session_keep_time,
             group.id,

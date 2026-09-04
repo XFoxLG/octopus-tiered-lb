@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Accordion, AccordionContent, AccordionItem } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 import { getModelIcon } from '@/lib/model-icons';
@@ -35,6 +36,8 @@ export type GroupEditorValues = {
     stream_idle_timeout: number;
     session_keep_time: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
+    default_reasoning_effort?: string; // "" | minimal | low | medium | high | xhigh | max
+    reasoning_force_override?: boolean;
     members: SelectedMember[];
 };
 
@@ -304,6 +307,8 @@ export function GroupEditor({
     const [streamIdleTimeout, setStreamIdleTimeout] = useState<number>(initial?.stream_idle_timeout ?? 0);
     const [sessionKeepTime, setSessionKeepTime] = useState<number>(initial?.session_keep_time ?? 0);
     const [reasoningBufferStrategy, setReasoningBufferStrategy] = useState<string>(initial?.reasoning_buffer_strategy ?? '');
+    const [defaultReasoningEffort, setDefaultReasoningEffort] = useState<string>(initial?.default_reasoning_effort ?? '');
+    const [reasoningForceOverride, setReasoningForceOverride] = useState<boolean>(initial?.reasoning_force_override ?? false);
     const [condition, setCondition] = useState(initial?.condition ?? '');
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(dedupeSelectedMembers(initial?.members ?? []));
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
@@ -398,6 +403,8 @@ export function GroupEditor({
             session_keep_time: sessionKeepTime,
             condition,
             reasoning_buffer_strategy: reasoningBufferStrategy,
+            default_reasoning_effort: defaultReasoningEffort,
+            reasoning_force_override: reasoningForceOverride,
             members: dedupeSelectedMembers(selectedMembers),
         });
     };
@@ -720,6 +727,39 @@ export function GroupEditor({
                         <option value="buffer">{t('form.reasoningBufferStrategy.buffer')}</option>
                         <option value="immediate">{t('form.reasoningBufferStrategy.immediate')}</option>
                     </select>
+                </Field>
+                <Field>
+                    <FieldLabel htmlFor="group-default-reasoning-effort">
+                        {t('form.defaultReasoningEffort.label')}
+                        <Hint text={t('form.defaultReasoningEffort.hint')} />
+                    </FieldLabel>
+                    <select
+                        id="group-default-reasoning-effort"
+                        value={defaultReasoningEffort}
+                        onChange={(e) => setDefaultReasoningEffort(e.target.value)}
+                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
+                    >
+                        <option value="">{t('form.defaultReasoningEffort.off')}</option>
+                        <option value="minimal">{t('form.defaultReasoningEffort.minimal')}</option>
+                        <option value="low">{t('form.defaultReasoningEffort.low')}</option>
+                        <option value="medium">{t('form.defaultReasoningEffort.medium')}</option>
+                        <option value="high">{t('form.defaultReasoningEffort.high')}</option>
+                        <option value="xhigh">{t('form.defaultReasoningEffort.xhigh')}</option>
+                        <option value="max">{t('form.defaultReasoningEffort.max')}</option>
+                    </select>
+                </Field>
+                <Field className="md:col-span-2">
+                    <FieldLabel htmlFor="group-reasoning-force-override">
+                        {t('form.reasoningForceOverride.label')}
+                        <Hint text={t('form.reasoningForceOverride.hint')} />
+                    </FieldLabel>
+                    <label className="flex w-fit items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground">
+                        <Switch
+                            checked={reasoningForceOverride}
+                            onCheckedChange={setReasoningForceOverride}
+                        />
+                        <span>{t('form.reasoningForceOverride.enable')}</span>
+                    </label>
                 </Field>
                                 <Field className="md:col-span-2">
                                     <FieldLabel htmlFor="group-condition">

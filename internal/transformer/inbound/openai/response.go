@@ -1077,6 +1077,10 @@ func convertToInternalRequest(req *ResponsesRequest) (*model.InternalLLMRequest,
 
 	// Convert reasoning
 	if req.Reasoning != nil {
+		// Any reasoning object counts as an expressed intent, even an empty
+		// one — the Responses API has no "none" keyword, and a client that
+		// bothered to send reasoning {} has made a deliberate choice.
+		chatReq.ReasoningExplicit = true
 		if req.Reasoning.Effort != "" {
 			chatReq.ReasoningEffort = req.Reasoning.Effort
 		}
