@@ -312,6 +312,11 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 
 	// Convert thinking configuration to reasoning effort and preserve budget
 	if anthropicReq.Thinking != nil {
+		// Any thinking object — enabled, adaptive, or explicitly disabled —
+		// counts as an expressed reasoning intent. The disabled case leaves
+		// every reasoning field zero-valued, so this flag is the only way the
+		// relay can tell "client chose no thinking" from "client said nothing".
+		chatReq.ReasoningExplicit = true
 		switch anthropicReq.Thinking.Type {
 		case ThinkingTypeEnabled:
 			if anthropicReq.Thinking.BudgetTokens != nil {

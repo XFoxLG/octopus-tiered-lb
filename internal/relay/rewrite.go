@@ -2,6 +2,7 @@ package relay
 
 import (
 	"fmt"
+	"strings"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
@@ -34,6 +35,7 @@ func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *trans
 	}
 
 	applyParamOverride(channel, group, target)
+	applyReasoningPolicy(group, target)
 	attachRelayGroupEndpointMetadata(target, groupEndpointType)
 	return target, effectiveRewrite, nil
 }
@@ -123,4 +125,38 @@ func attachRelayGroupEndpointMetadata(request *transmodel.InternalLLMRequest, gr
 		request.TransformerMetadata = make(map[string]string)
 	}
 	request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] = normalizedEndpointType
+}
+
+// applyReasoningPolicy 分组默认思考档位注入（Sub2API 参考，本仓库裁剪版）。
+// 仅当分组配置了 DefaultReasoningEffort 且客户端「未表达任何思考意图」时，
+// 把分组档位填入 request.ReasoningEffort；出向各协议自行翻译（OpenAI
+// reasoning_effort / Anthropic adaptive+output_config / Gemini thinking 钳制）。
+//
+// 语义五态：
+//   - 分组未配置（空串）或 group 为 nil        → 跳过
+//   - 客户端已发具体档位（ReasoningEffort 非空）→ 跳过（尊重客户端选择）
+//   - 客户端已发思考预算（ReasoningBudget 非空）→ 跳过（budget 即已表达）
+//   - 客户端 AdaptiveThinking                  → 跳过（adaptive 即已表达）
+//   - 客户端显式关闭（仅 ReasoningExplicit）    → 默认跳过；分组开启
+//     ReasoningForceOverride 时注入
+//
+// passthrough/raw 出站不经过本函数（relay.go 在 prepare 之前已分流），注入
+// 天然不触碰原始穿透。
+func applyReasoningPolicy(group *appmodel.Group, request *transmodel.InternalLLMRequest) {
+	if request == nil || group == nil {
+		return
+	}
+	defaultEffort := strings.ToLower(strings.TrimSpace(group.DefaultReasoningEffort))
+	if defaultEffort == "" {
+		return
+	}
+	// 客户端已发具体档位/预算/adaptive：一律尊重，不覆盖。
+	if request.ReasoningEffort != "" || request.ReasoningBudget != nil || request.AdaptiveThinking {
+		return
+	}
+	// 客户端显式关闭（none / thinking disabled）：默认尊重。
+	if request.ReasoningExplicit && !group.ReasoningForceOverride {
+		return
+	}
+	request.ReasoningEffort = defaultEffort
 }

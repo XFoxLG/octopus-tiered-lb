@@ -182,6 +182,14 @@ type InternalLLMRequest struct {
 	// Controls effort on reasoning for reasoning models. It can be set to "low", "medium", or "high".
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
+	// ReasoningExplicit indicates the client expressed ANY reasoning intent in
+	// the original request — including an explicit "none" / thinking disabled.
+	// Help field, will not be sent to the llm service.
+	// It is what lets the relay distinguish "client said nothing" (safe to
+	// fill with a group default) from "client explicitly turned thinking off"
+	// (must be respected unless a group forces otherwise).
+	ReasoningExplicit bool `json:"-"`
+
 	// Reasoning budget for reasoning models.
 	// Help fields， will not be sent to the llm service.
 	ReasoningBudget *int64 `json:"-"`

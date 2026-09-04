@@ -632,6 +632,13 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 			return err
 		}
 	}
+	// 分组默认思考档位：归一化 + 白名单校验（空串=关闭注入）。
+	group.DefaultReasoningEffort = strings.ToLower(strings.TrimSpace(group.DefaultReasoningEffort))
+	switch group.DefaultReasoningEffort {
+	case "", "minimal", "low", "medium", "high", "xhigh", "max":
+	default:
+		return fmt.Errorf("invalid default reasoning effort: must be empty, minimal, low, medium, high, xhigh or max")
+	}
 	group.Category = strings.TrimSpace(group.Category)
 	group.EndpointType = model.NormalizeEndpointType(group.EndpointType)
 	group.EndpointProvider = strings.ToLower(strings.TrimSpace(group.EndpointProvider))
@@ -789,6 +796,20 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		}
 		selectFields = append(selectFields, "param_override")
 		updates.ParamOverride = req.ParamOverride
+	}
+	if req.DefaultReasoningEffort != nil {
+		selectFields = append(selectFields, "default_reasoning_effort")
+		effort := strings.ToLower(strings.TrimSpace(*req.DefaultReasoningEffort))
+		switch effort {
+		case "", "minimal", "low", "medium", "high", "xhigh", "max":
+		default:
+			return nil, fmt.Errorf("invalid default reasoning effort: must be empty, minimal, low, medium, high, xhigh or max")
+		}
+		updates.DefaultReasoningEffort = effort
+	}
+	if req.ReasoningForceOverride != nil {
+		selectFields = append(selectFields, "reasoning_force_override")
+		updates.ReasoningForceOverride = *req.ReasoningForceOverride
 	}
 	if req.CustomHeader != nil {
 		selectFields = append(selectFields, "custom_header")
