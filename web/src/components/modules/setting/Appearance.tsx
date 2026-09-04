@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import { cn } from '@/lib/utils';
 import {
     DEFAULT_NAV_ORDER,
@@ -159,7 +160,10 @@ function NavigationPreferences() {
                 <div className="space-y-1">
                     <div className="flex items-center gap-2">
                         <ListOrdered className="size-4 text-muted-foreground" />
-                        <h3 className="text-sm font-semibold text-foreground">{t('navOrder.title')}</h3>
+                        <h3 className="text-sm font-semibold text-foreground">
+                            {t('navOrder.title')}
+                            <Hint text={t('navOrder.minimumVisibleHint', { count: MIN_VISIBLE_NAV_ITEMS })} />
+                        </h3>
                     </div>
                     <p className="text-xs leading-5 text-muted-foreground">{t('navOrder.description')}</p>
                 </div>
@@ -248,10 +252,6 @@ function NavigationPreferences() {
                     </Droppable>
                 </DragDropContext>
             </div>
-
-            <p className="text-xs leading-5 text-muted-foreground">
-                {t('navOrder.minimumVisibleHint', { count: MIN_VISIBLE_NAV_ITEMS })}
-            </p>
         </div>
     );
 }
@@ -351,7 +351,10 @@ function SubTabPreferences() {
                 <div className="space-y-1">
                     <div className="flex items-center gap-2">
                         <Layers className="size-4 text-muted-foreground" />
-                        <h3 className="text-sm font-semibold text-foreground">{t('subTab.title')}</h3>
+                        <h3 className="text-sm font-semibold text-foreground">
+                            {t('subTab.title')}
+                            <Hint text={t('subTab.minimumVisibleHint', { count: MIN_VISIBLE_SUB_TABS })} />
+                        </h3>
                     </div>
                     <p className="text-xs leading-5 text-muted-foreground">{t('subTab.description')}</p>
                 </div>
@@ -415,10 +418,6 @@ function SubTabPreferences() {
                     );
                 })}
             </div>
-
-            <p className="text-xs leading-5 text-muted-foreground">
-                {t('subTab.minimumVisibleHint', { count: MIN_VISIBLE_SUB_TABS })}
-            </p>
         </div>
     );
 }
@@ -654,8 +653,10 @@ export function SettingAppearance() {
                         {chinaMode && (
                             <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                                 <div className="flex items-center gap-3">
-                                    <span className="text-sm font-medium">{t('chinaMode.exchangeRate.label')}</span>
-                                    <span className="text-xs text-muted-foreground">{t('chinaMode.exchangeRate.hint')}</span>
+                                    <span className="text-sm font-medium">
+                                        {t('chinaMode.exchangeRate.label')}
+                                        <Hint text={t('chinaMode.exchangeRate.hint')} />
+                                    </span>
                                 </div>
                                 <Input
                                     type="number"

@@ -5,6 +5,7 @@ import { useCreateModel } from '@/api/endpoints/model';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Field, FieldLabel, FieldGroup } from '@/components/ui/field';
+import { Hint } from '@/components/ui/hint';
 import {
     MorphingDialogClose,
     MorphingDialogTitle,
@@ -73,7 +74,10 @@ export function CreateDialogContent() {
                         </Field>
                         <div className="grid grid-cols-2 gap-4">
                             <Field>
-                                <FieldLabel htmlFor="model-input">{t('input')}</FieldLabel>
+                                <FieldLabel htmlFor="model-input">
+                                    {t('input')}
+                                    <Hint text={t('priceHint')} />
+                                </FieldLabel>
                                 <Input
                                     id="model-input"
                                     type="number"
@@ -117,7 +121,6 @@ export function CreateDialogContent() {
                                 />
                             </Field>
                         </div>
-                        <p className="text-xs text-muted-foreground">{t('priceHint')}</p>
 
                         <Button
                             type="submit"

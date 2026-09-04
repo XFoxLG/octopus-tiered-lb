@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -237,12 +238,14 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                     {isOAuth ? (
                         <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
                             <div className="flex items-center justify-between">
-                                <Label className="text-sm">{t('oauthLogin')}</Label>
+                                <Label className="text-sm">
+    {t('oauthLogin')}
+    <Hint text={t('oauthLoginHint')} />
+</Label>
                                 <Button type="button" size="sm" onClick={handleOAuthLogin}>
                                     {t('oauthLoginBtn')}
                                 </Button>
                             </div>
-                            <p className="text-xs text-muted-foreground">{t('oauthLoginHint')}</p>
                             <div>
                                 <Label className="text-xs">{t('oauthManualPaste')}</Label>
                                 <textarea
@@ -256,7 +259,10 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                         </div>
                     ) : acctType === 'apikey' ? (
                         <div>
-                            <Label>{t('apiKey')}</Label>
+                            <Label>
+    {t('apiKey')}
+    <Hint text={`${t('credentialsHint')} {"type":"apikey","api_key":"sk-..."}`} />
+</Label>
                             <Input
                                 className="mt-1 font-mono"
                                 type="password"
@@ -264,9 +270,6 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                                 onChange={(e) => setForm({ ...form, credentials: e.target.value })}
                                 placeholder="sk-..."
                             />
-                            <p className="mt-1 text-xs text-muted-foreground">
-                                {t('credentialsHint')} {"{\"type\":\"apikey\",\"api_key\":\"sk-...\"}"}
-                            </p>
                         </div>
                     ) : acctType === 'cookie' ? (
                         <div>
@@ -364,24 +367,28 @@ export function AccountFormDialog({ poolId, account, open, onOpenChange }: Accou
                             />
                         </div>
                         <div>
-                            <Label>{t('weight')}</Label>
+                            <Label>
+    {t('weight')}
+    <Hint text={t('weightHint')} />
+</Label>
                             <Input
                                 type="number"
                                 className="mt-1"
                                 value={form.weight ?? 0}
                                 onChange={(e) => setForm({ ...form, weight: Number(e.target.value) })}
                             />
-                            <p className="mt-1 text-xs text-muted-foreground">{t('weightHint')}</p>
                         </div>
                         <div>
-                            <Label>{t('loadFactor')} (0={t('inheritPool')})</Label>
+                            <Label>
+    {t('loadFactor')} (0={t('inheritPool')})
+    <Hint text={t('loadFactorHint')} />
+</Label>
                             <Input
                                 type="number"
                                 className="mt-1"
                                 value={form.load_factor ?? 0}
                                 onChange={(e) => setForm({ ...form, load_factor: Number(e.target.value) })}
                             />
-                            <p className="mt-1 text-xs text-muted-foreground">{t('loadFactorHint')}</p>
                         </div>
                     </div>
 

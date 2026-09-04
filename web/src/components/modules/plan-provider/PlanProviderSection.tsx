@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import {
     Select,
@@ -436,6 +437,7 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium">
                                         {t('plan.zhipuTeamOrgIdLabel') || '组织 ID'}
+                                        <Hint text={t('plan.zhipuTeamHint') || '智谱团队版需 API Key + 组织 ID + 项目 ID 三者齐全（从 open.bigmodel.cn 控制台团队设置页获取）。'} />
                                     </label>
                                     <Input
                                         placeholder={t('plan.zhipuTeamOrgIdPlaceholder') || 'bigmodel-organization 请求头值'}
@@ -459,6 +461,7 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium">
                                         {t('plan.forwardApiKeyLabel') || 'API Key（可选）'}
+                                        <Hint text={t('plan.forwardApiKeyHint') || '填写后将自动创建或复用转发渠道，模型相同的合并为同一渠道。留空则仅监控套餐额度。'} />
                                     </label>
                                     <Input
                                         type="password"
@@ -494,6 +497,7 @@ function PlanProviderSection({ type, title, providers, categories, isLoading, er
                             <div className="space-y-2">
                                 <label className="text-sm font-medium">
                                     {t('plan.refreshInterval') || '自动刷新间隔'}
+                                    <Hint text={t('plan.refreshIntervalHint') || '按此间隔自动查询额度；全局默认可在 Hub 自动化面板调整'} />
                                 </label>
                                 <Select
                                     value={String(refreshInterval)}
@@ -1168,6 +1172,7 @@ function EditCredentialsDialog({
                             <div className="space-y-2 pt-2 border-t border-border/40">
                                 <label className="text-sm font-medium">
                                     {t('plan.deepSeekAccountLabel') || '控制台账号（可选，用于官方用量统计）'}
+                                    <Hint text={t('plan.deepSeekAccountHint') || '配置后系统自动登录控制台，把卡片统计切换为官方 token 用量（覆盖账号下所有 API key 的调用，比本地转发统计更准确）。账号密码 AES 加密存储；不填则继续使用本地统计。'} />
                                 </label>
                                 <Input
                                     type="text"
@@ -1181,9 +1186,6 @@ function EditCredentialsDialog({
                                     value={loginPassword}
                                     onChange={(e) => setLoginPassword(e.target.value)}
                                 />
-                                <p className="text-[11px] leading-tight text-muted-foreground">
-                                    {t('plan.deepSeekAccountHint') || '配置后系统自动登录控制台，把卡片统计切换为官方 token 用量（覆盖账号下所有 API key 的调用，比本地转发统计更准确）。账号密码 AES 加密存储；不填则继续使用本地统计。'}
-                                </p>
                             </div>
                         )}
                         {isCodexPlan && (
@@ -1196,6 +1198,7 @@ function EditCredentialsDialog({
                         <div className="space-y-2">
                             <label className="text-sm font-medium">
                                 {t('plan.zhipuTeamOrgIdLabel') || '组织 ID'}
+                                <Hint text={t('plan.zhipuTeamEditHint') || '留空则清空组织/项目 ID；填写新值将一并更新。'} />
                             </label>
                             <Input
                                 placeholder={t('plan.zhipuTeamOrgIdPlaceholder') || 'bigmodel-organization 请求头值'}
@@ -1210,9 +1213,6 @@ function EditCredentialsDialog({
                                 value={teamProjectId}
                                 onChange={(e) => setTeamProjectId(e.target.value)}
                             />
-                            <p className="text-xs text-muted-foreground">
-                                {t('plan.zhipuTeamEditHint') || '留空则清空组织/项目 ID；填写新值将一并更新。'}
-                            </p>
                         </div>
                     )}
 
@@ -1220,6 +1220,7 @@ function EditCredentialsDialog({
                         <div className="space-y-2">
                             <label className="text-sm font-medium">
                                 {t('plan.forwardApiKeyLabel') || 'API Key（可选）'}
+                                <Hint text={t('plan.forwardApiKeyEditHint') || '留空表示不更换转发凭据；填写新值将同步更新关联渠道的 key。'} />
                             </label>
                             <Input
                                 type="password"
@@ -1227,9 +1228,6 @@ function EditCredentialsDialog({
                                 value={forwardApiKey}
                                 onChange={(e) => setForwardApiKey(e.target.value)}
                             />
-                            <p className="text-xs text-muted-foreground">
-                                {t('plan.forwardApiKeyEditHint') || '留空表示不更换转发凭据；填写新值将同步更新关联渠道的 key。'}
-                            </p>
                         </div>
                     )}
 

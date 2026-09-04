@@ -46,6 +46,7 @@ type RelayLog struct {
 	Ftut            int              `json:"ftut" gorm:"column:ftut"`                         // 首字时间(毫秒)
 	UseTime         int              `json:"use_time" gorm:"column:use_time"`                 // 总用时(毫秒)
 	Cost            float64          `json:"cost" gorm:"column:cost"`                         // 消耗费用
+	BillingWindow   string           `json:"billing_window" gorm:"column:billing_window"`     // 计费窗口（DeepSeek 峰谷: peak/offpeak，其余为空）
 	RequestContent  string           `json:"request_content" gorm:"column:request_content"`   // 请求内容
 	ResponseContent string           `json:"response_content" gorm:"column:response_content"` // 响应内容
 	Error           string           `json:"error" gorm:"column:error"`                       // 错误信息
@@ -76,6 +77,7 @@ type RelayLogListItem struct {
 	Ftut              int              `json:"ftut" gorm:"column:ftut"`
 	UseTime           int              `json:"use_time" gorm:"column:use_time"`
 	Cost              float64          `json:"cost" gorm:"column:cost"`
+	BillingWindow     string           `json:"billing_window" gorm:"column:billing_window"`
 	Error             string           `json:"error" gorm:"column:error"`
 	Attempts          []ChannelAttempt `json:"attempts" gorm:"column:attempts;serializer:json"`
 	TotalAttempts     int              `json:"total_attempts" gorm:"column:total_attempts"`
@@ -128,6 +130,7 @@ func (r *RelayLog) ToListItem() RelayLogListItem {
 		Ftut:              r.Ftut,
 		UseTime:           r.UseTime,
 		Cost:              r.Cost,
+		BillingWindow:     r.BillingWindow,
 		Error:             r.Error,
 		Attempts:          r.Attempts,
 		TotalAttempts:     r.TotalAttempts,

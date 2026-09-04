@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Hint } from '@/components/ui/hint';
 import {
     Select,
     SelectContent,
@@ -369,8 +370,14 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('type')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('status')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('models')}</th>
-                            <th className="text-left p-3 font-medium whitespace-nowrap" title={t('weightHint')}>{t('weightCol')}</th>
-                            <th className="text-left p-3 font-medium whitespace-nowrap" title={t('loadFactorHint')}>{t('loadFactorCol')}</th>
+                            <th className="text-left p-3 font-medium whitespace-nowrap">
+    {t('weightCol')}
+    <Hint text={t('weightHint')} />
+</th>
+                            <th className="text-left p-3 font-medium whitespace-nowrap">
+    {t('loadFactorCol')}
+    <Hint text={t('loadFactorHint')} />
+</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('concurrency')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('requests')}</th>
                             <th className="text-left p-3 font-medium whitespace-nowrap">{t('errors')}</th>
@@ -508,9 +515,11 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
                     <DialogHeader><DialogTitle>{t('tempUnschedDialog.title')}</DialogTitle></DialogHeader>
                     <div className="space-y-3">
                         <div>
-                            <Label>{t('tempUnschedDialog.minutes')}</Label>
+                            <Label>
+    {t('tempUnschedDialog.minutes')}
+    <Hint text={t('tempUnschedDialog.minutesHint')} />
+</Label>
                             <Input type="number" value={tempUnschedMinutes} onChange={(e) => setTempUnschedMinutes(e.target.value)} />
-                            <p className="mt-1 text-xs text-muted-foreground">{t('tempUnschedDialog.minutesHint')}</p>
                         </div>
                         <div>
                             <Label>{t('tempUnschedDialog.reason')}</Label>
@@ -527,10 +536,12 @@ function PoolDetail({ pool, onBack }: { pool: AccountPool; onBack: () => void })
             <Dialog open={importOpen} onOpenChange={setImportOpen}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>{t('importAccounts')}</DialogTitle>
+                        <DialogTitle>
+    {t('importAccounts')}
+    <Hint text={t('importHint')} />
+</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-2">
-                        <p className="text-sm text-muted-foreground">{t('importHint')}</p>
                         <textarea
                             rows={10}
                             className="w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs"

@@ -7,6 +7,7 @@ import { Accordion as AccordionPrimitive } from 'radix-ui';
 import { useModelChannelList, type LLMChannel } from '@/api/endpoints/model';
 import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Accordion, AccordionContent, AccordionItem } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
@@ -433,7 +434,10 @@ export function GroupEditor({
                                     />
                                 </Field>
                                 <Field>
-                                    <FieldLabel htmlFor="group-category">{t('form.category')}</FieldLabel>
+                                    <FieldLabel htmlFor="group-category">
+                                        {t('form.category')}
+                                        <Hint text={t('form.categoryHint')} />
+                                    </FieldLabel>
                                     <Input
                                         id="group-category"
                                         value={category}
@@ -441,12 +445,12 @@ export function GroupEditor({
                                         className="h-10 rounded-lg text-sm md:h-11"
                                         placeholder={t('form.categoryPlaceholder')}
                                     />
-                                    <p className="mt-1 text-xs text-muted-foreground">
-                                        {t('form.categoryHint')}
-                                    </p>
                                 </Field>
                                 <Field>
-                                    <FieldLabel htmlFor="group-endpoint-type">{t('form.endpointType.label')}</FieldLabel>
+                                    <FieldLabel htmlFor="group-endpoint-type">
+                                        {t('form.endpointType.label')}
+                                        <Hint text={t('form.endpointType.hint')} />
+                                    </FieldLabel>
                                     <select
                                         id="group-endpoint-type"
                                         value={endpointType}
@@ -459,13 +463,13 @@ export function GroupEditor({
                                             </option>
                                         ))}
                                     </select>
-                                    <p className="mt-1 text-xs text-muted-foreground">
-                                        {t('form.endpointType.hint')}
-                                    </p>
                                 </Field>
                                 {endpointType === 'music_generation' ? (
                                     <Field>
-                                        <FieldLabel htmlFor="group-endpoint-provider">{t('form.endpointProvider.musicLabel')}</FieldLabel>
+                                        <FieldLabel htmlFor="group-endpoint-provider">
+                                        {t('form.endpointProvider.musicLabel')}
+                                        <Hint text={t('form.endpointProvider.musicHint')} />
+                                        </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
                                             value={endpointProvider}
@@ -478,14 +482,14 @@ export function GroupEditor({
                                                 </option>
                                             ))}
                                         </select>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            {t('form.endpointProvider.musicHint')}
-                                        </p>
                                     </Field>
                                 ) : null}
                                 {endpointType === 'chat' ? (
                                     <Field>
-                                        <FieldLabel htmlFor="group-endpoint-provider">{t('form.endpointProvider.chatLabel')}</FieldLabel>
+                                        <FieldLabel htmlFor="group-endpoint-provider">
+                                        {t('form.endpointProvider.chatLabel')}
+                                        <Hint text={t('form.endpointProvider.chatHint')} />
+                                        </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
                                             value={endpointProvider}
@@ -498,14 +502,14 @@ export function GroupEditor({
                                                 </option>
                                             ))}
                                         </select>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            {t('form.endpointProvider.chatHint')}
-                                        </p>
                                     </Field>
                                 ) : null}
                                 {supportsOutboundFormat ? (
                                     <Field>
-                                        <FieldLabel htmlFor="group-outbound-format">{t('form.outboundFormat.label')}</FieldLabel>
+                                        <FieldLabel htmlFor="group-outbound-format">
+{t('form.outboundFormat.label')}
+<Hint text={t('form.outboundFormat.hint')} />
+</FieldLabel>
                                         <select
                                             id="group-outbound-format"
                                             value={outboundFormat}
@@ -518,14 +522,14 @@ export function GroupEditor({
                                                 </option>
                                             ))}
                                         </select>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            {t('form.outboundFormat.hint')}
-                                        </p>
                                     </Field>
                                 ) : null}
                                 {endpointType === 'video_generation' ? (
                                     <Field>
-                                        <FieldLabel htmlFor="group-endpoint-provider">{t('form.endpointProvider.videoLabel')}</FieldLabel>
+                                        <FieldLabel htmlFor="group-endpoint-provider">
+                                        {t('form.endpointProvider.videoLabel')}
+                                        <Hint text={t('form.endpointProvider.videoHint')} />
+                                        </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
                                             value={endpointProvider}
@@ -538,14 +542,14 @@ export function GroupEditor({
                                                 </option>
                                             ))}
                                         </select>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            {t('form.endpointProvider.videoHint')}
-                                        </p>
                                     </Field>
                                 ) : null}
                                 {endpointType === 'image_generation' ? (
                                     <Field>
-                                        <FieldLabel htmlFor="group-endpoint-provider">{t('form.endpointProvider.imageLabel')}</FieldLabel>
+                                        <FieldLabel htmlFor="group-endpoint-provider">
+                                        {t('form.endpointProvider.imageLabel')}
+                                        <Hint text={t('form.endpointProvider.imageHint')} />
+                                        </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
                                             value={endpointProvider}
@@ -558,14 +562,14 @@ export function GroupEditor({
                                                 </option>
                                             ))}
                                         </select>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            {t('form.endpointProvider.imageHint')}
-                                        </p>
                                     </Field>
                                 ) : null}
                                 {endpointType === 'audio_speech' ? (
                                     <Field>
-                                        <FieldLabel htmlFor="group-endpoint-provider">{t('form.endpointProvider.audioSpeechLabel')}</FieldLabel>
+                                        <FieldLabel htmlFor="group-endpoint-provider">
+                                        {t('form.endpointProvider.audioSpeechLabel')}
+                                        <Hint text={t('form.endpointProvider.audioSpeechHint')} />
+                                        </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
                                             value={endpointProvider}
@@ -578,9 +582,6 @@ export function GroupEditor({
                                                 </option>
                                             ))}
                                         </select>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            {t('form.endpointProvider.audioSpeechHint')}
-                                        </p>
                                     </Field>
                                 ) : null}
                                 <Field className="md:col-span-2">
@@ -601,16 +602,7 @@ export function GroupEditor({
                                 <Field>
                                     <FieldLabel htmlFor="group-first-token-time-out">
                                         {t('form.firstTokenTimeOut')}
-                                        <TooltipProvider>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
-                                                </TooltipTrigger>
-                                                <TooltipContent>
-                                                    {t('form.firstTokenTimeOutHint')}
-                                                </TooltipContent>
-                                            </Tooltip>
-                                        </TooltipProvider>
+                                        <Hint text={t('form.firstTokenTimeOutHint')} />
                                     </FieldLabel>
                                     <Input
                                         id="group-first-token-time-out"
@@ -634,16 +626,7 @@ export function GroupEditor({
                                 <Field>
                                     <FieldLabel htmlFor="group-attempt-time-out">
                                         {t('form.attemptTimeOut')}
-                                        <TooltipProvider>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
-                                                </TooltipTrigger>
-                                                <TooltipContent>
-                                                    {t('form.attemptTimeOutHint')}
-                                                </TooltipContent>
-                                            </Tooltip>
-                                        </TooltipProvider>
+                                        <Hint text={t('form.attemptTimeOutHint')} />
                                     </FieldLabel>
                                     <Input
                                         id="group-attempt-time-out"
@@ -700,16 +683,7 @@ export function GroupEditor({
                 <Field>
                     <FieldLabel htmlFor="group-session-keep-time">
                         {t('form.sessionKeepTime')}
-                        <TooltipProvider>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    {t('form.sessionKeepTimeHint')}
-                                </TooltipContent>
-                            </Tooltip>
-                        </TooltipProvider>
+                        <Hint text={t('form.sessionKeepTimeHint')} />
                     </FieldLabel>
                     <Input
                         id="group-session-keep-time"
@@ -733,16 +707,8 @@ export function GroupEditor({
                 <Field>
                     <FieldLabel htmlFor="group-reasoning-buffer-strategy">
                         {t('form.reasoningBufferStrategy.label')}
-                        <TooltipProvider>
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                    {t('form.reasoningBufferStrategy.hint')}
-                                </TooltipContent>
-                            </Tooltip>
-                        </TooltipProvider>
+                        <Hint text={t('form.reasoningBufferStrategy.hint')} />
+                        <Hint text={t('form.reasoningBufferStrategy.groupHint')} />
                     </FieldLabel>
                     <select
                         id="group-reasoning-buffer-strategy"
@@ -754,24 +720,11 @@ export function GroupEditor({
                         <option value="buffer">{t('form.reasoningBufferStrategy.buffer')}</option>
                         <option value="immediate">{t('form.reasoningBufferStrategy.immediate')}</option>
                     </select>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        {t('form.reasoningBufferStrategy.groupHint')}
-                    </p>
                 </Field>
                                 <Field className="md:col-span-2">
                                     <FieldLabel htmlFor="group-condition">
                                         {t('form.condition.label')}
-                                        <TooltipProvider>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
-                                                </TooltipTrigger>
-                                                <TooltipContent>
-                                                    {t('form.condition.hint')}<br />
-                                                    {conditionPlaceholder}
-                                                </TooltipContent>
-                                            </Tooltip>
-                                        </TooltipProvider>
+                                        <Hint text={`${t('form.condition.hint')}\n${conditionPlaceholder}`} />
                                     </FieldLabel>
                                     <Input
                                         id="group-condition"

@@ -78,7 +78,7 @@ func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMRes
 	m.Stats.InputToken = usage.PromptTokens
 	m.Stats.OutputToken = usage.CompletionTokens
 
-	modelPrice := price.GetLLMPrice(actualModel)
+	modelPrice := price.EffectiveLLMPrice(actualModel, m.StartTime)
 	if modelPrice == nil {
 		return
 	}
@@ -299,6 +299,7 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		ChannelId:        channelID,
 		ActualModelName:  actualModel,
 		UseTime:          int(duration.Milliseconds()),
+		BillingWindow:    price.BillingWindow(actualModel, m.StartTime),
 		Attempts:         attempts,
 		TotalAttempts:    totalAttempts,
 	}

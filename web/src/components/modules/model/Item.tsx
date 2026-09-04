@@ -9,6 +9,7 @@ import { getModelIcon } from '@/lib/model-icons';
 import { toast } from '@/components/common/Toast';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { ModelDeleteOverlay, ModelEditOverlay } from './ItemOverlays';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { createPortal } from 'react-dom';
 import { CopyIconButton } from '@/components/common/CopyButton';
@@ -185,6 +186,15 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
                                     </TooltipTrigger>
                                     <TooltipContent key={model.name}>{model.name}</TooltipContent>
                                 </Tooltip>
+                                {model.billing_schedule === 'deepseek_v4' && (
+                                    <Badge
+                                        variant="outline"
+                                        className="shrink-0 text-[0.62rem] px-1.5 py-0 border-amber-400/50 text-amber-500 dark:text-amber-400"
+                                        title={t('card.billingWindowHint')}
+                                    >
+                                        {t('card.billingWindowBadge')}
+                                    </Badge>
+                                )}
                                 <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground sm:gap-2">
                                     <span className="inline-flex items-center gap-1.5 rounded-full border border-border/25 bg-card px-2.5 py-0.5 text-[0.68rem] sm:gap-2 sm:px-3 sm:py-1 sm:text-xs">
                                         <Waves className="size-3 text-primary sm:size-3.5" />
@@ -423,6 +433,7 @@ export const ModelItem = memo(function ModelItem({ model, layout = 'grid', laten
                                         onChange={setEditValues}
                                         onCancel={handleCancelEdit}
                                         onSave={handleSaveEdit}
+                                        peakBilling={model.billing_schedule === 'deepseek_v4'}
                                     />
                                 </div>
                             </div>

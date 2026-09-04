@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Wand2, Save, Loader2, Plus, X, Search, CheckCircle2, AlertCircle, Download, Check, ClipboardCopy, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -558,8 +559,10 @@ export function SettingNormalize() {
             {/* 模型广场默认开启归一化去重：独立于规则编辑，随保存按钮一起落库。 */}
             <div className="flex items-center justify-between gap-3 rounded-lg border-border/30 bg-card p-3 sm:p-4 shadow-sm">
                 <div className="space-y-0.5">
-                    <div className="text-sm font-semibold text-card-foreground">{t('normalize.marketDedupeDefault.title')}</div>
-                    <p className="text-xs leading-5 text-muted-foreground">{t('normalize.marketDedupeDefault.hint')}</p>
+                    <div className="text-sm font-semibold text-card-foreground">
+                        {t('normalize.marketDedupeDefault.title')}
+                        <Hint text={t('normalize.marketDedupeDefault.hint')} />
+                    </div>
                 </div>
                 <Switch checked={marketDedupeDefault} onCheckedChange={setMarketDedupeDefault} aria-label={t('normalize.marketDedupeDefault.title')} />
             </div>
@@ -567,10 +570,12 @@ export function SettingNormalize() {
             {/* 路由前缀 */}
             <div className="space-y-3 rounded-lg border-border/30 bg-card p-3 sm:p-4 shadow-sm">
                 <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-card-foreground">{t('normalize.routerPrefixes.title')}</span>
+                    <span className="text-sm font-semibold text-card-foreground">
+                        {t('normalize.routerPrefixes.title')}
+                        <Hint text={t('normalize.routerPrefixes.hint')} />
+                    </span>
                     <Badge variant="secondary" className="text-xs">{routerPrefixes.length}</Badge>
                 </div>
-                <p className="text-xs leading-5 text-muted-foreground">{t('normalize.routerPrefixes.hint')}</p>
                 <RuleList
                     items={routerPrefixes}
                     onAdd={handleAddPrefix}
@@ -584,10 +589,12 @@ export function SettingNormalize() {
             {/* 功能后缀 */}
             <div className="space-y-3 rounded-lg border-border/30 bg-card p-3 sm:p-4 shadow-sm">
                 <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-card-foreground">{t('normalize.functionalSuffixes.title')}</span>
+                    <span className="text-sm font-semibold text-card-foreground">
+                        {t('normalize.functionalSuffixes.title')}
+                        <Hint text={t('normalize.functionalSuffixes.hint')} />
+                    </span>
                     <Badge variant="secondary" className="text-xs">{functionalSuffixes.length}</Badge>
                 </div>
-                <p className="text-xs leading-5 text-muted-foreground">{t('normalize.functionalSuffixes.hint')}</p>
                 <RuleList
                     items={functionalSuffixes}
                     onAdd={handleAddSuffix}
@@ -601,10 +608,12 @@ export function SettingNormalize() {
             {/* 显式映射（变体→基准名，主要由 AI 离线分析后导入；支持删除） */}
             <div className="space-y-3 rounded-lg border-border/30 bg-card p-3 sm:p-4 shadow-sm">
                 <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-card-foreground">{t('normalize.explicitMappings.title')}</span>
+                    <span className="text-sm font-semibold text-card-foreground">
+                        {t('normalize.explicitMappings.title')}
+                        <Hint text={t('normalize.explicitMappings.hint')} />
+                    </span>
                     <Badge variant="secondary" className="text-xs">{explicitMappings.length}</Badge>
                 </div>
-                <p className="text-xs leading-5 text-muted-foreground">{t('normalize.explicitMappings.hint')}</p>
                 {explicitMappings.length > 0 && (
                     <div className="flex items-center justify-end">
                         <button
@@ -670,8 +679,10 @@ export function SettingNormalize() {
 
                 {/* 复制分析提示词：供用户粘贴到离线 AI，指导其分析导出的渠道模型名 JSON */}
                 <div className="space-y-1.5">
-                    <div className="text-xs font-medium text-muted-foreground">{t('normalize.workflow.promptTitle')}</div>
-                    <p className="text-[11px] text-muted-foreground/70">{t('normalize.workflow.promptHint')}</p>
+                    <div className="text-xs font-medium text-muted-foreground">
+                        {t('normalize.workflow.promptTitle')}
+                        <Hint text={t('normalize.workflow.promptHint')} />
+                    </div>
                     <Button
                         type="button"
                         variant="outline"
@@ -689,8 +700,10 @@ export function SettingNormalize() {
 
                 {/* 导出：含变体的渠道模型名，供离线 AI 分析 */}
                 <div className="space-y-1.5">
-                    <div className="text-xs font-medium text-muted-foreground">{t('normalize.export.title')}</div>
-                    <p className="text-[11px] text-muted-foreground/70">{t('normalize.export.hint')}</p>
+                    <div className="text-xs font-medium text-muted-foreground">
+                        {t('normalize.export.title')}
+                        <Hint text={t('normalize.export.hint')} />
+                    </div>
                     <Button
                         type="button"
                         variant="outline"
@@ -711,8 +724,10 @@ export function SettingNormalize() {
 
                 {/* 导入：AI 产出的归一化规则文件 */}
                 <div className="space-y-1.5">
-                    <div className="text-xs font-medium text-muted-foreground">{t('normalize.import.title')}</div>
-                    <p className="text-[11px] text-muted-foreground/70">{t('normalize.import.hint')}</p>
+                    <div className="text-xs font-medium text-muted-foreground">
+                        {t('normalize.import.title')}
+                        <Hint text={t('normalize.import.hint')} />
+                    </div>
                     <Input
                         ref={importFileRef}
                         type="file"

@@ -33,6 +33,7 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Hint } from '@/components/ui/hint';
 import {
     MorphingDialog,
     MorphingDialogClose,
@@ -178,8 +179,8 @@ function SectionHeader({
                 <div className="inline-flex items-center gap-2 rounded-full border border-primary/12 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
                     <Icon className="size-3.5" />
                     {title}
+                    {hint ? <Hint text={hint} /> : null}
                 </div>
-                {hint ? <p className="text-xs leading-5 text-muted-foreground">{hint}</p> : null}
             </div>
         </div>
     );
@@ -1098,21 +1099,25 @@ export function ChannelForm({
                                     </Button>
                                 </div>
                             </div>
-                            <p className={cn(
-                                'px-1 text-xs leading-5',
-                                isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) && hasManualVersionSuffix(u.url) ? 'text-destructive' : 'text-muted-foreground'
-                            )}>
-                                {isOpenAICompatBaseUrlSuffixMode(u.suffix_mode)
-                                    ? (hasManualVersionSuffix(u.url) ? t('baseUrlOpenAIWarning') : t('baseUrlOpenAIHint'))
-                                    : t('baseUrlCustomHint')}
-                            </p>
+                            {isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) && hasManualVersionSuffix(u.url) ? (
+                                <p className="px-1 text-xs leading-5 text-destructive">{t('baseUrlOpenAIWarning')}</p>
+                            ) : (
+                                <Hint
+                                    className="sm:shrink-0"
+                                    text={
+                                        isOpenAICompatBaseUrlSuffixMode(u.suffix_mode)
+                                            ? t('baseUrlOpenAIHint')
+                                            : t('baseUrlCustomHint')
+                                    }
+                                />
+                            )}
                         </div>
                     ))}
                 </div>
             </section>
 
             <section className={sectionClassName}>
-                <SectionHeader icon={Layers3} title={t('poolBinding')} />
+                <SectionHeader icon={Layers3} title={t('poolBinding')} hint={formData.pool_id > 0 ? t('poolHint') : undefined} />
                 <div className="space-y-2">
                     <Select
                         value={String(formData.pool_id || 0)}
@@ -1130,9 +1135,6 @@ export function ChannelForm({
                             ))}
                         </SelectContent>
                     </Select>
-                    {formData.pool_id > 0 && (
-                        <p className="text-xs text-muted-foreground">{t('poolHint')}</p>
-                    )}
                 </div>
             </section>
 
@@ -1185,14 +1187,15 @@ export function ChannelForm({
                                 className="rounded-lg"
                             />
                             {showPriorityInput && (
-                                <Input
-                                    type="number"
-                                    value={k.priority ?? 0}
-                                    onChange={(e) => handleUpdateKey(idx, { priority: Number(e.target.value || 0) })}
-                                    placeholder={t('priority')}
-                                    title={t('priorityHint')}
-                                    className="rounded-lg"
-                                />
+                                <Hint text={t('priorityHint')} side="top">
+                                    <Input
+                                        type="number"
+                                        value={k.priority ?? 0}
+                                        onChange={(e) => handleUpdateKey(idx, { priority: Number(e.target.value || 0) })}
+                                        placeholder={t('priority')}
+                                        className="rounded-lg"
+                                    />
+                                </Hint>
                             )}
                             <Input
                                 type="text"
@@ -1220,14 +1223,15 @@ export function ChannelForm({
                                 <X className="h-4 w-4" />
                             </Button>
                         </div>
-                        <Input
-                            type="text"
-                            value={k.supported_models ?? ''}
-                            onChange={(e) => handleUpdateKey(idx, { supported_models: e.target.value })}
-                            placeholder={t('supportedModels')}
-                            title={t('supportedModelsHint')}
-                            className="rounded-lg text-xs text-muted-foreground"
-                        />
+                        <Hint text={t('supportedModelsHint')} side="top">
+                            <Input
+                                type="text"
+                                value={k.supported_models ?? ''}
+                                onChange={(e) => handleUpdateKey(idx, { supported_models: e.target.value })}
+                                placeholder={t('supportedModels')}
+                                className="rounded-lg text-xs text-muted-foreground"
+                            />
+                        </Hint>
                         </div>
                     ))}
                 </div>
@@ -1241,7 +1245,10 @@ export function ChannelForm({
                                 ) : (
                                     <AlertTriangle className="h-4 w-4 text-orange-500" />
                                 )}
-                                <span>{testSummary.passed ? t('test.success') : t('test.partialSuccess')}</span>
+                                <span>
+                                    {testSummary.passed ? t('test.success') : t('test.partialSuccess')}
+                                    <Hint text={t('test.hint')} />
+                                </span>
                             </div>
                             <div className="flex items-center gap-2">
                                 {testSummary.results.some((r) => !r.passed) && (
@@ -1277,7 +1284,6 @@ export function ChannelForm({
                                 </div>
                             ))}
                         </div>
-                        <p className="text-xs text-muted-foreground">{t('test.hint')}</p>
                     </div>
                 )}
             </section>
@@ -1525,8 +1531,10 @@ export function ChannelForm({
                         <div className="space-y-4 pt-2 border-t border-border/20">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>
-                                    <p className="text-sm font-medium text-card-foreground">{t('requestRewrite')}</p>
-                                    <p className="text-xs text-muted-foreground">{t('requestRewriteHint')}</p>
+                                    <p className="text-sm font-medium text-card-foreground">
+                                        {t('requestRewrite')}
+                                        <Hint text={t('requestRewriteHint')} />
+                                    </p>
                                 </div>
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <Switch

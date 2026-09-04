@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Database, Layers, Timer, Gauge, Filter } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import { Switch } from '@/components/ui/switch';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
@@ -80,8 +81,8 @@ export function SettingPool() {
                         <div className="text-sm font-medium flex items-center gap-2">
                             <Gauge className="h-4 w-4" />
                             {t('pool.healthCheckEnabled')}
+                            <Hint text={t('pool.healthCheckEnabledHint')} />
                         </div>
-                        <p className="text-xs text-muted-foreground">{t('pool.healthCheckEnabledHint')}</p>
                     </div>
                     <Switch
                         checked={healthEnabled}
@@ -127,8 +128,8 @@ export function SettingPool() {
                         <div className="text-sm font-medium flex items-center gap-2">
                             <Filter className="h-4 w-4" />
                             {t('pool.layeredFilterEnabled')}
+                            <Hint text={t('pool.layeredFilterEnabledHint')} />
                         </div>
-                        <p className="text-xs text-muted-foreground">{t('pool.layeredFilterEnabledHint')}</p>
                     </div>
                     <Switch
                         checked={layeredEnabled}
@@ -137,7 +138,10 @@ export function SettingPool() {
                 </div>
 
                 <div>
-                    <label className="text-xs text-muted-foreground">{t('pool.minPriority')}</label>
+                    <label className="text-xs text-muted-foreground flex items-center gap-1">
+                        {t('pool.minPriority')}
+                        <Hint text={t('pool.minPriorityHint')} />
+                    </label>
                     <Input
                         className="mt-1"
                         type="number"
@@ -146,7 +150,6 @@ export function SettingPool() {
                         onBlur={() => saveValue(SettingKey.PoolMinPriority, minPriority, initMinPriority.current)}
                         placeholder="-9999"
                     />
-                    <p className="mt-1 text-xs text-muted-foreground">{t('pool.minPriorityHint')}</p>
                 </div>
             </div>
         </div>

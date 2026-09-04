@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { toast } from '@/components/common/Toast';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
+import { Hint } from '@/components/ui/hint';
 import type { MemberAvailabilityMeta, SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
@@ -928,6 +929,7 @@ export function GroupCard({ group }: { group: Group }) {
                     <div className="flex items-start justify-between gap-3">
                         <div className="text-sm font-medium text-amber-700 dark:text-amber-300">
                             {t('card.testFailedTitle')}
+                            <Hint text={t('card.testRemovableHint')} />
                         </div>
                         <button
                             type="button"
@@ -945,9 +947,6 @@ export function GroupCard({ group }: { group: Group }) {
                                 </li>
                             ))}
                     </ul>
-                    <p className="mt-2 text-xs text-amber-700/90 dark:text-amber-300/90">
-                        {t('card.testRemovableHint')}
-                    </p>
                 </section>
             )}
         </article >

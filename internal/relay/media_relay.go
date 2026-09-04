@@ -543,7 +543,15 @@ func extractModelFromJSON(c *gin.Context) (string, []byte, bool, error) {
 }
 
 // extractModelFromMultipart extracts the model from a multipart/form-data request.
+// When the inbound request carries a JSON body instead of a multipart form
+// (e.g. SenseNova /v1/images/edits accepts JSON with base64 image data-URLs),
+// it falls back to JSON extraction so the request can be forwarded as JSON.
 func extractModelFromMultipart(c *gin.Context) (string, []byte, bool, error) {
+	contentType := c.GetHeader("Content-Type")
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "multipart/") {
+		return extractModelFromJSON(c)
+	}
+
 	limitRequestBody(c, getMaxRelayMultipartBodyBytes())
 
 	// Parse the multipart form
@@ -570,7 +578,7 @@ func forwardMediaRequest(
 	streamRequested bool,
 	operationCtx context.Context,
 ) (int, error) {
-	if cfg.MultipartInput {
+	if cfg.MultipartInput && len(bodyBytes) == 0 {
 		return forwardMediaRequestMultipart(c, cfg, channel, key, requestModel, resolvedModel, streamRequested, operationCtx)
 	}
 	return forwardMediaRequestJSON(c, cfg, group, channel, key, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx)
@@ -616,6 +624,15 @@ func forwardMediaRequestJSON(
 	upstreamURL, err := buildMediaUpstreamURL(channel.GetBaseUrl(), cfg.UpstreamPath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to build upstream URL: %w", err)
+	}
+
+	// 透传（信息体）：保留客户端原始请求路径与查询串，仅改写请求体中的
+	// model 字段（与对话分组的出站格式 "raw" 语义一致）。
+	if strings.EqualFold(strings.TrimSpace(group.EndpointProvider), "raw") {
+		upstreamURL, err = buildRawPassthroughUpstreamURL(channel.GetBaseUrl(), c)
+		if err != nil {
+			return 0, fmt.Errorf("failed to build raw passthrough url: %w", err)
+		}
 	}
 
 	// Create request
@@ -829,6 +846,34 @@ func buildMediaUpstreamURL(baseURL, path string) (string, error) {
 
 	parsed.Path = basePath + normalizedPath
 	return parsed.String(), nil
+}
+
+// buildRawPassthroughUpstreamURL 将客户端原始请求路径与查询串拼接到渠道
+// base URL 上（透传（信息体）模式）。路径拼接复用 buildMediaUpstreamURL 的
+// /v1 去重规则，保证 base URL 以 /v1 结尾时不会重复版本段。
+func buildRawPassthroughUpstreamURL(baseURL string, c *gin.Context) (string, error) {
+	rawPath := ""
+	query := ""
+	if c != nil && c.Request != nil && c.Request.URL != nil {
+		rawPath = c.Request.URL.Path
+		query = c.Request.URL.RawQuery
+	}
+	if !strings.HasPrefix(rawPath, "/") {
+		rawPath = "/" + rawPath
+	}
+
+	upstreamURL, err := buildMediaUpstreamURL(baseURL, rawPath)
+	if err != nil {
+		return "", err
+	}
+	if query != "" {
+		separator := "?"
+		if strings.Contains(upstreamURL, "?") {
+			separator = "&"
+		}
+		upstreamURL += separator + query
+	}
+	return upstreamURL, nil
 }
 
 // applyChannelHeaders applies channel custom headers to the request.

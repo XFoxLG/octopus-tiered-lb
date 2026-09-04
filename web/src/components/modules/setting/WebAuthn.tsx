@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { SettingKey, useSetSetting, useSettingList } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import { Button } from '@/components/ui/button';
 
 const fieldKey = (settings: { key: string; value: string }[] | undefined, key: string, fallback: string) =>
@@ -54,18 +55,18 @@ export function SettingWebAuthn() {
                         <h2 className="flex items-center gap-2 text-lg font-bold text-card-foreground">
                             <Fingerprint className="h-5 w-5" />
                             {t('webauthn.title')}
+                            <Hint text={t('webauthn.hint')} />
                         </h2>
                         <p className="text-sm text-muted-foreground">{t('webauthn.description')}</p>
                     </div>
                 </div>
 
                 <div className="space-y-4 rounded-xl border border-border/30 bg-muted/10 p-4">
-                    <p className="text-xs leading-relaxed text-muted-foreground">{t('webauthn.hint')}</p>
-
                     <div className="space-y-1.5">
                         <label className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                             <Globe className="size-3.5" />
                             {t('webauthn.rpId')}
+                            <Hint text={t('webauthn.rpIdHint')} />
                         </label>
                         <Input
                             value={rpID}
@@ -75,7 +76,6 @@ export function SettingWebAuthn() {
                             autoComplete="off"
                             spellCheck={false}
                         />
-                        <p className="text-[11px] text-muted-foreground/70">{t('webauthn.rpIdHint')}</p>
                     </div>
 
                     <div className="space-y-1.5">
@@ -96,6 +96,7 @@ export function SettingWebAuthn() {
                         <label className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                             <Server className="size-3.5" />
                             {t('webauthn.origins')}
+                            <Hint text={t('webauthn.originsHint')} />
                         </label>
                         <Input
                             value={origins}
@@ -105,7 +106,6 @@ export function SettingWebAuthn() {
                             autoComplete="off"
                             spellCheck={false}
                         />
-                        <p className="text-[11px] text-muted-foreground/70">{t('webauthn.originsHint')}</p>
                     </div>
 
                     <div className="flex justify-end">

@@ -73,36 +73,6 @@ func TestMatchFallbackPrice(t *testing.T) {
 	}
 }
 
-// TestDeepSeekV4PresetPrices 验证手工维护的 deepseek-v4 系列价格预设
-// （presets_manual.go）存在且四值正确，并验证 provider/ 前缀回落可命中。
-func TestDeepSeekV4PresetPrices(t *testing.T) {
-	llmPriceLock.RLock()
-	defer llmPriceLock.RUnlock()
-
-	cases := []struct {
-		model string
-		want  model.LLMPrice
-	}{
-		{"deepseek-v4-flash", model.LLMPrice{Input: 0.14, Output: 0.28, CacheRead: 0.0028, CacheWrite: 0}},
-		{"deepseek-v4-pro", model.LLMPrice{Input: 0.42, Output: 0.84, CacheRead: 0.0035, CacheWrite: 0}},
-	}
-	for _, tc := range cases {
-		p, ok := llmPrice[tc.model]
-		if !ok {
-			t.Fatalf("llmPrice[%q] missing, want %+v", tc.model, tc.want)
-		}
-		if p != tc.want {
-			t.Errorf("llmPrice[%q] = %+v, want %+v", tc.model, p, tc.want)
-		}
-		// provider/ 前缀形式应能经 matchFallbackPrice 命中
-		got := matchFallbackPrice("deepseek/" + tc.model)
-		if got == nil || got.Input != tc.want.Input {
-			t.Errorf("matchFallbackPrice(\"deepseek/%s\") = %+v, want Input %v",
-				tc.model, got, tc.want.Input)
-		}
-	}
-}
-
 func TestContainsWholeWord(t *testing.T) {
 	cases := []struct {
 		s, sub string

@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Monitor, Globe, Clock, Shield, HelpCircle, Network } from 'lucide-react';
+import { Monitor, Globe, Clock, Shield, Network } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 
 export function SettingSystem() {
     const t = useTranslations('setting');
@@ -105,17 +105,10 @@ export function SettingSystem() {
             <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-3">
                     <Globe className="h-5 w-5 text-muted-foreground shrink-0" />
-                    <span className="text-sm font-medium">{t('publicApiBaseUrl.label')}</span>
-                    <TooltipProvider>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <HelpCircle className="size-4 text-muted-foreground cursor-help shrink-0" />
-                            </TooltipTrigger>
-                            <TooltipContent>
-                                {t('publicApiBaseUrl.hint')}
-                            </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider>
+                    <span className="text-sm font-medium">
+                        {t('publicApiBaseUrl.label')}
+                        <Hint text={t('publicApiBaseUrl.hint')} />
+                    </span>
                 </div>
                 <Input
                     value={publicApiBaseUrl}
@@ -146,19 +139,12 @@ export function SettingSystem() {
             <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-3">
                     <Shield className="h-5 w-5 text-muted-foreground shrink-0" />
-                    <span className="text-sm font-medium">{t('corsAllowOrigins.label')}</span>
-                    <TooltipProvider>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <HelpCircle className="size-4 text-muted-foreground cursor-help shrink-0" />
-                            </TooltipTrigger>
-                            <TooltipContent>
-                                {t('corsAllowOrigins.hint')}
-                                <br />
-                                {t('corsAllowOrigins.example')}
-                            </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider>
+                    <span className="text-sm font-medium">
+                        {t('corsAllowOrigins.label')}
+                        <Hint
+                            text={`${t('corsAllowOrigins.hint')}\n${t('corsAllowOrigins.example')}`}
+                        />
+                    </span>
                 </div>
                 <Input
                     value={corsAllowOrigins}
@@ -173,17 +159,10 @@ export function SettingSystem() {
             <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-3">
                     <Network className="h-5 w-5 text-muted-foreground shrink-0" />
-                    <span className="text-sm font-medium">{t('trustedProxies.label')}</span>
-                    <TooltipProvider>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <HelpCircle className="size-4 text-muted-foreground cursor-help shrink-0" />
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                                {t('trustedProxies.hint')}
-                            </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider>
+                    <span className="text-sm font-medium">
+                        {t('trustedProxies.label')}
+                        <Hint text={t('trustedProxies.hint')} />
+                    </span>
                 </div>
                 <div className="flex w-full flex-col gap-1.5 md:w-72">
                     <Input

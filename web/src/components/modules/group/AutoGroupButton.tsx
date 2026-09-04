@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { useAutoGroupModels } from '@/api/endpoints/group';
 import { toast } from '@/components/common/Toast';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { Hint } from '@/components/ui/hint';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -89,6 +90,7 @@ export function AutoGroupButton({ variant = 'ghost', className }: AutoGroupButto
                     <div className="grid gap-1.5 pt-2 text-left">
                         <label className="text-xs font-medium text-muted-foreground" htmlFor="auto-group-category">
                             {t('form.category')}
+                            <Hint text={t('autoGroup.categoryHint')} />
                         </label>
                         <input
                             id="auto-group-category"
@@ -97,7 +99,6 @@ export function AutoGroupButton({ variant = 'ghost', className }: AutoGroupButto
                             className="h-9 rounded-lg border border-border/40 bg-card px-3 text-sm outline-none transition-colors focus:border-primary/30"
                             placeholder={t('form.categoryPlaceholder')}
                         />
-                        <p className="text-[11px] text-muted-foreground/80">{t('autoGroup.categoryHint')}</p>
                     </div>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

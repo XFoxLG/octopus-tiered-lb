@@ -20,6 +20,7 @@ import {
 } from '@/api/endpoints/alert';
 import { PageWrapper } from '@/components/common/PageWrapper';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import { toast } from 'sonner';
 import { useTranslations } from 'next-intl';
 import {
@@ -574,7 +575,10 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                     </select>
                                 </label>
                                 <label className="grid gap-1">
-                                    <span className="text-xs font-medium text-muted-foreground">{t('rules.form.threshold')}</span>
+                                    <span className="text-xs font-medium text-muted-foreground">
+                                        {t('rules.form.threshold')}
+                                        <Hint text={t(`rules.form.thresholdHint.${newRule.condition_type}`)} />
+                                    </span>
                                     <Input
                                         type="number"
                                         min="0"
@@ -583,10 +587,12 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                         onChange={(e) => setNewRule({ ...newRule, threshold: Number(e.target.value) })}
                                         className="rounded-xl"
                                     />
-                                    <span className="text-[11px] text-muted-foreground/70">{t(`rules.form.thresholdHint.${newRule.condition_type}`)}</span>
                                 </label>
                                                         <label className="grid gap-1">
-                                                            <span className="text-xs font-medium text-muted-foreground">{t('rules.form.cooldown')}</span>
+                                                            <span className="text-xs font-medium text-muted-foreground">
+                                                                {t('rules.form.cooldown')}
+                                                                <Hint text={t('rules.form.cooldownHint')} />
+                                                            </span>
                                                             <Input
                                                                 type="number"
                                                                 min="0"
@@ -595,10 +601,12 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                                                 onChange={(e) => setNewRule({ ...newRule, cooldown_sec: Number(e.target.value) })}
                                                                 className="rounded-xl"
                                                             />
-                                                            <span className="text-[11px] text-muted-foreground/70">{t('rules.form.cooldownHint')}</span>
                                                         </label>
                                                         <label className="grid gap-1">
-                                                            <span className="text-xs font-medium text-muted-foreground">{t('rules.form.window')}</span>
+                                                            <span className="text-xs font-medium text-muted-foreground">
+                                                                {t('rules.form.window')}
+                                                                <Hint text={t('rules.form.windowHint')} />
+                                                            </span>
                                                             <Input
                                                                 type="number"
                                                                 min="0"
@@ -607,7 +615,6 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                                                 onChange={(e) => setNewRule({ ...newRule, window_sec: Number(e.target.value) })}
                                                                 className="rounded-xl"
                                                             />
-                                                            <span className="text-[11px] text-muted-foreground/70">{t('rules.form.windowHint')}</span>
                                                         </label>
                                                     </div>
                                                     <label className="grid gap-1">
@@ -710,7 +717,10 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                                             </select>
                                                         </label>
                                                         <label className="grid gap-1">
-                                                            <span className="text-xs font-medium text-muted-foreground">{t('rules.form.threshold')}</span>
+                                                            <span className="text-xs font-medium text-muted-foreground">
+                                                                {t('rules.form.threshold')}
+                                                                <Hint text={t(`rules.form.thresholdHint.${editingRule.condition_type}`)} />
+                                                            </span>
                                                             <Input
                                                                 type="number"
                                                                 value={editingRule.threshold}
@@ -718,10 +728,12 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                                                 placeholder={t('rules.form.thresholdPlaceholder')}
                                                                 className="rounded-xl"
                                                             />
-                                                            <span className="text-[11px] text-muted-foreground/70">{t(`rules.form.thresholdHint.${editingRule.condition_type}`)}</span>
                                                         </label>
                                                         <label className="grid gap-1">
-                                                            <span className="text-xs font-medium text-muted-foreground">{t('rules.form.cooldown')}</span>
+                                                            <span className="text-xs font-medium text-muted-foreground">
+                                                                {t('rules.form.cooldown')}
+                                                                <Hint text={t('rules.form.cooldownHint')} />
+                                                            </span>
                                                             <Input
                                                                 type="number"
                                                                 min="0"
@@ -730,10 +742,12 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                                                 placeholder={t('rules.form.cooldownPlaceholder')}
                                                                 className="rounded-xl"
                                                             />
-                                                            <span className="text-[11px] text-muted-foreground/70">{t('rules.form.cooldownHint')}</span>
                                                         </label>
                                                         <label className="grid gap-1">
-                                                            <span className="text-xs font-medium text-muted-foreground">{t('rules.form.window')}</span>
+                                                            <span className="text-xs font-medium text-muted-foreground">
+                                                                {t('rules.form.window')}
+                                                                <Hint text={t('rules.form.windowHint')} />
+                                                            </span>
                                                             <Input
                                                                 type="number"
                                                                 min="0"
@@ -742,7 +756,6 @@ export function AlertSections({ section, showTabs = false }: { section?: AlertSe
                                                                 placeholder={t('rules.form.windowPlaceholder')}
                                                                 className="rounded-xl"
                                                             />
-                                                            <span className="text-[11px] text-muted-foreground/70">{t('rules.form.windowHint')}</span>
                                                         </label>
                                                     </div>
                                                     <label className="grid gap-1">

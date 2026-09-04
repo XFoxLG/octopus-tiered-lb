@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { Bot, Clock3, KeyRound, Link2, Sparkles } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
+import { Hint } from '@/components/ui/hint';
 import {
     Select,
     SelectContent,
@@ -126,8 +127,8 @@ export function SettingAIRoute() {
                         <h2 className="flex items-center gap-2 text-lg font-bold text-card-foreground">
                             <Bot className="h-5 w-5" />
                             {t('aiRoute.title')}
+                            <Hint text={t('aiRoute.services.hint')} />
                         </h2>
-                        <p className="text-sm text-muted-foreground">{t('aiRoute.services.hint')}</p>
                     </div>
                     <div className="w-fit rounded-full border-border/25 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
                         {t('aiRoute.badge')}
@@ -138,7 +139,10 @@ export function SettingAIRoute() {
                     <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
                         <div className="flex items-center gap-3">
                             <Sparkles className="h-5 w-5 text-muted-foreground" />
-                            <span className="text-sm font-medium">{t('aiRoute.group.label')}</span>
+                            <span className="text-sm font-medium">
+                                {t('aiRoute.group.label')}
+                                <Hint text={t('aiRoute.group.hint')} />
+                            </span>
                         </div>
                         <Select
                             value={groupID}
@@ -159,7 +163,6 @@ export function SettingAIRoute() {
                                 ))}
                             </SelectContent>
                         </Select>
-                        <p className="text-xs text-muted-foreground">{t('aiRoute.group.hint')}</p>
                     </div>
 
                     <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
@@ -208,7 +211,10 @@ export function SettingAIRoute() {
                     <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
                         <div className="flex items-center gap-3">
                             <Clock3 className="h-5 w-5 text-muted-foreground" />
-                            <span className="text-sm font-medium">{t('aiRoute.timeoutSeconds.label')}</span>
+                            <span className="text-sm font-medium">
+                                {t('aiRoute.timeoutSeconds.label')}
+                                <Hint text={t('aiRoute.timeoutSeconds.hint')} />
+                            </span>
                         </div>
                         <Input
                             type="number"
@@ -225,13 +231,15 @@ export function SettingAIRoute() {
                             placeholder={t('aiRoute.timeoutSeconds.placeholder')}
                             className="w-full rounded-lg"
                         />
-                        <p className="text-xs text-muted-foreground">{t('aiRoute.timeoutSeconds.hint')}</p>
                     </div>
 
                     <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
                         <div className="flex items-center gap-3">
                             <Sparkles className="h-5 w-5 text-muted-foreground" />
-                            <span className="text-sm font-medium">{t('aiRoute.parallelism.label')}</span>
+                            <span className="text-sm font-medium">
+                                {t('aiRoute.parallelism.label')}
+                                <Hint text={t('aiRoute.parallelism.hint')} />
+                            </span>
                         </div>
                         <Input
                             type="number"
@@ -242,14 +250,16 @@ export function SettingAIRoute() {
                             placeholder={t('aiRoute.parallelism.placeholder')}
                             className="w-full rounded-lg"
                         />
-                        <p className="text-xs text-muted-foreground">{t('aiRoute.parallelism.hint')}</p>
                     </div>
                 </div>
 
                 <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
                     <div className="flex items-center gap-3">
                         <Link2 className="h-5 w-5 text-muted-foreground" />
-                        <span className="text-sm font-medium">{t('aiRoute.services.label')}</span>
+                        <span className="text-sm font-medium">
+                            {t('aiRoute.services.label')}
+                            <Hint text={t('aiRoute.services.hint')} />
+                        </span>
                     </div>
                     <textarea
                         value={servicesJSON}
@@ -258,7 +268,6 @@ export function SettingAIRoute() {
                         placeholder={t('aiRoute.services.placeholder')}
                         className=" min-h-44 w-full rounded-lg border border-border/35 bg-card px-4 py-3 font-mono text-sm text-foreground shadow-inner outline-none transition-[border-color,box-shadow] duration-300 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20"
                     />
-                    <p className="text-xs text-muted-foreground">{t('aiRoute.services.hint')}</p>
                 </div>
             </div>
         </div>

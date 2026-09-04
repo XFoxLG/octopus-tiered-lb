@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Sparkles } from 'lucide-react';
+import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { useSettingList, useSetSetting } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
@@ -51,20 +52,17 @@ export function SettingAutoStrategy() {
             <h2 className="text-lg font-bold text-card-foreground flex items-center gap-2">
                 <Sparkles className="h-5 w-5" />
                 {t('autoStrategy.title')}
+                <Hint text={t('autoStrategy.hint')} />
             </h2>
-
-            <p className="text-sm text-muted-foreground">
-                {t('autoStrategy.hint')}
-            </p>
 
             <div className="space-y-4">
                 {AUTO_STRATEGY_FIELDS.map((field) => (
                     <div key={field.key} className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                         <div className="flex flex-col gap-1">
-                            <span className="text-sm font-medium">{t(field.labelKey)}</span>
-                            {field.hintKey ? (
-                                <span className="text-xs text-muted-foreground">{t(field.hintKey)}</span>
-                            ) : null}
+                            <span className="text-sm font-medium">
+                                {t(field.labelKey)}
+                                <Hint text={field.hintKey ? t(field.hintKey) : undefined} />
+                            </span>
                         </div>
                         <Input
                             type="number"

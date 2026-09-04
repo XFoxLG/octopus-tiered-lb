@@ -18,6 +18,8 @@ export interface LLMPrice {
  */
 export interface LLMInfo extends LLMPrice {
     name: string;
+    price_manual?: boolean;      // 价格是否手动设置（同步刷新时保留）
+    billing_schedule?: string;   // 峰谷计费标识（"deepseek_v4" 或空，只读展示用）
 }
 
 /**
@@ -400,6 +402,93 @@ export function useDeletePriceCategory() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['models', 'price-category', 'list'] });
             queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
+        },
+    });
+}
+
+/**
+ * 峰谷计费规则（按时段缩放定价）。LLMPrice 为高峰价（USD/1M），
+ * 空闲价 = 高峰价 × off_peak_mul；窗口为北京时间分钟（0-1440）。
+ * weekend_off_peak = true 时，北京时间周六/周日全天按空闲价计费。
+ */
+export interface ModelPriceSchedule extends LLMPrice {
+    id: number;
+    name: string;
+    rule_type: 'exact' | 'prefix' | 'contains' | string;
+    rule_value: string;
+    off_peak_mul: number;
+    weekend_off_peak: boolean;
+    window1_start: number;
+    window1_end: number;
+    window2_start: number;
+    window2_end: number;
+    sort_order: number;
+    enabled: boolean;
+    created_at?: string;
+    updated_at?: string;
+}
+
+/**
+ * 获取峰谷计费规则列表 Hook
+ */
+export function usePriceScheduleList() {
+    return useQuery({
+        queryKey: ['models', 'price-schedule', 'list'],
+        queryFn: async () => {
+            return apiClient.get<ModelPriceSchedule[]>('/api/v1/model/price-schedule/list');
+        },
+        refetchInterval: REFETCH_INTERVAL_CONFIG,
+    });
+}
+
+/**
+ * 创建峰谷计费规则
+ */
+export function useCreatePriceSchedule() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (data: Omit<ModelPriceSchedule, 'id'>) => {
+            return apiClient.post<ModelPriceSchedule>('/api/v1/model/price-schedule/create', data);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['models', 'price-schedule', 'list'] });
+            // 峰谷规则改动需让模型列表峰谷标注与价格缓存失效。
+            queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'list'] });
+        },
+    });
+}
+
+/**
+ * 更新峰谷计费规则
+ */
+export function useUpdatePriceSchedule() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (data: ModelPriceSchedule) => {
+            return apiClient.post<ModelPriceSchedule>('/api/v1/model/price-schedule/update', data);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['models', 'price-schedule', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'list'] });
+        },
+    });
+}
+
+/**
+ * 删除峰谷计费规则
+ */
+export function useDeletePriceSchedule() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (id: number) => {
+            return apiClient.post<null>('/api/v1/model/price-schedule/delete', { id });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['models', 'price-schedule', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'list'] });
         },
     });
 }
