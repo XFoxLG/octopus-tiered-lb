@@ -107,6 +107,11 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := addGroupSortMultiplierColumns(db); err != nil {
 		t.Fatalf("addGroupSortMultiplierColumns: %v", err)
 	}
+	// Run migration 058 to add default reasoning policy columns
+	// (test uses latest model.Group which includes these fields)
+	if err := addGroupReasoningPolicyColumns(db); err != nil {
+		t.Fatalf("addGroupReasoningPolicyColumns: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

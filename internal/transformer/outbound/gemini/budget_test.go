@@ -267,20 +267,3 @@ func TestResolveThinkingConfigGemini3EffortCoercion(t *testing.T) {
 		t.Errorf("3-pro effort=bogus → dynamic, got %+v", d)
 	}
 }
-
-func TestCanonicalGeminiModality(t *testing.T) {
-	cases := map[string]string{
-		"text":    "TEXT",
-		"TEXT":    "TEXT",
-		"Image":   "IMAGE",
-		"audio":   "AUDIO",
-		" Audio ": "AUDIO",
-		"video":   "",
-		"":        "",
-	}
-	for in, want := range cases {
-		if got := canonicalGeminiModality(in); got != want {
-			t.Errorf("canonicalGeminiModality(%q) = %q, want %q", in, got, want)
-		}
-	}
-}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
@@ -118,7 +119,7 @@ func int64Ptr(value int64) *int64 {
 // prepareInternalRequestForOutbound 层面验证：注入发生在 param_override 之后，
 // 且 nil group（无分组路由）不会 panic。
 func TestPrepareInternalRequestAppliesReasoningPolicy(t *testing.T) {
-	channel := &appmodel.Channel{Type: "chat"}
+	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat}
 	group := &appmodel.Group{DefaultReasoningEffort: "medium"}
 
 	request := &transmodel.InternalLLMRequest{}
