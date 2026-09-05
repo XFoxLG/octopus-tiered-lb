@@ -10,18 +10,18 @@ import (
 
 func TestSetMessage_WithArgs(t *testing.T) {
 	n := &model.Notification{}
-	SetMessage(n, KeyBackupOK, KeyBackupOK,
-		map[string]any{"file": "octopus-2026.db"},
-		map[string]any{"file": "octopus-2026.db", "size": 1024},
-		nil,
-		[]any{"octopus-2026.db", 1024})
+	SetMessage(n, KeyBackupFail, KeyBackupFail,
+		map[string]any{"detail": "connection refused"},
+		map[string]any{"detail": "connection refused"},
+		[]any{"connection refused"},
+		[]any{"connection refused"})
 
 	// i18n 键
-	if n.TitleKey != "backup.ok" {
-		t.Fatalf("expected title_key 'backup.ok', got %q", n.TitleKey)
+	if n.TitleKey != "backup.fail" {
+		t.Fatalf("expected title_key 'backup.fail', got %q", n.TitleKey)
 	}
-	if n.ContentKey != "backup.ok" {
-		t.Fatalf("expected content_key 'backup.ok', got %q", n.ContentKey)
+	if n.ContentKey != "backup.fail" {
+		t.Fatalf("expected content_key 'backup.fail', got %q", n.ContentKey)
 	}
 
 	// 参数 JSON 可反序列化
@@ -29,24 +29,24 @@ func TestSetMessage_WithArgs(t *testing.T) {
 	if err := json.Unmarshal([]byte(n.TitleArgs), &titleArgs); err != nil {
 		t.Fatalf("failed to parse title_args: %v", err)
 	}
-	if titleArgs["file"] != "octopus-2026.db" {
-		t.Fatalf("expected title_args.file='octopus-2026.db', got %v", titleArgs["file"])
+	if titleArgs["detail"] != "connection refused" {
+		t.Fatalf("expected title_args.detail='connection refused', got %v", titleArgs["detail"])
 	}
 
 	var contentArgs map[string]any
 	if err := json.Unmarshal([]byte(n.ContentArgs), &contentArgs); err != nil {
 		t.Fatalf("failed to parse content_args: %v", err)
 	}
-	if contentArgs["size"].(float64) != 1024 {
-		t.Fatalf("expected content_args.size=1024, got %v", contentArgs["size"])
+	if contentArgs["detail"] != "connection refused" {
+		t.Fatalf("expected content_args.detail='connection refused', got %v", contentArgs["detail"])
 	}
 
 	// 英文回退串
-	if !strings.Contains(n.Title, "octopus-2026.db") {
-		t.Fatalf("expected title fallback to contain file name, got %q", n.Title)
+	if !strings.Contains(n.Title, "connection refused") {
+		t.Fatalf("expected title fallback to contain detail, got %q", n.Title)
 	}
-	if !strings.Contains(n.Content, "1024") {
-		t.Fatalf("expected content fallback to contain size, got %q", n.Content)
+	if !strings.Contains(n.Content, "connection refused") {
+		t.Fatalf("expected content fallback to contain detail, got %q", n.Content)
 	}
 }
 
