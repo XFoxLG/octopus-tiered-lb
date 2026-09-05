@@ -20,7 +20,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/dbmigration"
 	notifop "github.com/lingyuins/octopus/internal/op/notification"
 	grp "github.com/lingyuins/octopus/internal/op/group"
-	"github.com/lingyuins/octopus/internal/op/ops"
+	"github.com/lingyuins/octopus/internal/op/semanticcache"
 	stg "github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -120,7 +120,7 @@ func setSetting(c *gin.Context) {
 	// log failures but do not return an error status to the client,
 	// which would misleadingly suggest the setting was NOT saved.
 	if shouldRefreshSemanticCacheRuntime(setting.Key) {
-		if err := ops.RefreshSemanticCacheRuntime(); err != nil {
+		if err := semanticcache.RefreshSemanticCacheRuntime(); err != nil {
 			log.Warnf("semantic cache refresh failed after setting %s: %v", setting.Key, err)
 		}
 	}
@@ -262,7 +262,7 @@ func importDB(c *gin.Context) {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := ops.RefreshSemanticCacheRuntime(); err != nil {
+	if err := semanticcache.RefreshSemanticCacheRuntime(); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
