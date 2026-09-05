@@ -48,7 +48,6 @@ type OAuthSession struct {
 	State        string    `json:"state"`
 	CodeVerifier string    `json:"code_verifier"`
 	RedirectURI  string    `json:"redirect_uri"`
-	PoolID       int       `json:"pool_id,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

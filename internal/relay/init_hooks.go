@@ -7,11 +7,9 @@ import (
 	"github.com/lingyuins/octopus/internal/op"
 	"github.com/lingyuins/octopus/internal/op/apikey"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
-	"github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
-	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 )
 
 // OnChannelDeletedKeyHealthHook 由 task 包在启动时注入，用于清理 Key 巡检状态。
@@ -67,13 +65,4 @@ func init() {
 		ratelimitstore.RemoveAPIKeyBuckets(id)
 	}
 
-	// 注册号池删除时的清理钩子：清除池调度器中的 EWMA 统计、并发槽位、粘性会话。
-	pool.OnPoolDeletedHooks = append(pool.OnPoolDeletedHooks, func(poolID int) {
-		poolscheduler.RemovePool(poolID)
-	})
-
-	// 注册号池账号删除时的清理钩子：清除单个账号的调度状态。
-	pool.OnPoolAccountDeletedHooks = append(pool.OnPoolAccountDeletedHooks, func(poolID, accountID int) {
-		poolscheduler.RemoveAccount(poolID, accountID)
-	})
 }

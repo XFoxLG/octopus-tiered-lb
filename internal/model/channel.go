@@ -108,9 +108,7 @@ type Channel struct {
 	// 仅当 KeyHealthPassed=false 时有意义：前端据此决定整张卡片灰色化还是仅标记部分失败。
 	KeyHealthAllFailed *bool `json:"key_health_all_failed,omitempty" gorm:"column:key_health_all_failed"`
 	// KeyHealthAt 最近一次定时 Key 巡检完成时间（unix 秒），0 = 从未巡检。
-	KeyHealthAt int64 `json:"key_health_at,omitempty" gorm:"column:key_health_at;default:0"`
-	// PoolID 关联号池。0 = 使用 inline keys，>0 = 从号池调度器选账号。
-	PoolID        int                   `json:"pool_id" gorm:"default:0;index"`
+	KeyHealthAt   int64                 `json:"key_health_at,omitempty" gorm:"column:key_health_at;default:0"`
 	Managed       bool                  `json:"managed" gorm:"-"`
 	ManagedSource *ManagedChannelSource `json:"managed_source,omitempty" gorm:"-"`
 }
@@ -191,7 +189,6 @@ type ChannelUpdateRequest struct {
 	ParamOverride        *string                `json:"param_override,omitempty"`
 	RequestRewrite       *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
 	MatchRegex           *string                `json:"match_regex,omitempty"`
-	PoolID               *int                   `json:"pool_id,omitempty"`
 	IsReserve            *bool                  `json:"is_reserve,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`

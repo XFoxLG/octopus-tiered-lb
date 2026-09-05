@@ -365,7 +365,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 						if channelRateLimited, _ := balancer.IsChannelRateLimited(channel.ID, resolvedModel); channelRateLimited {
 							break keyRetryLoop
 						}
-						if channel.PoolID == 0 && channel.GetChannelKeyExcludingWithCooldown(failedKeyIDs, resolvedModel, ratelimitCooldown).ChannelKey != "" {
+						if channel.GetChannelKeyExcludingWithCooldown(failedKeyIDs, resolvedModel, ratelimitCooldown).ChannelKey != "" {
 							continue
 						}
 					}

@@ -8,18 +8,14 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/backup"
 	"github.com/lingyuins/octopus/internal/op/errorlog"
-	porop "github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"github.com/lingyuins/octopus/internal/op/remotesite"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/op/stats"
-	"github.com/lingyuins/octopus/internal/poolhealthcheck"
-	"github.com/lingyuins/octopus/internal/pooltokenrefresh"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/relay"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
-	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -44,9 +40,6 @@ func Init() {
 		db.StartSerialWriter(context.Background())
 	}
 	relaylog.StartFlushWorker(context.Background())
-	// 启动号池 ReportResult DB 写 worker pool（固定 worker + 有界队列，避免每请求
-	// 一 goroutine 在高 QPS + 慢 DB 下无限堆积）。
-	poolscheduler.StartReportWorkerPool(context.Background())
 	// 注入 Key 巡检状态清理函数到 relay 包（打破 relay -> task 循环依赖）。
 	relay.OnChannelDeletedKeyHealthHook = RemoveChannelKeyHealthState
 	priceUpdateIntervalHours, err := setting.GetInt(model.SettingKeyModelInfoUpdateInterval)
@@ -135,17 +128,6 @@ func Init() {
 		// clientModelName)，model 名由客户端请求携带、基数不受控；此前仅测试代码
 		// Clear()，无空闲回收，刷量/随机 model 名会让 map 终生驻留（见 issue #124）。
 		stats.PurgeIdleModelStats(balancerIdleThreshold)
-		// 清理长时间未活动的号池调度统计（EWMA、并发槽位）。
-		poolscheduler.PurgeStale(balancerIdleThreshold)
-		// 清理长时间未活动的号池粘性会话条目。globalPoolSticky 的 key 含客户端
-		// 请求携带的 model 名（基数不受控），仅靠 RemovePool/RemoveAccount 和
-		// trySticky 惰性删除无法回收一次性/随机 model 名，会无界增长（见 issue #46
-		// 同类遗漏，balancer.PurgeIdleSessions 已修复，此处补齐号池粘性）。
-		poolscheduler.PurgeStaleSticky(balancerIdleThreshold)
-		// 清理号池账号鉴权错误计数中窗口已过期的条目，防止 globalAuthErrors
-		// 因频繁 ResetAuthError 刷新 windowStart 而长期驻留（见 auth_error_counter.go）。
-		poolscheduler.PurgeStaleAuthErrors()
-
 		if db.IsSQLite() {
 			db.EnqueueWrite(db.WriteJob{Name: "relay_log_save", Fn: func(_ context.Context) error {
 				return relaylog.RelayLogSaveDBTask(context.Background())
@@ -231,29 +213,4 @@ func Init() {
 	}
 	Register(TaskKeyHealthCheck, time.Duration(keyHealthIntervalMin)*time.Minute, false, CheckKeyHealth)
 
-	// 号池 OAuth token 刷新：按设置间隔扫描即将过期的 oauth 账号并刷新。
-	poolTokenRefreshMin, err := setting.GetInt(model.SettingKeyPoolTokenRefreshInterval)
-	if err != nil || poolTokenRefreshMin < 1 {
-		poolTokenRefreshMin = 10
-	}
-	Register(string(model.SettingKeyPoolTokenRefreshInterval), time.Duration(poolTokenRefreshMin)*time.Minute, true, pooltokenrefresh.RefreshLoop)
-
-	// 号池额度同步：按设置间隔查询支持额度的账号并写回 quota 快照。
-	poolQuotaSyncMin, err := setting.GetInt(model.SettingKeyPoolQuotaSyncInterval)
-	if err != nil || poolQuotaSyncMin < 1 {
-		poolQuotaSyncMin = 360
-	}
-	Register(string(model.SettingKeyPoolQuotaSyncInterval), time.Duration(poolQuotaSyncMin)*time.Minute, true, func() {
-		porop.SyncAllQuotas(context.Background())
-	})
-
-	// 号池账号健康巡检（走 pool.TestAccount 主动探测，累计失败到阈值后 SetError）。
-	poolHealthCheckMin, err := setting.GetInt(model.SettingKeyPoolHealthCheckInterval)
-	if err != nil || poolHealthCheckMin < 1 {
-		poolHealthCheckMin = 30
-	}
-	Register(string(model.SettingKeyPoolHealthCheckInterval), time.Duration(poolHealthCheckMin)*time.Minute, false, poolhealthcheck.Run)
-
-	// 额度监控自动刷新：tick 固定 1 分钟，任务内部按单个覆盖/全局默认间隔到点刷新。
-	Register(TaskPlanProviderAutoRefresh, 1*time.Minute, false, PlanProviderAutoRefreshTask)
 }

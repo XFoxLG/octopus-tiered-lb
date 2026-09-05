@@ -455,10 +455,6 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		selectFields = append(selectFields, "custom_header")
 		updates.CustomHeader = *req.CustomHeader
 	}
-	if req.PoolID != nil {
-		selectFields = append(selectFields, "pool_id")
-		updates.PoolID = *req.PoolID
-	}
 	if req.ParamOverride != nil {
 		selectFields = append(selectFields, "param_override")
 		updates.ParamOverride = req.ParamOverride
