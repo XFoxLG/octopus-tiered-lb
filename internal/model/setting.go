@@ -3,7 +3,6 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -46,9 +45,6 @@ const (
 	SettingKeyCustomErrorRules                   SettingKey = "custom_error_rules"                       // 自定义错误透传规则（JSON 数组，见 relay.CustomErrorRule），按渠道类型+错误码/关键词改写最终错误呈现
 	SettingKeyRelayLogMaxContentSizeMB           SettingKey = "relay_log_max_content_size_mb"            // 单条日志请求与响应正文合计上限（MiB），超限整条跳过，-1=不限
 	SettingKeyRelayLogMemoryLogMaxDimidiateTimes SettingKey = "relay_log_memory_log_max_dimidiate_times" // 仅内存日志模式下折半次数阈值，达到后主动 GC 一次，-1=关闭
-	SettingKeyDefaultGroupLoadBalance            SettingKey = "default_group_load_balance"               // 默认分组负载均衡模式（空=不强制覆盖各分组现有模式，Seller 移植）
-	SettingKeyDefaultGroupSortStrategy           SettingKey = "default_group_sort_strategy"              // 默认分组排序策略（空=non_relay_balance，Seller 移植）
-	SettingKeyDefaultMultiplierCap               SettingKey = "default_multiplier_cap"                   // 默认分组倍率上限（0=不限制，Seller 移植）
 	SettingKeyReasoningBufferStrategy            SettingKey = "reasoning_buffer_strategy"               // 推理内容缓冲策略：buffer(缓冲) | immediate(立即)，默认 buffer（issue #155）
 	SettingKeyRateLimitHoldEnabled               SettingKey = "rate_limit_hold_enabled"                 // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
 	SettingKeyRateLimitHoldInterval              SettingKey = "rate_limit_hold_interval"                // 429 渠道内延时重试间隔（秒）
@@ -68,8 +64,6 @@ const (
 	SettingKeySemanticCacheEmbeddingTimeoutSeconds SettingKey = "semantic_cache_embedding_timeout_seconds" // 语义缓存 embedding 请求超时（秒）
 	SettingKeyNavOrder                             SettingKey = "nav_order"                                // 顶级页面顺序(JSON)
 	SettingKeyNavVisible                           SettingKey = "nav_visible"                              // 顶级页面显示状态(JSON)
-	SettingKeyHubTabOrder                          SettingKey = "hub_tab_order"                            // Hub 子标签顺序(JSON)
-	SettingKeyHubTabVisible                        SettingKey = "hub_tab_visible"                          // Hub 子标签可见性(JSON)
 	SettingKeyAnalyticsTabOrder                    SettingKey = "analytics_tab_order"                      // 分析中心子标签顺序(JSON)
 	SettingKeyAnalyticsTabVisible                  SettingKey = "analytics_tab_visible"                    // 分析中心子标签可见性(JSON)
 	SettingKeyOpsTabOrder                          SettingKey = "ops_tab_order"                            // 运维中心子标签顺序(JSON)
@@ -96,10 +90,6 @@ const (
 	SettingKeyFailureHintTTLRateLimit              SettingKey = "failure_hint_ttl_rate_limit"              // 限流失败提示缓存TTL（秒）
 	SettingKeyFailureHintTTLNetwork                SettingKey = "failure_hint_ttl_network"                 // 网络失败提示缓存TTL（秒）
 	SettingKeyWebDAVConfig                         SettingKey = "webdav_config"                            // WebDAV 云备份配置（JSON）
-	SettingKeySiteSyncInterval                     SettingKey = "site_sync_interval"                       // 站点账号同步间隔（小时）
-	SettingKeySiteCheckinInterval                  SettingKey = "site_checkin_interval"                    // 站点自动签到间隔（小时）
-	SettingKeyStatsSiteModelBackfilled             SettingKey = "stats_site_model_backfilled"              // 站点模型统计回填标记
-	SettingKeyProjectedChannelAutoGroupEnabled     SettingKey = "projected_channel_auto_group_enabled"     // 站点投影渠道自动分组全局开关
 	SettingKeyResponseFilterEnabled                SettingKey = "response_filter_enabled"                  // 输出结果关键词拦截开关
 	SettingKeyResponseFilterKeywords               SettingKey = "response_filter_keywords"                 // 拦截关键词列表(JSON 数组)
 	SettingKeyResponseFilterAction                 SettingKey = "response_filter_action"                   // 拦截动作: block(阻断) / replace(替换为*)
@@ -160,9 +150,6 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyCustomErrorRules, Value: "[]"},                  // 默认无自定义错误透传规则
 		{Key: SettingKeyRelayLogMaxContentSizeMB, Value: "2"},           // 默认单条日志正文上限 2MiB
 		{Key: SettingKeyRelayLogMemoryLogMaxDimidiateTimes, Value: "15"}, // 默认折半 15 次后主动 GC 一次
-		{Key: SettingKeyDefaultGroupLoadBalance, Value: ""},             // 为空时不覆盖各分组现有模式
-		{Key: SettingKeyDefaultGroupSortStrategy, Value: ""},            // 为空时使用 non_relay_balance
-		{Key: SettingKeyDefaultMultiplierCap, Value: "0"},               // 0 表示不限制
 		{Key: SettingKeyReasoningBufferStrategy, Value: "buffer"},        // 默认缓冲策略：安全重试但可能 CF 超时
 		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},            // 默认关闭：429 仍立即换 Key/渠道
 		{Key: SettingKeyRateLimitHoldInterval, Value: "10"},              // 默认每 10 秒重试一次
@@ -181,10 +168,8 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeySemanticCacheEmbeddingAPIKey, Value: ""},
 		{Key: SettingKeySemanticCacheEmbeddingModel, Value: ""},
 		{Key: SettingKeySemanticCacheEmbeddingTimeoutSeconds, Value: "10"},
-		{Key: SettingKeyNavOrder, Value: `["home","hub","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
-		{Key: SettingKeyNavVisible, Value: `["home","hub","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
-		{Key: SettingKeyHubTabOrder, Value: `["sites","site-channels","automation","balance","tokenplan"]`},
-		{Key: SettingKeyHubTabVisible, Value: `["sites","site-channels","automation","balance","tokenplan"]`},
+		{Key: SettingKeyNavOrder, Value: `["home","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
+		{Key: SettingKeyNavVisible, Value: `["home","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
 		{Key: SettingKeyAnalyticsTabOrder, Value: `["cache","utilization","route-health","channel-model","evaluation","latency"]`},
 		{Key: SettingKeyAnalyticsTabVisible, Value: `["cache","utilization","route-health","channel-model","evaluation","latency"]`},
 		{Key: SettingKeyOpsTabOrder, Value: `["telemetry","quota","health","maintenance","system","audit"]`},
@@ -211,10 +196,6 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyFailureHintTTLRateLimit, Value: "5"},     // 默认5秒
 		{Key: SettingKeyFailureHintTTLNetwork, Value: "2"},       // 默认2秒
 		{Key: SettingKeyWebDAVConfig, Value: `{"enabled":false,"base_url":"","username":"","password":"","remote_path":"/octopus-backup/","interval_hours":6,"include_stats":true,"include_logs":false,"max_backups":10}`},
-		{Key: SettingKeySiteSyncInterval, Value: "12"},
-		{Key: SettingKeySiteCheckinInterval, Value: "24"},
-		{Key: SettingKeyStatsSiteModelBackfilled, Value: "false"},
-		{Key: SettingKeyProjectedChannelAutoGroupEnabled, Value: "0"}, // 默认不自动分组
 		{Key: SettingKeyResponseFilterEnabled, Value: "false"},
 		{Key: SettingKeyResponseFilterKeywords, Value: "[]"},
 		{Key: SettingKeyResponseFilterAction, Value: "block"},
@@ -374,35 +355,6 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("relay log memory log max dimidiate times must be -1 or a positive integer")
 		}
 		return nil
-	case SettingKeyDefaultGroupLoadBalance:
-		// 空串合法（=不强制覆盖各分组现有模式）。非空必须是已知 GroupMode 名。
-		if strings.TrimSpace(s.Value) == "" {
-			return nil
-		}
-		switch strings.ToLower(strings.TrimSpace(s.Value)) {
-		case "round_robin", "random", "failover", "weighted", "auto":
-		default:
-			return fmt.Errorf("default group load balance must be round_robin, random, failover, weighted, auto or empty")
-		}
-		return nil
-	case SettingKeyDefaultGroupSortStrategy:
-		// 空串合法（=non_relay_balance）。非空必须是已知排序策略名。
-		if strings.TrimSpace(s.Value) == "" {
-			return nil
-		}
-		switch strings.ToLower(strings.TrimSpace(s.Value)) {
-		case "non_relay_balance", "non_relay_multiplier", "multiplier_balance", "balance_only":
-		default:
-			return fmt.Errorf("default group sort strategy must be non_relay_balance, non_relay_multiplier, multiplier_balance, balance_only or empty")
-		}
-		return nil
-	case SettingKeyDefaultMultiplierCap:
-		// 0=不限制；其余必须是非负有限数（Seller 语义：仅 known=true 且超 cap 才拦）。
-		capValue, err := strconv.ParseFloat(strings.TrimSpace(s.Value), 64)
-		if err != nil || math.IsNaN(capValue) || math.IsInf(capValue, 0) || capValue < 0 {
-			return fmt.Errorf("default multiplier cap must be a finite non-negative number")
-		}
-		return nil
 	case SettingKeyCustomRetryableCodes:
 		// 空串合法（=未配置，保持默认分类）。非空必须是逗号分隔的 100-599 状态码。
 		if strings.TrimSpace(s.Value) == "" {
@@ -499,7 +451,6 @@ func (s *Setting) Validate() error {
 		}
 		return nil
 	case SettingKeyNavOrder, SettingKeyNavVisible,
-		SettingKeyHubTabOrder, SettingKeyHubTabVisible,
 		SettingKeyAnalyticsTabOrder, SettingKeyAnalyticsTabVisible,
 		SettingKeyOpsTabOrder, SettingKeyOpsTabVisible:
 		var navOrder []string
@@ -585,12 +536,6 @@ func (s *Setting) Validate() error {
 				continue
 			}
 			return fmt.Errorf("trusted_proxies entry %q is not a valid CIDR or IP", v)
-		}
-		return nil
-	case SettingKeyProjectedChannelAutoGroupEnabled:
-		_, ok := ParseAutoGroupSettingValue(s.Value)
-		if !ok {
-			return fmt.Errorf("projected channel auto group mode must be 0 (none), 1 (fuzzy), 2 (exact), or 3 (regex)")
 		}
 		return nil
 	}

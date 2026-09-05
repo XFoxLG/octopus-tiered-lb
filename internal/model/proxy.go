@@ -51,31 +51,13 @@ type ProxyTestResult struct {
 type ProxyConfigurationReferenceType string
 
 const (
-	ProxyConfigurationReferenceTypeSite           ProxyConfigurationReferenceType = "site"
-	ProxyConfigurationReferenceTypeSiteAccount    ProxyConfigurationReferenceType = "site_account"
-	ProxyConfigurationReferenceTypeChannel        ProxyConfigurationReferenceType = "channel"
-	ProxyConfigurationReferenceTypeManagedChannel ProxyConfigurationReferenceType = "managed_channel"
+	ProxyConfigurationReferenceTypeChannel ProxyConfigurationReferenceType = "channel"
 )
 
 type ProxyConfigurationReference struct {
-	Type            ProxyConfigurationReferenceType `json:"type"`
-	SiteID          int                             `json:"site_id,omitempty"`
-	SiteName        string                          `json:"site_name,omitempty"`
-	SiteArchived    bool                            `json:"site_archived,omitempty"`
-	SiteAccountID   int                             `json:"site_account_id,omitempty"`
-	SiteAccountName string                          `json:"site_account_name,omitempty"`
-	ChannelID       int                             `json:"channel_id,omitempty"`
-	ChannelName     string                          `json:"channel_name,omitempty"`
-	Managed         bool                            `json:"managed,omitempty"`
-	ManagedSource   *ManagedChannelSource           `json:"managed_source,omitempty"`
-}
-
-// ManagedChannelSource identifies the origin of a managed channel.
-type ManagedChannelSource struct {
-	SiteID          int    `json:"site_id"`
-	SiteAccountID   int    `json:"site_account_id"`
-	SiteUserGroupID *int   `json:"site_user_group_id,omitempty"`
-	GroupKey        string `json:"group_key"`
+	Type        ProxyConfigurationReferenceType `json:"type"`
+	ChannelID   int                             `json:"channel_id,omitempty"`
+	ChannelName string                          `json:"channel_name,omitempty"`
 }
 
 func (m ProxyUsageMode) Validate(allowInherit bool) error {

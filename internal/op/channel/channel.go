@@ -295,7 +295,6 @@ func KeySaveDB(ctx context.Context) error {
 			"total_cost",
 			"priority",
 			"remark",
-			"managed",
 		}),
 	}).Create(&keys).Error; err != nil {
 		keyCacheNeedUpdateLock.Lock()
@@ -467,11 +466,6 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		selectFields = append(selectFields, "match_regex")
 		updates.MatchRegex = req.MatchRegex
 	}
-	if req.IsReserve != nil {
-		selectFields = append(selectFields, "is_reserve")
-		updates.IsReserve = *req.IsReserve
-	}
-
 	if len(selectFields) > 0 {
 		if err := tx.Model(&model.Channel{}).Where("id = ?", req.ID).Select(selectFields).Updates(&updates).Error; err != nil {
 			tx.Rollback()
@@ -509,9 +503,6 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 			if ku.SupportedModels != nil {
 				updates["supported_models"] = *ku.SupportedModels
 			}
-			if ku.Managed != nil {
-				updates["managed"] = *ku.Managed
-			}
 			if len(updates) == 0 {
 				continue
 			}
@@ -539,7 +530,6 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 				Priority:        ka.Priority,
 				Remark:          ka.Remark,
 				SupportedModels: ka.SupportedModels,
-				Managed:         ka.Managed,
 			})
 		}
 		if err := tx.Create(&newKeys).Error; err != nil {
@@ -600,53 +590,17 @@ func LLMList(ctx context.Context) ([]model.LLMChannel, error) {
 	models := []model.LLMChannel{}
 	seen := make(map[string]struct{})
 
-	// 投影渠道：channel_id → (site_account_id, base_group_key)
-	channelIDs := make([]int, 0, chCache.Len())
-	for _, ch := range chCache.GetAll() {
-		channelIDs = append(channelIDs, ch.ID)
-	}
-	bindingByChannel := loadProjectedChannelBindings(ctx, channelIDs)
-	accountBalanceByID, accountTodayIncomeByID, modelsByAccountGroup := loadProjectedChannelMetaIndex(ctx, bindingByChannel)
-
 	for _, ch := range chCache.GetAll() {
 		modelNames := xstrings.SplitTrimCompact(",", ch.Model, ch.CustomModel)
-		binding, isProjected := bindingByChannel[ch.ID]
-		var accountBalance *float64
-		var accountTodayIncome *float64
-		if isProjected {
-			if bal, ok := accountBalanceByID[binding.SiteAccountID]; ok {
-				copied := bal
-				accountBalance = &copied
-			}
-			if income, ok := accountTodayIncomeByID[binding.SiteAccountID]; ok {
-				copied := income
-				accountTodayIncome = &copied
-			}
-		}
 		for _, modelName := range modelNames {
 			if modelName == "" {
 				continue
 			}
 			item := model.LLMChannel{
-				Name:               modelName,
-				Enabled:            ch.Enabled,
-				ChannelID:          ch.ID,
-				ChannelName:        ch.Name,
-				ChannelBalance:     accountBalance,
-				ChannelTodayIncome: accountTodayIncome,
-			}
-			if isProjected {
-				lookupKey := projectedModelLookupKey(binding.SiteAccountID, binding.BaseGroupKey, modelName)
-				if meta, ok := modelsByAccountGroup[lookupKey]; ok {
-					if meta.Price != nil {
-						copied := *meta.Price
-						item.UpstreamPrice = &copied
-					}
-					if meta.Metrics != nil {
-						copied := *meta.Metrics
-						item.UpstreamMetrics = &copied
-					}
-				}
+				Name:        modelName,
+				Enabled:     ch.Enabled,
+				ChannelID:   ch.ID,
+				ChannelName: ch.Name,
 			}
 			key := fmt.Sprintf("%d|%s", item.ChannelID, item.Name)
 			if _, ok := seen[key]; ok {
@@ -657,132 +611,6 @@ func LLMList(ctx context.Context) ([]model.LLMChannel, error) {
 		}
 	}
 	return models, nil
-}
-
-type projectedChannelBindingInfo struct {
-	SiteAccountID int
-	BaseGroupKey  string
-}
-
-func loadProjectedChannelBindings(ctx context.Context, channelIDs []int) map[int]projectedChannelBindingInfo {
-	result := make(map[int]projectedChannelBindingInfo)
-	if len(channelIDs) == 0 {
-		return result
-	}
-	var bindings []model.SiteChannelBinding
-	if err := db.GetDB().WithContext(ctx).Where("channel_id IN ?", channelIDs).Find(&bindings).Error; err != nil {
-		return result
-	}
-	for _, binding := range bindings {
-		baseGroupKey, _ := model.ParseSiteChannelBindingKey(binding.GroupKey)
-		result[binding.ChannelID] = projectedChannelBindingInfo{
-			SiteAccountID: binding.SiteAccountID,
-			BaseGroupKey:  model.NormalizeSiteGroupKey(baseGroupKey),
-		}
-	}
-	return result
-}
-
-type projectedChannelModelMeta struct {
-	Price   *model.ChannelUpstreamPrice
-	Metrics *model.ChannelUpstreamMetrics
-}
-
-func loadProjectedChannelMetaIndex(
-	ctx context.Context,
-	bindingByChannel map[int]projectedChannelBindingInfo,
-) (map[int]float64, map[int]float64, map[string]projectedChannelModelMeta) {
-	balances := make(map[int]float64)
-	todayIncomes := make(map[int]float64)
-	metaByKey := make(map[string]projectedChannelModelMeta)
-	if len(bindingByChannel) == 0 {
-		return balances, todayIncomes, metaByKey
-	}
-
-	accountIDs := make([]int, 0, len(bindingByChannel))
-	seenAccounts := make(map[int]struct{}, len(bindingByChannel))
-	for _, binding := range bindingByChannel {
-		if binding.SiteAccountID <= 0 {
-			continue
-		}
-		if _, ok := seenAccounts[binding.SiteAccountID]; ok {
-			continue
-		}
-		seenAccounts[binding.SiteAccountID] = struct{}{}
-		accountIDs = append(accountIDs, binding.SiteAccountID)
-	}
-	if len(accountIDs) == 0 {
-		return balances, todayIncomes, metaByKey
-	}
-
-	type accountBalanceRow struct {
-		ID          int
-		Balance     float64
-		TodayIncome float64
-	}
-	var accountRows []accountBalanceRow
-	if err := db.GetDB().WithContext(ctx).
-		Model(&model.SiteAccount{}).
-		Select("id, balance, today_income").
-		Where("id IN ?", accountIDs).
-		Find(&accountRows).Error; err == nil {
-		for _, row := range accountRows {
-			balances[row.ID] = row.Balance
-			todayIncomes[row.ID] = row.TodayIncome
-		}
-	}
-
-	var siteModels []model.SiteModel
-	if err := db.GetDB().WithContext(ctx).
-		Where("site_account_id IN ? AND disabled = ?", accountIDs, false).
-		Find(&siteModels).Error; err != nil {
-		return balances, todayIncomes, metaByKey
-	}
-	for _, siteModel := range siteModels {
-		key := projectedModelLookupKey(siteModel.SiteAccountID, siteModel.GroupKey, siteModel.ModelName)
-		meta := metaByKey[key]
-		if siteModelHasUpstreamPriceLocal(siteModel) {
-			price := model.ChannelUpstreamPrice{
-				BillingMode: strings.TrimSpace(siteModel.PriceBillingMode),
-				Input:       siteModel.PriceInput,
-				Output:      siteModel.PriceOutput,
-				CacheRead:   siteModel.PriceCacheRead,
-				CacheWrite:  siteModel.PriceCacheWrite,
-			}
-			meta.Price = &price
-		}
-		if siteModelHasUpstreamPerfLocal(siteModel) {
-			metrics := model.ChannelUpstreamMetrics{
-				LatencyMs:   siteModel.PerfLatencyMs,
-				AvgTps:      siteModel.PerfAvgTps,
-				SuccessRate: siteModel.PerfSuccessRate,
-			}
-			meta.Metrics = &metrics
-		}
-		if meta.Price != nil || meta.Metrics != nil {
-			metaByKey[key] = meta
-		}
-	}
-	return balances, todayIncomes, metaByKey
-}
-
-func projectedModelLookupKey(accountID int, groupKey, modelName string) string {
-	return fmt.Sprintf("%d|%s|%s",
-		accountID,
-		model.NormalizeSiteGroupKey(groupKey),
-		strings.ToLower(strings.TrimSpace(modelName)),
-	)
-}
-
-func siteModelHasUpstreamPriceLocal(item model.SiteModel) bool {
-	if strings.TrimSpace(item.PriceBillingMode) == "" {
-		return false
-	}
-	return item.PriceInput > 0 || item.PriceOutput > 0 || item.PriceCacheRead > 0 || item.PriceCacheWrite > 0
-}
-
-func siteModelHasUpstreamPerfLocal(item model.SiteModel) bool {
-	return item.PerfLatencyMs > 0 || item.PerfAvgTps > 0 || item.PerfSuccessRate > 0
 }
 
 func Get(id int, ctx context.Context) (*model.Channel, error) {

@@ -10,7 +10,6 @@ import (
 	"github.com/lingyuins/octopus/internal/op/errorlog"
 	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
-	"github.com/lingyuins/octopus/internal/op/remotesite"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/price"
@@ -27,10 +26,6 @@ const (
 	TaskSyncLLM           = "sync_llm"
 	TaskCleanLLM          = "clean_llm"
 	TaskBaseUrlDelay      = "base_url_delay"
-	TaskBalanceCapture    = "hub_balance_capture"
-	TaskAutoCheckIn       = "hub_auto_checkin"
-	TaskAnnouncementFetch = "hub_announcement_fetch"
-	TaskUsageHistorySync  = "hub_usage_history_sync"
 	TaskWebDAVBackup      = "webdav_backup"
 	TaskErrorLogCleanup   = "error_log_cleanup"
 )
@@ -139,38 +134,6 @@ func Init() {
 		}
 	})
 
-	// Hub: capture balance snapshots every 6 hours
-	Register(TaskBalanceCapture, 6*time.Hour, false, func() {
-		n := remotesite.CaptureAllBalanceSnapshots(context.Background())
-		if n > 0 {
-			log.Infof("captured balance snapshots for %d remote sites", n)
-		}
-	})
-
-	// Hub: auto check-in daily at task tick (every 12 hours; the check-in logic is idempotent per day)
-	Register(TaskAutoCheckIn, 12*time.Hour, false, func() {
-		records := remotesite.ExecuteCheckInAll(context.Background())
-		if len(records) > 0 {
-			log.Infof("auto check-in completed for %d remote sites", len(records))
-		}
-	})
-
-	// Hub: fetch announcements every 4 hours
-	Register(TaskAnnouncementFetch, 4*time.Hour, false, func() {
-		n := remotesite.FetchAllAnnouncements(context.Background())
-		if n > 0 {
-			log.Infof("fetched announcements for %d remote sites", n)
-		}
-	})
-
-	// Hub: sync usage history every 6 hours
-	Register(TaskUsageHistorySync, 6*time.Hour, false, func() {
-		n := remotesite.SyncAllUsageHistory(context.Background())
-		if n > 0 {
-			log.Infof("synced %d usage history records", n)
-		}
-	})
-
 	// WebDAV cloud backup: respects interval_hours from settings (issue: user reported 72h setting ignored)
 	webdavCfg, err := backup.GetWebDAVConfig()
 	if err != nil {
@@ -182,24 +145,6 @@ func Init() {
 				log.Warnf("webdav backup failed: %v", err)
 			}
 		})
-	}
-
-	// Site sync task
-	siteSyncIntervalHours, err := setting.GetInt(model.SettingKeySiteSyncInterval)
-	if err != nil {
-		log.Warnf("failed to get site sync interval: %v", err)
-	} else {
-		siteSyncInterval := time.Duration(siteSyncIntervalHours) * time.Hour
-		Register(string(model.SettingKeySiteSyncInterval), siteSyncInterval, true, SiteSyncTask)
-	}
-
-	// Site checkin task
-	siteCheckinIntervalHours, err := setting.GetInt(model.SettingKeySiteCheckinInterval)
-	if err != nil {
-		log.Warnf("failed to get site checkin interval: %v", err)
-	} else {
-		siteCheckinInterval := time.Duration(siteCheckinIntervalHours) * time.Hour
-		Register(string(model.SettingKeySiteCheckinInterval), siteCheckinInterval, true, SiteCheckinTask)
 	}
 
 	// Disposable channel expiry: scan every 1 minute for expired one-time channels.

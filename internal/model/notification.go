@@ -6,9 +6,7 @@ type NotificationType string
 const (
 	NotificationTypeChannelExpire NotificationType = "channel_expire"
 	NotificationTypeSystem        NotificationType = "system"
-	NotificationTypeSite          NotificationType = "site"
 	NotificationTypeBackup        NotificationType = "backup"
-	NotificationTypeUsage         NotificationType = "usage"
 	NotificationTypeKeyHealth     NotificationType = "key_health"
 )
 
