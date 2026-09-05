@@ -489,6 +489,9 @@ export interface GroupUpdateRequest {
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     default_reasoning_effort?: string;
     reasoning_force_override?: boolean;
+    sort_strategy?: string;
+    param_override?: string;
+    custom_header?: { header_key: string; header_value: string }[];
     items_to_add?: GroupItemAddRequest[];
     items_to_update?: GroupItemUpdateRequest[];
     items_to_delete?: number[];

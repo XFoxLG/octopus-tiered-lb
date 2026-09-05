@@ -364,12 +364,11 @@ export function GroupListItem({ group }: { group: Group }) {
         () => groupHealthList.find((h) => h.group_id === group.id),
         [groupHealthList, group.id],
     );
-    // 最新一次健康拨测快照（Seller 移植后端 /group/health/*）：只读展示 + 手动触发。
-    const { data: healthSnapshot } = useGroupHealthLatest(group.id, expanded);
-
     const [expanded, setExpanded] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [healthSnapshotMessage, setHealthSnapshotMessage] = useState<string | null>(null);
+    // 最新一次健康拨测快照（Seller 移植后端 /group/health/*）：只读展示 + 手动触发。
+    const { data: healthSnapshot } = useGroupHealthLatest(group.id, expanded);
 
     // ---- Channel maps ----
     const channelNameByKey = useMemo(
