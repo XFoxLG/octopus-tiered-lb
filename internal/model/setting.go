@@ -32,7 +32,6 @@ const (
 	SettingKeyCircuitBreakerMaxCooldown          SettingKey = "circuit_breaker_max_cooldown"            // 熔断最大冷却时间（秒），指数退避上限
 	SettingKeyCircuitBreakerHalfOpenProbeTimeout SettingKey = "circuit_breaker_half_open_probe_timeout" // 熔断 HalfOpen 探测超时（秒），0=禁用；试探请求被中途放弃时避免永久跳过（issue #162）
 	SettingKeyPublicAPIBaseURL                   SettingKey = "public_api_base_url"                     // 对外可访问的 API 基础地址，用于生成示例
-	SettingKeyAlertNotifyLanguage                SettingKey = "alert_notify_language"                   // 告警通知发送语言
 	SettingKeyRatelimitCooldown                  SettingKey = "ratelimit_cooldown"                      // 429 Key 冷却时间（秒），0=关闭
 	SettingKeyAuthErrorCooldown                  SettingKey = "auth_error_cooldown"                    // 401/403 Key 隔离时间（秒），0=关闭
 	SettingKeyServerErrorCooldown                SettingKey = "server_error_cooldown"                  // 408/5xx Key 冷却时间（秒），0=关闭
@@ -178,7 +177,6 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRateLimitHoldMaxWait, Value: "60"},               // 默认最多坚持 60 秒
 
 		{Key: SettingKeyPublicAPIBaseURL, Value: ""},
-		{Key: SettingKeyAlertNotifyLanguage, Value: "en"},
 		{Key: SettingKeyAutoStrategyMinSamples, Value: "10"},       // 默认最小样本数10次
 		{Key: SettingKeyAutoStrategyTimeWindow, Value: "300"},      // 默认时间窗口300秒（5分钟）
 		{Key: SettingKeyAutoStrategySampleThreshold, Value: "100"}, // 默认滑动窗口大小100条
@@ -522,13 +520,6 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("public API base URL must have a host")
 		}
 		return nil
-	case SettingKeyAlertNotifyLanguage:
-		switch s.Value {
-		case "zh-Hans", "zh-Hant", "en":
-			return nil
-		default:
-			return fmt.Errorf("alert notify language must be zh-Hans, zh-Hant, or en")
-		}
 	case SettingKeyNavOrder, SettingKeyNavVisible,
 		SettingKeyHubTabOrder, SettingKeyHubTabVisible,
 		SettingKeyAnalyticsTabOrder, SettingKeyAnalyticsTabVisible,

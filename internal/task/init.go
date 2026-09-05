@@ -36,7 +36,6 @@ const (
 	TaskAnnouncementFetch = "hub_announcement_fetch"
 	TaskUsageHistorySync  = "hub_usage_history_sync"
 	TaskWebDAVBackup      = "webdav_backup"
-	TaskReportGenerate    = "report_generate"
 	TaskErrorLogCleanup   = "error_log_cleanup"
 )
 
@@ -157,9 +156,6 @@ func Init() {
 			}
 		}
 	})
-
-	Register(TaskAlertEvaluate, 60*time.Second, false, EvaluateAlertRules)
-	Register(TaskReportGenerate, 5*time.Minute, false, EvaluateReportSchedules)
 
 	// Hub: capture balance snapshots every 6 hours
 	Register(TaskBalanceCapture, 6*time.Hour, false, func() {

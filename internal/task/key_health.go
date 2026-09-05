@@ -11,7 +11,6 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
-	"github.com/lingyuins/octopus/internal/op/alert"
 	"github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/notification"
 	"github.com/lingyuins/octopus/internal/op/setting"
@@ -195,7 +194,7 @@ func handleKeyHealthRecovery(ctx context.Context, ch *model.Channel, recoveryNot
 	}
 }
 
-// sendKeyHealthNotification 创建应用内通知 + 外部投递。
+// sendKeyHealthNotification 创建应用内通知。
 func sendKeyHealthNotification(ctx context.Context, ch *model.Channel, recovered bool, fails int, detail string) {
 	var key notification.NotifKey
 	var severity model.NotificationSeverity
@@ -241,43 +240,6 @@ func sendKeyHealthNotification(ctx context.Context, ch *model.Channel, recovered
 	// notification.Create 在 DB 未初始化时（测试环境）可能 panic，recover 防止崩溃。
 	if err := safeCreateNotification(ctx, n); err != nil {
 		log.Warnf("key_health: failed to create notification for channel %d: %v", ch.ID, err)
-	}
-
-	// 外部投递：发送到渠道配置的 NotifChannelID
-	if ch.NotifChannelID != nil {
-		sendKeyHealthExternalNotification(ctx, *ch.NotifChannelID, ch, recovered, fails, detail)
-	}
-}
-
-// sendKeyHealthExternalNotification 发送外部通知（webhook/email/telegram 等）。
-func sendKeyHealthExternalNotification(ctx context.Context, notifChannelID int, ch *model.Channel, recovered bool, fails int, detail string) {
-	channels, err := alert.NotifChannelList(ctx)
-	if err != nil {
-		log.Warnf("key_health: failed to list notif channels: %v", err)
-		return
-	}
-	var notifCh *model.AlertNotifChannel
-	for i := range channels {
-		if channels[i].ID == notifChannelID {
-			notifCh = &channels[i]
-			break
-		}
-	}
-	if notifCh == nil {
-		return
-	}
-
-	var title, message string
-	if recovered {
-		title = fmt.Sprintf("Channel \"%s\" key verification recovered", ch.Name)
-		message = fmt.Sprintf("Channel \"%s\" (ID: %d) key check recovered.", ch.Name, ch.ID)
-	} else {
-		title = fmt.Sprintf("Channel \"%s\" key verification failed", ch.Name)
-		message = fmt.Sprintf("Channel \"%s\" (ID: %d) consecutive %d failures: %s", ch.Name, ch.ID, fails, detail)
-	}
-
-	if err := helper.SendNotificationMessage(notifCh, title, message); err != nil {
-		log.Warnf("key_health: failed to send external notification for channel %d: %v", ch.ID, err)
 	}
 }
 

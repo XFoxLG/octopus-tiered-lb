@@ -32,7 +32,6 @@ type Store struct {
 	// Session metrics (updated periodically by relay)
 	activeSessions      atomic.Int64
 	stickyBoundSessions atomic.Int64
-	quotaAlerts         atomic.Int64
 
 	// Latency sampling (mutex-protected ring buffer)
 	latencySamples []float64
@@ -188,9 +187,6 @@ func (s *Store) SetActiveSessions(n int64) { s.activeSessions.Store(n) }
 // SetStickyBoundSessions updates the sticky session count (called from balancer).
 func (s *Store) SetStickyBoundSessions(n int64) { s.stickyBoundSessions.Store(n) }
 
-// SetQuotaAlerts updates the quota alert count (called from alert evaluator).
-func (s *Store) SetQuotaAlerts(n int64) { s.quotaAlerts.Store(n) }
-
 // Snapshot returns a point-in-time snapshot of all runtime metrics.
 func (s *Store) Snapshot() Snapshot {
 	s.mu.Lock()
@@ -226,7 +222,6 @@ func (s *Store) Snapshot() Snapshot {
 		ActiveConnections:   s.activeConns.Load(),
 		ActiveSessions:      s.activeSessions.Load(),
 		StickyBoundSessions: s.stickyBoundSessions.Load(),
-		QuotaAlerts:         s.quotaAlerts.Load(),
 		MemoryMB:            int64(memStats.Alloc / 1024 / 1024),
 		TrendSnapshots:      trend,
 		HasTrendData:        hasTrend,
@@ -245,7 +240,6 @@ type Snapshot struct {
 	ActiveConnections   int64
 	ActiveSessions      int64
 	StickyBoundSessions int64
-	QuotaAlerts         int64
 	MemoryMB            int64
 	TrendSnapshots      []TrendPoint
 	HasTrendData        bool

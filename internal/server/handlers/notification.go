@@ -10,7 +10,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/conf"
-	"github.com/lingyuins/octopus/internal/model"
 	notifop "github.com/lingyuins/octopus/internal/op/notification"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
@@ -25,7 +24,6 @@ func init() {
 		AddRoute(router.NewRoute("/list", http.MethodGet).Handle(listNotifications)).
 		AddRoute(router.NewRoute("/unread-count", http.MethodGet).Handle(getNotificationUnreadCount)).
 		AddRoute(router.NewRoute("/detail/:id", http.MethodGet).Handle(getNotificationDetail)).
-		AddRoute(router.NewRoute("/delivery/list", http.MethodGet).Handle(listNotificationDeliveries)).
 		AddRoute(router.NewRoute("/stream", http.MethodGet).Handle(streamNotifications)).
 		AddRoute(router.NewRoute("/mark-read", http.MethodPost).Handle(markNotificationsRead)).
 		AddRoute(router.NewRoute("/mark-unread", http.MethodPost).Handle(markNotificationsUnread)).
@@ -33,14 +31,7 @@ func init() {
 		AddRoute(router.NewRoute("/archive", http.MethodPost).Handle(archiveNotifications)).
 		AddRoute(router.NewRoute("/unarchive", http.MethodPost).Handle(unarchiveNotifications)).
 		AddRoute(router.NewRoute("/delete/:id", http.MethodDelete).Use(middleware.RequirePermission(auth.PermNotificationsWrite)).Handle(deleteNotification)).
-		AddRoute(router.NewRoute("/archived", http.MethodDelete).Use(middleware.RequirePermission(auth.PermNotificationsWrite)).Handle(deleteArchivedNotifications)).
-		AddRoute(router.NewRoute("/preference/list", http.MethodGet).Handle(listNotificationPreferences)).
-		AddRoute(router.NewRoute("/preference/save", http.MethodPost).Use(middleware.RequirePermission(auth.PermNotificationsWrite)).Handle(saveNotificationPreference)).
-		AddRoute(router.NewRoute("/preference/delete/:id", http.MethodDelete).Use(middleware.RequirePermission(auth.PermNotificationsWrite)).Handle(deleteNotificationPreference)).
-		AddRoute(router.NewRoute("/policy/list", http.MethodGet).Handle(listNotificationPolicies)).
-		AddRoute(router.NewRoute("/policy/create", http.MethodPost).Use(middleware.RequirePermission(auth.PermNotificationsWrite)).Handle(createNotificationPolicy)).
-		AddRoute(router.NewRoute("/policy/update", http.MethodPost).Use(middleware.RequirePermission(auth.PermNotificationsWrite)).Handle(updateNotificationPolicy)).
-		AddRoute(router.NewRoute("/policy/delete/:id", http.MethodDelete).Use(middleware.RequirePermission(auth.PermNotificationsWrite)).Handle(deleteNotificationPolicy))
+		AddRoute(router.NewRoute("/archived", http.MethodDelete).Use(middleware.RequirePermission(auth.PermNotificationsWrite)).Handle(deleteArchivedNotifications))
 }
 
 type notificationIDsPayload struct {
@@ -83,30 +74,7 @@ func getNotificationDetail(c *gin.Context) {
 		resp.Error(c, http.StatusNotFound, "notification not found")
 		return
 	}
-	deliveries, err := notifop.DeliveryList(c.Request.Context(), id)
-	if err != nil {
-		resp.InternalError(c)
-		return
-	}
-	resp.Success(c, gin.H{"notification": item, "deliveries": deliveries})
-}
-
-func listNotificationDeliveries(c *gin.Context) {
-	var notificationID int64
-	if v := c.Query("notification_id"); v != "" {
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			resp.Error(c, http.StatusBadRequest, "invalid notification_id")
-			return
-		}
-		notificationID = id
-	}
-	items, err := notifop.DeliveryList(c.Request.Context(), notificationID)
-	if err != nil {
-		resp.InternalError(c)
-		return
-	}
-	resp.Success(c, items)
+	resp.Success(c, item)
 }
 
 func markNotificationsRead(c *gin.Context) {
@@ -184,100 +152,6 @@ func deleteNotification(c *gin.Context) {
 
 func deleteArchivedNotifications(c *gin.Context) {
 	if err := notifop.DeleteArchived(c.Request.Context()); err != nil {
-		resp.InternalError(c)
-		return
-	}
-	resp.Success(c, nil)
-}
-
-func listNotificationPreferences(c *gin.Context) {
-	items, err := notifop.PreferenceList(c.Request.Context())
-	if err != nil {
-		resp.InternalError(c)
-		return
-	}
-	resp.Success(c, items)
-}
-
-func saveNotificationPreference(c *gin.Context) {
-	var payload model.NotificationPreference
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		resp.Error(c, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if err := notifop.PreferenceSave(c.Request.Context(), &payload); err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	resp.Success(c, payload)
-}
-func deleteNotificationPreference(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || id <= 0 {
-		resp.Error(c, http.StatusBadRequest, "invalid id")
-		return
-	}
-	if err := notifop.PreferenceDelete(c.Request.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			resp.Error(c, http.StatusNotFound, err.Error())
-			return
-		}
-		resp.InternalError(c)
-		return
-	}
-	resp.Success(c, nil)
-}
-
-func listNotificationPolicies(c *gin.Context) {
-	items, err := notifop.PolicyList(c.Request.Context())
-	if err != nil {
-		resp.InternalError(c)
-		return
-	}
-	resp.Success(c, items)
-}
-
-func createNotificationPolicy(c *gin.Context) {
-	var payload model.NotificationPolicy
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		resp.Error(c, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if err := notifop.PolicyCreate(c.Request.Context(), &payload); err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	resp.Success(c, payload)
-}
-
-func updateNotificationPolicy(c *gin.Context) {
-	var payload model.NotificationPolicy
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		resp.Error(c, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if err := notifop.PolicyUpdate(c.Request.Context(), &payload); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			resp.Error(c, http.StatusNotFound, err.Error())
-			return
-		}
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	resp.Success(c, payload)
-}
-
-func deleteNotificationPolicy(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || id <= 0 {
-		resp.Error(c, http.StatusBadRequest, "invalid id")
-		return
-	}
-	if err := notifop.PolicyDelete(c.Request.Context(), id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			resp.Error(c, http.StatusNotFound, err.Error())
-			return
-		}
 		resp.InternalError(c)
 		return
 	}

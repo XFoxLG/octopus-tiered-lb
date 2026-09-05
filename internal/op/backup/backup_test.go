@@ -83,11 +83,10 @@ func TestImportWithModeFullClearsExistingRowsUsingActualTableNames(t *testing.T)
 	dbConn := internaldb.GetDB()
 	legacyChannel := model.Channel{ID: 1, Name: "legacy-channel", Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []model.BaseUrl{{URL: "https://legacy.example.com"}}}
 	legacyGroup := model.Group{ID: 1, Name: "legacy-group", Mode: model.GroupModeRoundRobin, EndpointType: model.EndpointTypeChat}
-	legacyAlert := model.AlertHistory{ID: 1, RuleID: 1, RuleName: "legacy", Message: "legacy", Time: 1}
 	legacyRuntime := model.AutoStrategyState{Key: "legacy", ChannelID: 1, ModelName: "gpt-4o", UpdatedAt: 1}
 	legacyStats := model.StatsTotal{ID: 1}
 
-	for _, row := range []any{&legacyChannel, &legacyGroup, &legacyAlert, &legacyRuntime, &legacyStats} {
+	for _, row := range []any{&legacyChannel, &legacyGroup, &legacyRuntime, &legacyStats} {
 		if err := dbConn.Create(row).Error; err != nil {
 			t.Fatalf("seed legacy row: %v", err)
 		}
@@ -97,7 +96,6 @@ func TestImportWithModeFullClearsExistingRowsUsingActualTableNames(t *testing.T)
 		Version:       1,
 		Channels:      []model.Channel{{ID: 2, Name: "new-channel", Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []model.BaseUrl{{URL: "https://new.example.com"}}}},
 		Groups:        []model.Group{{ID: 2, Name: "new-group", Mode: model.GroupModeRandom, EndpointType: model.EndpointTypeChat}},
-		AlertHistory:  []model.AlertHistory{{ID: 2, RuleID: 2, RuleName: "new", Message: "new", Time: 2}},
 		RuntimeStates: []model.AutoStrategyState{{Key: "new", ChannelID: 2, ModelName: "gpt-4.1", UpdatedAt: 2}},
 		IncludeStats:  true,
 		StatsTotal:    []model.StatsTotal{{ID: 2}},
@@ -127,8 +125,6 @@ func TestImportWithModeFullClearsExistingRowsUsingActualTableNames(t *testing.T)
 	assertCount(&model.Channel{}, 1, "id = ?", 2)
 	assertCount(&model.Group{}, 0, "id = ?", 1)
 	assertCount(&model.Group{}, 1, "id = ?", 2)
-	assertCount(&model.AlertHistory{}, 0, "id = ?", 1)
-	assertCount(&model.AlertHistory{}, 1, "id = ?", 2)
 	assertCount(&model.AutoStrategyState{}, 0, "key = ?", "legacy")
 	assertCount(&model.AutoStrategyState{}, 1, "key = ?", "new")
 	assertCount(&model.StatsTotal{}, 0, "id = ?", 1)

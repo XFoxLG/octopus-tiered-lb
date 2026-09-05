@@ -489,7 +489,6 @@ type channelRequestPayload struct {
 	SkipModelTest        bool                        `json:"skip_model_test"`
 	Disposable           bool                        `json:"disposable"`
 	ExpireAt             *time.Time                  `json:"expire_at,omitempty"`
-	NotifChannelID       *int                        `json:"notif_channel_id,omitempty"`
 	KeySelectionStrategy string                      `json:"key_selection_strategy"`
 	CustomHeader         []model.CustomHeader        `json:"custom_header"`
 	ParamOverride        *string                     `json:"param_override"`
@@ -552,7 +551,6 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		SkipModelTest:        p.SkipModelTest,
 		Disposable:           p.Disposable,
 		ExpireAt:             p.ExpireAt,
-		NotifChannelID:       p.NotifChannelID,
 		KeySelectionStrategy: p.KeySelectionStrategy,
 		AutoGroup:            p.AutoGroup,
 		CustomHeader:         p.CustomHeader,

@@ -3,7 +3,6 @@ package migrate
 import (
 	"fmt"
 
-	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/gorm"
 )
 
@@ -14,22 +13,11 @@ func init() {
 	})
 }
 
-// 029: 为告警规则增加错误率滑动窗口与作用域字段（issue #128）。
+// 029: 历史迁移（曾为 alert_rules 增加滑动窗口与作用域字段，issue #128）。
+// 告警规则引擎已移除；表由后续迁移 DROP，此处保留版本号占位。
 func migrateAlertRuleScopes(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
-	}
-	if !db.Migrator().HasTable(&model.AlertRule{}) {
-		return nil
-	}
-	columns := []string{"WindowSec", "ScopeGroupID", "ScopeModelName"}
-	for _, column := range columns {
-		if db.Migrator().HasColumn(&model.AlertRule{}, column) {
-			continue
-		}
-		if err := db.Migrator().AddColumn(&model.AlertRule{}, column); err != nil {
-			return fmt.Errorf("add alert_rules.%s: %w", column, err)
-		}
 	}
 	return nil
 }
