@@ -23,28 +23,6 @@ export interface LLMInfo extends LLMPrice {
 }
 
 /**
- * 投影渠道从上游站点同步到的展示用定价（不参与本地计费）。
- * billing_mode: token = $/M；per_call = $/次
- */
-export interface ChannelUpstreamPrice {
-    billing_mode: 'token' | 'per_call' | string;
-    input: number;
-    output: number;
-    cache_read: number;
-    cache_write: number;
-}
-
-/**
- * 上游模型广场性能指标（NewAPI /api/perf-metrics/summary）。
- * success_rate: 0-1
- */
-export interface ChannelUpstreamMetrics {
-    latency_ms: number;
-    avg_tps: number;
-    success_rate: number;
-}
-
-/**
  * LLM 渠道关联信息
  */
 export interface LLMChannel {
@@ -52,10 +30,6 @@ export interface LLMChannel {
     enabled: boolean;
     channel_id: number;
     channel_name: string;
-    upstream_price?: ChannelUpstreamPrice | null;
-    upstream_metrics?: ChannelUpstreamMetrics | null;
-    channel_balance?: number | null;
-    channel_today_income?: number | null;
 }
 
 export interface ModelMarketChannel {

@@ -15,34 +15,12 @@ func init() {
 	})
 }
 
-// 040: 号池（Account Pool）子系统。
-// - 创建 account_pools / pool_accounts 表（AutoMigrate 兜底）。
-// - channels 表增加 pool_id 列。
-// - nav_order / nav_visible 存量行补入 "pool"（保序去重、幂等）。
+// 040: 历史迁移（曾创建 account_pools / pool_accounts 表并为 channels 加 pool_id 列）。
+// 号池功能已移除；表和列由后续迁移 DROP。nav_order/nav_visible 补入 "pool" 的
+// 部分保留（幂等），nav 中 "pool" 条目由应用启动时的 nav 校准过滤。
 func migrateAccountPool(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
-	}
-
-	// 确保表存在（AutoMigrate 通常已创建，这里幂等兜底）。
-	if !db.Migrator().HasTable(&model.AccountPool{}) {
-		if err := db.Migrator().CreateTable(&model.AccountPool{}); err != nil {
-			return fmt.Errorf("create account_pools: %w", err)
-		}
-	}
-	if !db.Migrator().HasTable(&model.PoolAccount{}) {
-		if err := db.Migrator().CreateTable(&model.PoolAccount{}); err != nil {
-			return fmt.Errorf("create pool_accounts: %w", err)
-		}
-	}
-
-	// channels 表加 pool_id 列。
-	if db.Migrator().HasTable(&model.Channel{}) {
-		if !db.Migrator().HasColumn(&model.Channel{}, "PoolID") {
-			if err := db.Migrator().AddColumn(&model.Channel{}, "PoolID"); err != nil {
-				return fmt.Errorf("add column pool_id: %w", err)
-			}
-		}
 	}
 
 	// nav_order / nav_visible 补入 "pool"。

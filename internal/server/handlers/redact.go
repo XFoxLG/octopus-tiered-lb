@@ -42,41 +42,10 @@ func redactChannelBaseURLsForViewer(channels []model.Channel) {
 	}
 }
 
-func redactRemoteSiteBaseURLsForViewer(sites []model.RemoteSite) {
-	for siteIndex := range sites {
-		sites[siteIndex].BaseURL = maskURLDomainForViewer(sites[siteIndex].BaseURL)
-	}
-}
-
 func redactCredentialBaseURLsForViewer(profiles []model.APICredentialProfile) {
 	for profileIndex := range profiles {
 		profiles[profileIndex].BaseURL = maskURLDomainForViewer(profiles[profileIndex].BaseURL)
 		profiles[profileIndex].APIKey = viewerMaskedDomain
-	}
-}
-
-func redactSiteBaseURLsForViewer(sites []model.Site) {
-	for siteIndex := range sites {
-		sites[siteIndex].BaseURL = maskURLDomainForViewer(sites[siteIndex].BaseURL)
-		// Mask site-level custom proxy addresses
-		if sites[siteIndex].SiteProxy != nil {
-			masked := maskURLDomainForViewer(*sites[siteIndex].SiteProxy)
-			sites[siteIndex].SiteProxy = &masked
-		}
-		// Mask account-level custom proxy addresses (accounts are preloaded in list queries)
-		for accountIndex := range sites[siteIndex].Accounts {
-			account := &sites[siteIndex].Accounts[accountIndex]
-			if account.AccountProxy != nil {
-				masked := maskURLDomainForViewer(*account.AccountProxy)
-				account.AccountProxy = &masked
-			}
-			// Mask upstream account credentials: viewer 只能看到站点元信息，
-			// 账号密码/token/API Key 不得明文返回。
-			account.Password = viewerMaskedDomain
-			account.AccessToken = viewerMaskedDomain
-			account.APIKey = viewerMaskedDomain
-			account.RefreshToken = viewerMaskedDomain
-		}
 	}
 }
 

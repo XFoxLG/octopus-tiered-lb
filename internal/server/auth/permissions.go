@@ -19,8 +19,6 @@ const (
 	PermStatsRead          Permission = "stats:read"
 	PermUsersRead          Permission = "users:read"
 	PermUsersWrite         Permission = "users:write"
-	PermSitesRead          Permission = "sites:read"
-	PermSitesWrite         Permission = "sites:write"
 	PermNotificationsRead  Permission = "notifications:read"
 	PermNotificationsWrite Permission = "notifications:write"
 )
@@ -32,7 +30,6 @@ var adminPermissions = []Permission{
 	PermSettingsRead, PermSettingsWrite,
 	PermLogsRead, PermLogsWrite, PermStatsRead,
 	PermUsersRead, PermUsersWrite,
-	PermSitesRead, PermSitesWrite,
 	PermNotificationsRead, PermNotificationsWrite,
 }
 
@@ -42,7 +39,6 @@ var editorPermissions = []Permission{
 	PermAPIKeysRead, PermAPIKeysWrite,
 	PermSettingsRead, PermSettingsWrite,
 	PermLogsRead, PermLogsWrite, PermStatsRead,
-	PermSitesRead, PermSitesWrite,
 	PermNotificationsRead, PermNotificationsWrite,
 }
 
@@ -52,7 +48,6 @@ var viewerPermissions = []Permission{
 	PermAPIKeysRead,
 	PermSettingsRead,
 	PermLogsRead, PermStatsRead,
-	PermSitesRead,
 	PermNotificationsRead,
 }
 

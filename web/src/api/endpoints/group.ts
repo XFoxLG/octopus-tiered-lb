@@ -132,7 +132,6 @@ export interface Group {
     // true 时连客户端显式关闭（none / thinking disabled）也补上默认档位。
     reasoning_force_override?: boolean;
     custom_header?: { header_key: string; header_value: string }[];
-    sort_strategy?: string; // "" | "non_relay_balance" | "non_relay_multiplier" | "multiplier_balance" | "balance_only"
 }
 
 export interface GroupTestResult {
@@ -464,7 +463,6 @@ export interface CreateGroupRequest {
     reasoning_buffer_strategy?: string;
     default_reasoning_effort?: string;
     reasoning_force_override?: boolean;
-    sort_strategy?: string;
     param_override?: string;
     custom_header?: { header_key: string; header_value: string }[];
 }
@@ -489,7 +487,6 @@ export interface GroupUpdateRequest {
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     default_reasoning_effort?: string;
     reasoning_force_override?: boolean;
-    sort_strategy?: string;
     param_override?: string;
     custom_header?: { header_key: string; header_value: string }[];
     items_to_add?: GroupItemAddRequest[];

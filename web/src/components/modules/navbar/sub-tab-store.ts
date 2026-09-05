@@ -4,24 +4,21 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 /**
  * 子标签顺序 / 可见性 store。
  *
- * 管理 Hub / Analytics / Ops 三个模块的子标签排序与隐藏。
+ * 管理 Analytics / Ops 两个模块的子标签排序与隐藏。
  * 持久化方式与 nav-store 一致：localStorage 即时持久化 + DB 设置项跨设备同步
  * （由 app.tsx 在登录后 hydrate）。
  */
 
-export type HubTab = 'sites' | 'site-channels' | 'automation' | 'balance' | 'tokenplan';
 export type AnalyticsTab = 'cache' | 'utilization' | 'route-health' | 'channel-model' | 'evaluation' | 'latency';
 export type OpsTab = 'telemetry' | 'quota' | 'health' | 'maintenance' | 'system' | 'audit';
 
-export type ModuleId = 'hub' | 'analytics' | 'ops';
-export type SubTab = HubTab | AnalyticsTab | OpsTab;
+export type ModuleId = 'analytics' | 'ops';
+export type SubTab = AnalyticsTab | OpsTab;
 
-export const DEFAULT_HUB_TABS: HubTab[] = ['sites', 'site-channels', 'automation', 'balance', 'tokenplan'];
 export const DEFAULT_ANALYTICS_TABS: AnalyticsTab[] = ['cache', 'utilization', 'route-health', 'channel-model', 'evaluation', 'latency'];
 export const DEFAULT_OPS_TABS: OpsTab[] = ['telemetry', 'quota', 'health', 'maintenance', 'system', 'audit'];
 
 export const DEFAULT_SUB_TABS: Record<ModuleId, SubTab[]> = {
-    hub: [...DEFAULT_HUB_TABS],
     analytics: [...DEFAULT_ANALYTICS_TABS],
     ops: [...DEFAULT_OPS_TABS],
 };
@@ -30,7 +27,6 @@ export const MIN_VISIBLE_SUB_TABS = 1;
 
 /** 各模块的合法子标签表，用于 normalize 过滤非法值。 */
 const ALLOWED_TABS: Record<ModuleId, Record<string, boolean>> = {
-    hub: DEFAULT_HUB_TABS.reduce((acc, t) => { acc[t] = true; return acc; }, {} as Record<string, boolean>),
     analytics: DEFAULT_ANALYTICS_TABS.reduce((acc, t) => { acc[t] = true; return acc; }, {} as Record<string, boolean>),
     ops: DEFAULT_OPS_TABS.reduce((acc, t) => { acc[t] = true; return acc; }, {} as Record<string, boolean>),
 };
@@ -115,7 +111,6 @@ export function parseSubTabVisible(module: ModuleId, value: string | null | unde
 }
 
 interface SubTabState {
-    hub: { orderedTabs: SubTab[]; visibleTabs: SubTab[] };
     analytics: { orderedTabs: SubTab[]; visibleTabs: SubTab[] };
     ops: { orderedTabs: SubTab[]; visibleTabs: SubTab[] };
     setOrderedTabs: (module: ModuleId, tabs: SubTab[]) => void;
@@ -128,7 +123,6 @@ interface SubTabState {
 export const useSubTabStore = create<SubTabState>()(
     persist(
         (set) => ({
-            hub: { orderedTabs: [...DEFAULT_HUB_TABS], visibleTabs: [...DEFAULT_HUB_TABS] },
             analytics: { orderedTabs: [...DEFAULT_ANALYTICS_TABS], visibleTabs: [...DEFAULT_ANALYTICS_TABS] },
             ops: { orderedTabs: [...DEFAULT_OPS_TABS], visibleTabs: [...DEFAULT_OPS_TABS] },
             setOrderedTabs: (module, tabs) => {
@@ -163,7 +157,6 @@ export const useSubTabStore = create<SubTabState>()(
             },
             resetAll: () => {
                 set({
-                    hub: { orderedTabs: [...DEFAULT_HUB_TABS], visibleTabs: [...DEFAULT_HUB_TABS] },
                     analytics: { orderedTabs: [...DEFAULT_ANALYTICS_TABS], visibleTabs: [...DEFAULT_ANALYTICS_TABS] },
                     ops: { orderedTabs: [...DEFAULT_OPS_TABS], visibleTabs: [...DEFAULT_OPS_TABS] },
                 });
@@ -175,7 +168,7 @@ export const useSubTabStore = create<SubTabState>()(
             merge: (persistedState, currentState) => {
                 const typed = (persistedState as Partial<SubTabState> | null) ?? null;
                 const result = { ...currentState, ...typed };
-                for (const modId of ['hub', 'analytics', 'ops'] as ModuleId[]) {
+                for (const modId of ['analytics', 'ops'] as ModuleId[]) {
                     const stored = (typed as Record<ModuleId, { orderedTabs?: SubTab[]; visibleTabs?: SubTab[] } | undefined> | null)?.[modId];
                     const orderedTabs = normalizeSubTabOrder(modId, stored?.orderedTabs);
                     const visibleTabs = normalizeSubTabVisible(modId, stored?.visibleTabs, orderedTabs);

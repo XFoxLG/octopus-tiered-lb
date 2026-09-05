@@ -104,14 +104,6 @@ func runStart() error {
 		return fmt.Errorf("cache init error: %w", err)
 	}
 
-	// One-time backfill of site model hourly stats from relay logs.
-	// Runs asynchronously to avoid blocking startup.
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		op.StatsSiteModelBackfill(ctx)
-	}()
-
 	telemetry.Global().StartBackground()
 
 	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 10*time.Second)

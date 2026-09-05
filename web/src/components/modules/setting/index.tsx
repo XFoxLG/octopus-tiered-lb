@@ -22,7 +22,6 @@ import { SettingSemanticCache } from './SemanticCache';
 import { SettingWebDAV } from './WebDAV';
 import { SettingWebAuthn } from './WebAuthn';
 import { SettingNormalize } from './Normalize';
-import { SettingPool } from './Pool';
 import { useProxyPoolDialogStore } from '@/components/modules/proxy-pool/dialog-store';
 import { DEFAULT_SETTING_ORDER } from './SettingOrder';
 
@@ -48,7 +47,6 @@ const SETTING_ITEM_DEFS: SettingItemDef[] = [
     { id: 'webdav',            icon: <Cloud className="h-5 w-5" />,             titleKey: 'webdav.title',         component: <SettingWebDAV /> },
     { id: 'webauthn',          icon: <Fingerprint className="h-5 w-5" />,      titleKey: 'webauthn.title',       component: <SettingWebAuthn /> },
     { id: 'normalize',         icon: <Wand2 className="h-5 w-5" />,           titleKey: 'normalize.title',      component: <SettingNormalize /> },
-    { id: 'pool',              icon: <Layers className="h-5 w-5" />,           titleKey: 'pool.title',           component: <SettingPool /> },
     { id: 'proxy-pool',        icon: <Network className="h-5 w-5" />,          titleKey: 'proxyPool.title',      component: null },
 ];
 

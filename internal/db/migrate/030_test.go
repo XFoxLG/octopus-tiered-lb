@@ -102,11 +102,6 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := addGroupRequestOptions(db); err != nil {
 		t.Fatalf("addGroupRequestOptions: %v", err)
 	}
-	// Run migration 057 to add sort_strategy/is_reserve/multiplier policy columns
-	// (test uses latest model.Group/Channel/SiteUserGroup which include these fields)
-	if err := addGroupSortMultiplierColumns(db); err != nil {
-		t.Fatalf("addGroupSortMultiplierColumns: %v", err)
-	}
 	// Run migration 058 to add default reasoning policy columns
 	// (test uses latest model.Group which includes these fields)
 	if err := addGroupReasoningPolicyColumns(db); err != nil {

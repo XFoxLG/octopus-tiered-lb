@@ -80,12 +80,6 @@
   },
   "navbar": {
     "home": "主页",
-    "hub": "站点管理",
-    "announcement": "公告",
-    "checkin": "签到",
-    "redemption": "兑换码",
-    "usage-history": "用量历史",
-    "credential": "凭据管理",
     "channel": "渠道",
     "group": "分组",
     "key": "密钥",
@@ -98,8 +92,7 @@
     "setting": "设置",
     "ariaLabel": "主导航",
     "apikey": "API 密钥",
-    "notification": "通知中心",
-    "pool": "号池"
+    "notification": "通知中心"
   },
   "endpoints": {
     "title": "可用端点",
@@ -110,290 +103,6 @@
     "modelCount": "{count, plural, =0 {暂无模型} other {# 个模型}}",
     "empty": "暂无可用端点",
     "noMatch": "没有符合搜索条件的端点或模型"
-  },
-  "hub": {
-    "tabs": {
-      "sites": "站点",
-      "checkin": "签到",
-      "announcement": "公告",
-      "redemption": "兑换",
-      "usage": "用量历史",
-      "credential": "凭证",
-      "siteChannels": "站点渠道",
-      "automation": "自动化"
-    },
-    "plan": {
-      "balance": "额度",
-      "tokenPlan": "TokenPlan",
-      "addProvider": "添加监控",
-      "addProviderTitle": "添加额度监控",
-      "addProviderDesc": "选择厂商并输入 API Key，系统将自动查询额度并创建渠道至 Plan 分组。",
-      "provider": "厂商",
-      "selectProvider": "选择厂商",
-      "apiKeyPlaceholder": "请输入 API Key",
-      "customName": "自定义名称（可选）",
-      "customNamePlaceholder": "留空则使用默认名称",
-      "add": "添加并查询",
-      "refresh": "刷新",
-      "delete": "删除",
-      "balanceAvailable": "可用余额",
-      "balanceUsed": "已用额度",
-      "totalUsed": "累计已用",
-      "tierFiveHour": "近5小时用量",
-      "tierWeekly": "近一周用量",
-      "tierMonthly": "近一月用量",
-      "usedLabel": "已使用",
-      "days": "天",
-      "hours": "小时",
-      "minutes": "分钟",
-      "resetSuffix": "后重置",
-      "resetNow": "即将重置",
-      "empty": "暂无监控项，点击上方按钮添加",
-      "loadError": "加载失败",
-      "getKey": "获取 Key",
-      "apiKeyLabel": "API Key",
-      "querying": "查询中...",
-      "loading": "正在加载...",
-      "oasisTokenLabel": "Oasis-Token",
-      "oasisTokenPlaceholder": "粘贴控制台 Cookie 中的 Oasis-Token 值",
-      "oasisTokenHint": "需登录 platform.stepfun.com 控制台，从浏览器 Cookie 复制 Oasis-Token 值（格式：access...refresh）。该 Token 有效期约 30 分钟，过期后需重新获取。",
-      "monitorOnly": "仅监控",
-      "refreshInterval": "自动刷新间隔",
-      "refreshFollowGlobal": "跟随全局（{minutes} 分钟）",
-      "refreshEvery": "每 {minutes} 分钟",
-      "refreshIntervalHint": "按此间隔自动查询额度；全局默认可在 Hub 自动化面板调整",
-      "refreshIntervalShort": "自动刷新",
-      "refreshFollowGlobalShort": "跟随全局",
-      "deltaSpent": "上次检测后消耗",
-      "sysStats": "DeepSeek 额度调用统计",
-      "sysTotalRequests": "累计调用",
-      "sysTodayRequests": "今日调用",
-      "forwardApiKeyLabel": "API Key（可选）",
-      "forwardApiKeyPlaceholder": "sk- 开头的 API Key，用于转发",
-      "forwardApiKeyHint": "填写后将自动创建或复用转发渠道，模型相同的合并为同一渠道。留空则仅监控套餐额度。",
-      "consoleTokenLabel": "控制台 Token",
-      "sensenovaTokenPlaceholder": "粘贴控制台 Bearer Token 值",
-      "sensenovaTokenHint": "需登录 platform.sensenova.cn 控制台，从请求头复制 Bearer Token 值。有效期约 3 小时，过期后需重新获取。",
-      "bailianTokenPlaceholder": "粘贴控制台完整 Cookie 值",
-      "bailianTokenHint": "需登录 bailian.console.aliyun.com 控制台，按 F12 打开开发者工具 → Network（网络）→ 刷新页面，点击任意请求，从请求头（Request Headers）复制完整 Cookie 值。会话过期后需重新获取。",
-      "volcengineCredentialPlaceholder": "Cookie值|||x-csrf-token值（从控制台请求头复制，用竖线分隔）",
-      "volcengineCredentialHint": "登录 console.volcengine.com/ark → F12 → Network → 任意 plan 接口，复制完整 Cookie 请求头和 x-csrf-token 请求头，用 ||| 连接。会话过期后需重新获取。",
-      "volcengineAKSKPlaceholder": "AccessKey ID|||Secret Access Key（火山控制面 OpenAPI 签名凭据，与推理 Key 不同）",
-      "volcengineAKSKHint": "在 console.volcengine.com/iam → 密钥管理 创建 AccessKey ID 与 Secret（与推理 API Key 是两套凭据），用 ||| 连接。系统通过控制面 OpenAPI 签名查询，先查 Agent Plan，无订阅再查 Coding Plan。",
-      "cookieLabel": "Cookie",
-      "mimoPassTokenPlaceholder": "粘贴 account.xiaomi.com 的完整 Cookie",
-      "mimoServiceTokenPlaceholder": "粘贴 platform.xiaomimimo.com 的完整 Cookie",
-      "mimoPassTokenHint": "需包含字段：passToken=、userId=、cUserId=。有效期 30 天（每次使用自动续期）。⚠️ 安全风险：passToken 是小米账号长期会话凭证，可能存在横向移动风险，未进行全方面测试。填入后系统自动通过 SSO 刷新 serviceToken，无需手动更新。",
-      "mimoServiceTokenHint": "需包含字段：api-platform_serviceToken=、userId=、api-platform_slh=、api-platform_ph=。有效期约 1 天（服务端控制），过期需手动更新。登录 platform.xiaomimimo.com -> F12 -> Application -> Cookies，复制 api-platform 域下所有 Cookie。",
-      "codexOAuthLabel": "OAuth JSON",
-      "codexOAuthPlaceholder": "粘贴 OAuth JSON 凭据（含 access_token 和 account_id）",
-      "codexOAuthHint": "从 ChatGPT 订阅账号获取 OAuth JSON 凭据（含 access_token 和 account_id）。系统将自动创建 Codex 类型转发渠道（接入点 chatgpt.com/backend-api/codex/responses）。access_token 有效期较短，过期后需重新获取。",
-      "zhipuTeamOrgIdLabel": "组织 ID",
-      "zhipuTeamOrgIdPlaceholder": "bigmodel-organization 请求头值",
-      "zhipuTeamProjectIdLabel": "项目 ID",
-      "zhipuTeamProjectIdPlaceholder": "bigmodel-project 请求头值",
-      "zhipuTeamHint": "智谱团队版需 API Key + 组织 ID + 项目 ID 三者齐全（从 open.bigmodel.cn 控制台团队设置页获取）。",
-      "zhipuTeamEditHint": "留空则清空组织/项目 ID；填写新值将一并更新。",
-      "zhipuTeamMissingIds": "智谱团队版需填写组织 ID 和项目 ID",
-      "editCredentials": "更换凭据",
-      "editCredentialsTitle": "更换凭据",
-      "editCredentialsDesc": "凭据过期或失效时粘贴新凭据，系统将立即重新查询用量。",
-      "credentialsUpdated": "凭据已更新",
-      "updateFailed": "更新失败",
-      "update": "更新并查询",
-      "forwardApiKeyPlaceholderOptional": "留空保持不变，填写则更新转发渠道 key",
-      "forwardApiKeyEditHint": "留空表示不更换转发凭据；填写新值将同步更新关联渠道的 key。",
-      "senseNovaAuthModeLabel": "凭据方式",
-      "senseNovaAuthModeAccount": "账号密码（自动登录续期）",
-      "senseNovaUsernameLabel": "登录账号",
-      "senseNovaUsernamePlaceholder": "platform.sensenova.cn 控制台登录账号（手机号/用户名）",
-      "senseNovaPasswordLabel": "登录密码",
-      "senseNovaPasswordPlaceholder": "控制台登录密码",
-      "senseNovaAccountHint": "系统自动完成登录并续期控制台 Token（约 3 小时有效期），全程无需手动更换。账号密码 AES 加密存储，仅用于自动登录。",
-      "senseNovaAccountMissing": "请填写登录账号和密码",
-      "senseNovaLoginConfiguredHint": "当前已启用账号密码自动登录（{username}）。重新填写密码即可更换账号。",
-      "senseNovaAutoLoginBadge": "自动登录",
-      "volcengineAuthModeLabel": "凭据方式",
-      "volcengineAuthModeCookie": "Cookie + CSRF Token",
-      "volcengineAuthModeAKSK": "AK/SK（AccessKey 签名）",
-      "sysTotalTokens": "累计 Token",
-      "sysTodayTokens": "今日 Token",
-      "deepSeekAccountLabel": "控制台账号（可选，用于官方用量统计）",
-      "deepSeekAccountPlaceholder": "platform.deepseek.com 登录手机号",
-      "deepSeekPasswordPlaceholder": "控制台登录密码",
-      "deepSeekAccountHint": "配置后系统自动登录控制台，把卡片统计切换为官方 token 用量（覆盖账号下所有 API key 的调用，比本地转发统计更准确）。账号密码 AES 加密存储；不填则继续使用本地统计。",
-      "sysStatsOfficial": "官方用量",
-      "sysStatsLocal": "本地统计",
-      "deepSeekApiKeyMissing": "请填写 API Key（用于余额查询，控制台账号为可选）"
-    },
-    "title": "远程站点",
-    "addSite": "添加站点",
-    "editSite": "编辑站点",
-    "disabled": "已禁用",
-    "user": "用户",
-    "quota": "余额",
-    "refreshAll": "全部刷新",
-    "refreshed": "站点已刷新",
-    "allRefreshed": "所有站点已刷新",
-    "created": "站点已创建",
-    "updated": "站点已更新",
-    "deleted": "站点已删除",
-    "confirmDelete": "确定要删除此远程站点吗？",
-    "empty": "暂无远程站点，点击添加开始使用。",
-    "detected": "检测到类型",
-    "detect": "自动检测",
-    "requiredFields": "名称、Base URL 和站点类型为必填项",
-    "cancel": "取消",
-    "save": "保存",
-    "create": "创建",
-    "saving": "保存中...",
-    "form": {
-      "name": "名称",
-      "namePlaceholder": "我的 API 站点",
-      "baseUrl": "Base URL",
-      "siteType": "站点类型",
-      "accessToken": "访问令牌",
-      "username": "用户名",
-      "usernamePlaceholder": "New API 用户名（用于 New-Api-User header）",
-      "password": "密码",
-      "exchangeRate": "汇率（USD）",
-      "enabled": "启用",
-      "unchanged": "留空表示不修改"
-    },
-    "chart": {
-      "loading": "加载图表数据中...",
-      "noData": "暂无余额历史数据。",
-      "quota": "余额",
-      "predicted": "预测",
-      "dailyBurn": "日消耗",
-      "daysRemaining": "剩余天数",
-      "sevenDayAvg": "7日均值",
-      "estimatedZero": "预计耗尽日"
-    },
-    "discover": "发现站点",
-    "discoveredTitle": "发现的站点",
-    "discoveredEmpty": "未发现站点",
-    "add": "添加"
-  },
-  "announcement": {
-    "title": "公告",
-    "refreshAll": "刷新全部",
-    "refreshed": "已刷新 {count} 条公告",
-    "empty": "暂无公告"
-  },
-  "checkin": {
-    "title": "签到",
-    "checkIn": "签到",
-    "checkInAll": "全部签到",
-    "done": "已签到",
-    "success": "签到成功！",
-    "alreadyChecked": "今天已签到",
-    "failed": "签到失败",
-    "allDone": "已完成 {count} 个站点的签到",
-    "empty": "暂无可签到的远程站点。"
-  },
-  "redemption": {
-    "title": "兑换码",
-    "description": "使用兑换码为远程站点添加额度",
-    "labels": {
-      "codes": "兑换码",
-      "site": "目标站点"
-    },
-    "placeholders": {
-      "codes": "每行输入一个兑换码...",
-      "site": "选择站点"
-    },
-    "hints": {
-      "codes": "每行一个兑换码，空行将被忽略。"
-    },
-    "buttons": {
-      "redeem": "兑换",
-      "redeeming": "兑换中...",
-      "redeemAll": "在所有站点兑换"
-    },
-    "status": {
-      "success": "成功",
-      "already_used": "已使用",
-      "invalid": "无效",
-      "failed": "失败"
-    },
-    "success": {
-      "description": "成功兑换 {success}/{total} 个兑换码",
-      "allSitesTitle": "兑换完成",
-      "allSitesDesc": "在 {count} 个站点成功兑换"
-    },
-    "errors": {
-      "noCodes": "无兑换码",
-      "noCodesDesc": "请至少输入一个兑换码",
-      "noSite": "未选择站点",
-      "noSiteDesc": "请选择目标站点",
-      "failed": "兑换失败"
-    },
-    "history": {
-      "title": "兑换历史",
-      "description": "该站点的最近兑换记录",
-      "selectSite": "选择站点以查看历史",
-      "empty": "暂无兑换记录"
-    }
-  },
-  "usage_history": {
-    "title": "用量历史",
-    "description": "查看和分析远程站点的用量历史",
-    "filters": "筛选条件",
-    "site": "站点",
-    "select_site": "选择站点",
-    "day_from": "起始日期",
-    "day_to": "结束日期",
-    "model": "模型",
-    "all_models": "所有模型",
-    "token": "令牌",
-    "all_tokens": "所有令牌",
-    "sync": "同步",
-    "sync_all": "同步全部",
-    "sync_success": "已同步 {count} 条记录",
-    "sync_all_success": "已从所有站点同步 {count} 条记录",
-    "sync_error": "同步用量历史失败",
-    "total_requests": "总请求数",
-    "total_tokens": "总令牌数",
-    "total_quota": "总配额",
-    "history": "历史记录",
-    "history_description": "详细用量记录",
-    "date": "日期",
-    "requests": "请求数",
-    "prompt_tokens": "输入令牌",
-    "completion_tokens": "输出令牌",
-    "quota": "配额",
-    "no_data": "暂无用量数据"
-  },
-  "credential": {
-    "title": "API 凭据",
-    "add": "添加凭据",
-    "edit": "编辑凭据",
-    "verify": "验证",
-    "export": "导出",
-    "lastVerified": "上次验证",
-    "confirmDelete": "确定要删除此凭据吗？",
-    "deleted": "凭据已删除",
-    "created": "凭据已创建",
-    "updated": "凭据已更新",
-    "verifySuccess": "所有探针通过",
-    "verifyFailed": "部分探针失败",
-    "exportCopied": "配置已复制到剪贴板",
-    "empty": "暂无 API 凭据，添加一个来管理你的密钥。",
-    "requiredFields": "名称、Base URL 和 API Key 为必填项",
-    "cancel": "取消",
-    "save": "保存",
-    "create": "创建",
-    "saving": "保存中...",
-    "form": {
-      "name": "名称",
-      "namePlaceholder": "我的 OpenAI Key",
-      "apiType": "API 类型",
-      "baseUrl": "Base URL",
-      "apiKey": "API Key",
-      "notes": "备注",
-      "unchanged": "留空表示不修改"
-    }
   },
   "model_mapping": {
     "title": "模型映射",
@@ -1378,18 +1087,6 @@
       "hint": "CIDR/IP 列表，用于从 X-Forwarded-For 解析真实客户端 IP。留空=不信任任何代理，*=信任所有（有风险）。",
       "restartNotice": "修改后需重启服务生效。"
     },
-    "pool": {
-      "title": "号池配置",
-      "description": "号池账号健康巡检与分层调度过滤。",
-      "healthCheckEnabled": "启用健康巡检",
-      "healthCheckEnabledHint": "定期调用 TestAccount 探测账号连通性，连续失败后自动 SetError。",
-      "healthCheckInterval": "巡检间隔（分钟）",
-      "healthCheckFailThreshold": "失败阈值（连续 N 次失败后 SetError）",
-      "layeredFilterEnabled": "启用分层过滤",
-      "layeredFilterEnabledHint": "仅选择 priority ≥ min_priority 的账号。",
-      "minPriority": "最小优先级（默认 -9999 关闭）",
-      "minPriorityHint": "优先级低于该值的账号被调度跳过。"
-    },
     "proxyPool": {
       "title": "代理池"
     },
@@ -1866,44 +1563,6 @@
       "summary": "渠道删除 {removed} · 渠道禁用 {disabled} · 模型消失 {missing}",
       "failed": "清理不可用模型失败"
     },
-    "siteAutomation": {
-      "title": "站点自动化",
-      "autoGroupMode": {
-        "label": "投影渠道自动分组策略",
-        "description": "全局策略会覆盖各投影渠道的单独设置",
-        "none": "不自动分组",
-        "fuzzy": "模糊匹配",
-        "exact": "精准匹配",
-        "regex": "正则匹配"
-      },
-      "syncInterval": {
-        "label": "自动同步间隔（小时）",
-        "placeholder": "请输入间隔（小时）"
-      },
-      "checkinInterval": {
-        "label": "自动签到间隔（小时）",
-        "placeholder": "请输入间隔（小时）"
-      },
-      "planRefreshInterval": {
-        "label": "额度监控自动刷新（分钟）",
-        "placeholder": "默认 30 分钟"
-      },
-      "manualSync": {
-        "label": "手动站点全量同步",
-        "button": "立即同步",
-        "syncing": "同步中..."
-      },
-      "manualCheckin": {
-        "label": "手动站点全量签到",
-        "button": "立即签到",
-        "checking": "签到中..."
-      },
-      "saveFailed": "保存失败",
-      "syncTriggered": "已触发后台站点全量同步",
-      "syncFailed": "触发同步失败",
-      "checkinTriggered": "已触发后台站点全量签到",
-      "checkinFailed": "触发签到失败"
-    },
     "apiKey": {
       "title": "API 密钥",
       "empty": "暂无 API 密钥",
@@ -2298,7 +1957,6 @@
     "subTab": {
       "title": "子标签顺序与显示",
       "description": "拖拽调整站点管理、分析中心、运维中心的子标签顺序，可隐藏不需要的子标签。",
-      "hub": "站点管理",
       "analytics": "分析中心",
       "ops": "运维中心",
       "reset": "恢复默认",
@@ -2319,10 +1977,6 @@
         "label": "美元兑人民币汇率",
         "hint": "默认 7.2，可手动调整"
       }
-    },
-    "groupUpstreamMeta": {
-      "label": "分组上游渠道信息",
-      "description": "在分组编辑页展示上游价格、余额、今日收入与延迟/吞吐/状态"
     }
   },
   "group": {
@@ -2974,7 +2628,6 @@
       },
       "reasoningChars": "思考",
       "reasoningCharsUnit": "字",
-
       "reasoningTokensUnit": "字",
       "billingWindowPeak": "高峰",
       "billingWindowOffPeak": "空闲",
@@ -3151,10 +2804,6 @@
       "baseUrlDelay": "延迟(ms)",
       "advanced": "高级设置",
       "apiKeyConfig": "API Key 配置",
-      "poolBinding": "关联号池",
-      "poolPlaceholder": "选择号池...",
-      "poolNone": "无（使用内联 Key）",
-      "poolHint": "选择号池后，API Key 由号池调度器统一管理。",
       "apiKey": "API Key",
       "customHeader": "自定义 Header",
       "customHeaderKey": "Header Key",
@@ -3330,44 +2979,12 @@
     "upstreamServiceUnavailable": "上游服务不可用",
     "unexpectedError": "未预期的错误"
   },
-  "siteChannel": {
-    "card": {
-      "statusEnabled": "已启用",
-      "statusDisabled": "已禁用",
-      "maskedPending": "{n} 个待处理",
-      "noRouteDistribution": "无模型分布",
-      "metrics": {
-        "totalRequests": "请求数",
-        "successRequests": "成功",
-        "failedRequests": "失败",
-        "totalCost": "费用",
-        "lastRequestAt": "最近使用"
-      }
-    },
-    "advanced": {
-      "title": "站点渠道高级设置",
-      "description": "为分组 {group} 下的投影渠道配置参数覆盖。",
-      "channelList": "投影渠道",
-      "empty": "此分组中没有投影渠道",
-      "paramOverride": "参数覆盖 JSON",
-      "paramOverridePlaceholder": "留空清除。非空值必须是有效的 JSON 对象。",
-      "cancel": "取消",
-      "save": "保存",
-      "saving": "保存中…",
-      "saved": "高级设置已保存",
-      "invalidParamOverride": "参数覆盖必须是有效的 JSON 对象",
-      "saveFailed": "保存高级设置失败"
-    }
-  },
   "system": {
     "fields": {
       "logCountUnit": "条"
     }
   },
   "proxyPool": {
-    "site": {
-      "inherit": "继承站点"
-    },
     "mode": {
       "label": "代理模式",
       "direct": "直连",
@@ -3396,22 +3013,12 @@
       "referencesDescription": "使用代理 \"{name}\" 的实体。",
       "referencesEmpty": "没有实体引用此代理。",
       "referenceTypes": {
-        "site": "站点",
-        "siteAccount": "账号",
-        "managedChannel": "托管渠道",
         "channel": "渠道",
         "reference": "实体"
       },
       "referenceLocations": {
-        "site": "站点",
-        "siteAccount": "站点账号",
-        "channel": "渠道",
-        "managedChannel": "托管渠道",
-        "managedChannelUnderSite": "站点：{site}",
-        "archivedSite": "已归档站点",
-        "siteNamed": "站点：{name}"
+        "channel": "渠道"
       },
-      "managedChannelTitle": "渠道：{channel}",
       "edit": "编辑",
       "delete": "删除",
       "deleteBlocked": "无法删除——存在引用",
@@ -3555,9 +3162,7 @@
       "report": "报表",
       "channel_expire": "渠道过期",
       "system": "系统",
-      "site": "站点",
       "backup": "备份",
-      "usage": "用量",
       "key_health": "Key 巡检"
     },
     "severity": {
@@ -3629,20 +3234,6 @@
         "content": "报表 \"{name}\" 已跳过: {detail}"
       }
     },
-    "site": {
-      "batch": {
-        "title": "站点 {phase} 已完成",
-        "content": "{trigger}: 成功={success} 部分成功={partial} 失败={failed} 跳过={skipped} 警告={warnings}"
-      },
-      "account_ok": {
-        "title": "站点账号 {phase} 已完成",
-        "content": "账号 {account_id} {phase} 已成功完成。"
-      },
-      "account_fail": {
-        "title": "站点账号 {phase} 失败",
-        "content": "账号 {account_id} {phase} 失败: {detail}"
-      }
-    },
     "backup": {
       "ok": {
         "title": "WebDAV 备份已完成",
@@ -3697,136 +3288,5 @@
         "content": "渠道「{name}」(ID: {id}) Key 验证已恢复正常。"
       }
     }
-  },
-  "pool": {
-    "title": "号池",
-    "create": "创建号池",
-    "created": "号池已创建",
-    "deleted": "号池已删除",
-    "enabled": "启用",
-    "disabled": "禁用",
-    "strategy": "调度策略",
-    "concurrency": "并发上限",
-    "cooldown": "冷却时长(秒)",
-    "name": "名称",
-    "description": "描述",
-    "addAccount": "添加账号",
-    "accountCreated": "账号已添加",
-    "accountUpdated": "账号已更新",
-    "accountDeleted": "账号已删除",
-    "accountName": "账号",
-    "status": "状态",
-    "active": "活跃",
-    "requests": "请求数",
-    "errors": "错误数",
-    "cooldownStatus": "冷却",
-    "cooling": "冷却中",
-    "tokenExpired": "Token 过期",
-    "noAccounts": "此号池暂无账号",
-    "credentials": "凭据 (JSON)",
-    "credentialsHint": "或直接填 JSON：",
-    "baseUrl": "上游地址",
-    "priority": "优先级",
-    "inheritPool": "继承池默认",
-    "proxyConfig": "代理配置",
-    "proxyConfigPlaceholder": "可选：代理池配置 ID",
-    "platform": "平台",
-    "type": "凭据类型",
-    "typeLabels": {
-      "oauth": "OAuth",
-      "apikey": "API Key",
-      "cookie": "Cookie",
-      "upstream": "上游中转",
-      "setup-token": "Setup Token"
-    },
-    "platformLabels": {
-      "anthropic": "Anthropic",
-      "openai": "OpenAI",
-      "gemini": "Gemini",
-      "grok": "Grok",
-      "volcengine": "火山方舟",
-      "custom": "自定义"
-    },
-    "models": "绑定模型",
-    "modelsPlaceholder": "逗号分隔，留空表示不限",
-    "allModels": "不限",
-    "notes": "备注",
-    "apiKey": "API Key",
-    "cookie": "Cookie",
-    "quota": "额度",
-    "quotaRefreshed": "额度已刷新",
-    "refreshQuota": "刷新额度",
-    "refreshToken": "刷新 Token",
-    "tokenRefreshed": "Token 已刷新",
-    "testAccount": "测试账号",
-    "testSuccess": "测试成功（{{latency}}ms）",
-    "testFailed": "测试失败：{{error}}",
-    "editAccount": "编辑账号",
-    "save": "保存",
-    "cancel": "取消",
-    "actions": "操作",
-    "oauthLogin": "OAuth 登录",
-    "oauthLoginBtn": "去授权",
-    "oauthLoginHint": "点击跳转到平台授权页，授权完成后自动创建账号。也可手动粘贴 OAuth JSON。",
-    "oauthManualPaste": "手动粘贴 OAuth JSON（可选）",
-    "oauthInitiateFailed": "OAuth 发起失败，请重试",
-    "oauthSuccess": "OAuth 授权成功，账号已创建",
-    "oauthFailed": "OAuth 授权失败",
-    "importAccounts": "批量导入",
-    "import": "导入",
-    "importHint": "粘贴账号 JSON 数组，每项含 platform/type/credentials 等字段。",
-    "importPlaceholder": "[{\"name\":\"acct1\",\"platform\":\"anthropic\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-...\"}}]",
-    "importSuccess": "已导入 {{count}} 个账号",
-    "weight": "权重",
-    "weightHint": "调度评分倾斜（同 priority 生效顺序：weight 优先）",
-    "weightCol": "W",
-    "loadFactor": "荷载因子",
-    "loadFactorHint": "账号在 least_loaded/槽位控制下的等价权重，0 表示继承 concurrency",
-    "loadFactorCol": "LF",
-    "autoPauseOnExpired": "到期自动停用",
-    "expiresAt": "到期时间",
-    "expiredBadge": "已到期",
-    "tempUnschedAction": "临时禁用",
-    "tempUnschedBadge": "临时 {{minutes}}m",
-    "tempUnschedDialog": {
-      "title": "临时禁用账号",
-      "minutes": "分钟（≤0 表示解除）",
-      "minutesHint": "该期间内调度跳过此账号",
-      "reason": "原因（可选）",
-      "confirm": "应用"
-    },
-    "tempUnschedApplied": "临时禁用已应用",
-    "recoverAccount": "恢复",
-    "recoverSuccess": "账号状态已恢复",
-    "extras": {
-      "section": "平台附加",
-      "projectId": "Project ID",
-      "tierId": "Tier ID",
-      "oauthType": "OAuth Type",
-      "oauthTypeNone": "无",
-      "authMode": "Auth Mode",
-      "authModeDefault": "默认",
-      "tlsFingerprint": "TLS 指纹",
-      "reserved": "预留"
-    },
-    "headerOverride": {
-      "section": "自定义请求头",
-      "row": {
-        "key": "Header",
-        "value": "Value"
-      },
-      "add": "新增一行",
-      "remove": "删除",
-      "blockedWarning": "黑名单头 (authorization / cookie / x-api-key 等) 将被后端跳过"
-    },
-    "exportAccounts": "导出",
-    "exportSuccess": "已导出 {{count}} 个账号",
-    "selectedCount": "已选 {{count}} 项",
-    "batchRefresh": "批量刷新 Token",
-    "batchClearError": "批量清除错误",
-    "batchTest": "批量测试",
-    "batchRefreshResult": "Token 刷新：{{ok}} 成功 / {{failed}} 失败",
-    "batchClearResult": "错误清除：{{ok}} 成功 / {{failed}} 失败",
-    "batchTestResult": "连通性：{{ok}}/{{total}} 通过"
   }
 }

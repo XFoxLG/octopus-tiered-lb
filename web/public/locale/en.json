@@ -80,12 +80,6 @@
   },
   "navbar": {
     "home": "Home",
-    "hub": "Hub",
-    "announcement": "Announcements",
-    "checkin": "Check-in",
-    "redemption": "Redemption",
-    "usage-history": "Usage History",
-    "credential": "Credentials",
     "channel": "Channel",
     "group": "Group",
     "key": "Key",
@@ -98,8 +92,7 @@
     "setting": "Setting",
     "ariaLabel": "Main navigation",
     "apikey": "API Keys",
-    "notification": "Notification Center",
-    "pool": "Account Pool"
+    "notification": "Notification Center"
   },
   "endpoints": {
     "title": "Available Endpoints",
@@ -110,290 +103,6 @@
     "modelCount": "{count, plural, =0 {No models} one {# model} other {# models}}",
     "empty": "No available endpoints",
     "noMatch": "No endpoints or models match your search"
-  },
-  "hub": {
-    "tabs": {
-      "sites": "Sites",
-      "checkin": "Check-in",
-      "announcement": "Announcements",
-      "redemption": "Redemption",
-      "usage": "Usage History",
-      "credential": "Credentials",
-      "siteChannels": "Site Channels",
-      "automation": "Automation"
-    },
-    "plan": {
-      "balance": "Balance",
-      "tokenPlan": "TokenPlan",
-      "addProvider": "Add Monitor",
-      "addProviderTitle": "Add Quota Monitor",
-      "addProviderDesc": "Select a provider and enter your API Key. The system will query the quota and create a channel in the Plan group.",
-      "provider": "Provider",
-      "selectProvider": "Select provider",
-      "apiKeyPlaceholder": "Enter API Key",
-      "customName": "Custom name (optional)",
-      "customNamePlaceholder": "Leave blank for default name",
-      "add": "Add & Query",
-      "refresh": "Refresh",
-      "delete": "Delete",
-      "balanceAvailable": "Available Balance",
-      "balanceUsed": "Used",
-      "totalUsed": "Total Used",
-      "tierFiveHour": "Last 5 Hours Usage",
-      "tierWeekly": "Last Week Usage",
-      "tierMonthly": "Last Month Usage",
-      "usedLabel": "Used",
-      "days": "d ",
-      "hours": "h ",
-      "minutes": "m",
-      "resetSuffix": "until reset",
-      "resetNow": "Resetting soon",
-      "empty": "No monitors yet. Click the button above to add one.",
-      "loadError": "Failed to load",
-      "getKey": "Get Key",
-      "apiKeyLabel": "API Key",
-      "querying": "Querying...",
-      "loading": "Loading...",
-      "oasisTokenLabel": "Oasis-Token",
-      "oasisTokenPlaceholder": "Paste Oasis-Token from console browser cookie",
-      "oasisTokenHint": "Log in to platform.stepfun.com console, copy the Oasis-Token value from browser cookies (format: access...refresh). The token is valid for ~30 minutes; re-obtain after expiry.",
-      "monitorOnly": "Monitor Only",
-      "refreshInterval": "Auto refresh interval",
-      "refreshFollowGlobal": "Follow global ({minutes} min)",
-      "refreshEvery": "Every {minutes} min",
-      "refreshIntervalHint": "Quota is auto-refreshed at this interval; the global default is set in the Hub Automation panel",
-      "refreshIntervalShort": "Auto refresh",
-      "refreshFollowGlobalShort": "Follow global",
-      "deltaSpent": "Spent since last check",
-      "sysStats": "DeepSeek quota usage stats",
-      "sysTotalRequests": "Total requests",
-      "sysTodayRequests": "Today requests",
-      "forwardApiKeyLabel": "API Key (Optional)",
-      "forwardApiKeyPlaceholder": "sk- API Key for forwarding",
-      "forwardApiKeyHint": "When provided, a forwarding channel will be created or reused. Channels with the same models are merged. Leave empty to monitor quota only.",
-      "consoleTokenLabel": "Console Token",
-      "sensenovaTokenPlaceholder": "Paste console Bearer Token value",
-      "sensenovaTokenHint": "Log in to platform.sensenova.cn console, copy the Bearer Token from request headers. Valid for ~3 hours; re-obtain after expiry.",
-      "bailianTokenPlaceholder": "Paste full Cookie value from console",
-      "bailianTokenHint": "Log in to bailian.console.aliyun.com console, press F12 -> Network tab -> refresh the page, click any request, copy the full Cookie value from Request Headers. Session expiry requires re-obtaining.",
-      "volcengineCredentialPlaceholder": "Cookie value|||x-csrf-token value (copy from console request headers, joined with |||)",
-      "volcengineCredentialHint": "Log in to console.volcengine.com/ark -> F12 -> Network -> any plan API, copy the full Cookie request header and x-csrf-token request header, joined with |||. Session expiry requires re-obtaining.",
-      "volcengineAKSKPlaceholder": "AccessKey ID|||Secret Access Key (Volcengine OpenAPI signing creds, different from the inference API key)",
-      "volcengineAKSKHint": "Create AccessKey ID + Secret at console.volcengine.com/iam -> Key Management (separate from the inference API key). System queries via control-plane OpenAPI signing: tries Agent Plan (GetAFPUsage) first, then Coding Plan (GetCodingPlanUsage) if no subscription.",
-      "cookieLabel": "Cookie",
-      "mimoPassTokenPlaceholder": "Paste full Cookie from account.xiaomi.com",
-      "mimoServiceTokenPlaceholder": "Paste full Cookie from platform.xiaomimimo.com",
-      "mimoPassTokenHint": "Required fields: passToken=, userId=, cUserId=. Valid 30 days (auto-renewed on each use). ⚠️ Security risk: passToken is a long-lived Xiaomi account session token, may have lateral movement risk, not fully tested. System auto-refreshes serviceToken via SSO.",
-      "mimoServiceTokenHint": "Required fields: api-platform_serviceToken=, userId=, api-platform_slh=, api-platform_ph=. Valid ~1 day (server-controlled), manual update required. Login platform.xiaomimimo.com -> F12 -> Application -> Cookies, copy all cookies under api-platform domain.",
-      "codexOAuthLabel": "OAuth JSON",
-      "codexOAuthPlaceholder": "Paste OAuth JSON credential (with access_token and account_id)",
-      "codexOAuthHint": "Obtain OAuth JSON credential (with access_token and account_id) from a ChatGPT subscription account. A Codex forwarding channel is automatically created (endpoint: chatgpt.com/backend-api/codex/responses). access_token has a short validity; re-obtain after expiry.",
-      "zhipuTeamOrgIdLabel": "Organization ID",
-      "zhipuTeamOrgIdPlaceholder": "bigmodel-organization request header value",
-      "zhipuTeamProjectIdLabel": "Project ID",
-      "zhipuTeamProjectIdPlaceholder": "bigmodel-project request header value",
-      "zhipuTeamHint": "Zhipu Team Plan requires API Key + Organization ID + Project ID (obtain from open.bigmodel.cn console team settings).",
-      "zhipuTeamEditHint": "Leave blank to clear org/project ID; fill new values to update together.",
-      "zhipuTeamMissingIds": "Zhipu team plan needs the organization ID and project ID",
-      "editCredentials": "Update Credentials",
-      "editCredentialsTitle": "Update Credentials",
-      "editCredentialsDesc": "Paste new credentials when they expire or become invalid. The system will immediately re-query usage.",
-      "credentialsUpdated": "Credentials updated",
-      "updateFailed": "Update failed",
-      "update": "Update & Query",
-      "forwardApiKeyPlaceholderOptional": "Leave blank to keep unchanged, or enter a new forwarding key",
-      "forwardApiKeyEditHint": "Leave blank to keep the forwarding credential unchanged; entering a new value will sync-update the associated channel key.",
-      "senseNovaAuthModeLabel": "Credential Mode",
-      "senseNovaAuthModeAccount": "Account & Password (auto-login)",
-      "senseNovaUsernameLabel": "Login Account",
-      "senseNovaUsernamePlaceholder": "platform.sensenova.cn console login account (phone/username)",
-      "senseNovaPasswordLabel": "Login Password",
-      "senseNovaPasswordPlaceholder": "Console login password",
-      "senseNovaAccountHint": "The system automatically logs in and renews the console Token (~3h validity) — no manual refresh needed. Credentials are AES-encrypted and only used for auto-login.",
-      "senseNovaAccountMissing": "Please fill in the login account and password",
-      "senseNovaLoginConfiguredHint": "Account auto-login is enabled ({username}). Re-enter the password to switch accounts.",
-      "senseNovaAutoLoginBadge": "Auto-login",
-      "volcengineAuthModeLabel": "Credential Mode",
-      "volcengineAuthModeCookie": "Cookie + CSRF Token",
-      "volcengineAuthModeAKSK": "AK/SK (AccessKey signing)",
-      "sysTotalTokens": "Total Tokens",
-      "sysTodayTokens": "Today Tokens",
-      "deepSeekAccountLabel": "Console account (optional, for official usage stats)",
-      "deepSeekAccountPlaceholder": "platform.deepseek.com login phone number",
-      "deepSeekPasswordPlaceholder": "Console login password",
-      "deepSeekAccountHint": "When configured, the system auto-logs in and switches card stats to official token usage (covers all API keys under the account, more accurate than local relay stats). Credentials are AES-encrypted; leave blank to keep local stats.",
-      "sysStatsOfficial": "Official usage",
-      "sysStatsLocal": "Local stats",
-      "deepSeekApiKeyMissing": "API Key is required (for balance query; console account is optional)"
-    },
-    "title": "Remote Sites",
-    "addSite": "Add Site",
-    "editSite": "Edit Site",
-    "disabled": "Disabled",
-    "user": "User",
-    "quota": "Quota",
-    "refreshAll": "Refresh All",
-    "refreshed": "Site refreshed",
-    "allRefreshed": "All sites refreshed",
-    "created": "Site created",
-    "updated": "Site updated",
-    "deleted": "Site deleted",
-    "confirmDelete": "Are you sure you want to delete this remote site?",
-    "empty": "No remote sites yet. Add one to get started.",
-    "detected": "Detected type",
-    "detect": "Auto detect",
-    "requiredFields": "Name, Base URL and Site Type are required",
-    "cancel": "Cancel",
-    "save": "Save",
-    "create": "Create",
-    "saving": "Saving...",
-    "form": {
-      "name": "Name",
-      "namePlaceholder": "My API Site",
-      "baseUrl": "Base URL",
-      "siteType": "Site Type",
-      "accessToken": "Access Token",
-      "username": "Username",
-      "usernamePlaceholder": "New API username (for New-Api-User header)",
-      "password": "Password",
-      "exchangeRate": "Exchange Rate (USD)",
-      "enabled": "Enabled",
-      "unchanged": "Leave empty to keep unchanged"
-    },
-    "chart": {
-      "loading": "Loading chart data...",
-      "noData": "No balance history data available.",
-      "quota": "Quota",
-      "predicted": "Predicted",
-      "dailyBurn": "Daily Burn",
-      "daysRemaining": "Days Remaining",
-      "sevenDayAvg": "7-Day Avg",
-      "estimatedZero": "Est. Zero Date"
-    },
-    "discover": "Discover",
-    "discoveredTitle": "Discovered Sites",
-    "discoveredEmpty": "No sites discovered",
-    "add": "Add"
-  },
-  "announcement": {
-    "title": "Announcements",
-    "refreshAll": "Refresh All",
-    "refreshed": "Refreshed {count} announcements",
-    "empty": "No announcements yet"
-  },
-  "checkin": {
-    "title": "Check-in",
-    "checkIn": "Check In",
-    "checkInAll": "Check In All",
-    "done": "Done",
-    "success": "Check-in successful!",
-    "alreadyChecked": "Already checked in today",
-    "failed": "Check-in failed",
-    "allDone": "Check-in completed for {count} sites",
-    "empty": "No enabled remote sites for check-in."
-  },
-  "redemption": {
-    "title": "Redemption Codes",
-    "description": "Redeem codes to add quota to remote sites",
-    "labels": {
-      "codes": "Redemption Codes",
-      "site": "Target Site"
-    },
-    "placeholders": {
-      "codes": "Enter one code per line...",
-      "site": "Select a site"
-    },
-    "hints": {
-      "codes": "One code per line. Blank lines will be ignored."
-    },
-    "buttons": {
-      "redeem": "Redeem",
-      "redeeming": "Redeeming...",
-      "redeemAll": "Redeem on All Sites"
-    },
-    "status": {
-      "success": "Success",
-      "already_used": "Already Used",
-      "invalid": "Invalid",
-      "failed": "Failed"
-    },
-    "success": {
-      "description": "Redeemed {success}/{total} codes successfully",
-      "allSitesTitle": "Redemption Complete",
-      "allSitesDesc": "Redeemed on {count} sites successfully"
-    },
-    "errors": {
-      "noCodes": "No Codes",
-      "noCodesDesc": "Please enter at least one redemption code",
-      "noSite": "No Site Selected",
-      "noSiteDesc": "Please select a target site",
-      "failed": "Redemption Failed"
-    },
-    "history": {
-      "title": "Redemption History",
-      "description": "Recent redemption attempts for this site",
-      "selectSite": "Select a site to view history",
-      "empty": "No redemption history"
-    }
-  },
-  "usage_history": {
-    "title": "Usage History",
-    "description": "View and analyze usage history from remote sites",
-    "filters": "Filters",
-    "site": "Site",
-    "select_site": "Select site",
-    "day_from": "From",
-    "day_to": "To",
-    "model": "Model",
-    "all_models": "All models",
-    "token": "Token",
-    "all_tokens": "All tokens",
-    "sync": "Sync",
-    "sync_all": "Sync All",
-    "sync_success": "Synced {count} records",
-    "sync_all_success": "Synced {count} records from all sites",
-    "sync_error": "Failed to sync usage history",
-    "total_requests": "Total Requests",
-    "total_tokens": "Total Tokens",
-    "total_quota": "Total Quota",
-    "history": "History",
-    "history_description": "Detailed usage records",
-    "date": "Date",
-    "requests": "Requests",
-    "prompt_tokens": "Prompt Tokens",
-    "completion_tokens": "Completion Tokens",
-    "quota": "Quota",
-    "no_data": "No usage data available"
-  },
-  "credential": {
-    "title": "API Credentials",
-    "add": "Add Credential",
-    "edit": "Edit Credential",
-    "verify": "Verify",
-    "export": "Export",
-    "lastVerified": "Last verified",
-    "confirmDelete": "Are you sure you want to delete this credential?",
-    "deleted": "Credential deleted",
-    "created": "Credential created",
-    "updated": "Credential updated",
-    "verifySuccess": "All probes passed",
-    "verifyFailed": "Some probes failed",
-    "exportCopied": "Config copied to clipboard",
-    "empty": "No API credentials yet. Add one to manage your keys.",
-    "requiredFields": "Name, Base URL and API Key are required",
-    "cancel": "Cancel",
-    "save": "Save",
-    "create": "Create",
-    "saving": "Saving...",
-    "form": {
-      "name": "Name",
-      "namePlaceholder": "My OpenAI Key",
-      "apiType": "API Type",
-      "baseUrl": "Base URL",
-      "apiKey": "API Key",
-      "notes": "Notes",
-      "unchanged": "Leave empty to keep unchanged"
-    }
   },
   "model_mapping": {
     "title": "Model Mapping",
@@ -1422,18 +1131,6 @@
       "hint": "CIDR/IP list for resolving real client IP from X-Forwarded-For. Empty = trust none, * = trust all (risk).",
       "restartNotice": "Changes take effect after service restart."
     },
-    "pool": {
-      "title": "Pool",
-      "description": "Account health check and layered filtering for pool scheduling.",
-      "healthCheckEnabled": "Enable health check",
-      "healthCheckEnabledHint": "Periodically probes accounts via TestAccount; SetError after N consecutive failures.",
-      "healthCheckInterval": "Interval (minutes)",
-      "healthCheckFailThreshold": "Fail threshold",
-      "layeredFilterEnabled": "Enable layered filter",
-      "layeredFilterEnabledHint": "Only pick accounts with priority >= min_priority.",
-      "minPriority": "Min priority (default -9999 = off)",
-      "minPriorityHint": "Accounts with lower priority are skipped by the scheduler."
-    },
     "proxyPool": {
       "title": "Proxy Pool"
     },
@@ -1910,44 +1607,6 @@
       "summary": "Channel disabled {disabled} · Model gone {missing} · Channel deleted {removed}",
       "failed": "Failed to clean up unavailable models"
     },
-    "siteAutomation": {
-      "title": "Site Automation",
-      "autoGroupMode": {
-        "label": "Projected Channel Auto-Group Strategy",
-        "description": "Global strategy overrides per-channel settings",
-        "none": "None",
-        "fuzzy": "Fuzzy Match",
-        "exact": "Exact Match",
-        "regex": "Regex Match"
-      },
-      "syncInterval": {
-        "label": "Auto Sync Interval (hours)",
-        "placeholder": "Enter interval (hours)"
-      },
-      "checkinInterval": {
-        "label": "Auto Check-in Interval (hours)",
-        "placeholder": "Enter interval (hours)"
-      },
-      "planRefreshInterval": {
-        "label": "Quota Monitor Auto Refresh (minutes)",
-        "placeholder": "Default 30 min"
-      },
-      "manualSync": {
-        "label": "Manual Full Site Sync",
-        "button": "Sync Now",
-        "syncing": "Syncing..."
-      },
-      "manualCheckin": {
-        "label": "Manual Full Site Check-in",
-        "button": "Check in Now",
-        "checking": "Checking in..."
-      },
-      "saveFailed": "Save failed",
-      "syncTriggered": "Full site sync triggered in background",
-      "syncFailed": "Failed to trigger sync",
-      "checkinTriggered": "Full site check-in triggered in background",
-      "checkinFailed": "Failed to trigger check-in"
-    },
     "apiKey": {
       "title": "API Keys",
       "empty": "No API keys",
@@ -2342,7 +2001,6 @@
     "subTab": {
       "title": "Sub-tab Order & Visibility",
       "description": "Drag to reorder sub-tabs of Hub, Analytics, and Ops. Hide sub-tabs you don't need.",
-      "hub": "Hub",
       "analytics": "Analytics",
       "ops": "Ops",
       "reset": "Reset Default",
@@ -2363,10 +2021,6 @@
         "label": "USD to CNY Rate",
         "hint": "Default 7.2, adjustable"
       }
-    },
-    "groupUpstreamMeta": {
-      "label": "Group upstream channel info",
-      "description": "Show upstream price, balance, today's income, and latency/throughput/status in the group editor"
     }
   },
   "group": {
@@ -3018,7 +2672,6 @@
       },
       "reasoningChars": "Reasoning",
       "reasoningCharsUnit": " chars",
-
       "reasoningTokensUnit": " tokens",
       "billingWindowPeak": "Peak",
       "billingWindowOffPeak": "Off-peak",
@@ -3195,10 +2848,6 @@
       "baseUrlDelay": "Delay(ms)",
       "advanced": "Advanced Settings",
       "apiKeyConfig": "API Key Configuration",
-      "poolBinding": "Account Pool",
-      "poolPlaceholder": "Select a pool...",
-      "poolNone": "None (use inline keys)",
-      "poolHint": "When a pool is selected, API keys are managed by the pool scheduler.",
       "apiKey": "API Key",
       "customHeader": "Custom Headers",
       "customHeaderKey": "Header Key",
@@ -3374,44 +3023,12 @@
     "upstreamServiceUnavailable": "Upstream service unavailable",
     "unexpectedError": "Unexpected error"
   },
-  "siteChannel": {
-    "card": {
-      "statusEnabled": "Enabled",
-      "statusDisabled": "Disabled",
-      "maskedPending": "{n} pending",
-      "noRouteDistribution": "No model distribution",
-      "metrics": {
-        "totalRequests": "Requests",
-        "successRequests": "Success",
-        "failedRequests": "Failed",
-        "totalCost": "Cost",
-        "lastRequestAt": "Last used"
-      }
-    },
-    "advanced": {
-      "title": "Site Channel Advanced Settings",
-      "description": "Configure parameter overrides for projected channels under group {group}.",
-      "channelList": "Projected channels",
-      "empty": "No projected channels in this group",
-      "paramOverride": "Parameter override JSON",
-      "paramOverridePlaceholder": "Leave empty to clear. Must be a valid JSON object.",
-      "cancel": "Cancel",
-      "save": "Save",
-      "saving": "Saving…",
-      "saved": "Advanced settings saved",
-      "invalidParamOverride": "Parameter override must be a valid JSON object",
-      "saveFailed": "Failed to save advanced settings"
-    }
-  },
   "system": {
     "fields": {
       "logCountUnit": "entries"
     }
   },
   "proxyPool": {
-    "site": {
-      "inherit": "Inherit from site"
-    },
     "mode": {
       "label": "Proxy Mode",
       "direct": "Direct",
@@ -3440,22 +3057,12 @@
       "referencesDescription": "Entities using proxy \"{name}\".",
       "referencesEmpty": "No entities reference this proxy.",
       "referenceTypes": {
-        "site": "Site",
-        "siteAccount": "Account",
-        "managedChannel": "Managed Channel",
         "channel": "Channel",
         "reference": "Entity"
       },
       "referenceLocations": {
-        "site": "Site",
-        "siteAccount": "Site Account",
-        "channel": "Channel",
-        "managedChannel": "Managed Channel",
-        "managedChannelUnderSite": "Site: {site}",
-        "archivedSite": "Archived Site",
-        "siteNamed": "Site: {name}"
+        "channel": "Channel"
       },
-      "managedChannelTitle": "Channel: {channel}",
       "edit": "Edit",
       "delete": "Delete",
       "deleteBlocked": "Cannot delete — has references",
@@ -3555,9 +3162,7 @@
       "report": "Report",
       "channel_expire": "Channel Expire",
       "system": "System",
-      "site": "Site",
       "backup": "Backup",
-      "usage": "Usage",
       "key_health": "Key Health"
     },
     "severity": {
@@ -3629,20 +3234,6 @@
         "content": "Report \"{name}\" skipped: {detail}"
       }
     },
-    "site": {
-      "batch": {
-        "title": "Site {phase} completed",
-        "content": "{trigger}: success={success} partial={partial} failed={failed} skipped={skipped} warnings={warnings}"
-      },
-      "account_ok": {
-        "title": "Site account {phase} completed",
-        "content": "Account {account_id} {phase} completed successfully."
-      },
-      "account_fail": {
-        "title": "Site account {phase} failed",
-        "content": "Account {account_id} {phase} failed: {detail}"
-      }
-    },
     "backup": {
       "ok": {
         "title": "WebDAV backup completed",
@@ -3697,136 +3288,5 @@
         "content": "Channel \"{name}\" (ID: {id}) key verification recovered."
       }
     }
-  },
-  "pool": {
-    "title": "Account Pool",
-    "create": "Create Pool",
-    "created": "Pool created",
-    "deleted": "Pool deleted",
-    "enabled": "Enabled",
-    "disabled": "Disabled",
-    "strategy": "Strategy",
-    "concurrency": "Concurrency",
-    "cooldown": "Cooldown (s)",
-    "name": "Name",
-    "description": "Description",
-    "addAccount": "Add Account",
-    "accountCreated": "Account added",
-    "accountUpdated": "Account updated",
-    "accountDeleted": "Account deleted",
-    "accountName": "Account",
-    "status": "Status",
-    "active": "Active",
-    "requests": "Requests",
-    "errors": "Errors",
-    "cooldownStatus": "Cooldown",
-    "cooling": "Cooling",
-    "tokenExpired": "Token expired",
-    "noAccounts": "No accounts in this pool",
-    "credentials": "Credentials (JSON)",
-    "credentialsHint": "Or paste JSON directly:",
-    "baseUrl": "Base URL",
-    "priority": "Priority",
-    "inheritPool": "inherit pool",
-    "proxyConfig": "Proxy",
-    "proxyConfigPlaceholder": "Optional: proxy pool config ID",
-    "platform": "Platform",
-    "type": "Credential Type",
-    "typeLabels": {
-      "oauth": "OAuth",
-      "apikey": "API Key",
-      "cookie": "Cookie",
-      "upstream": "Upstream Relay",
-      "setup-token": "Setup Token"
-    },
-    "platformLabels": {
-      "anthropic": "Anthropic",
-      "openai": "OpenAI",
-      "gemini": "Gemini",
-      "grok": "Grok",
-      "volcengine": "Volcengine",
-      "custom": "Custom"
-    },
-    "models": "Models",
-    "modelsPlaceholder": "Comma-separated, empty = all",
-    "allModels": "All",
-    "notes": "Notes",
-    "apiKey": "API Key",
-    "cookie": "Cookie",
-    "quota": "Quota",
-    "quotaRefreshed": "Quota refreshed",
-    "refreshQuota": "Refresh Quota",
-    "refreshToken": "Refresh Token",
-    "tokenRefreshed": "Token refreshed",
-    "testAccount": "Test Account",
-    "testSuccess": "Test success ({{latency}}ms)",
-    "testFailed": "Test failed: {{error}}",
-    "editAccount": "Edit Account",
-    "save": "Save",
-    "cancel": "Cancel",
-    "actions": "Actions",
-    "oauthLogin": "OAuth Login",
-    "oauthLoginBtn": "Authorize",
-    "oauthLoginHint": "Click to go to the platform authorization page. An account is created automatically after authorization. You can also paste OAuth JSON manually.",
-    "oauthManualPaste": "Paste OAuth JSON manually (optional)",
-    "oauthInitiateFailed": "Failed to start OAuth, please retry",
-    "oauthSuccess": "OAuth authorized, account created",
-    "oauthFailed": "OAuth authorization failed",
-    "importAccounts": "Import",
-    "import": "Import",
-    "importHint": "Paste an array of account JSON objects, each with platform/type/credentials fields.",
-    "importPlaceholder": "[{\"name\":\"acct1\",\"platform\":\"anthropic\",\"type\":\"apikey\",\"credentials\":{\"api_key\":\"sk-...\"}}]",
-    "importSuccess": "Imported {{count}} accounts",
-    "weight": "Weight",
-    "weightHint": "Tilts scheduler scoring (applied before priority)",
-    "weightCol": "W",
-    "loadFactor": "Load factor",
-    "loadFactorHint": "Account weight under least_loaded/slot control; 0 = inherit concurrency",
-    "loadFactorCol": "LF",
-    "autoPauseOnExpired": "Auto-pause on expiry",
-    "expiresAt": "Expires at",
-    "expiredBadge": "Expired",
-    "tempUnschedAction": "Temp disable",
-    "tempUnschedBadge": "Temp {{minutes}}m",
-    "tempUnschedDialog": {
-      "title": "Temporarily disable account",
-      "minutes": "Minutes (≤0 to clear)",
-      "minutesHint": "Scheduler skips this account during the window",
-      "reason": "Reason (optional)",
-      "confirm": "Apply"
-    },
-    "tempUnschedApplied": "Temporary disable applied",
-    "recoverAccount": "Recover",
-    "recoverSuccess": "Account state recovered",
-    "extras": {
-      "section": "Platform extras",
-      "projectId": "Project ID",
-      "tierId": "Tier ID",
-      "oauthType": "OAuth Type",
-      "oauthTypeNone": "None",
-      "authMode": "Auth Mode",
-      "authModeDefault": "Default",
-      "tlsFingerprint": "TLS Fingerprint",
-      "reserved": "reserved"
-    },
-    "headerOverride": {
-      "section": "Custom headers",
-      "row": {
-        "key": "Header",
-        "value": "Value"
-      },
-      "add": "Add row",
-      "remove": "Remove",
-      "blockedWarning": "Blacklisted headers (authorization / cookie / x-api-key etc.) are skipped by the backend"
-    },
-    "exportAccounts": "Export",
-    "exportSuccess": "Exported {{count}} accounts",
-    "selectedCount": "Selected {{count}}",
-    "batchRefresh": "Batch refresh tokens",
-    "batchClearError": "Batch clear errors",
-    "batchTest": "Batch test",
-    "batchRefreshResult": "Tokens: {{ok}} ok / {{failed}} failed",
-    "batchClearResult": "Clear: {{ok}} ok / {{failed}} failed",
-    "batchTestResult": "Test: {{ok}}/{{total}} passed"
   }
 }

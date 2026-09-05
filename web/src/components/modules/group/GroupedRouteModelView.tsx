@@ -11,7 +11,6 @@ import type {
     GroupedRouteModelRow,
 } from './grouped-view';
 import { UNGROUPED_BUCKET_ID, UNCATEGORIZED_CATEGORY_ID } from './grouped-view';
-import { UpstreamPerfBadges, UpstreamPriceBadges } from './UpstreamPriceBadges';
 
 function RouteModelRow({ model, index }: { model: GroupedRouteModelRow; index: number }) {
     const { Avatar: ModelAvatar } = getModelIcon(model.name);
@@ -29,18 +28,11 @@ function RouteModelRow({ model, index }: { model: GroupedRouteModelRow; index: n
             <span className="shrink-0">
                 <ModelAvatar size={18} />
             </span>
-            <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-1.5">
-                    <div className="min-w-0 max-w-[55%] truncate text-sm font-medium text-foreground">{model.name}</div>
-                    <UpstreamPerfBadges metrics={model.upstream_metrics} />
-                </div>
-                <UpstreamPriceBadges
-                    price={model.upstream_price}
-                    balance={model.channel_balance}
-                    todayIncome={model.channel_today_income}
-                    className="mt-0.5"
-                />
-                <div className="truncate text-xs text-muted-foreground">{model.channel_name}</div>
+                <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                        <div className="min-w-0 max-w-[55%] truncate text-sm font-medium text-foreground">{model.name}</div>
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">{model.channel_name}</div>
             </div>
             {typeof model.weight === 'number' ? (
                 <span className="shrink-0 rounded-md border border-border/30 bg-muted/30 px-2 py-1 text-[11px] font-medium text-muted-foreground">

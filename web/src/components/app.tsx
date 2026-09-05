@@ -56,7 +56,6 @@ function getNavVisibleFromSettings(settings: Setting[] | undefined): NavItem[] {
 }
 
 const SUB_TAB_SETTING_KEYS: Record<ModuleId, { order: string; visible: string }> = {
-    hub: { order: SettingKey.HubTabOrder, visible: SettingKey.HubTabVisible },
     analytics: { order: SettingKey.AnalyticsTabOrder, visible: SettingKey.AnalyticsTabVisible },
     ops: { order: SettingKey.OpsTabOrder, visible: SettingKey.OpsTabVisible },
 };
@@ -64,7 +63,7 @@ const SUB_TAB_SETTING_KEYS: Record<ModuleId, { order: string; visible: string }>
 function hydrateSubTabsFromSettings(settings: Setting[] | undefined) {
     if (!settings) return;
     const store = useSubTabStore.getState();
-    for (const modId of ['hub', 'analytics', 'ops'] as ModuleId[]) {
+    for (const modId of ['analytics', 'ops'] as ModuleId[]) {
         const keys = SUB_TAB_SETTING_KEYS[modId];
         const orderValue = settings.find((s) => s.key === keys.order)?.value;
         const visibleValue = settings.find((s) => s.key === keys.visible)?.value;
@@ -137,7 +136,6 @@ export function AppContainer() {
     const { isAuthenticated, isAPIKeyAuth, isLoading: authLoading } = useAuth();
     const { activeItem, direction, visibleItems, setNavOrder, setVisibleItems, resetNavOrder } = useNavStore();
     const t = useTranslations('navbar');
-    const tPool = useTranslations('pool');
     const queryClient = useQueryClient();
     const isMobile = useIsMobile();
     const reduceMotion = useReducedMotion();
@@ -181,41 +179,6 @@ export function AppContainer() {
         const timer = setTimeout(() => el.remove(), 220);
         return () => clearTimeout(timer);
     }, []);
-
-    // OAuth 回跳处理：后端回调 302 到 /pool?oauth=success|error&pool_id=N&msg=...。
-    // 这里 toast 结果并导航到 pool 模块；pool_id 保留在 URL，由 Pool 列表挂载后
-    // 自动选中对应池子并清理。
-    const oauthRedirectHandledRef = useRef(false);
-    useEffect(() => {
-        if (oauthRedirectHandledRef.current || typeof window === 'undefined') return;
-        const params = new URLSearchParams(window.location.search);
-        const oauth = params.get('oauth');
-        if (!oauth) return;
-        oauthRedirectHandledRef.current = true;
-
-        const msg = params.get('msg') || '';
-        const poolIdStr = params.get('pool_id');
-
-        // 清理 oauth/msg 参数，避免刷新后重复提示；pool_id 留给 Pool 列表处理。
-        const url = new URL(window.location.href);
-        url.searchParams.delete('oauth');
-        url.searchParams.delete('msg');
-        window.history.replaceState({}, '', url.toString());
-
-        if (oauth === 'success') {
-            toast.success(tPool('oauthSuccess'));
-        } else {
-            toast.error(msg ? `${tPool('oauthFailed')}: ${msg}` : tPool('oauthFailed'));
-        }
-
-        if (poolIdStr) {
-            // 导航到 pool 模块（若该模块在导航中可见），列表挂载后自动选中池子。
-            const { activeItem: current, visibleItems: visible } = useNavStore.getState();
-            if (visible.includes('pool') && current !== 'pool') {
-                useNavStore.getState().setActiveItem('pool');
-            }
-        }
-    }, [tPool]);
 
     useEffect(() => {
         const timer = setTimeout(() => setLogoAnimationComplete(true), LOGO_DRAW_END_MS);

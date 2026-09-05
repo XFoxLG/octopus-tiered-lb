@@ -36,7 +36,6 @@ func addHistogramColumnsToStatsTablesIfMissing(db *gorm.DB) error {
 		{&model.StatsDailyChannelModel{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
 		{&model.StatsChannel{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
 		{&model.StatsAPIKey{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
-		{&model.StatsSiteModelHourly{}, []string{"HistogramLt100", "Histogram100to500", "Histogram500to1k", "Histogram1kto5k", "HistogramGt5k"}},
 	}
 
 	for _, tbl := range tables {

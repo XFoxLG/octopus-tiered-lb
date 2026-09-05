@@ -8,18 +8,13 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/backup"
 	"github.com/lingyuins/octopus/internal/op/errorlog"
-	porop "github.com/lingyuins/octopus/internal/op/pool"
 	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
-	"github.com/lingyuins/octopus/internal/op/remotesite"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/op/stats"
-	"github.com/lingyuins/octopus/internal/poolhealthcheck"
-	"github.com/lingyuins/octopus/internal/pooltokenrefresh"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/relay"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
-	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -31,10 +26,6 @@ const (
 	TaskSyncLLM           = "sync_llm"
 	TaskCleanLLM          = "clean_llm"
 	TaskBaseUrlDelay      = "base_url_delay"
-	TaskBalanceCapture    = "hub_balance_capture"
-	TaskAutoCheckIn       = "hub_auto_checkin"
-	TaskAnnouncementFetch = "hub_announcement_fetch"
-	TaskUsageHistorySync  = "hub_usage_history_sync"
 	TaskWebDAVBackup      = "webdav_backup"
 	TaskErrorLogCleanup   = "error_log_cleanup"
 )
@@ -44,9 +35,6 @@ func Init() {
 		db.StartSerialWriter(context.Background())
 	}
 	relaylog.StartFlushWorker(context.Background())
-	// 启动号池 ReportResult DB 写 worker pool（固定 worker + 有界队列，避免每请求
-	// 一 goroutine 在高 QPS + 慢 DB 下无限堆积）。
-	poolscheduler.StartReportWorkerPool(context.Background())
 	// 注入 Key 巡检状态清理函数到 relay 包（打破 relay -> task 循环依赖）。
 	relay.OnChannelDeletedKeyHealthHook = RemoveChannelKeyHealthState
 	priceUpdateIntervalHours, err := setting.GetInt(model.SettingKeyModelInfoUpdateInterval)
@@ -135,17 +123,6 @@ func Init() {
 		// clientModelName)，model 名由客户端请求携带、基数不受控；此前仅测试代码
 		// Clear()，无空闲回收，刷量/随机 model 名会让 map 终生驻留（见 issue #124）。
 		stats.PurgeIdleModelStats(balancerIdleThreshold)
-		// 清理长时间未活动的号池调度统计（EWMA、并发槽位）。
-		poolscheduler.PurgeStale(balancerIdleThreshold)
-		// 清理长时间未活动的号池粘性会话条目。globalPoolSticky 的 key 含客户端
-		// 请求携带的 model 名（基数不受控），仅靠 RemovePool/RemoveAccount 和
-		// trySticky 惰性删除无法回收一次性/随机 model 名，会无界增长（见 issue #46
-		// 同类遗漏，balancer.PurgeIdleSessions 已修复，此处补齐号池粘性）。
-		poolscheduler.PurgeStaleSticky(balancerIdleThreshold)
-		// 清理号池账号鉴权错误计数中窗口已过期的条目，防止 globalAuthErrors
-		// 因频繁 ResetAuthError 刷新 windowStart 而长期驻留（见 auth_error_counter.go）。
-		poolscheduler.PurgeStaleAuthErrors()
-
 		if db.IsSQLite() {
 			db.EnqueueWrite(db.WriteJob{Name: "relay_log_save", Fn: func(_ context.Context) error {
 				return relaylog.RelayLogSaveDBTask(context.Background())
@@ -154,38 +131,6 @@ func Init() {
 			if err := relaylog.RelayLogSaveDBTask(context.Background()); err != nil {
 				log.Warnf("relay log save db task failed: %v", err)
 			}
-		}
-	})
-
-	// Hub: capture balance snapshots every 6 hours
-	Register(TaskBalanceCapture, 6*time.Hour, false, func() {
-		n := remotesite.CaptureAllBalanceSnapshots(context.Background())
-		if n > 0 {
-			log.Infof("captured balance snapshots for %d remote sites", n)
-		}
-	})
-
-	// Hub: auto check-in daily at task tick (every 12 hours; the check-in logic is idempotent per day)
-	Register(TaskAutoCheckIn, 12*time.Hour, false, func() {
-		records := remotesite.ExecuteCheckInAll(context.Background())
-		if len(records) > 0 {
-			log.Infof("auto check-in completed for %d remote sites", len(records))
-		}
-	})
-
-	// Hub: fetch announcements every 4 hours
-	Register(TaskAnnouncementFetch, 4*time.Hour, false, func() {
-		n := remotesite.FetchAllAnnouncements(context.Background())
-		if n > 0 {
-			log.Infof("fetched announcements for %d remote sites", n)
-		}
-	})
-
-	// Hub: sync usage history every 6 hours
-	Register(TaskUsageHistorySync, 6*time.Hour, false, func() {
-		n := remotesite.SyncAllUsageHistory(context.Background())
-		if n > 0 {
-			log.Infof("synced %d usage history records", n)
 		}
 	})
 
@@ -202,24 +147,6 @@ func Init() {
 		})
 	}
 
-	// Site sync task
-	siteSyncIntervalHours, err := setting.GetInt(model.SettingKeySiteSyncInterval)
-	if err != nil {
-		log.Warnf("failed to get site sync interval: %v", err)
-	} else {
-		siteSyncInterval := time.Duration(siteSyncIntervalHours) * time.Hour
-		Register(string(model.SettingKeySiteSyncInterval), siteSyncInterval, true, SiteSyncTask)
-	}
-
-	// Site checkin task
-	siteCheckinIntervalHours, err := setting.GetInt(model.SettingKeySiteCheckinInterval)
-	if err != nil {
-		log.Warnf("failed to get site checkin interval: %v", err)
-	} else {
-		siteCheckinInterval := time.Duration(siteCheckinIntervalHours) * time.Hour
-		Register(string(model.SettingKeySiteCheckinInterval), siteCheckinInterval, true, SiteCheckinTask)
-	}
-
 	// Disposable channel expiry: scan every 1 minute for expired one-time channels.
 	Register(TaskChannelExpire, 1*time.Minute, false, ExpireDisposableChannels)
 
@@ -231,29 +158,4 @@ func Init() {
 	}
 	Register(TaskKeyHealthCheck, time.Duration(keyHealthIntervalMin)*time.Minute, false, CheckKeyHealth)
 
-	// 号池 OAuth token 刷新：按设置间隔扫描即将过期的 oauth 账号并刷新。
-	poolTokenRefreshMin, err := setting.GetInt(model.SettingKeyPoolTokenRefreshInterval)
-	if err != nil || poolTokenRefreshMin < 1 {
-		poolTokenRefreshMin = 10
-	}
-	Register(string(model.SettingKeyPoolTokenRefreshInterval), time.Duration(poolTokenRefreshMin)*time.Minute, true, pooltokenrefresh.RefreshLoop)
-
-	// 号池额度同步：按设置间隔查询支持额度的账号并写回 quota 快照。
-	poolQuotaSyncMin, err := setting.GetInt(model.SettingKeyPoolQuotaSyncInterval)
-	if err != nil || poolQuotaSyncMin < 1 {
-		poolQuotaSyncMin = 360
-	}
-	Register(string(model.SettingKeyPoolQuotaSyncInterval), time.Duration(poolQuotaSyncMin)*time.Minute, true, func() {
-		porop.SyncAllQuotas(context.Background())
-	})
-
-	// 号池账号健康巡检（走 pool.TestAccount 主动探测，累计失败到阈值后 SetError）。
-	poolHealthCheckMin, err := setting.GetInt(model.SettingKeyPoolHealthCheckInterval)
-	if err != nil || poolHealthCheckMin < 1 {
-		poolHealthCheckMin = 30
-	}
-	Register(string(model.SettingKeyPoolHealthCheckInterval), time.Duration(poolHealthCheckMin)*time.Minute, false, poolhealthcheck.Run)
-
-	// 额度监控自动刷新：tick 固定 1 分钟，任务内部按单个覆盖/全局默认间隔到点刷新。
-	Register(TaskPlanProviderAutoRefresh, 1*time.Minute, false, PlanProviderAutoRefreshTask)
 }

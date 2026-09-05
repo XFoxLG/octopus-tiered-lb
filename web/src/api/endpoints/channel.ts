@@ -131,7 +131,6 @@ export type Channel = {
     key_health_passed?: boolean | null;
     key_health_all_failed?: boolean | null;
     key_health_at?: number;
-    pool_id: number;
     stats?: StatsChannel;
 };
 
@@ -169,7 +168,6 @@ export type CreateChannelRequest = {
     param_override?: string | null;
     request_rewrite?: RequestRewriteConfig;
     match_regex?: string | null;
-    pool_id?: number;
 };
 
 /**
@@ -199,7 +197,6 @@ export type UpdateChannelRequest = {
     param_override?: string | null;
     request_rewrite?: RequestRewriteConfig;
     match_regex?: string | null;
-    pool_id?: number;
     // keys diff
     keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'priority' | 'remark' | 'supported_models'>>;
     keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; priority?: number; remark?: string; supported_models?: string }>;

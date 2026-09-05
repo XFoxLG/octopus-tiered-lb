@@ -1,6 +1,5 @@
 export const DEFAULT_NAV_ORDER = [
     'home',
-    'hub',
     'channel',
     'group',
     'model',

@@ -17,18 +17,12 @@ export type ProxyConfiguration = {
     updated_at: string;
 };
 
-export type ProxyConfigurationReferenceType = 'site' | 'site_account' | 'channel' | 'managed_channel';
+export type ProxyConfigurationReferenceType = 'channel';
 
 export type ProxyConfigurationReference = {
     type: ProxyConfigurationReferenceType;
-    site_id?: number;
-    site_name?: string;
-    site_archived?: boolean;
-    site_account_id?: number;
-    site_account_name?: string;
     channel_id?: number;
     channel_name?: string;
-    managed?: boolean;
 };
 
 export type ProxyTestRequest = {
@@ -46,7 +40,6 @@ export type ProxyTestResult = {
 
 function invalidateProxyPool(queryClient: ReturnType<typeof useQueryClient>) {
     queryClient.invalidateQueries({ queryKey: ['proxy-pool'] });
-    queryClient.invalidateQueries({ queryKey: ['sites', 'list'] });
     queryClient.invalidateQueries({ queryKey: ['channels', 'list'] });
 }
 

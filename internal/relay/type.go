@@ -386,19 +386,6 @@ type relayAttempt struct {
 	attemptTimeOutSec    int
 	tryIndex             int
 	tryTotal             int
-	// poolCredType 号池凭据类型（"bearer" 或 "cookie"）。空字符串表示非号池模式。
-	poolCredType string
-	// poolProxyConfigID 号池账号级代理配置 ID。nil 表示使用渠道级代理。
-	poolProxyConfigID *int
-	// poolBaseURL 号池账号 base_url 覆盖。非空时覆盖渠道 base_url。
-	poolBaseURL string
-	// poolPlatform / poolType 号池账号平台与凭据类型，用于出站凭据路由。
-	poolPlatform string
-	poolType     string
-	// poolAccountID 号池账号 ID，用于 ReportResult。
-	poolAccountID int
-	// poolAccount 号池账号指针（号池模式时使用），供 applyPoolCredentialHeaders 读取 extra。
-	poolAccount *dbmodel.PoolAccount
 
 	// filterCfg 缓存本次尝试的响应关键词过滤配置，避免在流式响应的每个
 	// chunk 上重复读取 setting 并解析关键词 JSON。通过 getResponseFilterConfig
