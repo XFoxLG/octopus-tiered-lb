@@ -1605,7 +1605,38 @@
         "label": "Force override explicit off",
         "hint": "When enabled, even requests that explicitly disable thinking (reasoning_effort=none or thinking disabled) get the default effort level injected. Requests that sent a concrete level are never rewritten.",
         "enable": "Override client's explicit off"
-      }
+      },
+      "sortStrategy": {
+        "label": "Member sort strategy",
+        "hint": "How members inside this group are ordered. Only rewrites candidate order, never the routing mode. Leave empty to follow the global default (non_relay_balance).",
+        "useGlobal": "Follow global default",
+        "nonRelayBalance": "Non-relay first + balanced",
+        "nonRelayMultiplier": "Non-relay first + low multiplier",
+        "multiplierBalance": "Low multiplier + balanced",
+        "balanceOnly": "Balanced only"
+      },
+      "paramOverride": {
+        "label": "Param override (JSON)",
+        "hint": "Group-level request parameter overrides as a JSON object. Only max_tokens / max_completion_tokens / temperature / top_p are honored, and values already set by the client win. Precedence: client > channel > group.",
+        "placeholder": "{\"temperature\": 0.7}"
+      },
+      "customHeader": {
+        "label": "Custom headers",
+        "hint": "Group-level custom request headers, applied before channel-level ones; same-name headers are overridden by the channel. Not applied in passthrough mode.",
+        "add": "Add header",
+        "empty": "No custom headers",
+        "keyPlaceholder": "Header name",
+        "valuePlaceholder": "Header value",
+        "remove": "Remove this header"
+      },
+      "runHealthProbe": "Run health probe (standard mode, stops at first success)",
+      "healthProbeStatus": {
+        "running": "Probing",
+        "success": "Probe passed",
+        "partial": "Partially passed",
+        "failed": "Probe failed"
+      },
+      "healthProbeDuration": "Took {ms} ms"
     },
     "autoStrategy": {
       "title": "Auto Strategy",

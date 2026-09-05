@@ -11,12 +11,15 @@ import {
     CircleX,
     Waves,
     TestTubeDiagonal,
+    HeartPulse,
     ChevronDown,
     AlertTriangle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
     type Group,
+    useGroupHealthLatest,
+    useRunGroupHealth,
     useDeleteGroup,
     useUpdateGroup,
     useTestGroup,
@@ -167,6 +170,9 @@ function EditDialogContent({
                             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
                             default_reasoning_effort: group.default_reasoning_effort ?? '',
                             reasoning_force_override: group.reasoning_force_override ?? false,
+                            sort_strategy: group.sort_strategy ?? '',
+                            param_override: group.param_override ?? '',
+                            custom_header: group.custom_header ?? [],
                             members: editMembers,
                         }}
                         submitText={t('detail.actions.save')}
@@ -351,15 +357,18 @@ export function GroupListItem({ group }: { group: Group }) {
     const deleteGroup = useDeleteGroup();
     const testGroup = useTestGroup();
     const testDraftGroup = useTestDraftGroup();
+    const runGroupHealth = useRunGroupHealth();
     const { data: modelChannels = [] } = useModelChannelList();
     const { data: groupHealthList = [] } = useAnalyticsGroupHealth();
     const health = useMemo(
         () => groupHealthList.find((h) => h.group_id === group.id),
         [groupHealthList, group.id],
     );
-
     const [expanded, setExpanded] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const [healthSnapshotMessage, setHealthSnapshotMessage] = useState<string | null>(null);
+    // 最新一次健康拨测快照（Seller 移植后端 /group/health/*）：只读展示 + 手动触发。
+    const { data: healthSnapshot } = useGroupHealthLatest(group.id, expanded);
 
     // ---- Channel maps ----
     const channelNameByKey = useMemo(
@@ -765,6 +774,18 @@ export function GroupListItem({ group }: { group: Group }) {
                 (group.reasoning_force_override ?? false)
             )
                 payload.reasoning_force_override = nextReasoningForceOverride;
+            const nextSortStrategy = (values.sort_strategy ?? '').trim();
+            if (nextSortStrategy !== ((group.sort_strategy ?? '').trim()))
+                payload.sort_strategy = nextSortStrategy;
+            const nextParamOverride = (values.param_override ?? '').trim();
+            if (nextParamOverride !== ((group.param_override ?? '').trim()))
+                payload.param_override = nextParamOverride;
+            const nextCustomHeader = values.custom_header ?? [];
+            if (
+                JSON.stringify(nextCustomHeader) !==
+                JSON.stringify(group.custom_header ?? [])
+            )
+                payload.custom_header = nextCustomHeader;
             if (items_to_add.length) payload.items_to_add = items_to_add;
             if (items_to_update.length)
                 payload.items_to_update = items_to_update;
@@ -788,11 +809,14 @@ export function GroupListItem({ group }: { group: Group }) {
             group.category,
             group.condition,
             group.default_reasoning_effort,
+            group.custom_header,
             group.endpoint_provider,
             group.endpoint_type,
             group.first_token_time_out,
             group.attempt_time_out,
+            group.param_override,
             group.reasoning_force_override,
+            group.sort_strategy,
             group.stream_idle_timeout,
             group.session_keep_time,
             group.id,
@@ -1100,6 +1124,45 @@ export function GroupListItem({ group }: { group: Group }) {
                         </Tooltip>
                     )}
 
+                    {/* 健康拨测（Seller 移植 /group/health/*）：手动触发 + 结果徽章 */}
+                    {group.id ? (
+                        <Tooltip side="top" sideOffset={8} align="center">
+                            <TooltipTrigger asChild>
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setHealthSnapshotMessage(null);
+                                        runGroupHealth.mutate(
+                                            { groupId: group.id },
+                                            {
+                                                onSuccess: (snapshot) => {
+                                                    setHealthSnapshotMessage(
+                                                        `${snapshot.status} · ${snapshot.duration_ms}ms`,
+                                                    );
+                                                },
+                                                onError: (error) => {
+                                                    toast.error(error.message);
+                                                },
+                                            },
+                                        );
+                                    }}
+                                    disabled={runGroupHealth.isPending}
+                                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {runGroupHealth.isPending ? (
+                                        <Loader2 className="size-4 animate-spin" />
+                                    ) : (
+                                        <HeartPulse className="size-4" />
+                                    )}
+                                </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                {healthSnapshotMessage ?? t('card.runHealthProbe')}
+                            </TooltipContent>
+                        </Tooltip>
+                    ) : null}
+
                     {/* Status indicator */}
                     <div
                         onClick={(e) => e.stopPropagation()}
@@ -1185,6 +1248,29 @@ export function GroupListItem({ group }: { group: Group }) {
                         className="overflow-hidden"
                     >
                         <div className="space-y-3 border-t border-border/40 px-4 pb-4 pt-3">
+                            {/* --- 健康拨测快照（只读，Seller 移植 /group/health/latest）--- */}
+                            {healthSnapshot && (
+                                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/25 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                                    <span
+                                        className={cn(
+                                            'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                                            healthSnapshot.status === 'success'
+                                                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
+                                                : healthSnapshot.status === 'partial'
+                                                  ? 'border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                                                  : healthSnapshot.status === 'failed'
+                                                    ? 'border-destructive/20 bg-destructive/10 text-destructive'
+                                                    : 'border-border/40 bg-muted/40 text-muted-foreground',
+                                        )}
+                                    >
+                                        {t(`card.healthProbeStatus.${healthSnapshot.status}`)}
+                                    </span>
+                                    <span>
+                                        {t('card.healthProbeDuration', { ms: healthSnapshot.duration_ms })}
+                                    </span>
+                                    {healthSnapshot.message ? <span className="truncate">{healthSnapshot.message}</span> : null}
+                                </div>
+                            )}
                             {/* --- Mode switcher --- */}
                             <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-5">
                                 {(
