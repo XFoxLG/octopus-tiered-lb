@@ -26,7 +26,6 @@ import {
     type NavItem,
 } from '@/components/modules/navbar';
 import {
-    DEFAULT_HUB_TABS,
     DEFAULT_ANALYTICS_TABS,
     DEFAULT_OPS_TABS,
     DEFAULT_SUB_TABS,
@@ -36,7 +35,6 @@ import {
     useSubTabStore,
     type ModuleId,
     type SubTab,
-    type HubTab,
     type AnalyticsTab,
     type OpsTab,
 } from '@/components/modules/navbar/sub-tab-store';
@@ -256,12 +254,6 @@ function NavigationPreferences() {
     );
 }
 
-const HUB_TAB_LABEL_KEY: Record<HubTab, string> = {
-    sites: 'tabs.sites',
-    'site-channels': 'tabs.siteChannels',
-    automation: 'tabs.automation',
-};
-
 const ANALYTICS_TAB_LABEL: Record<AnalyticsTab, { ns: 'analytics' | 'ops'; key: string }> = {
     cache: { ns: 'ops', key: 'tabs.cache' },
     utilization: { ns: 'analytics', key: 'cards.utilization.title' },
@@ -282,12 +274,10 @@ const OPS_TAB_LABEL_KEY: Record<OpsTab, string> = {
 
 function SubTabPreferences() {
     const t = useTranslations('setting');
-    const hubT = useTranslations('hub');
     const analyticsT = useTranslations('analytics');
     const opsT = useTranslations('ops');
     const setSetting = useSetSetting();
 
-    const hubTabs = useSubTabStore((s) => s.hub);
     const analyticsTabs = useSubTabStore((s) => s.analytics);
     const opsTabs = useSubTabStore((s) => s.ops);
     const setOrderedTabs = useSubTabStore((s) => s.setOrderedTabs);
@@ -295,7 +285,6 @@ function SubTabPreferences() {
     const resetModule = useSubTabStore((s) => s.resetModule);
 
     const MODULES = [
-        { id: 'hub' as ModuleId, label: t('subTab.hub'), state: hubTabs, tabs: DEFAULT_HUB_TABS, getLabel: (tab: string) => hubT(HUB_TAB_LABEL_KEY[tab as HubTab] ?? tab) },
         { id: 'analytics' as ModuleId, label: t('subTab.analytics'), state: analyticsTabs, tabs: DEFAULT_ANALYTICS_TABS, getLabel: (tab: string) => {
             const label = ANALYTICS_TAB_LABEL[tab as AnalyticsTab];
             if (!label) return tab;
@@ -305,12 +294,12 @@ function SubTabPreferences() {
     ];
 
     const persistOrder = useCallback((module: ModuleId, items: readonly SubTab[]) => {
-        const key = module === 'hub' ? SettingKey.HubTabOrder : module === 'analytics' ? SettingKey.AnalyticsTabOrder : SettingKey.OpsTabOrder;
+        const key = module === 'analytics' ? SettingKey.AnalyticsTabOrder : SettingKey.OpsTabOrder;
         setSetting.mutate({ key, value: serializeSubTabOrder(module, items) }, { onError: () => toast.error(t('saveFailed')) });
     }, [setSetting, t]);
 
     const persistVisible = useCallback((module: ModuleId, items: readonly SubTab[]) => {
-        const key = module === 'hub' ? SettingKey.HubTabVisible : module === 'analytics' ? SettingKey.AnalyticsTabVisible : SettingKey.OpsTabVisible;
+        const key = module === 'analytics' ? SettingKey.AnalyticsTabVisible : SettingKey.OpsTabVisible;
         setSetting.mutate({ key, value: serializeSubTabVisible(module, items) }, { onError: () => toast.error(t('saveFailed')) });
     }, [setSetting, t]);
 
@@ -431,8 +420,6 @@ export function SettingAppearance() {
     const initialTimeZone = useRef(timeZone);
     const [localExchangeRate, setLocalExchangeRate] = useState(exchangeRate.toString());
     const initialExchangeRate = useRef(exchangeRate);
-    const [groupUpstreamMetaEnabled, setGroupUpstreamMetaEnabled] = useState(true);
-    const initialGroupUpstreamMetaEnabled = useRef(true);
     useEffect(() => {
         if (!settings) return;
         const alertNotifyLanguageSetting = settings.find((item) => item.key === SettingKey.AlertNotifyLanguage);
@@ -442,11 +429,6 @@ export function SettingAppearance() {
             initialAlertNotifyLanguage.current = nextValue;
         }
 
-        const groupMetaSetting = settings.find((item) => item.key === SettingKey.GroupUpstreamMetaDisplayEnabled);
-        // 缺省或非 false 都视为开启，保持默认打开。
-        const nextGroupMeta = groupMetaSetting?.value !== 'false';
-        queueMicrotask(() => setGroupUpstreamMetaEnabled(nextGroupMeta));
-        initialGroupUpstreamMetaEnabled.current = nextGroupMeta;
     }, [settings]);
 
     // 从服务端同步 stats_timezone：后端配置为准，覆盖 localStorage 默认值，保证多端一致。
@@ -497,26 +479,6 @@ export function SettingAppearance() {
                     toast.error(t('saveFailed'));
                 },
             }
-        );
-    };
-
-    const handleGroupUpstreamMetaEnabledChange = (checked: boolean) => {
-        setGroupUpstreamMetaEnabled(checked);
-        setSetting.mutate(
-            {
-                key: SettingKey.GroupUpstreamMetaDisplayEnabled,
-                value: checked ? 'true' : 'false',
-            },
-            {
-                onSuccess: () => {
-                    toast.success(t('saved'));
-                    initialGroupUpstreamMetaEnabled.current = checked;
-                },
-                onError: () => {
-                    setGroupUpstreamMetaEnabled(initialGroupUpstreamMetaEnabled.current);
-                    toast.error(t('saveFailed'));
-                },
-            },
         );
     };
 
@@ -682,27 +644,6 @@ export function SettingAppearance() {
                         )}
                     </div>
 
-                    {/* 分组上游渠道元信息展示 */}
-                    <div className="flex items-center justify-between gap-4 rounded-lg border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4 shadow-sm">
-                        <div className="flex min-w-0 items-center gap-3">
-                            <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/12">
-                                <Layers className="h-5 w-5 text-primary" />
-                            </div>
-                            <div className="min-w-0 space-y-0.5">
-                                <span className="text-sm font-semibold text-card-foreground">
-                                    {t('groupUpstreamMeta.label')}
-                                </span>
-                                <p className="text-xs text-muted-foreground">
-                                    {t('groupUpstreamMeta.description')}
-                                </p>
-                            </div>
-                        </div>
-                        <Switch
-                            checked={groupUpstreamMetaEnabled}
-                            onCheckedChange={handleGroupUpstreamMetaEnabledChange}
-                            aria-label={t('groupUpstreamMeta.label')}
-                        />
-                    </div>
                     <div className="grid items-start gap-4 xl:grid-cols-2">
                         <div className="flex flex-col gap-4">
                             <NavigationPreferences />

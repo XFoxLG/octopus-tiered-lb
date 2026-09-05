@@ -38,7 +38,6 @@ export type GroupEditorValues = {
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     default_reasoning_effort?: string; // "" | minimal | low | medium | high | xhigh | max
     reasoning_force_override?: boolean;
-    sort_strategy?: string; // "" | non_relay_balance | non_relay_multiplier | multiplier_balance | balance_only
     param_override?: string; // JSON object string
     custom_header?: { header_key: string; header_value: string }[];
     members: SelectedMember[];
@@ -312,7 +311,6 @@ export function GroupEditor({
     const [reasoningBufferStrategy, setReasoningBufferStrategy] = useState<string>(initial?.reasoning_buffer_strategy ?? '');
     const [defaultReasoningEffort, setDefaultReasoningEffort] = useState<string>(initial?.default_reasoning_effort ?? '');
     const [reasoningForceOverride, setReasoningForceOverride] = useState<boolean>(initial?.reasoning_force_override ?? false);
-    const [sortStrategy, setSortStrategy] = useState<string>(initial?.sort_strategy ?? '');
     const [paramOverride, setParamOverride] = useState<string>(initial?.param_override ?? '');
     const [customHeaders, setCustomHeaders] = useState<{ header_key: string; header_value: string }[]>(initial?.custom_header ?? []);
     const [condition, setCondition] = useState(initial?.condition ?? '');
@@ -411,7 +409,6 @@ export function GroupEditor({
             reasoning_buffer_strategy: reasoningBufferStrategy,
             default_reasoning_effort: defaultReasoningEffort,
             reasoning_force_override: reasoningForceOverride,
-            sort_strategy: sortStrategy,
             param_override: paramOverride,
             custom_header: customHeaders.filter((header) => header.header_key.trim() !== ''),
             members: dedupeSelectedMembers(selectedMembers),
@@ -769,24 +766,6 @@ export function GroupEditor({
                         />
                         <span>{t('form.reasoningForceOverride.enable')}</span>
                     </label>
-                </Field>
-                <Field>
-                    <FieldLabel htmlFor="group-sort-strategy">
-                        {t('form.sortStrategy.label')}
-                        <Hint text={t('form.sortStrategy.hint')} />
-                    </FieldLabel>
-                    <select
-                        id="group-sort-strategy"
-                        value={sortStrategy}
-                        onChange={(e) => setSortStrategy(e.target.value)}
-                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
-                    >
-                        <option value="">{t('form.sortStrategy.useGlobal')}</option>
-                        <option value="non_relay_balance">{t('form.sortStrategy.nonRelayBalance')}</option>
-                        <option value="non_relay_multiplier">{t('form.sortStrategy.nonRelayMultiplier')}</option>
-                        <option value="multiplier_balance">{t('form.sortStrategy.multiplierBalance')}</option>
-                        <option value="balance_only">{t('form.sortStrategy.balanceOnly')}</option>
-                    </select>
                 </Field>
                 <Field>
                     <FieldLabel htmlFor="group-param-override">

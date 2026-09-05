@@ -56,7 +56,6 @@ function getNavVisibleFromSettings(settings: Setting[] | undefined): NavItem[] {
 }
 
 const SUB_TAB_SETTING_KEYS: Record<ModuleId, { order: string; visible: string }> = {
-    hub: { order: SettingKey.HubTabOrder, visible: SettingKey.HubTabVisible },
     analytics: { order: SettingKey.AnalyticsTabOrder, visible: SettingKey.AnalyticsTabVisible },
     ops: { order: SettingKey.OpsTabOrder, visible: SettingKey.OpsTabVisible },
 };
@@ -64,7 +63,7 @@ const SUB_TAB_SETTING_KEYS: Record<ModuleId, { order: string; visible: string }>
 function hydrateSubTabsFromSettings(settings: Setting[] | undefined) {
     if (!settings) return;
     const store = useSubTabStore.getState();
-    for (const modId of ['hub', 'analytics', 'ops'] as ModuleId[]) {
+    for (const modId of ['analytics', 'ops'] as ModuleId[]) {
         const keys = SUB_TAB_SETTING_KEYS[modId];
         const orderValue = settings.find((s) => s.key === keys.order)?.value;
         const visibleValue = settings.find((s) => s.key === keys.visible)?.value;

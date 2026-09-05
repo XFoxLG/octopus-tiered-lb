@@ -80,12 +80,6 @@
   },
   "navbar": {
     "home": "主頁",
-    "hub": "站點管理",
-    "announcement": "公告",
-    "checkin": "簽到",
-    "redemption": "兌換碼",
-    "usage-history": "用量歷史",
-    "credential": "憑據管理",
     "channel": "供應源",
     "group": "分組",
     "key": "金鑰",
@@ -109,186 +103,6 @@
     "modelCount": "{count, plural, =0 {暫無模型} other {# 個模型}}",
     "empty": "暫無可用端點",
     "noMatch": "沒有符合搜尋條件的端點或模型"
-  },
-  "hub": {
-    "tabs": {
-      "sites": "站點",
-      "checkin": "簽到",
-      "announcement": "公告",
-      "redemption": "兌換",
-      "usage": "用量歷史",
-      "credential": "憑證",
-      "siteChannels": "站點渠道",
-      "automation": "自動化"
-    },
-    "title": "遠端站點",
-    "addSite": "新增站點",
-    "editSite": "編輯站點",
-    "disabled": "已停用",
-    "user": "用戶",
-    "quota": "餘額",
-    "refreshAll": "全部重新整理",
-    "refreshed": "站點已重新整理",
-    "allRefreshed": "所有站點已重新整理",
-    "created": "站點已建立",
-    "updated": "站點已更新",
-    "deleted": "站點已刪除",
-    "confirmDelete": "確定要刪除此遠端站點嗎？",
-    "empty": "尚無遠端站點，點擊新增開始使用。",
-    "detected": "偵測到類型",
-    "detect": "自動偵測",
-    "requiredFields": "名稱、Base URL 和站點類型為必填項",
-    "cancel": "取消",
-    "save": "儲存",
-    "create": "建立",
-    "saving": "儲存中...",
-    "form": {
-      "name": "名稱",
-      "namePlaceholder": "我的 API 站點",
-      "baseUrl": "Base URL",
-      "siteType": "站點類型",
-      "accessToken": "存取權杖",
-      "username": "使用者名稱",
-      "usernamePlaceholder": "New API 使用者名稱（用於 New-Api-User header）",
-      "password": "密碼",
-      "exchangeRate": "匯率（USD）",
-      "enabled": "啟用",
-      "unchanged": "留空表示不修改"
-    },
-    "chart": {
-      "loading": "載入圖表資料中...",
-      "noData": "暫無餘額歷史資料。",
-      "quota": "餘額",
-      "predicted": "預測",
-      "dailyBurn": "日消耗",
-      "daysRemaining": "剩餘天數",
-      "sevenDayAvg": "7日均值",
-      "estimatedZero": "預計耗盡日"
-    },
-    "discover": "發現站點",
-    "discoveredTitle": "發現的站點",
-    "discoveredEmpty": "未發現站點",
-    "add": "新增"
-  },
-  "announcement": {
-    "title": "公告",
-    "refreshAll": "重新整理全部",
-    "refreshed": "已重新整理 {count} 條公告",
-    "empty": "暫無公告"
-  },
-  "checkin": {
-    "title": "簽到",
-    "checkIn": "簽到",
-    "checkInAll": "全部簽到",
-    "done": "已簽到",
-    "success": "簽到成功！",
-    "alreadyChecked": "今天已簽到",
-    "failed": "簽到失敗",
-    "allDone": "已完成 {count} 個站點的簽到",
-    "empty": "暫無可簽到的遠端站點。"
-  },
-  "redemption": {
-    "title": "兌換碼",
-    "description": "使用兌換碼為遠端站點新增額度",
-    "labels": {
-      "codes": "兌換碼",
-      "site": "目標站點"
-    },
-    "placeholders": {
-      "codes": "每行輸入一個兌換碼...",
-      "site": "選擇站點"
-    },
-    "hints": {
-      "codes": "每行一個兌換碼，空行將被忽略。"
-    },
-    "buttons": {
-      "redeem": "兌換",
-      "redeeming": "兌換中...",
-      "redeemAll": "在所有站點兌換"
-    },
-    "status": {
-      "success": "成功",
-      "already_used": "已使用",
-      "invalid": "無效",
-      "failed": "失敗"
-    },
-    "success": {
-      "description": "成功兌換 {success}/{total} 個兌換碼",
-      "allSitesTitle": "兌換完成",
-      "allSitesDesc": "在 {count} 個站點成功兌換"
-    },
-    "errors": {
-      "noCodes": "無兌換碼",
-      "noCodesDesc": "請至少輸入一個兌換碼",
-      "noSite": "未選擇站點",
-      "noSiteDesc": "請選擇目標站點",
-      "failed": "兌換失敗"
-    },
-    "history": {
-      "title": "兌換歷史",
-      "description": "該站點的最近兌換記錄",
-      "selectSite": "選擇站點以查看歷史",
-      "empty": "暫無兌換記錄"
-    }
-  },
-  "usage_history": {
-    "title": "用量歷史",
-    "description": "查看和分析遠端站點的用量歷史",
-    "filters": "篩選條件",
-    "site": "站點",
-    "select_site": "選擇站點",
-    "day_from": "起始日期",
-    "day_to": "結束日期",
-    "model": "模型",
-    "all_models": "所有模型",
-    "token": "令牌",
-    "all_tokens": "所有令牌",
-    "sync": "同步",
-    "sync_all": "同步全部",
-    "sync_success": "已同步 {count} 條記錄",
-    "sync_all_success": "已從所有站點同步 {count} 條記錄",
-    "sync_error": "同步用量歷史失敗",
-    "total_requests": "總請求數",
-    "total_tokens": "總令牌數",
-    "total_quota": "總配額",
-    "history": "歷史記錄",
-    "history_description": "詳細用量記錄",
-    "date": "日期",
-    "requests": "請求數",
-    "prompt_tokens": "輸入令牌",
-    "completion_tokens": "輸出令牌",
-    "quota": "配額",
-    "no_data": "暫無用量數據"
-  },
-  "credential": {
-    "title": "API 憑據",
-    "add": "新增憑據",
-    "edit": "編輯憑據",
-    "verify": "驗證",
-    "export": "匯出",
-    "lastVerified": "上次驗證",
-    "confirmDelete": "確定要刪除此憑據嗎？",
-    "deleted": "憑據已刪除",
-    "created": "憑據已建立",
-    "updated": "憑據已更新",
-    "verifySuccess": "所有探針通過",
-    "verifyFailed": "部分探針失敗",
-    "exportCopied": "設定已複製到剪貼簿",
-    "empty": "暫無 API 憑據，新增一個來管理您的金鑰。",
-    "requiredFields": "名稱、Base URL 和 API Key 為必填項",
-    "cancel": "取消",
-    "save": "儲存",
-    "create": "建立",
-    "saving": "儲存中...",
-    "form": {
-      "name": "名稱",
-      "namePlaceholder": "我的 OpenAI Key",
-      "apiType": "API 類型",
-      "baseUrl": "Base URL",
-      "apiKey": "API Key",
-      "notes": "備註",
-      "unchanged": "留空表示不修改"
-    }
   },
   "model_mapping": {
     "title": "模型映射",
@@ -1749,40 +1563,6 @@
       "summary": "渠道停用 {disabled} · 模型消失 {missing} · 渠道刪除殘留 {removed}",
       "failed": "清理不可用模型失敗"
     },
-    "siteAutomation": {
-      "title": "站點自動化",
-      "autoGroupMode": {
-        "label": "投影渠道自動分組策略",
-        "description": "全域策略會覆蓋各投影渠道的單獨設定",
-        "none": "不自動分組",
-        "fuzzy": "模糊匹配",
-        "exact": "精準匹配",
-        "regex": "正則匹配"
-      },
-      "syncInterval": {
-        "label": "自動同步間隔（小時）",
-        "placeholder": "請輸入間隔（小時）"
-      },
-      "checkinInterval": {
-        "label": "自動簽到間隔（小時）",
-        "placeholder": "請輸入間隔（小時）"
-      },
-      "manualSync": {
-        "label": "手動站點全量同步",
-        "button": "立即同步",
-        "syncing": "同步中..."
-      },
-      "manualCheckin": {
-        "label": "手動站點全量簽到",
-        "button": "立即簽到",
-        "checking": "簽到中..."
-      },
-      "saveFailed": "儲存失敗",
-      "syncTriggered": "已觸發後台站點全量同步",
-      "syncFailed": "觸發同步失敗",
-      "checkinTriggered": "已觸發後台站點全量簽到",
-      "checkinFailed": "觸發簽到失敗"
-    },
     "apiKey": {
       "title": "API 金鑰",
       "empty": "暫無 API 金鑰",
@@ -2177,7 +1957,6 @@
     "subTab": {
       "title": "子標籤順序與顯示",
       "description": "拖拽調整站點管理、分析中心、運維中心的子標籤順序，可隱藏不需要的子標籤。",
-      "hub": "站點管理",
       "analytics": "分析中心",
       "ops": "運維中心",
       "reset": "恢復預設",
@@ -2198,10 +1977,6 @@
         "label": "美元兌人民幣匯率",
         "hint": "預設 7.2，可手動調整"
       }
-    },
-    "groupUpstreamMeta": {
-      "label": "分組上游渠道資訊",
-      "description": "在分組編輯頁展示上游價格、餘額、今日收入與延遲/吞吐/狀態"
     }
   },
   "group": {
@@ -3204,44 +2979,12 @@
     "upstreamServiceUnavailable": "上游服務不可用",
     "unexpectedError": "未預期的錯誤"
   },
-  "siteChannel": {
-    "card": {
-      "statusEnabled": "已啟用",
-      "statusDisabled": "已禁用",
-      "maskedPending": "{n} 個待處理",
-      "noRouteDistribution": "無模型分佈",
-      "metrics": {
-        "totalRequests": "請求數",
-        "successRequests": "成功",
-        "failedRequests": "失敗",
-        "totalCost": "費用",
-        "lastRequestAt": "最近使用"
-      }
-    },
-    "advanced": {
-      "title": "站點渠道進階設定",
-      "description": "為分組 {group} 下的投影渠道設定參數覆蓋。",
-      "channelList": "投影渠道",
-      "empty": "此分組中沒有投影渠道",
-      "paramOverride": "參數覆蓋 JSON",
-      "paramOverridePlaceholder": "留空清除。非空值必須是有效的 JSON 物件。",
-      "cancel": "取消",
-      "save": "儲存",
-      "saving": "儲存中…",
-      "saved": "進階設定已儲存",
-      "invalidParamOverride": "參數覆蓋必須是有效的 JSON 物件",
-      "saveFailed": "儲存進階設定失敗"
-    }
-  },
   "system": {
     "fields": {
       "logCountUnit": "條"
     }
   },
   "proxyPool": {
-    "site": {
-      "inherit": "繼承站點"
-    },
     "mode": {
       "label": "代理模式",
       "direct": "直連",
@@ -3270,22 +3013,12 @@
       "referencesDescription": "使用代理 \"{name}\" 的實體。",
       "referencesEmpty": "沒有實體引用此代理。",
       "referenceTypes": {
-        "site": "站點",
-        "siteAccount": "帳號",
-        "managedChannel": "託管渠道",
         "channel": "渠道",
         "reference": "實體"
       },
       "referenceLocations": {
-        "site": "站點",
-        "siteAccount": "站點帳號",
-        "channel": "渠道",
-        "managedChannel": "託管渠道",
-        "managedChannelUnderSite": "站點：{site}",
-        "archivedSite": "已歸檔站點",
-        "siteNamed": "站點：{name}"
+        "channel": "渠道"
       },
-      "managedChannelTitle": "渠道：{channel}",
       "edit": "編輯",
       "delete": "刪除",
       "deleteBlocked": "無法刪除——存在引用",
@@ -3429,9 +3162,7 @@
       "report": "報表",
       "channel_expire": "管道過期",
       "system": "系統",
-      "site": "站點",
       "backup": "備份",
-      "usage": "用量",
       "key_health": "Key 巡檢"
     },
     "severity": {
@@ -3501,20 +3232,6 @@
       "skipped": {
         "title": "報表已跳過: {name}",
         "content": "報表 \"{name}\" 已跳過: {detail}"
-      }
-    },
-    "site": {
-      "batch": {
-        "title": "站點 {phase} 已完成",
-        "content": "{trigger}: 成功={success} 部分成功={partial} 失敗={failed} 跳過={skipped} 警告={warnings}"
-      },
-      "account_ok": {
-        "title": "站點帳號 {phase} 已完成",
-        "content": "帳號 {account_id} {phase} 已成功完成。"
-      },
-      "account_fail": {
-        "title": "站點帳號 {phase} 失敗",
-        "content": "帳號 {account_id} {phase} 失敗: {detail}"
       }
     },
     "backup": {
