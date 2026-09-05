@@ -9,14 +9,14 @@ import { createJSONStorage, persist } from 'zustand/middleware';
  * （由 app.tsx 在登录后 hydrate）。
  */
 
-export type HubTab = 'sites' | 'site-channels' | 'automation' | 'balance' | 'tokenplan';
+export type HubTab = 'sites' | 'site-channels' | 'automation';
 export type AnalyticsTab = 'cache' | 'utilization' | 'route-health' | 'channel-model' | 'evaluation' | 'latency';
 export type OpsTab = 'telemetry' | 'quota' | 'health' | 'maintenance' | 'system' | 'audit';
 
 export type ModuleId = 'hub' | 'analytics' | 'ops';
 export type SubTab = HubTab | AnalyticsTab | OpsTab;
 
-export const DEFAULT_HUB_TABS: HubTab[] = ['sites', 'site-channels', 'automation', 'balance', 'tokenplan'];
+export const DEFAULT_HUB_TABS: HubTab[] = ['sites', 'site-channels', 'automation'];
 export const DEFAULT_ANALYTICS_TABS: AnalyticsTab[] = ['cache', 'utilization', 'route-health', 'channel-model', 'evaluation', 'latency'];
 export const DEFAULT_OPS_TABS: OpsTab[] = ['telemetry', 'quota', 'health', 'maintenance', 'system', 'audit'];
 

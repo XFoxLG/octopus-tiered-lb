@@ -48,11 +48,9 @@ export function SettingSiteAutomation() {
 
     const [syncInterval, setSyncInterval] = useState('');
     const [checkinInterval, setCheckinInterval] = useState('');
-    const [planRefreshInterval, setPlanRefreshInterval] = useState('');
     const [autoGroupMode, setAutoGroupMode] = useState(String(AutoGroupType.None));
     const initialSyncInterval = useRef('');
     const initialCheckinInterval = useRef('');
-    const initialPlanRefreshInterval = useRef('');
     const initialAutoGroupMode = useRef(String(AutoGroupType.None));
 
     useEffect(() => {
@@ -60,7 +58,6 @@ export function SettingSiteAutomation() {
 
         const siteSync = settings.find((item) => item.key === SettingKey.SiteSyncInterval);
         const siteCheckin = settings.find((item) => item.key === SettingKey.SiteCheckinInterval);
-        const planRefresh = settings.find((item) => item.key === SettingKey.PlanProviderRefreshInterval);
         const autoGroupSetting = settings.find((item) => item.key === SettingKey.ProjectedChannelAutoGroupEnabled);
 
         if (siteSync) {
@@ -70,10 +67,6 @@ export function SettingSiteAutomation() {
         if (siteCheckin) {
             queueMicrotask(() => setCheckinInterval(siteCheckin.value));
             initialCheckinInterval.current = siteCheckin.value;
-        }
-        if (planRefresh) {
-            queueMicrotask(() => setPlanRefreshInterval(planRefresh.value));
-            initialPlanRefreshInterval.current = planRefresh.value;
         }
         if (autoGroupSetting) {
             // The value can be "0"/"1"/"2"/"3", or "true"/"false"/""
@@ -194,23 +187,6 @@ export function SettingSiteAutomation() {
                         initialCheckinInterval.current = next;
                     })}
                     placeholder={t('siteAutomation.checkinInterval.placeholder')}
-                    className="w-48 rounded-xl"
-                />
-            </div>
-
-            <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-3">
-                    <Clock3 className="h-5 w-5 text-muted-foreground" />
-                    <span className="text-sm font-medium">{t('siteAutomation.planRefreshInterval.label')}</span>
-                </div>
-                <Input
-                    type="number"
-                    value={planRefreshInterval}
-                    onChange={(event) => setPlanRefreshInterval(event.target.value)}
-                    onBlur={() => handleSave(SettingKey.PlanProviderRefreshInterval, planRefreshInterval, initialPlanRefreshInterval.current, (next) => {
-                        initialPlanRefreshInterval.current = next;
-                    })}
-                    placeholder={t('siteAutomation.planRefreshInterval.placeholder')}
                     className="w-48 rounded-xl"
                 />
             </div>

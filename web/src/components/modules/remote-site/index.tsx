@@ -9,7 +9,6 @@ import { Tabs, TabsContents, TabsContent, TabsList, TabsTrigger } from '@/compon
 import { Site } from '@/components/modules/site';
 import { SiteChannelSection } from '@/components/modules/site-channel';
 import { SettingSiteAutomation } from '@/components/modules/setting/SiteAutomation';
-import { BalanceSection, TokenPlanSection } from '@/components/modules/plan-provider';
 import { useHubTabStore } from './hub-tab-store';
 import { useSiteUIStore } from '@/components/modules/site/ui-store';
 import { useSubTabStore, type HubTab } from '@/components/modules/navbar/sub-tab-store';
@@ -19,8 +18,6 @@ const TAB_LABEL_KEY: Record<HubTab, string> = {
     sites: 'tabs.sites',
     'site-channels': 'tabs.siteChannels',
     automation: 'tabs.automation',
-    balance: 'plan.balance',
-    tokenplan: 'plan.tokenPlan',
 };
 
 export function RemoteSite() {
@@ -59,7 +56,7 @@ export function RemoteSite() {
                             <TabsList className="w-max min-w-full xl:min-w-0">
                                 {orderedVisible.map((tab) => (
                                     <TabsTrigger key={tab} value={tab}>
-                                        {tab === 'balance' ? (t('plan.balance') || '额度') : tab === 'tokenplan' ? (t('plan.tokenPlan') || 'TokenPlan') : t(TAB_LABEL_KEY[tab as HubTab])}
+                                        {t(TAB_LABEL_KEY[tab as HubTab])}
                                     </TabsTrigger>
                                 ))}
                             </TabsList>
@@ -90,12 +87,6 @@ export function RemoteSite() {
                                 <SettingSiteAutomation />
                             </div>
                         ) : <div />}
-                    </TabsContent>
-                    <TabsContent value="balance">
-                        <BalanceSection />
-                    </TabsContent>
-                    <TabsContent value="tokenplan">
-                        <TokenPlanSection />
                     </TabsContent>
                 </TabsContents>
             </Tabs>

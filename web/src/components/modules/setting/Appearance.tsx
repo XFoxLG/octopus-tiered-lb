@@ -260,8 +260,6 @@ const HUB_TAB_LABEL_KEY: Record<HubTab, string> = {
     sites: 'tabs.sites',
     'site-channels': 'tabs.siteChannels',
     automation: 'tabs.automation',
-    balance: 'plan.balance',
-    tokenplan: 'plan.tokenPlan',
 };
 
 const ANALYTICS_TAB_LABEL: Record<AnalyticsTab, { ns: 'analytics' | 'ops'; key: string }> = {

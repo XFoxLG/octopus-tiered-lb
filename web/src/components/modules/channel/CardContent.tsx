@@ -163,7 +163,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         notif_channel_id: channel.notif_channel_id ?? null,
         key_selection_strategy: channel.key_selection_strategy,
         match_regex: channel.match_regex ?? '',
-        pool_id: channel.pool_id ?? 0,
     });
     const t = useTranslations('channel.detail');
     const tProxy = useTranslations('proxyPool');
@@ -255,8 +254,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             // Empty string means "clear" for patch semantics; backend maps it to NULL.
             req.match_regex = nextMatchRegex;
         }
-
-        if (formData.pool_id !== (channel.pool_id ?? 0)) req.pool_id = formData.pool_id;
 
         const originalKeys = channel.keys;
         const originalByID = new Map(originalKeys.map((k) => [k.id, k]));
