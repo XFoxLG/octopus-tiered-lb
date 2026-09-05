@@ -598,3 +598,21 @@ func (c *Channel) selectKeyBySpeed(candidates []ChannelKey, modelName string) Ch
 	}
 	return best
 }
+
+// ModelMatches 判断逗号分隔的模型列表是否包含目标模型。
+// modelsCSV 为空表示不限制（返回 true）；匹配采用 trim 后精确比较，不做模糊匹配。
+func ModelMatches(modelsCSV, model string) bool {
+	if modelsCSV == "" {
+		return true
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return true
+	}
+	for _, candidate := range strings.Split(modelsCSV, ",") {
+		if strings.TrimSpace(candidate) == model {
+			return true
+		}
+	}
+	return false
+}
