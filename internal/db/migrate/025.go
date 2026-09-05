@@ -1,7 +1,6 @@
 package migrate
 
 import (
-	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/gorm"
 )
 
@@ -12,16 +11,11 @@ func init() {
 	})
 }
 
-// 025: 创建使用量报表相关表 (report_schedules, report_history)
+// 025: 历史迁移（曾创建 report_schedules / report_history）。
+// 报表功能已移除；表由后续迁移 DROP，此处保留版本号占位。
 func migrateReportTables(db *gorm.DB) error {
 	if db == nil {
 		return nil
 	}
-
-	// AutoMigrate handles table creation idempotently
-	if err := db.AutoMigrate(&model.ReportSchedule{}, &model.ReportHistory{}); err != nil {
-		return err
-	}
-
 	return nil
 }

@@ -10,18 +10,18 @@ import (
 
 func TestSetMessage_WithArgs(t *testing.T) {
 	n := &model.Notification{}
-	SetMessage(n, KeyReportSent, KeyReportSent,
-		map[string]any{"name": "daily-report"},
-		map[string]any{"name": "daily-report", "channel": "gotify (gotify)"},
-		[]any{"daily-report"},
-		[]any{"daily-report", "gotify (gotify)"})
+	SetMessage(n, KeyBackupOK, KeyBackupOK,
+		map[string]any{"file": "octopus-2026.db"},
+		map[string]any{"file": "octopus-2026.db", "size": 1024},
+		nil,
+		[]any{"octopus-2026.db", 1024})
 
 	// i18n 键
-	if n.TitleKey != "report.sent" {
-		t.Fatalf("expected title_key 'report.sent', got %q", n.TitleKey)
+	if n.TitleKey != "backup.ok" {
+		t.Fatalf("expected title_key 'backup.ok', got %q", n.TitleKey)
 	}
-	if n.ContentKey != "report.sent" {
-		t.Fatalf("expected content_key 'report.sent', got %q", n.ContentKey)
+	if n.ContentKey != "backup.ok" {
+		t.Fatalf("expected content_key 'backup.ok', got %q", n.ContentKey)
 	}
 
 	// 参数 JSON 可反序列化
@@ -29,24 +29,24 @@ func TestSetMessage_WithArgs(t *testing.T) {
 	if err := json.Unmarshal([]byte(n.TitleArgs), &titleArgs); err != nil {
 		t.Fatalf("failed to parse title_args: %v", err)
 	}
-	if titleArgs["name"] != "daily-report" {
-		t.Fatalf("expected title_args.name='daily-report', got %v", titleArgs["name"])
+	if titleArgs["file"] != "octopus-2026.db" {
+		t.Fatalf("expected title_args.file='octopus-2026.db', got %v", titleArgs["file"])
 	}
 
 	var contentArgs map[string]any
 	if err := json.Unmarshal([]byte(n.ContentArgs), &contentArgs); err != nil {
 		t.Fatalf("failed to parse content_args: %v", err)
 	}
-	if contentArgs["channel"] != "gotify (gotify)" {
-		t.Fatalf("expected content_args.channel, got %v", contentArgs["channel"])
+	if contentArgs["size"].(float64) != 1024 {
+		t.Fatalf("expected content_args.size=1024, got %v", contentArgs["size"])
 	}
 
 	// 英文回退串
-	if !strings.Contains(n.Title, "daily-report") {
-		t.Fatalf("expected title fallback to contain 'daily-report', got %q", n.Title)
+	if !strings.Contains(n.Title, "octopus-2026.db") {
+		t.Fatalf("expected title fallback to contain file name, got %q", n.Title)
 	}
-	if !strings.Contains(n.Content, "gotify (gotify)") {
-		t.Fatalf("expected content fallback to contain channel, got %q", n.Content)
+	if !strings.Contains(n.Content, "1024") {
+		t.Fatalf("expected content fallback to contain size, got %q", n.Content)
 	}
 }
 
@@ -74,40 +74,40 @@ func TestSetMessage_NoArgs(t *testing.T) {
 }
 
 func TestSetMessage_NumericArgs(t *testing.T) {
-	// 整型参数（如 site.batch 的 success/failed 计数）应正确序列化进 JSON。
+	// 整型参数应正确序列化进 JSON。
 	n := &model.Notification{}
-	SetMessage(n, KeySiteBatch, KeySiteBatch,
-		map[string]any{"phase": "sync"},
-		map[string]any{"trigger": "scheduled", "success": 10, "failed": 2},
-		[]any{"sync"},
-		[]any{"scheduled", 10, 0, 2, 0, 0})
+	SetMessage(n, KeyKeyHealthFail, KeyKeyHealthFail,
+		map[string]any{"name": "ch-1"},
+		map[string]any{"name": "ch-1", "id": 7, "fails": 3, "detail": "timeout"},
+		[]any{"ch-1"},
+		[]any{"ch-1", 7, 3, "timeout"})
 
 	var contentArgs map[string]any
 	if err := json.Unmarshal([]byte(n.ContentArgs), &contentArgs); err != nil {
 		t.Fatalf("failed to parse content_args: %v", err)
 	}
 	// JSON 数字反序列化为 float64
-	if contentArgs["success"].(float64) != 10 {
-		t.Fatalf("expected success=10, got %v", contentArgs["success"])
+	if contentArgs["fails"].(float64) != 3 {
+		t.Fatalf("expected fails=3, got %v", contentArgs["fails"])
 	}
-	if contentArgs["failed"].(float64) != 2 {
-		t.Fatalf("expected failed=2, got %v", contentArgs["failed"])
+	if contentArgs["id"].(float64) != 7 {
+		t.Fatalf("expected id=7, got %v", contentArgs["id"])
 	}
-	if !strings.Contains(n.Content, "scheduled") {
-		t.Fatalf("expected fallback content to contain trigger, got %q", n.Content)
+	if !strings.Contains(n.Content, "timeout") {
+		t.Fatalf("expected fallback content to contain detail, got %q", n.Content)
 	}
 }
 
 func TestAllKeysHaveFallbackTemplates(t *testing.T) {
 	// 确保每个 NotifKey 常量都有对应的英文回退 title/content 模板，避免漏配。
 	allKeys := []NotifKey{
-		KeyAlertFiring, KeyAlertResolved, KeyChannelExpire,
-		KeyReportSent, KeyReportFailed, KeyReportSkipped,
+		KeyChannelExpire,
 		KeySiteBatch, KeySiteAccountOK, KeySiteAccountFail,
 		KeyBackupOK, KeyBackupFail, KeyBackupSkip,
 		KeyRestoreOK, KeyRestoreFail,
 		KeyMigrationOK, KeyMigrationFail,
 		KeySelfUpdateOK, KeySelfUpdateFail,
+		KeyKeyHealthFail, KeyKeyHealthRecover,
 	}
 	for _, k := range allKeys {
 		if _, ok := fallbackTitle[k]; !ok {

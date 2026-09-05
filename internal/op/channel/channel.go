@@ -443,10 +443,6 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		selectFields = append(selectFields, "expire_at")
 		updates.ExpireAt = req.ExpireAt
 	}
-	if req.NotifChannelID != nil {
-		selectFields = append(selectFields, "notif_channel_id")
-		updates.NotifChannelID = req.NotifChannelID
-	}
 	if req.KeySelectionStrategy != nil {
 		selectFields = append(selectFields, "key_selection_strategy")
 		updates.KeySelectionStrategy = *req.KeySelectionStrategy

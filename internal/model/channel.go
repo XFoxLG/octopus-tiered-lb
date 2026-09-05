@@ -90,7 +90,6 @@ type Channel struct {
 	SkipModelTest        bool                  `json:"skip_model_test" gorm:"default:false"`
 	Disposable           bool                  `json:"disposable" gorm:"default:false"`
 	ExpireAt             *time.Time            `json:"expire_at,omitempty" gorm:"index"`
-	NotifChannelID       *int                  `json:"notif_channel_id,omitempty" gorm:"index"`
 	KeySelectionStrategy string                `json:"key_selection_strategy" gorm:"type:varchar(16);not null;default:''"`
 	CustomHeader         []CustomHeader        `json:"custom_header" gorm:"serializer:json"`
 	ParamOverride        *string               `json:"param_override"`
@@ -185,7 +184,6 @@ type ChannelUpdateRequest struct {
 	SkipModelTest        *bool                  `json:"skip_model_test,omitempty"`
 	Disposable           *bool                  `json:"disposable,omitempty"`
 	ExpireAt             *time.Time             `json:"expire_at,omitempty"`
-	NotifChannelID       *int                   `json:"notif_channel_id,omitempty"`
 	KeySelectionStrategy *string                `json:"key_selection_strategy,omitempty"`
 	AutoGroup            *AutoGroupType         `json:"auto_group,omitempty"`
 	CustomHeader         *[]CustomHeader        `json:"custom_header,omitempty"`

@@ -13,12 +13,7 @@ import (
 type NotifKey string
 
 const (
-	KeyAlertFiring      NotifKey = "alert.firing"
-	KeyAlertResolved    NotifKey = "alert.resolved"
 	KeyChannelExpire    NotifKey = "channel_expire"
-	KeyReportSent       NotifKey = "report.sent"
-	KeyReportFailed     NotifKey = "report.failed"
-	KeyReportSkipped    NotifKey = "report.skipped"
 	KeySiteBatch        NotifKey = "site.batch"
 	KeySiteAccountOK    NotifKey = "site.account_ok"
 	KeySiteAccountFail  NotifKey = "site.account_fail"
@@ -41,12 +36,7 @@ const (
 // 模板里的占位符名仅作文档；实际渲染用按位置的 Sprintf，参数顺序需与调用处一致。
 var (
 	fallbackTitle = map[NotifKey]string{
-		KeyAlertFiring:      `Alert "%s" triggered`,
-		KeyAlertResolved:    `Alert "%s" resolved`,
 		KeyChannelExpire:    `Disposable channel expired`,
-		KeyReportSent:       `Report sent: %s`,
-		KeyReportFailed:     `Report failed: %s`,
-		KeyReportSkipped:    `Report skipped: %s`,
 		KeySiteBatch:        `Site %s completed`,
 		KeySiteAccountOK:    `Site account %s completed`,
 		KeySiteAccountFail:  `Site account %s failed`,
@@ -63,12 +53,7 @@ var (
 		KeyKeyHealthRecover: `Channel "%s" key verification recovered`,
 	}
 	fallbackContent = map[NotifKey]string{
-		KeyAlertFiring:      `Alert rule "%s" triggered. %s`,
-		KeyAlertResolved:    `Alert rule "%s" has resolved.`,
 		KeyChannelExpire:    `Disposable channel "%s" (ID: %d) expired at %s and has been automatically deleted.`,
-		KeyReportSent:       `Report "%s" was sent via %s.`,
-		KeyReportFailed:     `Report "%s" failed: %s`,
-		KeyReportSkipped:    `Report "%s" skipped: %s`,
 		KeySiteBatch:        `%s: success=%d partial=%d failed=%d skipped=%d warnings=%d`,
 		KeySiteAccountOK:    `Account %d %s completed successfully.`,
 		KeySiteAccountFail:  `Account %d %s failed: %s`,

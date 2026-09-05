@@ -57,32 +57,9 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 		return nil, fmt.Errorf("export settings: %w", err)
 	}
 
-	// Alert tables
-	if err := conn.Find(&d.AlertRules).Error; err != nil {
-		return nil, fmt.Errorf("export alert_rules: %w", err)
-	}
-	if err := conn.Find(&d.AlertNotifChannels).Error; err != nil {
-		return nil, fmt.Errorf("export alert_notif_channels: %w", err)
-	}
-	if err := conn.Find(&d.AlertStateRecords).Error; err != nil {
-		return nil, fmt.Errorf("export alert_state_records: %w", err)
-	}
-	if err := conn.Find(&d.AlertHistory).Error; err != nil {
-		return nil, fmt.Errorf("export alert_history: %w", err)
-	}
-
 	// Notifications
 	if err := conn.Find(&d.Notifications).Error; err != nil {
 		return nil, fmt.Errorf("export notifications: %w", err)
-	}
-	if err := conn.Find(&d.NotificationDeliveries).Error; err != nil {
-		return nil, fmt.Errorf("export notification_deliveries: %w", err)
-	}
-	if err := conn.Find(&d.NotificationPreferences).Error; err != nil {
-		return nil, fmt.Errorf("export notification_preferences: %w", err)
-	}
-	if err := conn.Find(&d.NotificationPolicies).Error; err != nil {
-		return nil, fmt.Errorf("export notification_policies: %w", err)
 	}
 
 	// Runtime
@@ -383,8 +360,7 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 				"check_in_records", "balance_snapshots",
 				"api_credential_profiles", "remote_sites",
 				"group_items", "channel_groups", "groups",
-				"notification_deliveries", "notifications", "notification_preferences", "notification_policies",
-				"alert_histories", "alert_state_records", "alert_rules", "alert_notif_channels",
+				"notifications",
 				"audit_logs", "auto_strategy_states", "circuit_breaker_states",
 				"api_keys", "channel_keys", "channels",
 				"llm_infos", "settings",
@@ -403,8 +379,6 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 					deleteOrder[i] = cfg.conn.NamingStrategy.TableName("stats_channel")
 				case "stats_api_keys":
 					deleteOrder[i] = cfg.conn.NamingStrategy.TableName("stats_api_key")
-				case "alert_histories":
-					deleteOrder[i] = cfg.conn.NamingStrategy.TableName("alert_history")
 				case "auto_strategy_states":
 					deleteOrder[i] = "auto_strategy_states"
 				}
@@ -460,46 +434,9 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			return err
 		}
 
-		// Alerts — skip existing
-		if len(dump.AlertRules) > 0 {
-			if err := cfg.doNothing("alert_rules", &dump.AlertRules, len(dump.AlertRules)); err != nil {
-				return err
-			}
-		}
-		if len(dump.AlertNotifChannels) > 0 {
-			if err := cfg.doNothing("alert_notif_channels", &dump.AlertNotifChannels, len(dump.AlertNotifChannels)); err != nil {
-				return err
-			}
-		}
-		if len(dump.AlertStateRecords) > 0 {
-			if err := cfg.doNothing("alert_state_records", &dump.AlertStateRecords, len(dump.AlertStateRecords)); err != nil {
-				return err
-			}
-		}
-		if len(dump.AlertHistory) > 0 {
-			if err := cfg.doNothing("alert_histories", &dump.AlertHistory, len(dump.AlertHistory)); err != nil {
-				return err
-			}
-		}
-
 		// Notifications — skip existing
 		if len(dump.Notifications) > 0 {
 			if err := cfg.doNothing("notifications", &dump.Notifications, len(dump.Notifications)); err != nil {
-				return err
-			}
-		}
-		if len(dump.NotificationDeliveries) > 0 {
-			if err := cfg.doNothing("notification_deliveries", &dump.NotificationDeliveries, len(dump.NotificationDeliveries)); err != nil {
-				return err
-			}
-		}
-		if len(dump.NotificationPreferences) > 0 {
-			if err := cfg.doNothing("notification_preferences", &dump.NotificationPreferences, len(dump.NotificationPreferences)); err != nil {
-				return err
-			}
-		}
-		if len(dump.NotificationPolicies) > 0 {
-			if err := cfg.doNothing("notification_policies", &dump.NotificationPolicies, len(dump.NotificationPolicies)); err != nil {
 				return err
 			}
 		}

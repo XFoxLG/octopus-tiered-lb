@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
-	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
-	"github.com/lingyuins/octopus/internal/op/alert"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/notification"
 	"github.com/lingyuins/octopus/internal/op/setting"
@@ -39,21 +37,12 @@ func ExpireDisposableChannels() {
 
 	log.Infof("channel expire: found %d expired disposable channels", len(channels))
 
-	// 预加载通知渠道列表（仅在有过期渠道配了 notif_channel_id 时才加载）。
-	var notifChannels map[int]*model.AlertNotifChannel
-	for _, c := range channels {
-		if c.NotifChannelID != nil && *c.NotifChannelID > 0 {
-			notifChannels = loadNotifChannels(ctx)
-			break
-		}
-	}
-
 	for _, channel := range channels {
-		deleteExpiredChannel(ctx, channel, notifChannels)
+		deleteExpiredChannel(ctx, channel)
 	}
 }
 
-func deleteExpiredChannel(ctx context.Context, channel model.Channel, notifChannels map[int]*model.AlertNotifChannel) {
+func deleteExpiredChannel(ctx context.Context, channel model.Channel) {
 	// 先删除渠道，删除成功后再发通知。
 	// 反过来（先通知后删除）会在删除失败时导致下一轮重复发送通知（issue #126 修复项）。
 	// channel 是局部变量，删除后其字段仍在内存中，通知内容（name/id/expire_at）不受影响。
@@ -64,28 +53,8 @@ func deleteExpiredChannel(ctx context.Context, channel model.Channel, notifChann
 	st.OnChannelDeleted(channel.ID)
 	log.Infof("channel expire: deleted expired disposable channel %d (%s)", channel.ID, channel.Name)
 
-	// 删除成功后发送通知。
-	deliveryStatus := "skipped"
-	deliveryDetail := "notification channel not configured"
-	if channel.NotifChannelID != nil && *channel.NotifChannelID > 0 {
-		deliveryStatus, deliveryDetail = sendChannelExpireNotification(channel, *channel.NotifChannelID, notifChannels)
-	}
-	createChannelExpireNotification(ctx, channel, deliveryStatus, deliveryDetail)
-}
-
-func sendChannelExpireNotification(channel model.Channel, notifChannelID int, notifChannels map[int]*model.AlertNotifChannel) (string, string) {
-	notifCh, ok := notifChannels[notifChannelID]
-	if !ok || notifCh == nil {
-		log.Warnf("channel expire: channel %d references notif_channel_id=%d which was not found; notification skipped", channel.ID, notifChannelID)
-		return "skipped", "notification channel not found"
-	}
-
-	title, message := buildChannelExpireMessage(channel)
-	if err := helper.SendNotificationMessage(notifCh, title, message); err != nil {
-		log.Warnf("channel expire: failed to send notification for channel %d (%s): %v", channel.ID, channel.Name, err)
-		return "failed", err.Error()
-	}
-	return "sent", fmt.Sprintf("%s (%s)", notifCh.Name, notifCh.Type)
+	// 删除成功后发送应用内通知。
+	createChannelExpireNotification(ctx, channel, "in_app", "")
 }
 
 func createChannelExpireNotification(ctx context.Context, channel model.Channel, deliveryStatus, deliveryDetail string) {
@@ -105,8 +74,7 @@ func createChannelExpireNotification(ctx context.Context, channel model.Channel,
 		MetadataJSON: string(metadata),
 		Link:         "channel",
 	}
-	// 应用内通知走 i18n 键。外部通知仍由 sendChannelExpireMessage 用
-	// buildChannelExpireMessage 渲染后发送，与此处独立。
+	// 应用内通知走 i18n 键。
 	expireStr := ""
 	if channel.ExpireAt != nil {
 		expireStr = channel.ExpireAt.Format(time.RFC3339)
@@ -118,51 +86,5 @@ func createChannelExpireNotification(ctx context.Context, channel model.Channel,
 		[]any{channel.Name, channel.ID, expireStr})
 	if err := notification.Create(ctx, n); err != nil {
 		log.Warnf("notification: failed to create channel expiration notification for channel %d: %v", channel.ID, err)
-	}
-}
-
-func loadNotifChannels(ctx context.Context) map[int]*model.AlertNotifChannel {
-	channels, err := alert.NotifChannelList(ctx)
-	if err != nil {
-		log.Warnf("channel expire: failed to list notification channels: %v", err)
-		return nil
-	}
-	m := make(map[int]*model.AlertNotifChannel, len(channels))
-	for i := range channels {
-		m[channels[i].ID] = &channels[i]
-	}
-	return m
-}
-
-func buildChannelExpireMessage(channel model.Channel) (title, message string) {
-	language := resolveChannelExpireLanguage()
-	expireStr := ""
-	if channel.ExpireAt != nil {
-		expireStr = channel.ExpireAt.Format(time.RFC3339)
-	}
-	switch language {
-	case "zh-Hans":
-		title = "一次性渠道已到期删除"
-		message = fmt.Sprintf("一次性渠道 \"%s\" (ID: %d) 已于 %s 到期并被自动删除。", channel.Name, channel.ID, expireStr)
-	case "zh-Hant":
-		title = "一次性管道已到期刪除"
-		message = fmt.Sprintf("一次性管道 \"%s\" (ID: %d) 已於 %s 到期並被自動刪除。", channel.Name, channel.ID, expireStr)
-	default:
-		title = "Disposable Channel Expired"
-		message = fmt.Sprintf("Disposable channel \"%s\" (ID: %d) expired at %s and has been automatically deleted.", channel.Name, channel.ID, expireStr)
-	}
-	return title, message
-}
-
-func resolveChannelExpireLanguage() string {
-	v, err := setting.GetString(model.SettingKeyAlertNotifyLanguage)
-	if err != nil || v == "" {
-		return "en"
-	}
-	switch v {
-	case "zh-Hans", "zh-Hant", "en":
-		return v
-	default:
-		return "en"
 	}
 }

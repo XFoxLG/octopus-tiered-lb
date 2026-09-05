@@ -15,21 +15,19 @@ type advancedFields struct {
 	skipModelTest        bool
 	disposable           bool
 	expireAt             time.Time
-	notifChannelID       int
 	keySelectionStrategy string
 	autoGroup            model.AutoGroupType
 	customHeader         []model.CustomHeader
 	poolID               int
 }
 
-// advancedUpdateRequest 构造携带全部 9 个高级设置字段的更新请求（回归 #182）。
+// advancedUpdateRequest 构造携带全部高级设置字段的更新请求（回归 #182）。
 func advancedUpdateRequest(id int) (*model.ChannelUpdateRequest, advancedFields) {
 	f := advancedFields{
 		autoSync:             true,
 		skipModelTest:        true,
 		disposable:           true,
 		expireAt:             time.Now().Add(24 * time.Hour).Truncate(time.Second),
-		notifChannelID:       7,
 		keySelectionStrategy: "random",
 		autoGroup:            model.AutoGroupTypeExact,
 		customHeader: []model.CustomHeader{
@@ -44,7 +42,6 @@ func advancedUpdateRequest(id int) (*model.ChannelUpdateRequest, advancedFields)
 		SkipModelTest:        &f.skipModelTest,
 		Disposable:           &f.disposable,
 		ExpireAt:             &f.expireAt,
-		NotifChannelID:       &f.notifChannelID,
 		KeySelectionStrategy: &f.keySelectionStrategy,
 		AutoGroup:            &f.autoGroup,
 		CustomHeader:         &f.customHeader,
@@ -62,9 +59,6 @@ func assertAdvancedFields(t *testing.T, ch *model.Channel, want advancedFields) 
 	}
 	if ch.ExpireAt == nil || ch.ExpireAt.Unix() != want.expireAt.Unix() {
 		t.Fatalf("ExpireAt = %v, want %v", ch.ExpireAt, want.expireAt)
-	}
-	if ch.NotifChannelID == nil || *ch.NotifChannelID != want.notifChannelID {
-		t.Fatalf("NotifChannelID = %v, want %d", ch.NotifChannelID, want.notifChannelID)
 	}
 	if ch.KeySelectionStrategy != want.keySelectionStrategy {
 		t.Fatalf("KeySelectionStrategy = %q, want %q", ch.KeySelectionStrategy, want.keySelectionStrategy)
