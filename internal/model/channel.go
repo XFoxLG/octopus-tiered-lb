@@ -97,9 +97,6 @@ type Channel struct {
 	RequestRewrite       *RequestRewriteConfig `json:"request_rewrite" gorm:"serializer:json"`
 	Stats                *StatsChannel         `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
 	MatchRegex           *string               `json:"match_regex"`
-	// IsReserve 备用渠道标记（Seller 移植）。排序策略 non_relay_* 把备用渠道排后：
-	// 非备用按余额/倍率正常排，备用统一沉底。false=常规，true=备用。
-	IsReserve bool `json:"is_reserve" gorm:"default:false"`
 	// KeyHealthPassed 记录最近一次定时 Key 巡检是否全部通过（issue #142）。
 	// nil = 从未巡检；true = 全部通过；false = 存在失败。前端据此对失败渠道标灰。
 	KeyHealthPassed *bool `json:"key_health_passed,omitempty" gorm:"column:key_health_passed"`
@@ -109,10 +106,6 @@ type Channel struct {
 	KeyHealthAllFailed *bool `json:"key_health_all_failed,omitempty" gorm:"column:key_health_all_failed"`
 	// KeyHealthAt 最近一次定时 Key 巡检完成时间（unix 秒），0 = 从未巡检。
 	KeyHealthAt int64 `json:"key_health_at,omitempty" gorm:"column:key_health_at;default:0"`
-	// PoolID 关联号池。0 = 使用 inline keys，>0 = 从号池调度器选账号。
-	PoolID        int                   `json:"pool_id" gorm:"default:0;index"`
-	Managed       bool                  `json:"managed" gorm:"-"`
-	ManagedSource *ManagedChannelSource `json:"managed_source,omitempty" gorm:"-"`
 }
 
 type BaseUrl struct {
@@ -140,10 +133,6 @@ type ChannelKey struct {
 	// 空表示不限制（兼容存量 key）。key 选择时用 ModelMatches 过滤，
 	// 避免把不支持当前模型的 key 发给上游（如上游中转站某 token 无某模型权限）。
 	SupportedModels string `json:"supported_models,omitempty" gorm:"column:supported_models;type:varchar(512)"`
-	// Managed 标记该 key 是否由 site 同步投影自动生成。
-	// site 同步 diff 时只删除 Managed=true 的 key，
-	// 保留用户手动添加的（Managed=false）key 不被清除。
-	Managed bool `json:"managed" gorm:"default:false"`
 }
 
 // KeyCooldownFunc 由 balancer 包在启动时注入，用于查询某 (channelID, keyID, modelName)
@@ -191,14 +180,10 @@ type ChannelUpdateRequest struct {
 	ParamOverride        *string                `json:"param_override,omitempty"`
 	RequestRewrite       *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
 	MatchRegex           *string                `json:"match_regex,omitempty"`
-	PoolID               *int                   `json:"pool_id,omitempty"`
-	IsReserve            *bool                  `json:"is_reserve,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`
 	KeysToUpdate []ChannelKeyUpdateRequest `json:"keys_to_update,omitempty"`
 	KeysToDelete []int                     `json:"keys_to_delete,omitempty"`
-
-	BypassManagedCheck bool `json:"-"` // 内部使用：允许投影逻辑更新 managed channel
 }
 
 type ChannelKeyAddRequest struct {
@@ -208,8 +193,6 @@ type ChannelKeyAddRequest struct {
 	Remark     string `json:"remark"`
 	// SupportedModels 逗号分隔的模型列表，限定该 key 只能用于这些模型（空=不限）。
 	SupportedModels string `json:"supported_models,omitempty"`
-	// Managed 标记是否由 site 同步投影自动生成，仅投影逻辑透传。
-	Managed bool `json:"managed,omitempty"`
 }
 
 type ChannelKeyUpdateRequest struct {
@@ -220,8 +203,6 @@ type ChannelKeyUpdateRequest struct {
 	Remark     *string `json:"remark,omitempty"`
 	// SupportedModels 逗号分隔的模型列表，限定该 key 只能用于这些模型（空=不限）。
 	SupportedModels *string `json:"supported_models,omitempty"`
-	// Managed 标记是否由 site 同步投影自动生成，仅投影逻辑透传。
-	Managed *bool `json:"managed,omitempty"`
 }
 
 // ChannelBatchGroupRequest 批量设置渠道分组请求
@@ -600,4 +581,22 @@ func (c *Channel) selectKeyBySpeed(candidates []ChannelKey, modelName string) Ch
 		return selectKeyByCost(candidates)
 	}
 	return best
+}
+
+// ModelMatches 判断逗号分隔的模型列表是否包含目标模型。
+// modelsCSV 为空表示不限制（返回 true）；匹配采用 trim 后精确比较，不做模糊匹配。
+func ModelMatches(modelsCSV, model string) bool {
+	if modelsCSV == "" {
+		return true
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return true
+	}
+	for _, candidate := range strings.Split(modelsCSV, ",") {
+		if strings.TrimSpace(candidate) == model {
+			return true
+		}
+	}
+	return false
 }

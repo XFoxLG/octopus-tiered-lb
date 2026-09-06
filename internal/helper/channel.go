@@ -78,22 +78,6 @@ func channelHTTPClient(channel *model.Channel, timeout time.Duration) (*http.Cli
 	}
 }
 
-// PoolAccountHttpClient 返回使用号池账号级代理配置的 HTTP 客户端。
-// proxyConfigID 为 nil 或 <= 0 时返回 nil（调用方回退到渠道级代理）。
-func PoolAccountHttpClient(proxyConfigID *int) (*http.Client, error) {
-	if proxyConfigID == nil || *proxyConfigID <= 0 {
-		return nil, nil
-	}
-	if ProxyURLByConfigFunc == nil {
-		return nil, fmt.Errorf("proxy configuration resolver is not initialized")
-	}
-	proxyURL, err := ProxyURLByConfigFunc(*proxyConfigID, context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return client.GetHTTPClientCustomProxy(proxyURL)
-}
-
 // resolveChannelProxy 解析渠道实际代理模式。
 // 兼容路径：
 // 1) 新模型 ProxyMode=system/pool（含 ProxyConfigID）

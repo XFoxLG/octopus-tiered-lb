@@ -130,7 +130,6 @@ function EditDialogContent({
                             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
                             default_reasoning_effort: group.default_reasoning_effort ?? '',
                             reasoning_force_override: group.reasoning_force_override ?? false,
-                            sort_strategy: group.sort_strategy ?? '',
                             param_override: group.param_override ?? '',
                             custom_header: group.custom_header ?? [],
                             members: editMembers,
@@ -289,10 +288,6 @@ export function GroupCard({ group }: { group: Group }) {
                     channel_name: channelNameByKey.get(key) ?? t('aiRoute.progress.channelFallbackName', { id: item.channel_id }),
                     item_id: item.id,
                     weight: item.weight,
-                    upstream_price: channelModel?.upstream_price,
-                    upstream_metrics: channelModel?.upstream_metrics,
-                    channel_balance: channelModel?.channel_balance,
-                    channel_today_income: channelModel?.channel_today_income,
                 };
             }),
         [group.items, channelByKey, channelNameByKey, enabledByKey, t]
@@ -505,7 +500,6 @@ export function GroupCard({ group }: { group: Group }) {
         const nextReasoningBufferStrategy = (values.reasoning_buffer_strategy ?? '').trim();
         const nextDefaultReasoningEffort = (values.default_reasoning_effort ?? '').trim();
         const nextReasoningForceOverride = values.reasoning_force_override ?? false;
-        const nextSortStrategy = (values.sort_strategy ?? '').trim();
         const nextParamOverride = (values.param_override ?? '').trim();
         const nextCustomHeader = values.custom_header ?? [];
 
@@ -523,7 +517,6 @@ export function GroupCard({ group }: { group: Group }) {
         if (nextReasoningBufferStrategy !== ((group.reasoning_buffer_strategy ?? '').trim())) payload.reasoning_buffer_strategy = nextReasoningBufferStrategy;
         if (nextDefaultReasoningEffort !== ((group.default_reasoning_effort ?? '').trim())) payload.default_reasoning_effort = nextDefaultReasoningEffort;
         if (nextReasoningForceOverride !== (group.reasoning_force_override ?? false)) payload.reasoning_force_override = nextReasoningForceOverride;
-        if (nextSortStrategy !== ((group.sort_strategy ?? '').trim())) payload.sort_strategy = nextSortStrategy;
         if (nextParamOverride !== ((group.param_override ?? '').trim())) payload.param_override = nextParamOverride;
         if (JSON.stringify(nextCustomHeader) !== JSON.stringify(group.custom_header ?? [])) payload.custom_header = nextCustomHeader;
         if (items_to_add.length) payload.items_to_add = items_to_add;
@@ -542,7 +535,7 @@ export function GroupCard({ group }: { group: Group }) {
             },
             onError,
         });
-    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.session_keep_time, group.reasoning_buffer_strategy, group.default_reasoning_effort, group.reasoning_force_override, group.sort_strategy, group.param_override, group.custom_header, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
+    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.session_keep_time, group.reasoning_buffer_strategy, group.default_reasoning_effort, group.reasoning_force_override, group.param_override, group.custom_header, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
 
     const resolvedMode = MODE_LABELS[group.mode] ? group.mode : GroupMode.Auto;
 
@@ -879,7 +872,6 @@ export function GroupCard({ group }: { group: Group }) {
                     onDragFinish={handleDragFinish}
                     autoScrollOnAdd={false}
                     showWeight={resolvedMode === GroupMode.Weighted || resolvedMode === GroupMode.Auto}
-                    showUpstreamMeta={false}
                     layoutScope={`card-${group.id ?? 'unknown'}`}
                 />
             </section>

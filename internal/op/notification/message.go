@@ -14,9 +14,6 @@ type NotifKey string
 
 const (
 	KeyChannelExpire    NotifKey = "channel_expire"
-	KeySiteBatch        NotifKey = "site.batch"
-	KeySiteAccountOK    NotifKey = "site.account_ok"
-	KeySiteAccountFail  NotifKey = "site.account_fail"
 	KeyBackupOK         NotifKey = "backup.ok"
 	KeyBackupFail       NotifKey = "backup.fail"
 	KeyBackupSkip       NotifKey = "backup.skip"
@@ -37,9 +34,6 @@ const (
 var (
 	fallbackTitle = map[NotifKey]string{
 		KeyChannelExpire:    `Disposable channel expired`,
-		KeySiteBatch:        `Site %s completed`,
-		KeySiteAccountOK:    `Site account %s completed`,
-		KeySiteAccountFail:  `Site account %s failed`,
 		KeyBackupOK:         `WebDAV backup completed`,
 		KeyBackupFail:       `WebDAV backup failed`,
 		KeyBackupSkip:       `WebDAV backup skipped`,
@@ -54,9 +48,6 @@ var (
 	}
 	fallbackContent = map[NotifKey]string{
 		KeyChannelExpire:    `Disposable channel "%s" (ID: %d) expired at %s and has been automatically deleted.`,
-		KeySiteBatch:        `%s: success=%d partial=%d failed=%d skipped=%d warnings=%d`,
-		KeySiteAccountOK:    `Account %d %s completed successfully.`,
-		KeySiteAccountFail:  `Account %d %s failed: %s`,
 		KeyBackupOK:         `Backup uploaded to %s (%d bytes).`,
 		KeyBackupFail:       `%s`,
 		KeyBackupSkip:       `WebDAV backup did not produce a remote file.`,

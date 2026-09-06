@@ -160,10 +160,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         skip_model_test: channel.skip_model_test,
         disposable: channel.disposable ?? false,
         expire_at: channel.expire_at ? channel.expire_at.slice(0, 16) : '',
-        notif_channel_id: channel.notif_channel_id ?? null,
         key_selection_strategy: channel.key_selection_strategy,
         match_regex: channel.match_regex ?? '',
-        pool_id: channel.pool_id ?? 0,
     });
     const t = useTranslations('channel.detail');
     const tProxy = useTranslations('proxyPool');
@@ -219,9 +217,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             // 转 ISO 字符串（带 Z 时区）发给后端，避免 Go 解析无时区字符串为 UTC 导致时区偏移。
             req.expire_at = formData.expire_at ? new Date(formData.expire_at).toISOString() : null;
         }
-        if (formData.notif_channel_id !== (channel.notif_channel_id ?? null)) {
-            req.notif_channel_id = formData.notif_channel_id;
-        }
         if (formData.key_selection_strategy !== channel.key_selection_strategy) req.key_selection_strategy = formData.key_selection_strategy;
         if (formData.auto_group !== channel.auto_group) req.auto_group = formData.auto_group;
 
@@ -255,8 +250,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             // Empty string means "clear" for patch semantics; backend maps it to NULL.
             req.match_regex = nextMatchRegex;
         }
-
-        if (formData.pool_id !== (channel.pool_id ?? 0)) req.pool_id = formData.pool_id;
 
         const originalKeys = channel.keys;
         const originalByID = new Map(originalKeys.map((k) => [k.id, k]));

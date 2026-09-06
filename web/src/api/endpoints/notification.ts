@@ -5,9 +5,16 @@ import { REFETCH_INTERVAL_DEFAULT } from '../constants';
 import { useAuthStore } from './user';
 import { logger } from '@/lib/logger';
 
-export type NotificationType = 'alert' | 'report' | 'channel_expire' | 'system' | 'site' | 'backup' | 'usage';
+export type NotificationType =
+    | 'channel_expire'
+    | 'system'
+    | 'backup'
+    | 'key_health'
+    | 'alert'
+    | 'report'
+    | 'site'
+    | 'usage';
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error' | 'critical';
-export type NotificationDeliveryStatus = 'pending' | 'sent' | 'failed' | 'skipped';
 
 export interface NotificationItem {
     id: number;
@@ -31,45 +38,6 @@ export interface NotificationItem {
     updated_at: number;
 }
 
-export interface NotificationDelivery {
-    id: number;
-    notification_id: number;
-    channel_id: number;
-    channel_name: string;
-    channel_type: string;
-    status: NotificationDeliveryStatus;
-    attempts: number;
-    last_error?: string;
-    sent_at?: number;
-    created_at: number;
-    updated_at: number;
-}
-
-export interface NotificationPreference {
-    id: number;
-    user_id: number;
-    type: NotificationType;
-    in_app_enabled: boolean;
-    external_enabled: boolean;
-    min_severity: NotificationSeverity;
-    channel_ids?: string;
-    quiet_start?: string;
-    quiet_end?: string;
-    enabled: boolean;
-}
-
-export interface NotificationPolicy {
-    id: number;
-    name: string;
-    enabled: boolean;
-    type?: NotificationType | '';
-    min_severity: NotificationSeverity;
-    source?: string;
-    channel_ids: string;
-    created_at?: number;
-    updated_at?: number;
-}
-
 export interface NotificationFilter {
     page?: number;
     page_size?: number;
@@ -79,11 +47,6 @@ export interface NotificationFilter {
     read?: boolean;
     archived?: boolean;
     search?: string;
-}
-
-export interface NotificationDetailResponse {
-    notification: NotificationItem;
-    deliveries: NotificationDelivery[];
 }
 
 export const notificationQueryKey = (filter: NotificationFilter = {}) => ['notifications', 'list', filter] as const;
@@ -178,7 +141,7 @@ export function useUnreadNotificationCount() {
 export function useNotificationDetail(id?: number) {
     return useQuery({
         queryKey: ['notifications', 'detail', id],
-        queryFn: async () => apiClient.get<NotificationDetailResponse>(`/api/v1/notification/detail/${id}`),
+        queryFn: async () => apiClient.get<NotificationItem>(`/api/v1/notification/detail/${id}`),
         enabled: Boolean(id),
     });
 }
@@ -212,60 +175,6 @@ export function useDeleteNotification() {
     return useMutation({
         mutationFn: async (id: number) => apiClient.delete<null>(`/api/v1/notification/delete/${id}`),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications'] }),
-    });
-}
-
-export function useNotificationPreferences() {
-    return useQuery({
-        queryKey: ['notifications', 'preferences'],
-        queryFn: async () => apiClient.get<NotificationPreference[]>('/api/v1/notification/preference/list'),
-    });
-}
-
-export function useSaveNotificationPreference() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: async (data: Partial<NotificationPreference>) => apiClient.post<NotificationPreference>('/api/v1/notification/preference/save', data),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications', 'preferences'] }),
-    });
-}
-export function useDeleteNotificationPreference() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: async (id: number) => apiClient.delete<null>(`/api/v1/notification/preference/delete/${id}`),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications', 'preferences'] }),
-    });
-}
-
-
-export function useNotificationPolicies() {
-    return useQuery({
-        queryKey: ['notifications', 'policies'],
-        queryFn: async () => apiClient.get<NotificationPolicy[]>('/api/v1/notification/policy/list'),
-    });
-}
-
-export function useCreateNotificationPolicy() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: async (data: Partial<NotificationPolicy>) => apiClient.post<NotificationPolicy>('/api/v1/notification/policy/create', data),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications', 'policies'] }),
-    });
-}
-
-export function useUpdateNotificationPolicy() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: async (data: NotificationPolicy) => apiClient.post<NotificationPolicy>('/api/v1/notification/policy/update', data),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications', 'policies'] }),
-    });
-}
-
-export function useDeleteNotificationPolicy() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: async (id: number) => apiClient.delete<null>(`/api/v1/notification/policy/delete/${id}`),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notifications', 'policies'] }),
     });
 }
 

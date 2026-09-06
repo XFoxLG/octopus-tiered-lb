@@ -80,14 +80,6 @@ function createFormFromProxy(proxy: ProxyConfiguration): FormState {
 
 function referenceTitle(reference: ProxyConfigurationReference, t: ProxyPoolDialogTranslator) {
     switch (reference.type) {
-        case 'site':
-            return reference.site_name || `#${reference.site_id}`;
-        case 'site_account':
-            return reference.site_account_name || `#${reference.site_account_id}`;
-        case 'managed_channel':
-            return reference.channel_name
-                ? t('managedChannelTitle', { channel: reference.channel_name })
-                : t('managedChannelTitle', { channel: `#${reference.channel_id}` });
         case 'channel':
             return reference.channel_name || `#${reference.channel_id}`;
         default:
@@ -97,14 +89,6 @@ function referenceTitle(reference: ProxyConfigurationReference, t: ProxyPoolDial
 
 function referenceLocation(reference: ProxyConfigurationReference, t: ProxyPoolDialogTranslator) {
     switch (reference.type) {
-        case 'site':
-            return reference.site_archived ? t('referenceLocations.archivedSite') : t('referenceLocations.site');
-        case 'site_account':
-            return reference.site_name ? t('referenceLocations.siteNamed', { name: reference.site_name }) : t('referenceLocations.siteAccount');
-        case 'managed_channel':
-            return reference.site_name
-                ? t('referenceLocations.managedChannelUnderSite', { site: reference.site_name })
-                : t('referenceLocations.managedChannel');
         case 'channel':
             return t('referenceLocations.channel');
         default:
@@ -114,12 +98,6 @@ function referenceLocation(reference: ProxyConfigurationReference, t: ProxyPoolD
 
 function referenceTypeLabel(reference: ProxyConfigurationReference, t: ProxyPoolDialogTranslator) {
     switch (reference.type) {
-        case 'site':
-            return t('referenceTypes.site');
-        case 'site_account':
-            return t('referenceTypes.siteAccount');
-        case 'managed_channel':
-            return t('referenceTypes.managedChannel');
         case 'channel':
             return t('referenceTypes.channel');
         default:
@@ -128,7 +106,7 @@ function referenceTypeLabel(reference: ProxyConfigurationReference, t: ProxyPool
 }
 
 function referenceNodeKey(reference: ProxyConfigurationReference) {
-    return `${reference.type}:${reference.site_id ?? 0}:${reference.site_account_id ?? 0}:${reference.channel_id ?? 0}`;
+    return `${reference.type}:${reference.channel_id ?? 0}`;
 }
 
 function buildReferenceTree(references: ProxyConfigurationReference[]) {
@@ -136,33 +114,11 @@ function buildReferenceTree(references: ProxyConfigurationReference[]) {
     const rootMap = new Map<string, ReferenceTreeNode>();
 
     for (const reference of references) {
-        if (reference.type === 'managed_channel') continue;
         const key = referenceNodeKey(reference);
         const node = rootMap.get(key) ?? { key, reference, children: [] };
         node.reference = reference;
         rootMap.set(key, node);
         if (!roots.includes(node)) roots.push(node);
-    }
-
-    const siteAccountRoots = roots.filter((node) => node.reference.type === 'site_account');
-    const siteRoots = roots.filter((node) => node.reference.type === 'site');
-
-    for (const reference of references) {
-        if (reference.type !== 'managed_channel') continue;
-        const accountParent = siteAccountRoots.find((node) =>
-            (node.reference.site_account_id ?? 0) > 0 && node.reference.site_account_id === reference.site_account_id,
-        );
-        const siteParent = siteRoots.find((node) =>
-            (node.reference.site_id ?? 0) > 0 && node.reference.site_id === reference.site_id,
-        );
-        const parent = accountParent ?? siteParent;
-        if (parent) {
-            parent.children.push(reference);
-            continue;
-        }
-
-        const key = `derived:${referenceNodeKey(reference)}`;
-        roots.push({ key, reference, children: [] });
     }
 
     return roots;
@@ -239,23 +195,6 @@ export function ProxyPoolDialog() {
         setReferencesProxy(null);
         setOpen(false);
         switch (reference.type) {
-            case 'site':
-                if (reference.site_id) requestJump({ kind: 'site-card', siteId: reference.site_id });
-                return;
-            case 'site_account':
-                if (reference.site_id && reference.site_account_id) {
-                    requestJump({ kind: 'site-account', siteId: reference.site_id, accountId: reference.site_account_id });
-                }
-                return;
-            case 'managed_channel':
-                if (reference.site_id) {
-                    requestJump(
-                        reference.site_account_id
-                            ? { kind: 'site-channel-account', siteId: reference.site_id, accountId: reference.site_account_id }
-                            : { kind: 'site-channel-card', siteId: reference.site_id },
-                    );
-                }
-                return;
             case 'channel':
                 if (reference.channel_id) requestJump({ kind: 'channel-card', channelId: reference.channel_id });
                 return;

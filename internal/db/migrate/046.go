@@ -3,7 +3,6 @@ package migrate
 import (
 	"fmt"
 
-	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/gorm"
 )
 
@@ -14,29 +13,11 @@ func init() {
 	})
 }
 
-// 046: 为 plan_providers 表增加商汤日日新账号密码自动登录相关字段。
-// gorm AutoMigrate 也会加列，这里幂等兜底。
+// 046: 历史迁移（曾为 plan_providers 增加商汤自动登录字段）。
+// 额度监控功能已移除；表由后续迁移 DROP，此处保留版本号占位。
 func migratePlanProviderLoginCredentials(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
-	}
-	if !db.Migrator().HasTable(&model.PlanProvider{}) {
-		return nil
-	}
-	columns := []struct {
-		name string
-		typ  string
-	}{
-		{"LoginUsername", "varchar(191) DEFAULT ''"},
-		{"LoginPasswordEnc", "text"},
-		{"RefreshTokenEnc", "text"},
-	}
-	for _, col := range columns {
-		if !db.Migrator().HasColumn(&model.PlanProvider{}, col.name) {
-			if err := db.Migrator().AddColumn(&model.PlanProvider{}, col.name); err != nil {
-				return fmt.Errorf("add column %s: %w", col.name, err)
-			}
-		}
 	}
 	return nil
 }

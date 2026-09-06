@@ -57,8 +57,8 @@ type RateLimitStore interface {
 // 语义变更（issue #123）：从「内存累积 + 定时全行覆盖写 DB（snapshot/last-write-wins）」
 // 改为「实时增量写 Redis + 定时快照 DB」。计数器字段用 HINCRBY/HINCRBYFLOAT，
 // 百分位/max 字段（LatencyP50/95/99、Ftut*）用 Lua 原子 max 脚本。
-// 这与现有 stats_site_model_hourly 的 col + EXCLUDED.col 增量 upsert 一致，
-// 崩溃不丢增量。scope/id 映射见 stats 包调用点。
+// 语义与增量 upsert 一致（col + EXCLUDED.col），崩溃不丢增量。scope/id 映射见
+// stats 包调用点。
 type StatsStore interface {
 	// IncrMetrics 将 delta 增量累加到 scope:id 维度。
 	IncrMetrics(ctx context.Context, scope, id string, m model.StatsMetrics) error

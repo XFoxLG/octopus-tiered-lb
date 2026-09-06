@@ -170,7 +170,6 @@ function EditDialogContent({
                             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
                             default_reasoning_effort: group.default_reasoning_effort ?? '',
                             reasoning_force_override: group.reasoning_force_override ?? false,
-                            sort_strategy: group.sort_strategy ?? '',
                             param_override: group.param_override ?? '',
                             custom_header: group.custom_header ?? [],
                             members: editMembers,
@@ -409,10 +408,6 @@ export function GroupListItem({ group }: { group: Group }) {
                         }),
                     item_id: item.id,
                     weight: item.weight,
-                    upstream_price: channelModel?.upstream_price,
-                    upstream_metrics: channelModel?.upstream_metrics,
-                    channel_balance: channelModel?.channel_balance,
-                    channel_today_income: channelModel?.channel_today_income,
                 };
             }),
         [group.items, channelByKey, channelNameByKey, enabledByKey, t],
@@ -774,9 +769,6 @@ export function GroupListItem({ group }: { group: Group }) {
                 (group.reasoning_force_override ?? false)
             )
                 payload.reasoning_force_override = nextReasoningForceOverride;
-            const nextSortStrategy = (values.sort_strategy ?? '').trim();
-            if (nextSortStrategy !== ((group.sort_strategy ?? '').trim()))
-                payload.sort_strategy = nextSortStrategy;
             const nextParamOverride = (values.param_override ?? '').trim();
             if (nextParamOverride !== ((group.param_override ?? '').trim()))
                 payload.param_override = nextParamOverride;
@@ -816,7 +808,6 @@ export function GroupListItem({ group }: { group: Group }) {
             group.attempt_time_out,
             group.param_override,
             group.reasoning_force_override,
-            group.sort_strategy,
             group.stream_idle_timeout,
             group.session_keep_time,
             group.id,
@@ -1344,7 +1335,6 @@ export function GroupListItem({ group }: { group: Group }) {
                                                 GroupMode.Weighted ||
                                             resolvedMode === GroupMode.Auto
                                         }
-                                        showUpstreamMeta={false}
                                         layoutScope={`list-item-${group.id ?? 'unknown'}`}
                                     />
                                 </div>

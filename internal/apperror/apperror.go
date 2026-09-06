@@ -26,22 +26,6 @@ const (
 	CodeAuthPasswordIncorrect  = "auth.password_incorrect"
 	CodeAuthAPIKeyDisabled     = "auth.api_key_disabled"
 	CodeAuthAPIKeyCostExceeded = "auth.api_key_cost_exceeded"
-
-	CodeSiteSub2APIAPIKeyRequired      = "site.sub2api.api_key_required"
-	CodeSiteSub2APIModelAPIKeyRequired = "site.sub2api.model_api_key_required"
-	CodeSiteSub2APIEnvelopeFailed      = "site.sub2api.envelope_failed"
-	CodeSiteSub2APIMissingData         = "site.sub2api.missing_data"
-
-	CodeSiteSyncMissingGroupKey = "site.sync.missing_group_key"
-	CodeSiteAuthLoginFailed     = "site.auth.login_failed"
-	CodeSiteAuthTokenMissing    = "site.auth.token_missing"
-	CodeSiteUpstreamHTTPError   = "site.upstream.http_error"
-	CodeSiteUpstreamDecodeError = "site.upstream.decode_error"
-	CodeSiteAccessTokenRequired = "site.auth.access_token_required"
-	CodeSiteDirectTokenRequired = "site.auth.direct_token_required"
-	CodeSiteImportEmptyPayload  = "site.import.empty_payload"
-	CodeSiteImportInvalidFormat = "site.import.invalid_format"
-	CodeSiteUnsupportedPlatform = "site.unsupported_platform"
 )
 
 // Error carries a stable machine-readable code plus a default human-readable message.

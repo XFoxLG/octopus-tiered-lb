@@ -27,7 +27,6 @@ export type SettingItemId =
     | 'backup'
     | 'redis'
     | 'normalize'
-    | 'pool'
     | 'proxy-pool'
     | 'webdav'
     | 'webauthn';
@@ -46,7 +45,6 @@ export const DEFAULT_SETTING_ORDER: SettingItemId[] = [
     'redis',
     'webdav',
     'normalize',
-    'pool',
     'proxy-pool',
     'webauthn',
 ];
@@ -123,7 +121,6 @@ export function SettingOrder() {
             normalize: settingT('normalize.title'),
             webdav: settingT('webdav.title'),
             webauthn: settingT('webauthn.title'),
-            pool: settingT('pool.title'),
             'proxy-pool': settingT('proxyPool.title'),
         };
         return map;

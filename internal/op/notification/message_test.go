@@ -102,7 +102,6 @@ func TestAllKeysHaveFallbackTemplates(t *testing.T) {
 	// 确保每个 NotifKey 常量都有对应的英文回退 title/content 模板，避免漏配。
 	allKeys := []NotifKey{
 		KeyChannelExpire,
-		KeySiteBatch, KeySiteAccountOK, KeySiteAccountFail,
 		KeyBackupOK, KeyBackupFail, KeyBackupSkip,
 		KeyRestoreOK, KeyRestoreFail,
 		KeyMigrationOK, KeyMigrationFail,

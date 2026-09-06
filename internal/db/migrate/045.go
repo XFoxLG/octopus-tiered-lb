@@ -3,7 +3,6 @@ package migrate
 import (
 	"fmt"
 
-	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/gorm"
 )
 
@@ -14,19 +13,11 @@ func init() {
 	})
 }
 
-// 045: 为 plan_providers 表增加累计已用额度字段（TotalUsed）。
-// gorm AutoMigrate 也会加列，这里幂等兜底。
+// 045: 历史迁移（曾为 plan_providers 增加 TotalUsed 字段）。
+// 额度监控功能已移除；表由后续迁移 DROP，此处保留版本号占位。
 func migratePlanProviderTotalUsed(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("db is nil")
-	}
-	if !db.Migrator().HasTable(&model.PlanProvider{}) {
-		return nil
-	}
-	if !db.Migrator().HasColumn(&model.PlanProvider{}, "TotalUsed") {
-		if err := db.Migrator().AddColumn(&model.PlanProvider{}, "TotalUsed"); err != nil {
-			return fmt.Errorf("add column TotalUsed: %w", err)
-		}
 	}
 	return nil
 }

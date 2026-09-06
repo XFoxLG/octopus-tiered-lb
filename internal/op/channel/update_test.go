@@ -18,7 +18,6 @@ type advancedFields struct {
 	keySelectionStrategy string
 	autoGroup            model.AutoGroupType
 	customHeader         []model.CustomHeader
-	poolID               int
 }
 
 // advancedUpdateRequest 构造携带全部高级设置字段的更新请求（回归 #182）。
@@ -34,7 +33,6 @@ func advancedUpdateRequest(id int) (*model.ChannelUpdateRequest, advancedFields)
 			{HeaderKey: "X-Example-Header", HeaderValue: "example-value"},
 			{HeaderKey: "X-Second", HeaderValue: "second"},
 		},
-		poolID: 42,
 	}
 	req := &model.ChannelUpdateRequest{
 		ID:                   id,
@@ -45,7 +43,6 @@ func advancedUpdateRequest(id int) (*model.ChannelUpdateRequest, advancedFields)
 		KeySelectionStrategy: &f.keySelectionStrategy,
 		AutoGroup:            &f.autoGroup,
 		CustomHeader:         &f.customHeader,
-		PoolID:               &f.poolID,
 	}
 	return req, f
 }
@@ -73,9 +70,6 @@ func assertAdvancedFields(t *testing.T, ch *model.Channel, want advancedFields) 
 		if ch.CustomHeader[i] != want.customHeader[i] {
 			t.Fatalf("CustomHeader[%d] = %+v, want %+v", i, ch.CustomHeader[i], want.customHeader[i])
 		}
-	}
-	if ch.PoolID != want.poolID {
-		t.Fatalf("PoolID = %d, want %d", ch.PoolID, want.poolID)
 	}
 }
 

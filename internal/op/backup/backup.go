@@ -110,44 +110,9 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 		}
 	}
 
-	// Hub tables
-	if err := conn.Find(&d.RemoteSites).Error; err != nil {
-		return nil, fmt.Errorf("export remote_sites: %w", err)
-	}
-	if err := conn.Find(&d.BalanceSnapshots).Error; err != nil {
-		return nil, fmt.Errorf("export balance_snapshots: %w", err)
-	}
-	if err := conn.Find(&d.CheckInRecords).Error; err != nil {
-		return nil, fmt.Errorf("export check_in_records: %w", err)
-	}
+	// API credential profiles (Tools: CLI credential verification/export)
 	if err := conn.Find(&d.APICredentialProfiles).Error; err != nil {
 		return nil, fmt.Errorf("export api_credential_profiles: %w", err)
-	}
-	if err := conn.Find(&d.SiteAnnouncements).Error; err != nil {
-		return nil, fmt.Errorf("export site_announcements: %w", err)
-	}
-	if err := conn.Find(&d.RemoteSiteTokens).Error; err != nil {
-		return nil, fmt.Errorf("export remote_site_tokens: %w", err)
-	}
-
-	// Site tables (upstream platform multi-account management)
-	if err := conn.Find(&d.Sites).Error; err != nil {
-		return nil, fmt.Errorf("export sites: %w", err)
-	}
-	if err := conn.Find(&d.SiteAccounts).Error; err != nil {
-		return nil, fmt.Errorf("export site_accounts: %w", err)
-	}
-	if err := conn.Find(&d.SiteTokens).Error; err != nil {
-		return nil, fmt.Errorf("export site_tokens: %w", err)
-	}
-	if err := conn.Find(&d.SiteUserGroups).Error; err != nil {
-		return nil, fmt.Errorf("export site_user_groups: %w", err)
-	}
-	if err := conn.Find(&d.SiteModels).Error; err != nil {
-		return nil, fmt.Errorf("export site_models: %w", err)
-	}
-	if err := conn.Find(&d.SiteChannelBindings).Error; err != nil {
-		return nil, fmt.Errorf("export site_channel_bindings: %w", err)
 	}
 
 	return d, nil
@@ -353,12 +318,6 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			deleteOrder := []string{
 				"relay_logs", "stats_api_keys", "stats_channels", "stats_models",
 				"stats_hourlies", "stats_dailies", "stats_totals",
-				// Site tables — children before parents
-				"site_channel_bindings", "site_models", "site_user_groups",
-				"site_tokens", "site_accounts", "sites",
-				"remote_site_tokens", "site_announcements",
-				"check_in_records", "balance_snapshots",
-				"api_credential_profiles", "remote_sites",
 				"group_items", "channel_groups", "groups",
 				"notifications",
 				"audit_logs", "auto_strategy_states", "circuit_breaker_states",
@@ -489,66 +448,9 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			}
 		}
 
-		// Hub tables — skip existing
-		if len(dump.RemoteSites) > 0 {
-			if err := cfg.doNothing("remote_sites", &dump.RemoteSites, len(dump.RemoteSites)); err != nil {
-				return err
-			}
-		}
-		if len(dump.BalanceSnapshots) > 0 {
-			if err := cfg.doNothing("balance_snapshots", &dump.BalanceSnapshots, len(dump.BalanceSnapshots)); err != nil {
-				return err
-			}
-		}
-		if len(dump.CheckInRecords) > 0 {
-			if err := cfg.doNothing("check_in_records", &dump.CheckInRecords, len(dump.CheckInRecords)); err != nil {
-				return err
-			}
-		}
+		// API credential profiles (Tools) — skip existing
 		if len(dump.APICredentialProfiles) > 0 {
 			if err := cfg.doNothing("api_credential_profiles", &dump.APICredentialProfiles, len(dump.APICredentialProfiles)); err != nil {
-				return err
-			}
-		}
-		if len(dump.SiteAnnouncements) > 0 {
-			if err := cfg.doNothing("site_announcements", &dump.SiteAnnouncements, len(dump.SiteAnnouncements)); err != nil {
-				return err
-			}
-		}
-		if len(dump.RemoteSiteTokens) > 0 {
-			if err := cfg.doNothing("remote_site_tokens", &dump.RemoteSiteTokens, len(dump.RemoteSiteTokens)); err != nil {
-				return err
-			}
-		}
-
-		// Site tables — skip existing. Parents before children.
-		if len(dump.Sites) > 0 {
-			if err := cfg.doNothing("sites", &dump.Sites, len(dump.Sites)); err != nil {
-				return err
-			}
-		}
-		if len(dump.SiteAccounts) > 0 {
-			if err := cfg.doNothing("site_accounts", &dump.SiteAccounts, len(dump.SiteAccounts)); err != nil {
-				return err
-			}
-		}
-		if len(dump.SiteTokens) > 0 {
-			if err := cfg.doNothing("site_tokens", &dump.SiteTokens, len(dump.SiteTokens)); err != nil {
-				return err
-			}
-		}
-		if len(dump.SiteUserGroups) > 0 {
-			if err := cfg.doNothing("site_user_groups", &dump.SiteUserGroups, len(dump.SiteUserGroups)); err != nil {
-				return err
-			}
-		}
-		if len(dump.SiteModels) > 0 {
-			if err := cfg.doNothing("site_models", &dump.SiteModels, len(dump.SiteModels)); err != nil {
-				return err
-			}
-		}
-		if len(dump.SiteChannelBindings) > 0 {
-			if err := cfg.doNothing("site_channel_bindings", &dump.SiteChannelBindings, len(dump.SiteChannelBindings)); err != nil {
 				return err
 			}
 		}

@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,7 +22,6 @@ import (
 	st "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	"github.com/lingyuins/octopus/internal/relay/condition"
-	"github.com/lingyuins/octopus/internal/relay/poolscheduler"
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/transformer/inbound"
 	"github.com/lingyuins/octopus/internal/transformer/model"
@@ -673,9 +671,6 @@ func (ra *relayAttempt) forward() (int, error) {
 
 	// 构建出站请求
 	baseURL := ra.channel.GetNormalizedBaseUrl()
-	if ra.poolBaseURL != "" {
-		baseURL = ra.poolBaseURL
-	}
 	outboundRequest, err := ra.outAdapter.TransformRequest(
 		ctx,
 		requestForOutbound,
@@ -686,9 +681,6 @@ func (ra *relayAttempt) forward() (int, error) {
 		log.Warnf("failed to create request: %v", err)
 		return 0, fmt.Errorf("failed to create request: %w", err)
 	}
-
-	// 号池凭据按 platform/type 路由出站鉴权头。
-	ra.applyPoolCredentialHeaders(outboundRequest)
 
 	// 复制请求头
 	ra.copyHeaders(outboundRequest, effectiveRewrite)
@@ -717,100 +709,6 @@ func (ra *relayAttempt) forward() (int, error) {
 		return response.StatusCode, err
 	}
 	return response.StatusCode, nil
-}
-
-// applyPoolCredentialHeaders 按号池账号 platform/type 调整出站鉴权头。
-//
-// 出站适配器已按 ChannelKey 设置默认 Authorization（Bearer 或 X-API-Key）。
-// 这里仅处理需要覆盖的情况：
-//   - cookie 类型：删除 Authorization，改为 Cookie header（ChannelKey 即 cookie 值）。
-//   - openai-oauth 且非 codex 适配器：ChannelKey 是 OAuth JSON，适配器无法解析，
-//     手动设置 Authorization: Bearer {access_token} + chatgpt-account-id: {account_id}。
-//     codex 适配器自身解析 OAuth JSON，无需覆盖。
-//   - gemini-oauth：ChannelKey 是 code_assist 凭据 JSON，由 gemini 出站适配器
-//     自行解析并设置 Bearer（同时切到 cloudcode-pa 端点），这里不覆盖。
-//   - 其他 oauth/apikey/upstream：适配器默认 Bearer 行为正确，无需覆盖。
-//   - P3 header overrides：符合资格条件时叠加自定义请求头（跳过黑名单与安全头）。
-func (ra *relayAttempt) applyPoolCredentialHeaders(req *http.Request) {
-	if ra.poolType == "" {
-		return
-	}
-	switch ra.poolType {
-	case dbmodel.PoolTypeCookie:
-		req.Header.Del("Authorization")
-		req.Header.Set("Cookie", ra.usedKey.ChannelKey)
-	case dbmodel.PoolTypeOAuth:
-		if ra.poolPlatform == dbmodel.PoolPlatformOpenAI && ra.adapterType != outbound.OutboundTypeCodex {
-			// ChannelKey 对 openai-oauth 是 OAuth JSON（由 EffectiveKeyWithExtra 构造）。
-			var oauth struct {
-				AccessToken string `json:"access_token"`
-				AccountID   string `json:"account_id"`
-			}
-			if json.Unmarshal([]byte(ra.usedKey.ChannelKey), &oauth) == nil && oauth.AccessToken != "" {
-				req.Header.Set("Authorization", "Bearer "+oauth.AccessToken)
-				if oauth.AccountID != "" {
-					req.Header.Set("chatgpt-account-id", oauth.AccountID)
-				}
-			}
-		}
-	}
-	// P3 自定义请求头叠加（不依赖 poolType，仅检查是否为号池账号）。
-	ra.applyHeaderOverrides(req)
-}
-
-// blockedHeaderOverrideNames 与 sub2api 对齐的黑名单：防止误覆写鉴权/路由关键头。
-var blockedHeaderOverrideNames = map[string]struct{}{
-	"authorization":            {},
-	"x-api-key":                {},
-	"cookie":                   {},
-	"host":                     {},
-	"content-length":           {},
-	"chatgpt-account-id":       {},
-	"x-claude-code-session-id": {},
-	"x-client-request-id":      {},
-	"x-grok-conv-id":           {},
-}
-
-// applyHeaderOverrides 按账号 extra.header_overrides 应用自定义请求头。
-// 资格条件同 sub2api IsHeaderOverrideEligible：
-//   - anthropic / openai 且 type==apikey
-//   - grok 且 (type==apikey 或 oauth)
-//
-// 其他平台/类型不叫用（防御性），避免破坏 cookie/setup-token 类型的默认鉴权。
-// 黑名单头与空 value 会被跳过。
-func (ra *relayAttempt) applyHeaderOverrides(req *http.Request) {
-	if ra.poolAccount == nil {
-		return
-	}
-	acct := ra.poolAccount
-	eligible := false
-	switch acct.Platform {
-	case dbmodel.PoolPlatformAnthropic, dbmodel.PoolPlatformOpenAI:
-		eligible = acct.Type == dbmodel.PoolTypeAPIKey
-	case dbmodel.PoolPlatformGrok:
-		eligible = acct.Type == dbmodel.PoolTypeAPIKey || acct.Type == dbmodel.PoolTypeOAuth
-	}
-	if !eligible {
-		return
-	}
-	extra := acct.GetExtra()
-	if !extra.HeaderOverridesEnabled || len(extra.HeaderOverrides) == 0 {
-		return
-	}
-	for k, v := range extra.HeaderOverrides {
-		if v == "" {
-			continue
-		}
-		lower := strings.ToLower(k)
-		if _, blocked := blockedHeaderOverrideNames[lower]; blocked {
-			continue
-		}
-		// 前缀匹配 x-codex-* 名列黑名单
-		if strings.HasPrefix(lower, "x-codex-") {
-			continue
-		}
-		req.Header.Set(k, v)
-	}
 }
 
 func (ra *relayAttempt) handleForwardResponse(response *http.Response) (int, error) {
@@ -981,22 +879,10 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 	}
 	req = req.WithContext(safeCtx)
 
-	var httpClient *http.Client
-	var err2 error
-	// 号池账号级代理优先；未配置时回退到渠道级代理。
-	if ra.poolProxyConfigID != nil {
-		httpClient, err2 = helper.PoolAccountHttpClient(ra.poolProxyConfigID)
-		if err2 != nil {
-			log.Warnf("failed to get pool account http client: %v", err2)
-			return nil, err2
-		}
-	}
-	if httpClient == nil {
-		httpClient, err2 = helper.ChannelHttpClient(ra.channel)
-		if err2 != nil {
-			log.Warnf("failed to get http client: %v", err2)
-			return nil, err2
-		}
+	httpClient, err2 := helper.ChannelHttpClient(ra.channel)
+	if err2 != nil {
+		log.Warnf("failed to get http client: %v", err2)
+		return nil, err2
 	}
 
 	response, err := httpClient.Do(req)
@@ -1998,40 +1884,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				}
 
 				var usedKey dbmodel.ChannelKey
-				var poolAccount *dbmodel.PoolAccount
-				var poolCredType string
-				var poolProxyConfigID *int
-				var poolBaseURL, poolPlatform, poolType string
-				var poolAccountID int
-				if channel.PoolID > 0 {
-					// 号池模式：从池调度器选账号。
-					sessionHash := strconv.Itoa(req.apiKeyID) + ":" + requestModel
-					var excludeAccountIDs []int
-					for _, kid := range failedKeyIDs {
-						excludeAccountIDs = append(excludeAccountIDs, kid)
-					}
-					acct, selErr := poolscheduler.SelectAccount(channel.PoolID, sessionHash, excludeAccountIDs, 1, resolvedModelName)
-					if selErr != nil || acct == nil {
-						routeIter.Skip(channel.ID, 0, channel.Name, "no available pool account")
-						lastErr = fmt.Errorf("channel %s: no available pool account", channel.Name)
-						break
-					}
-					poolAccount = acct
-					cred := dbmodel.ParsePoolCredential(acct.Credentials)
-					poolCredType = cred.Type
-					poolProxyConfigID = acct.ProxyConfigID
-					poolBaseURL = acct.BaseURL
-					poolPlatform = acct.Platform
-					poolType = cred.Type
-					poolAccountID = acct.ID
-					usedKey = dbmodel.ChannelKey{
-						ID:         acct.ID,
-						ChannelID:  channel.ID,
-						Enabled:    true,
-						ChannelKey: cred.EffectiveKeyWithExtra(acct.Platform, acct.GetExtra()),
-						Priority:   acct.Priority,
-					}
-				} else {
+				{
 					// keyRound == 1 但 failedKeyIDs 非空 = 失败提示/熔断跳过后的重选
 					// （跳过分支 keyRound-- 不消耗配额）。此时必须走排除路径：
 					// 无排除的选 key 是确定性的，会选回刚被跳过的同一个 key，
@@ -2054,19 +1907,16 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					}
 					break
 				}
-				// 号池模式跳过熔断器和失败提示（池调度器有自己的健康管理）。
-				if channel.PoolID == 0 {
-					if hint, ok := globalFailureHintCache.get(channel.ID, usedKey.ID, resolvedModelName); ok {
-						failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-						routeIter.Skip(channel.ID, usedKey.ID, channel.Name, failureHintSkipReason(hint))
-						keyRound--
-						continue
-					}
-					if routeIter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name, resolvedModelName) {
-						failedKeyIDs = append(failedKeyIDs, usedKey.ID)
-						keyRound--
-						continue
-					}
+				if hint, ok := globalFailureHintCache.get(channel.ID, usedKey.ID, resolvedModelName); ok {
+					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
+					routeIter.Skip(channel.ID, usedKey.ID, channel.Name, failureHintSkipReason(hint))
+					keyRound--
+					continue
+				}
+				if routeIter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name, resolvedModelName) {
+					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
+					keyRound--
+					continue
 				}
 
 				log.Infof("request model %s, mode: %d, channel: %s (%s) model: %s key_id: %d (route R%d, key %d/%d, sticky=%t)",
@@ -2089,13 +1939,6 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						attemptTimeOutSec:    group.AttemptTimeOut,
 						tryIndex:             keyRound,
 						tryTotal:             maxKeyRetriesPerRoute,
-						poolCredType:         poolCredType,
-						poolProxyConfigID:    poolProxyConfigID,
-						poolBaseURL:          poolBaseURL,
-						poolPlatform:         poolPlatform,
-						poolType:             poolType,
-						poolAccountID:        poolAccountID,
-						poolAccount:          poolAccount,
 					}
 
 					result = ra.attempt()
@@ -2117,27 +1960,11 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
 					// 离群窗口：记录成功样本（与熔断器同级证据）。
 					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
-					if poolAccount != nil {
-						poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, true, 0, 0)
-						poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
-					}
 					namespace, requestText, _ := semanticCacheStoreMetadata(req.internalRequest)
 					req.metrics.Save(true, nil, currentAttempts)
 					return newInflightRelayResult(cloneInternalResponse(req.metrics.InternalResponse), req.internalRequest.Model, currentAttempts, namespace, requestText), nil
 				}
 
-				// 号池模式：上报失败 + 释放槽位 + 设置冷却。
-				if poolAccount != nil {
-					poolscheduler.ReportResult(channel.PoolID, poolAccount.ID, false, 0, 0)
-					poolscheduler.ReleaseSlot(channel.PoolID, poolAccount.ID)
-					if result.Decision.Code == http.StatusTooManyRequests {
-						poolscheduler.SetRateLimitCooldown(channel.PoolID, poolAccount.ID, time.Now().Add(5*time.Minute))
-					} else if result.Decision.Code >= 500 {
-						poolscheduler.SetOverload(channel.PoolID, poolAccount.ID, time.Now().Add(60*time.Second))
-					}
-					// P0 调度健壮性：OpenAI 403 阈值禁用 / OAuth 401 临时禁用（对齐 sub2api ratelimit_service）。
-					handlePoolAuthError(poolAccount, poolCredType, result.Decision.Code)
-				}
 				if result.Decision.Code == http.StatusTooManyRequests {
 					channelRateLimited, remaining := balancer.RecordChannelRateLimit(
 						channel.ID,
@@ -2154,7 +1981,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 				// 熔断器和 Auto 策略：在所有 adapter 类型（如 Responses→Chat）均失败后才记录，
 				// 避免 Response adapter 降级到 Chat 的过程中误触发熔断。
-				if channel.PoolID == 0 && (result.Decision.Scope == ScopeNextChannel || result.Decision.Scope == ScopeAbortAll) {
+				if result.Decision.Scope == ScopeNextChannel || result.Decision.Scope == ScopeAbortAll {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModelName)
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
 					// 离群窗口：记录失败样本（与熔断器同级，避免 adapter 降级误触发）。
@@ -2171,7 +1998,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				// hold 路径：本轮 429 会立刻再试同一渠道，不写 failure hint / 不记 failedKey，
 				// 并清掉 attempt() 里刚写入的 key 冷却，避免间隔到期后仍被挡住。
 				holdingRateLimit := shouldHoldOnRateLimit(rateLimitHoldCfg, result.Decision)
-				if channel.PoolID == 0 && !holdingRateLimit {
+				if !holdingRateLimit {
 					recordFailureHint(channel.ID, usedKey.ID, resolvedModelName, result.Decision, result.Err, ratelimitCooldown)
 				}
 				switch result.Decision.Scope {
@@ -2210,9 +2037,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 							if !waitRateLimitHoldFor(holdCtx, rateLimitHoldCfg, channel.Name, rateLimitHoldWaited, waitFor) {
 								return nil, handleClientDisconnect(req, currentAttempts)
 							}
-							if channel.PoolID == 0 {
-								balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModelName)
-							}
+							balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModelName)
 							// The held key is eligible again after the wait; keep other
 							// failed keys excluded but remove this key from the retry set.
 							failedKeyIDs = failedKeyIDs[:len(failedKeyIDs)-1]

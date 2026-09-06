@@ -10,7 +10,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/lingyuins/octopus/internal/model"
-	"github.com/lingyuins/octopus/internal/op"
 	"github.com/lingyuins/octopus/internal/op/apikey"
 	"github.com/lingyuins/octopus/internal/op/cacheusage"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
@@ -170,7 +169,6 @@ func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAtt
 		totalAttempts, forwardedAttempts)
 
 	m.saveLog(ctx, err, duration, attempts, channelID, channelName)
-	op.StatsSiteModelHourlyRecordAttempts(attempts, actualModel)
 	telemetry.Global().RecordRequest(duration.Milliseconds(), success)
 }
 

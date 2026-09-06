@@ -16,9 +16,7 @@ import {
     type ChannelProxyMode,
 } from '@/api/endpoints/channel';
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
-import { useAlertNotifChannelList } from '@/api/endpoints/alert';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
-import { usePoolList } from '@/api/endpoints/pool';
 import { channelTemplates } from './templates';
 import { CHANNEL_TYPE_OPTIONS } from './type-options';
 import { isOpenAICompatBaseUrlSuffixMode } from './base-url-suffix';
@@ -84,10 +82,8 @@ export interface ChannelFormData {
     skip_model_test: boolean;
     disposable: boolean;
     expire_at: string;
-    notif_channel_id: number | null;
     key_selection_strategy: string;
     match_regex: string;
-    pool_id: number;
 }
 
 /**
@@ -637,8 +633,6 @@ export function ChannelForm({
     const isMobile = useIsMobile();
     const { data: settings } = useSettingList();
     const { data: channelGroups = [] } = useChannelGroupList();
-    const { data: notifChannels = [] } = useAlertNotifChannelList();
-    const { data: pools = [] } = usePoolList();
     const requestRewriteSupported = isRequestRewriteSupportedChannelType(formData.type);
     const sectionClassName = 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
     const labelClassName = 'text-sm font-medium text-card-foreground';
@@ -1117,29 +1111,6 @@ export function ChannelForm({
             </section>
 
             <section className={sectionClassName}>
-                <SectionHeader icon={Layers3} title={t('poolBinding')} hint={formData.pool_id > 0 ? t('poolHint') : undefined} />
-                <div className="space-y-2">
-                    <Select
-                        value={String(formData.pool_id || 0)}
-                        onValueChange={(value) => onFormDataChange({ ...formData, pool_id: Number(value) })}
-                    >
-                        <SelectTrigger className="h-8 rounded-lg">
-                            <SelectValue placeholder={t('poolPlaceholder')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="0">{t('poolNone')}</SelectItem>
-                            {pools.map((pool) => (
-                                <SelectItem key={pool.id} value={String(pool.id)}>
-                                    {pool.name}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-            </section>
-
-            {formData.pool_id === 0 && (
-            <section className={sectionClassName}>
                 <SectionHeader icon={KeyRound} title={t('apiKeyConfig')} />
                 <div className="flex items-center justify-end gap-2">
                     <Badge variant="secondary" className="rounded-full">
@@ -1287,7 +1258,6 @@ export function ChannelForm({
                     </div>
                 )}
             </section>
-            )}
 
             <section className={sectionClassName}>
                 <SectionHeader icon={Layers3} title={t('modelConfig')} />
@@ -1699,27 +1669,6 @@ export function ChannelForm({
                                     onChange={(e) => onFormDataChange({ ...formData, expire_at: e.target.value })}
                                 />
                             </div>
-                            {notifChannels.length > 0 && (
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm text-card-foreground whitespace-nowrap">{t('notifChannel')}</span>
-                                    <Select
-                                        value={formData.notif_channel_id != null ? String(formData.notif_channel_id) : '__none__'}
-                                        onValueChange={(value) => onFormDataChange({ ...formData, notif_channel_id: value === '__none__' ? null : Number(value) })}
-                                    >
-                                        <SelectTrigger className="h-8 w-36 rounded-lg">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="rounded-lg">
-                                            <SelectItem className="rounded-xl" value="__none__">{t('notifChannelNone')}</SelectItem>
-                                            {notifChannels.map((nc) => (
-                                                <SelectItem key={nc.id} className="rounded-xl" value={String(nc.id)}>
-                                                    {nc.name}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            )}
                         </div>
                     )}
                     <div className="flex items-center gap-2">

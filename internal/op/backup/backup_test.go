@@ -50,24 +50,13 @@ func TestBackupIncludesCircuitBreakerStates(t *testing.T) {
 	}
 }
 
-func TestBackupIncludesHubTables(t *testing.T) {
+func TestBackupIncludesAPICredentialProfiles(t *testing.T) {
 	text := loadBackupSource(t)
-	for _, table := range []string{
-		"RemoteSites", "BalanceSnapshots", "CheckInRecords",
-		"APICredentialProfiles", "SiteAnnouncements", "RemoteSiteTokens",
-	} {
-		if !strings.Contains(text, "Find(&d."+table+")") {
-			t.Fatalf("ExportAll does not export %s", table)
-		}
+	if !strings.Contains(text, "Find(&d.APICredentialProfiles)") {
+		t.Fatal("ExportAll does not export api_credential_profiles")
 	}
-	for _, table := range []string{
-		"remote_sites", "balance_snapshots", "check_in_records",
-		"api_credential_profiles", "site_announcements", "remote_site_tokens",
-	} {
-		if !strings.Contains(text, `"remote_site_tokens", "site_announcements"`) &&
-			!strings.Contains(text, table) {
-			t.Fatalf("full import delete order does not include %s", table)
-		}
+	if !strings.Contains(text, "api_credential_profiles") {
+		t.Fatal("full import does not handle api_credential_profiles")
 	}
 }
 
@@ -99,7 +88,6 @@ func TestImportWithModeFullClearsExistingRowsUsingActualTableNames(t *testing.T)
 		RuntimeStates: []model.AutoStrategyState{{Key: "new", ChannelID: 2, ModelName: "gpt-4.1", UpdatedAt: 2}},
 		IncludeStats:  true,
 		StatsTotal:    []model.StatsTotal{{ID: 2}},
-		RemoteSites:   []model.RemoteSite{{ID: 2, Name: "new-site", BaseURL: "https://new.example.com", SiteType: model.SiteTypeNewAPI, AuthType: model.AuthTypeAccessToken}},
 	}
 
 	if _, err := ImportWithMode(context.Background(), dump, model.ImportModeFull); err != nil {
@@ -129,7 +117,6 @@ func TestImportWithModeFullClearsExistingRowsUsingActualTableNames(t *testing.T)
 	assertCount(&model.AutoStrategyState{}, 1, "key = ?", "new")
 	assertCount(&model.StatsTotal{}, 0, "id = ?", 1)
 	assertCount(&model.StatsTotal{}, 1, "id = ?", 2)
-	assertCount(&model.RemoteSite{}, 1, "id = ?", 2)
 }
 
 func TestExportImportSeparateLogDBRoundTrip(t *testing.T) {
@@ -272,111 +259,10 @@ func TestFullImportPreservesUsers(t *testing.T) {
 	}
 }
 
-// TestSiteTablesRoundTrip verifies that the Site management tables survive
-// an export → full-import cycle. These tables (sites, site_accounts,
-// site_tokens, site_user_groups, site_models, site_channel_bindings) were
-// previously missing from DBDump, so dbmigration silently dropped all site
-// management data when switching database types.
-func TestSiteTablesRoundTrip(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "sites.db")
-	if err := internaldb.InitDB("sqlite", dbPath, false); err != nil {
-		t.Fatalf("init db: %v", err)
-	}
-	t.Cleanup(func() { _ = internaldb.Close() })
-
-	dbConn := internaldb.GetDB()
-
-	// Seed one site with an account and child rows.
-	site := model.Site{ID: 1, Name: "test-site", Platform: model.SitePlatformNewAPI, BaseURL: "https://example.com", ProxyMode: model.ProxyUsageModeDirect}
-	if err := dbConn.Create(&site).Error; err != nil {
-		t.Fatalf("seed site: %v", err)
-	}
-	account := model.SiteAccount{ID: 1, SiteID: 1, Name: "acc1", CredentialType: model.SiteCredentialTypeAccessToken, ProxyMode: model.ProxyUsageModeInherit}
-	if err := dbConn.Create(&account).Error; err != nil {
-		t.Fatalf("seed account: %v", err)
-	}
-	token := model.SiteToken{ID: 1, SiteAccountID: 1, Token: "sk-xxx", ValueStatus: model.SiteTokenValueStatusReady}
-	if err := dbConn.Create(&token).Error; err != nil {
-		t.Fatalf("seed token: %v", err)
-	}
-	userGroup := model.SiteUserGroup{ID: 1, SiteAccountID: 1, GroupKey: "default", Name: "Default"}
-	if err := dbConn.Create(&userGroup).Error; err != nil {
-		t.Fatalf("seed user group: %v", err)
-	}
-	siteModel := model.SiteModel{ID: 1, SiteAccountID: 1, GroupKey: "default", ModelName: "gpt-4o", RouteType: model.SiteModelRouteTypeOpenAIChat, RouteSource: model.SiteModelRouteSourceSyncInferred}
-	if err := dbConn.Create(&siteModel).Error; err != nil {
-		t.Fatalf("seed model: %v", err)
-	}
-	binding := model.SiteChannelBinding{ID: 1, SiteID: 1, SiteAccountID: 1, GroupKey: "default", ChannelID: 1}
-	if err := dbConn.Create(&binding).Error; err != nil {
-		t.Fatalf("seed binding: %v", err)
-	}
-
-	// Export
-	dump, err := ExportAll(context.Background(), false, false)
-	if err != nil {
-		t.Fatalf("export: %v", err)
-	}
-	if len(dump.Sites) != 1 || dump.Sites[0].Name != "test-site" {
-		t.Fatalf("export sites = %+v, want 1 test-site", dump.Sites)
-	}
-	if len(dump.SiteAccounts) != 1 {
-		t.Fatalf("export site_accounts = %d, want 1", len(dump.SiteAccounts))
-	}
-	if len(dump.SiteTokens) != 1 {
-		t.Fatalf("export site_tokens = %d, want 1", len(dump.SiteTokens))
-	}
-	if len(dump.SiteUserGroups) != 1 {
-		t.Fatalf("export site_user_groups = %d, want 1", len(dump.SiteUserGroups))
-	}
-	if len(dump.SiteModels) != 1 {
-		t.Fatalf("export site_models = %d, want 1", len(dump.SiteModels))
-	}
-	if len(dump.SiteChannelBindings) != 1 {
-		t.Fatalf("export site_channel_bindings = %d, want 1", len(dump.SiteChannelBindings))
-	}
-
-	// Wipe and full-import into a fresh DB to simulate a dbmigration target.
-	// Use OpenStandalone (not InitDB) so we don't clobber the global DB connection.
-	wipePath := filepath.Join(t.TempDir(), "wipe.db")
-	target, err := internaldb.OpenStandalone("sqlite", wipePath, false)
-	if err != nil {
-		t.Fatalf("open target db: %v", err)
-	}
-	if err := internaldb.Migrate(target); err != nil {
-		t.Fatalf("migrate target: %v", err)
-	}
-	t.Cleanup(func() {
-		if sqlDB, e := target.DB(); e == nil {
-			_ = sqlDB.Close()
-		}
-	})
-	if _, err := ImportWithModeToDB(context.Background(), target, dump, model.ImportModeFull); err != nil {
-		t.Fatalf("full import: %v", err)
-	}
-
-	assertCount := func(modelValue any, expected int64) {
-		t.Helper()
-		var count int64
-		if err := target.Model(modelValue).Count(&count).Error; err != nil {
-			t.Fatalf("count %T: %v", modelValue, err)
-		}
-		if count != expected {
-			t.Fatalf("count %T = %d, want %d", modelValue, count, expected)
-		}
-	}
-	assertCount(&model.Site{}, 1)
-	assertCount(&model.SiteAccount{}, 1)
-	assertCount(&model.SiteToken{}, 1)
-	assertCount(&model.SiteUserGroup{}, 1)
-	assertCount(&model.SiteModel{}, 1)
-	assertCount(&model.SiteChannelBinding{}, 1)
-}
-
-// TestProxyFieldsExportRoundTrip verifies that proxy address fields
-// (ChannelProxy, SiteProxy, AccountProxy) survive a JSON export → import cycle.
-// These fields were previously json:"-", so backup files silently dropped
-// custom proxy configurations (including credentials like socks5://user:pass@host).
+// TestProxyFieldsExportRoundTrip verifies that custom proxy addresses survive
+// a JSON export → import cycle. The field was previously json:"-", so backup
+// files silently dropped custom proxy configurations (including credentials
+// like socks5://user:pass@host).
 func TestProxyFieldsExportRoundTrip(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "proxy.db")
 	if err := internaldb.InitDB("sqlite", dbPath, false); err != nil {
@@ -387,21 +273,11 @@ func TestProxyFieldsExportRoundTrip(t *testing.T) {
 	dbConn := internaldb.GetDB()
 
 	channelProxy := "socks5://user:pass@proxy.example.com:1080"
-	siteProxy := "http://proxy2.example.com:8080"
-	accountProxy := "socks5://10.0.0.1:1080"
 
-	// Seed a channel, site, and account with proxy fields set.
+	// Seed a channel with a custom proxy address.
 	ch := model.Channel{ID: 1, Name: "proxy-channel", Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []model.BaseUrl{{URL: "https://api.example.com"}}, ChannelProxy: &channelProxy}
 	if err := dbConn.Create(&ch).Error; err != nil {
 		t.Fatalf("seed channel: %v", err)
-	}
-	site := model.Site{ID: 1, Name: "proxy-site", Platform: model.SitePlatformNewAPI, BaseURL: "https://example.com", ProxyMode: model.ProxyUsageModeDirect, SiteProxy: &siteProxy}
-	if err := dbConn.Create(&site).Error; err != nil {
-		t.Fatalf("seed site: %v", err)
-	}
-	account := model.SiteAccount{ID: 1, SiteID: 1, Name: "acc1", CredentialType: model.SiteCredentialTypeAccessToken, ProxyMode: model.ProxyUsageModeInherit, AccountProxy: &accountProxy}
-	if err := dbConn.Create(&account).Error; err != nil {
-		t.Fatalf("seed account: %v", err)
 	}
 
 	// Export and JSON round-trip (simulates backup file serialization).
@@ -421,11 +297,5 @@ func TestProxyFieldsExportRoundTrip(t *testing.T) {
 	// Verify proxy fields survived the JSON round-trip.
 	if len(roundTripped.Channels) != 1 || roundTripped.Channels[0].ChannelProxy == nil || *roundTripped.Channels[0].ChannelProxy != channelProxy {
 		t.Fatalf("channel proxy lost in export: %+v", roundTripped.Channels)
-	}
-	if len(roundTripped.Sites) != 1 || roundTripped.Sites[0].SiteProxy == nil || *roundTripped.Sites[0].SiteProxy != siteProxy {
-		t.Fatalf("site proxy lost in export: %+v", roundTripped.Sites)
-	}
-	if len(roundTripped.SiteAccounts) != 1 || roundTripped.SiteAccounts[0].AccountProxy == nil || *roundTripped.SiteAccounts[0].AccountProxy != accountProxy {
-		t.Fatalf("account proxy lost in export: %+v", roundTripped.SiteAccounts)
 	}
 }

@@ -47,27 +47,6 @@ func TestRedactChannelBaseURLsForViewer(t *testing.T) {
 	}
 }
 
-func TestRedactSiteProxyForViewer(t *testing.T) {
-	siteProxy := "http://user:pass@proxy.example.com:8080"
-	accountProxy := "socks5://10.0.0.1:1080"
-	sites := []model.Site{{
-		BaseURL:   "https://api.example.com",
-		SiteProxy: &siteProxy,
-		Accounts: []model.SiteAccount{{
-			AccountProxy: &accountProxy,
-		}},
-	}}
-
-	redactSiteBaseURLsForViewer(sites)
-
-	if sites[0].SiteProxy == nil || *sites[0].SiteProxy != "http://***" {
-		t.Fatalf("site proxy = %v, want masked", sites[0].SiteProxy)
-	}
-	if sites[0].Accounts[0].AccountProxy == nil || *sites[0].Accounts[0].AccountProxy != "socks5://***" {
-		t.Fatalf("account proxy = %v, want masked", sites[0].Accounts[0].AccountProxy)
-	}
-}
-
 func TestRedactSettingsURLsForViewer(t *testing.T) {
 	settings := []model.Setting{
 		{Key: model.SettingKeyPublicAPIBaseURL, Value: "https://octopus.example.com"},

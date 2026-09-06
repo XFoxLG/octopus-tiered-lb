@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { SettingOrder } from './SettingOrder';
 import { useTranslations } from 'next-intl';
-import { Bell, Clock3, GripVertical, Layers, Languages, ListOrdered, Monitor, Moon, RotateCcw, Sun, Landmark } from 'lucide-react';
+import { Clock3, GripVertical, Layers, Languages, ListOrdered, Monitor, Moon, RotateCcw, Sun, Landmark } from 'lucide-react';
 import {
     DragDropContext,
     Draggable,
@@ -26,7 +26,6 @@ import {
     type NavItem,
 } from '@/components/modules/navbar';
 import {
-    DEFAULT_HUB_TABS,
     DEFAULT_ANALYTICS_TABS,
     DEFAULT_OPS_TABS,
     DEFAULT_SUB_TABS,
@@ -36,7 +35,6 @@ import {
     useSubTabStore,
     type ModuleId,
     type SubTab,
-    type HubTab,
     type AnalyticsTab,
     type OpsTab,
 } from '@/components/modules/navbar/sub-tab-store';
@@ -45,7 +43,6 @@ import { useSettingStore, normalizeTimeZone, type Locale } from '@/stores/settin
 import { SettingKey, useSetSetting, useSettingList } from '@/api/endpoints/setting';
 import { toast } from '@/components/common/Toast';
 
-type AlertNotifyLanguage = Locale;
 const TIME_ZONE_OPTIONS = [
     'Asia/Shanghai',
     'Asia/Tokyo',
@@ -58,17 +55,6 @@ const TIME_ZONE_OPTIONS = [
     'America/Denver',
     'America/Los_Angeles',
 ] as const;
-
-function normalizeAlertNotifyLanguage(value: string | null | undefined): AlertNotifyLanguage {
-    switch (value) {
-        case 'zh-Hans':
-        case 'zh-Hant':
-        case 'en':
-            return value;
-        default:
-            return 'en';
-    }
-}
 
 function reorderList<T>(list: readonly T[], startIndex: number, endIndex: number): T[] {
     const result = [...list];
@@ -256,40 +242,25 @@ function NavigationPreferences() {
     );
 }
 
-const HUB_TAB_LABEL_KEY: Record<HubTab, string> = {
-    sites: 'tabs.sites',
-    'site-channels': 'tabs.siteChannels',
-    automation: 'tabs.automation',
-    balance: 'plan.balance',
-    tokenplan: 'plan.tokenPlan',
-};
-
-const ANALYTICS_TAB_LABEL: Record<AnalyticsTab, { ns: 'analytics' | 'ops'; key: string }> = {
-    cache: { ns: 'ops', key: 'tabs.cache' },
-    utilization: { ns: 'analytics', key: 'cards.utilization.title' },
-    'route-health': { ns: 'analytics', key: 'cards.routeHealth.title' },
-    'channel-model': { ns: 'analytics', key: 'cards.channelModel.title' },
-    evaluation: { ns: 'analytics', key: 'evaluation.title' },
-    latency: { ns: 'analytics', key: 'latency.title' },
+const ANALYTICS_TAB_LABEL_KEY: Record<AnalyticsTab, string> = {
+    utilization: 'cards.utilization.title',
+    'route-health': 'cards.routeHealth.title',
+    'channel-model': 'cards.channelModel.title',
+    evaluation: 'evaluation.title',
+    latency: 'latency.title',
 };
 
 const OPS_TAB_LABEL_KEY: Record<OpsTab, string> = {
-    telemetry: 'tabs.telemetry',
-    quota: 'tabs.quota',
-    health: 'tabs.health',
     maintenance: 'tabs.maintenance',
-    system: 'tabs.system',
     audit: 'tabs.audit',
 };
 
 function SubTabPreferences() {
     const t = useTranslations('setting');
-    const hubT = useTranslations('hub');
     const analyticsT = useTranslations('analytics');
     const opsT = useTranslations('ops');
     const setSetting = useSetSetting();
 
-    const hubTabs = useSubTabStore((s) => s.hub);
     const analyticsTabs = useSubTabStore((s) => s.analytics);
     const opsTabs = useSubTabStore((s) => s.ops);
     const setOrderedTabs = useSubTabStore((s) => s.setOrderedTabs);
@@ -297,22 +268,20 @@ function SubTabPreferences() {
     const resetModule = useSubTabStore((s) => s.resetModule);
 
     const MODULES = [
-        { id: 'hub' as ModuleId, label: t('subTab.hub'), state: hubTabs, tabs: DEFAULT_HUB_TABS, getLabel: (tab: string) => hubT(HUB_TAB_LABEL_KEY[tab as HubTab] ?? tab) },
         { id: 'analytics' as ModuleId, label: t('subTab.analytics'), state: analyticsTabs, tabs: DEFAULT_ANALYTICS_TABS, getLabel: (tab: string) => {
-            const label = ANALYTICS_TAB_LABEL[tab as AnalyticsTab];
-            if (!label) return tab;
-            return label.ns === 'ops' ? opsT(label.key) : analyticsT(label.key);
+            const labelKey = ANALYTICS_TAB_LABEL_KEY[tab as AnalyticsTab];
+            return labelKey ? analyticsT(labelKey) : tab;
         } },
         { id: 'ops' as ModuleId, label: t('subTab.ops'), state: opsTabs, tabs: DEFAULT_OPS_TABS, getLabel: (tab: string) => opsT(OPS_TAB_LABEL_KEY[tab as OpsTab] ?? tab) },
     ];
 
     const persistOrder = useCallback((module: ModuleId, items: readonly SubTab[]) => {
-        const key = module === 'hub' ? SettingKey.HubTabOrder : module === 'analytics' ? SettingKey.AnalyticsTabOrder : SettingKey.OpsTabOrder;
+        const key = module === 'analytics' ? SettingKey.AnalyticsTabOrder : SettingKey.OpsTabOrder;
         setSetting.mutate({ key, value: serializeSubTabOrder(module, items) }, { onError: () => toast.error(t('saveFailed')) });
     }, [setSetting, t]);
 
     const persistVisible = useCallback((module: ModuleId, items: readonly SubTab[]) => {
-        const key = module === 'hub' ? SettingKey.HubTabVisible : module === 'analytics' ? SettingKey.AnalyticsTabVisible : SettingKey.OpsTabVisible;
+        const key = module === 'analytics' ? SettingKey.AnalyticsTabVisible : SettingKey.OpsTabVisible;
         setSetting.mutate({ key, value: serializeSubTabVisible(module, items) }, { onError: () => toast.error(t('saveFailed')) });
     }, [setSetting, t]);
 
@@ -428,29 +397,9 @@ export function SettingAppearance() {
     const { locale, setLocale, timeZone, setTimeZone, chinaMode, setChinaMode, exchangeRate, setExchangeRate } = useSettingStore();
     const { data: settings } = useSettingList();
     const setSetting = useSetSetting();
-    const [alertNotifyLanguage, setAlertNotifyLanguage] = useState<AlertNotifyLanguage>('en');
-    const initialAlertNotifyLanguage = useRef<AlertNotifyLanguage>('en');
     const initialTimeZone = useRef(timeZone);
     const [localExchangeRate, setLocalExchangeRate] = useState(exchangeRate.toString());
     const initialExchangeRate = useRef(exchangeRate);
-    const [groupUpstreamMetaEnabled, setGroupUpstreamMetaEnabled] = useState(true);
-    const initialGroupUpstreamMetaEnabled = useRef(true);
-    useEffect(() => {
-        if (!settings) return;
-        const alertNotifyLanguageSetting = settings.find((item) => item.key === SettingKey.AlertNotifyLanguage);
-        if (alertNotifyLanguageSetting) {
-            const nextValue = normalizeAlertNotifyLanguage(alertNotifyLanguageSetting.value);
-            queueMicrotask(() => setAlertNotifyLanguage(nextValue));
-            initialAlertNotifyLanguage.current = nextValue;
-        }
-
-        const groupMetaSetting = settings.find((item) => item.key === SettingKey.GroupUpstreamMetaDisplayEnabled);
-        // 缺省或非 false 都视为开启，保持默认打开。
-        const nextGroupMeta = groupMetaSetting?.value !== 'false';
-        queueMicrotask(() => setGroupUpstreamMetaEnabled(nextGroupMeta));
-        initialGroupUpstreamMetaEnabled.current = nextGroupMeta;
-    }, [settings]);
-
     // 从服务端同步 stats_timezone：后端配置为准，覆盖 localStorage 默认值，保证多端一致。
     useEffect(() => {
         if (!settings) return;
@@ -480,45 +429,6 @@ export function SettingAppearance() {
                     toast.error(t('saveFailed'));
                 },
             }
-        );
-    };
-
-    const handleAlertNotifyLanguageChange = (value: string) => {
-        const nextValue = normalizeAlertNotifyLanguage(value);
-        setAlertNotifyLanguage(nextValue);
-
-        setSetting.mutate(
-            { key: SettingKey.AlertNotifyLanguage, value: nextValue },
-            {
-                onSuccess: () => {
-                    toast.success(t('saved'));
-                    initialAlertNotifyLanguage.current = nextValue;
-                },
-                onError: () => {
-                    setAlertNotifyLanguage(initialAlertNotifyLanguage.current);
-                    toast.error(t('saveFailed'));
-                },
-            }
-        );
-    };
-
-    const handleGroupUpstreamMetaEnabledChange = (checked: boolean) => {
-        setGroupUpstreamMetaEnabled(checked);
-        setSetting.mutate(
-            {
-                key: SettingKey.GroupUpstreamMetaDisplayEnabled,
-                value: checked ? 'true' : 'false',
-            },
-            {
-                onSuccess: () => {
-                    toast.success(t('saved'));
-                    initialGroupUpstreamMetaEnabled.current = checked;
-                },
-                onError: () => {
-                    setGroupUpstreamMetaEnabled(initialGroupUpstreamMetaEnabled.current);
-                    toast.error(t('saveFailed'));
-                },
-            },
         );
     };
 
@@ -576,7 +486,7 @@ export function SettingAppearance() {
                         </Select>
                     </div>
 
-                    <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid gap-4 lg:grid-cols-2">
                         <div className="flex flex-col gap-4 rounded-lg border-border/30 bg-card p-4 shadow-sm">
                             <div className="flex items-center gap-3">
                                 <Languages className="h-5 w-5 text-muted-foreground" />
@@ -614,22 +524,6 @@ export function SettingAppearance() {
                             <p className="text-xs leading-5 text-muted-foreground">{t('timeZone.description')}</p>
                         </div>
 
-                        <div className="flex flex-col gap-4 rounded-lg border-border/30 bg-card p-4 shadow-sm">
-                            <div className="flex items-center gap-3">
-                                <Bell className="h-5 w-5 text-muted-foreground" />
-                                <span className="text-sm font-medium">{t('alertLanguage.label')}</span>
-                            </div>
-                            <Select value={alertNotifyLanguage} onValueChange={handleAlertNotifyLanguageChange}>
-                                <SelectTrigger className="w-full rounded-lg">
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="rounded-lg">
-                                    <SelectItem value="zh-Hans" className="rounded-xl">{t('alertLanguage.zh_hans')}</SelectItem>
-                                    <SelectItem value="zh-Hant" className="rounded-xl">{t('alertLanguage.zh_hant')}</SelectItem>
-                                    <SelectItem value="en" className="rounded-xl">{t('alertLanguage.en')}</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
                     </div>
 
                     {/* 中国化模式 */}
@@ -684,27 +578,6 @@ export function SettingAppearance() {
                         )}
                     </div>
 
-                    {/* 分组上游渠道元信息展示 */}
-                    <div className="flex items-center justify-between gap-4 rounded-lg border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent p-4 shadow-sm">
-                        <div className="flex min-w-0 items-center gap-3">
-                            <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/12">
-                                <Layers className="h-5 w-5 text-primary" />
-                            </div>
-                            <div className="min-w-0 space-y-0.5">
-                                <span className="text-sm font-semibold text-card-foreground">
-                                    {t('groupUpstreamMeta.label')}
-                                </span>
-                                <p className="text-xs text-muted-foreground">
-                                    {t('groupUpstreamMeta.description')}
-                                </p>
-                            </div>
-                        </div>
-                        <Switch
-                            checked={groupUpstreamMetaEnabled}
-                            onCheckedChange={handleGroupUpstreamMetaEnabledChange}
-                            aria-label={t('groupUpstreamMeta.label')}
-                        />
-                    </div>
                     <div className="grid items-start gap-4 xl:grid-cols-2">
                         <div className="flex flex-col gap-4">
                             <NavigationPreferences />
