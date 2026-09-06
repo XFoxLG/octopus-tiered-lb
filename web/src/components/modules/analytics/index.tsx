@@ -20,21 +20,19 @@ import { ChannelModel } from './ChannelModel';
 import { Evaluation } from './Evaluation';
 import { LatencyDistribution } from './LatencyDistribution';
 import { ShareSnapshot, type SnapshotSection } from './ShareSnapshot';
-import { Cache } from '@/components/modules/ops/Cache';
 import { formatCount, formatMoney } from '@/lib/utils';
 import { formatPercent } from './shared';
 import { AnalyticsCacheTtlProvider } from './cache-context';
 
 import { useSubTabStore, type AnalyticsTab } from '@/components/modules/navbar/sub-tab-store';
 
-/** 各子标签的标签文案翻译键。cache 属于 ops 命名空间，其余属于 analytics。 */
-const TAB_LABEL: Record<AnalyticsTab, { ns: 'analytics' | 'ops'; key: string }> = {
-    cache: { ns: 'ops', key: 'tabs.cache' },
-    utilization: { ns: 'analytics', key: 'cards.utilization.title' },
-    'route-health': { ns: 'analytics', key: 'cards.routeHealth.title' },
-    'channel-model': { ns: 'analytics', key: 'cards.channelModel.title' },
-    evaluation: { ns: 'analytics', key: 'evaluation.title' },
-    latency: { ns: 'analytics', key: 'latency.title' },
+/** 各子标签的标签文案翻译键。 */
+const TAB_LABEL_KEY: Record<AnalyticsTab, string> = {
+    utilization: 'cards.utilization.title',
+    'route-health': 'cards.routeHealth.title',
+    'channel-model': 'cards.channelModel.title',
+    evaluation: 'evaluation.title',
+    latency: 'latency.title',
 };
 
 /** 常用时间范围按钮（1d/7d/30d）。 */
@@ -46,7 +44,6 @@ const CACHE_TTL_OPTIONS: AnalyticsCacheTtl[] = ['10s', '30s', '1m', 'off'];
 
 export function Analytics() {
     const t = useTranslations('analytics');
-    const opsT = useTranslations('ops');
     const { orderedTabs, visibleTabs } = useSubTabStore((s) => s.analytics);
     // 默认显示显示顺序中的第一个子标签（用户可在外观设置中拖拽排序/隐藏）
     const [activeTab, setActiveTab] = useState<AnalyticsTab>(() => (visibleTabs[0] as AnalyticsTab) ?? 'channel-model');
@@ -218,15 +215,11 @@ export function Analytics() {
                         <div className="relative flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                             <div className="-mx-1 overflow-x-auto overscroll-x-contain scroll-smooth px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                                 <TabsList className="flex w-max min-w-max flex-nowrap rounded-lg border-border/30 bg-card p-1 xl:min-w-0 xl:flex-wrap">
-                                    {orderedVisible.map((tab) => {
-                                        const label = TAB_LABEL[tab as AnalyticsTab];
-                                        const text = label.ns === 'ops' ? opsT(label.key) : t(label.key);
-                                        return (
-                                            <TabsTrigger key={tab} value={tab}>
-                                                {text}
-                                            </TabsTrigger>
-                                        );
-                                    })}
+                                    {orderedVisible.map((tab) => (
+                                        <TabsTrigger key={tab} value={tab}>
+                                            {t(TAB_LABEL_KEY[tab as AnalyticsTab])}
+                                        </TabsTrigger>
+                                    ))}
                                 </TabsList>
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
@@ -283,9 +276,6 @@ export function Analytics() {
                     </section>
 
                     <TabsContents>
-                        <TabsContent value="cache">
-                            <Cache />
-                        </TabsContent>
                         <TabsContent value="utilization">
                             <Utilization range={range} />
                         </TabsContent>

@@ -325,15 +325,6 @@ export function AppContainer() {
                             );
                             break;
                         }
-                        case 'ops': {
-                            prefetches.push(
-                                queryClient.prefetchQuery({
-                                    queryKey: ['ops', 'health'],
-                                    queryFn: async () => apiClient.get('/api/v1/ops/health'),
-                                })
-                            );
-                            break;
-                        }
                         default:
                             break;
                     }

@@ -3162,7 +3162,9 @@
       "report": "報表",
       "channel_expire": "管道過期",
       "system": "系統",
+      "site": "站點",
       "backup": "備份",
+      "usage": "用量",
       "key_health": "Key 巡檢"
     },
     "severity": {

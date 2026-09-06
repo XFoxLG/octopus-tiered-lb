@@ -20,12 +20,6 @@ import (
 const maxAuditTargetBodyBytes = 8 << 10
 
 var auditedManagementWriteRoutes = map[string]struct{}{
-	"POST /api/v1/alert/notif/create":                                                {},
-	"POST /api/v1/alert/notif/update":                                                {},
-	"DELETE /api/v1/alert/notif/delete/:id":                                          {},
-	"POST /api/v1/alert/rule/create":                                                 {},
-	"POST /api/v1/alert/rule/update":                                                 {},
-	"DELETE /api/v1/alert/rule/delete/:id":                                           {},
 	"POST /api/v1/apikey/create":                                                     {},
 	"POST /api/v1/apikey/update":                                                     {},
 	"DELETE /api/v1/apikey/delete/:id":                                               {},
@@ -62,10 +56,6 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/model-mapping":                                                     {},
 	"PUT /api/v1/model-mapping/:id":                                                  {},
 	"DELETE /api/v1/model-mapping/:id":                                               {},
-	"POST /api/v1/report/schedule/create":                                            {},
-	"POST /api/v1/report/schedule/update":                                            {},
-	"POST /api/v1/report/schedule/test":                                              {},
-	"DELETE /api/v1/report/schedule/delete/:id":                                      {},
 	"POST /api/v1/route/ai-generate":                                                 {},
 	"POST /api/v1/setting/database/migrate":                                          {},
 	"POST /api/v1/setting/database/test":                                             {},
@@ -94,11 +84,6 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/notification/unarchive":                                            {},
 	"DELETE /api/v1/notification/delete/:id":                                         {},
 	"DELETE /api/v1/notification/archived":                                           {},
-	"POST /api/v1/notification/preference/save":                                      {},
-	"DELETE /api/v1/notification/preference/delete/:id":                              {},
-	"POST /api/v1/notification/policy/create":                                        {},
-	"POST /api/v1/notification/policy/update":                                        {},
-	"DELETE /api/v1/notification/policy/delete/:id":                                  {},
 	"POST /api/v1/backup/webdav/config":                                              {},
 	"POST /api/v1/backup/webdav/test":                                                {},
 	"POST /api/v1/backup/webdav/backup":                                              {},
@@ -108,21 +93,6 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/proxy-pool/update":                                                 {},
 	"POST /api/v1/proxy-pool/test":                                                   {},
 	"DELETE /api/v1/proxy-pool/delete/:id":                                           {},
-	"POST /api/v1/pool/create":                                                       {},
-	"POST /api/v1/pool/update":                                                       {},
-	"DELETE /api/v1/pool/delete/:id":                                                 {},
-	"POST /api/v1/pool/import":                                                       {},
-	"POST /api/v1/pool/:id/account/create":                                           {},
-	"POST /api/v1/pool/:id/account/update/:aid":                                      {},
-	"POST /api/v1/pool/:id/account/test":                                             {},
-	"POST /api/v1/pool/:id/account/quota/:aid":                                       {},
-	"POST /api/v1/pool/:id/account/refresh-token/:aid":                               {},
-	"POST /api/v1/pool/:id/account/recover/:aid":                                     {},
-	"POST /api/v1/pool/:id/account/temp-unsched/:aid":                                {},
-	"POST /api/v1/pool/:id/account/batch-refresh":                                    {},
-	"POST /api/v1/pool/:id/account/batch-clear-error":                                {},
-	"POST /api/v1/pool/:id/account/batch-test":                                       {},
-	"DELETE /api/v1/pool/:id/account/delete/:aid":                                    {},
 }
 
 func AuditManagementWrite() gin.HandlerFunc {
@@ -276,8 +246,6 @@ func buildAuditTarget(c *gin.Context, fullPath string, bodyFields map[string]any
 		"group_id",
 		"channel_id",
 		"api_key_id",
-		"rule_id",
-		"notif_channel_id",
 	} {
 		if value := stringifyAuditTargetValue(bodyFields[key]); value != "" {
 			if key == "id" || strings.HasSuffix(key, "_id") {

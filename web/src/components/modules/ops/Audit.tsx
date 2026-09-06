@@ -4,7 +4,7 @@ import { useCallback, useMemo } from 'react';
 import { Clock3, FileText, Loader2, ShieldAlert, User } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { motion } from 'motion/react';
-import { DEFAULT_AUDIT_PAGE_SIZE, type AuditLogEntry, useAuditLogDetail, useAuditLogs } from '@/api/endpoints/ops';
+import { DEFAULT_AUDIT_PAGE_SIZE, type AuditLogEntry, useAuditLogDetail, useAuditLogs } from '@/api/endpoints/audit';
 import { QueryState, StatusBadge } from '@/components/modules/analytics/shared';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { Badge } from '@/components/ui/badge';

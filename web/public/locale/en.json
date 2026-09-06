@@ -3162,7 +3162,9 @@
       "report": "Report",
       "channel_expire": "Channel Expire",
       "system": "System",
+      "site": "Site",
       "backup": "Backup",
+      "usage": "Usage",
       "key_health": "Key Health"
     },
     "severity": {

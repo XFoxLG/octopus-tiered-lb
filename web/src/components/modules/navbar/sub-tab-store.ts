@@ -9,14 +9,14 @@ import { createJSONStorage, persist } from 'zustand/middleware';
  * （由 app.tsx 在登录后 hydrate）。
  */
 
-export type AnalyticsTab = 'cache' | 'utilization' | 'route-health' | 'channel-model' | 'evaluation' | 'latency';
-export type OpsTab = 'telemetry' | 'quota' | 'health' | 'maintenance' | 'system' | 'audit';
+export type AnalyticsTab = 'utilization' | 'route-health' | 'channel-model' | 'evaluation' | 'latency';
+export type OpsTab = 'maintenance' | 'audit';
 
 export type ModuleId = 'analytics' | 'ops';
 export type SubTab = AnalyticsTab | OpsTab;
 
-export const DEFAULT_ANALYTICS_TABS: AnalyticsTab[] = ['cache', 'utilization', 'route-health', 'channel-model', 'evaluation', 'latency'];
-export const DEFAULT_OPS_TABS: OpsTab[] = ['telemetry', 'quota', 'health', 'maintenance', 'system', 'audit'];
+export const DEFAULT_ANALYTICS_TABS: AnalyticsTab[] = ['utilization', 'route-health', 'channel-model', 'evaluation', 'latency'];
+export const DEFAULT_OPS_TABS: OpsTab[] = ['maintenance', 'audit'];
 
 export const DEFAULT_SUB_TABS: Record<ModuleId, SubTab[]> = {
     analytics: [...DEFAULT_ANALYTICS_TABS],

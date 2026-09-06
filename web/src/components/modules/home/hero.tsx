@@ -4,7 +4,6 @@ import { motion } from 'motion/react';
 import { Waves } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useStatsToday } from '@/api/endpoints/stats';
-import { useOpsCacheStatus, type OpsProviderPromptCacheTrendPoint } from '@/api/endpoints/ops';
 import { useHomeStatsRefreshMs } from './store';
 import { StatsRefreshControls } from './refresh-controls';
 import { AnimatedNumber } from '@/components/common/AnimatedNumber';
@@ -15,7 +14,6 @@ export function HomeHero() {
     const t = useTranslations('home.hero');
     const statsRefreshMs = useHomeStatsRefreshMs();
     const { data: statsToday } = useStatsToday({ refetchIntervalMs: statsRefreshMs });
-    const { data: cacheStatus } = useOpsCacheStatus();
 
     const requestCount = (statsToday?.request_success ?? 0) + (statsToday?.request_failed ?? 0);
     const successCount = statsToday?.request_success ?? 0;
@@ -25,20 +23,11 @@ export function HomeHero() {
     const successRate = requestCount > 0 ? (successCount / requestCount) * 100 : 0;
     const avgWait = requestCount > 0 ? totalWaitTime / requestCount : 0;
 
-    // 今日缓存复用 Tokens：对 provider prompt cache 的 24h 趋势点求和（timestamp >= 本地时区今日 0 点）。
-    // trend 按 UTC 整点对齐（后端 opsHourlyWindowStart），+8 时区下今日 0 点恰为整点边界，过滤无污染。
-    const cacheTrend = cacheStatus?.provider_prompt_cache?.trend ?? ([] as OpsProviderPromptCacheTrendPoint[]);
-    const todayCacheReadTokens = cacheTrend
-        .filter((point) => point.timestamp >= Math.floor(new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime() / 1000))
-        .reduce((sum, point) => sum + (point.cache_read_tokens ?? 0), 0);
-    const cacheRate = totalTokens > 0 ? (todayCacheReadTokens / totalTokens) * 100 : 0;
-
     const callsSuccess = formatCount(successCount).formatted;
     const callsTotal = formatCount(requestCount).formatted;
-    const cacheRead = formatCount(todayCacheReadTokens).formatted;
     const tokens = formatCount(totalTokens).formatted;
 
-    // 2 列 × 2 行：第一行普通指标（平均响应时延 / 今日花费），第二行复合卡（今日调用 / 今日Token使用）。
+    // 2 列 × 2 行：平均响应时延、今日花费、今日调用和今日 Token 使用。
     const cards = [
         {
             key: 'avgWait',
@@ -64,15 +53,10 @@ export function HomeHero() {
             rateLabel: t('signals.successRateShort'),
         },
         {
-            key: 'cacheRate',
-            label: t('signals.cacheRate'),
-            isComposite: true,
-            mainValue: cacheRead.value,
-            mainUnit: cacheRead.unit,
-            dividerValue: tokens.value,
-            dividerUnit: tokens.unit,
-            rate: cacheRate.toFixed(2),
-            rateLabel: t('signals.cacheRateShort'),
+            key: 'tokens',
+            label: t('metrics.tokens'),
+            value: tokens.value,
+            unit: tokens.unit,
         },
     ];
 

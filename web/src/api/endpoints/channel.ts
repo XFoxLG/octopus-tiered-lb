@@ -121,7 +121,6 @@ export type Channel = {
     skip_model_test: boolean;
     disposable: boolean;
     expire_at?: string | null;
-    notif_channel_id?: number | null;
     key_selection_strategy: string;
     custom_header: CustomHeader[];
     param_override?: string | null;
@@ -160,7 +159,6 @@ export type CreateChannelRequest = {
     skip_model_test?: boolean;
     disposable?: boolean;
     expire_at?: string | null;
-    notif_channel_id?: number | null;
     key_selection_strategy?: string;
     auto_group?: AutoGroupType;
     custom_header?: CustomHeader[];
@@ -190,7 +188,6 @@ export type UpdateChannelRequest = {
     skip_model_test?: boolean;
     disposable?: boolean;
     expire_at?: string | null;
-    notif_channel_id?: number | null;
     auto_group?: AutoGroupType;
     custom_header?: CustomHeader[];
     channel_proxy?: string | null;

@@ -4,20 +4,12 @@ import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { PageWrapper } from '@/components/common/PageWrapper';
 import { Tabs, TabsContents, TabsContent, TabsList, TabsTrigger } from '@/components/animate-ui/components/animate/tabs';
-import { Telemetry } from './Telemetry';
-import { Quota } from './Quota';
-import { Health } from './Health';
 import { Maintenance } from './Maintenance';
-import { System } from './System';
 import { Audit } from './Audit';
 import { useSubTabStore, type OpsTab } from '@/components/modules/navbar/sub-tab-store';
 
 const TAB_LABEL_KEY: Record<OpsTab, string> = {
-    telemetry: 'tabs.telemetry',
-    quota: 'tabs.quota',
-    health: 'tabs.health',
     maintenance: 'tabs.maintenance',
-    system: 'tabs.system',
     audit: 'tabs.audit',
 };
 
@@ -25,7 +17,7 @@ export function Ops() {
     const t = useTranslations('ops');
     const { orderedTabs, visibleTabs } = useSubTabStore((s) => s.ops);
     // 默认显示显示顺序中的第一个子标签（用户可在外观设置中拖拽排序/隐藏）
-    const [activeTab, setActiveTab] = useState<OpsTab>(() => (visibleTabs[0] as OpsTab) ?? 'telemetry');
+    const [activeTab, setActiveTab] = useState<OpsTab>(() => (visibleTabs[0] as OpsTab) ?? 'maintenance');
 
     // 当可见列表变化且当前 tab 被隐藏时，回退到第一个可见 tab
     useEffect(() => {
@@ -53,20 +45,8 @@ export function Ops() {
                 </section>
 
                 <TabsContents>
-                    <TabsContent value="telemetry">
-                        <Telemetry onNavigate={(tab) => setActiveTab(tab as OpsTab)} />
-                    </TabsContent>
-                    <TabsContent value="quota">
-                        <Quota />
-                    </TabsContent>
-                    <TabsContent value="health">
-                        <Health />
-                    </TabsContent>
                     <TabsContent value="maintenance">
                         <Maintenance />
-                    </TabsContent>
-                    <TabsContent value="system">
-                        <System />
                     </TabsContent>
                     <TabsContent value="audit">
                         <Audit />
