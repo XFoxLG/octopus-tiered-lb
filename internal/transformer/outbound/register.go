@@ -123,8 +123,11 @@ func IsLLMRequestFormat(request *model.InternalLLMRequest) bool {
 	}
 }
 
-// ResolveAttemptTypes 根据 channel type、请求格式和 group outbound format 决定出站 adapter
-// 尝试顺序。从 relay 包提取以供 helper 探测逻辑复用。
+// ResolveAttemptTypesForChannel 根据 channel type、请求格式决定出站 adapter 尝试
+// 顺序，并在分组 outbound_format 之上叠加渠道级协议覆盖
+// （Channel.OutboundFormatOverride）。渠道覆盖非空时优先于分组值，供只支持单一
+// 协议的 OpenAI 兼容上游（如仅 /v1/chat/completions 的公益站）避免 auto 回退。
+// 覆盖值仅接受 chat_only / responses_only；其余值（含未知串）一律忽略回落分组值。
 //
 // 对 OpenAIChat / OpenAIResponse 类型，提供可配置的 adapter 回退优先级：
 //   - "passthrough": 原样转发 inbound JSON body，禁用 adapter 回退。
@@ -135,7 +138,16 @@ func IsLLMRequestFormat(request *model.InternalLLMRequest) bool {
 //   - "chat_only" / "responses_only" / "messages_only": 禁用跨格式回退。
 //
 // 其它 channel type 直接返回 [channelType]。
-func ResolveAttemptTypes(channelType OutboundType, request *model.InternalLLMRequest, outboundFormat string) []OutboundType {
+func ResolveAttemptTypesForChannel(channelType OutboundType, request *model.InternalLLMRequest, groupOutboundFormat, channelOverride string) []OutboundType {
+	switch override := strings.ToLower(strings.TrimSpace(channelOverride)); override {
+	case "chat_only", "responses_only":
+		return resolveAttemptTypesByFormat(channelType, request, override)
+	default:
+		return resolveAttemptTypesByFormat(channelType, request, groupOutboundFormat)
+	}
+}
+
+func resolveAttemptTypesByFormat(channelType OutboundType, request *model.InternalLLMRequest, outboundFormat string) []OutboundType {
 	format := strings.ToLower(strings.TrimSpace(outboundFormat))
 	if format == "passthrough" && request != nil {
 		switch request.RawAPIFormat {

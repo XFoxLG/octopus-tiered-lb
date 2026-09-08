@@ -89,6 +89,11 @@ func Create(ch *model.Channel, ctx context.Context) error {
 		if err := ch.RequestRewrite.Validate(ch.Type); err != nil {
 			return err
 		}
+		normalizedOverride, err := model.NormalizeOutboundFormatOverride(ch.OutboundFormatOverride)
+		if err != nil {
+			return err
+		}
+		ch.OutboundFormatOverride = normalizedOverride
 		if err := normalizeChannelProxyFields(ch); err != nil {
 			return err
 		}
@@ -457,6 +462,15 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 	if req.ParamOverride != nil {
 		selectFields = append(selectFields, "param_override")
 		updates.ParamOverride = req.ParamOverride
+	}
+	if req.OutboundFormatOverride != nil {
+		normalizedOverride, err := model.NormalizeOutboundFormatOverride(*req.OutboundFormatOverride)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		selectFields = append(selectFields, "outbound_format_override")
+		updates.OutboundFormatOverride = normalizedOverride
 	}
 	if req.RequestRewrite != nil {
 		selectFields = append(selectFields, "request_rewrite")

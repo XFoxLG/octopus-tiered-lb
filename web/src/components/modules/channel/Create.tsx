@@ -39,6 +39,7 @@ export function CreateDialogContent() {
         custom_header: [],
         channel_proxy: '',
         param_override: '',
+        outbound_format_override: '',
         request_rewrite: createDefaultRequestRewriteFormData(),
         keys: [{ enabled: true, channel_key: '', priority: 0, remark: '' }],
         model: '',
@@ -64,10 +65,11 @@ export function CreateDialogContent() {
             group_id: 0,
             type: DEFAULT_CHANNEL_TYPE,
             base_urls: [{ url: '', delay: 0, suffix_mode: 'auto' }],
-            custom_header: [],
-            channel_proxy: '',
-            param_override: '',
-            request_rewrite: createDefaultRequestRewriteFormData(),
+        custom_header: [],
+        channel_proxy: '',
+        param_override: '',
+        outbound_format_override: '',
+        request_rewrite: createDefaultRequestRewriteFormData(),
             keys: [{ enabled: true, channel_key: '', priority: 0, remark: '' }],
             model: '',
             custom_model: '',
@@ -117,6 +119,7 @@ export function CreateDialogContent() {
 
         const channelProxy = formData.channel_proxy.trim();
         const paramOverride = formData.param_override.trim();
+        const outboundFormatOverride = formData.outbound_format_override.trim();
         const requestRewrite = getEffectiveRequestRewriteFormData(formData.type, formData.request_rewrite);
         createChannel.mutate(
             {
@@ -142,6 +145,7 @@ export function CreateDialogContent() {
                 custom_header: normalizedHeaders,
                 channel_proxy: channelProxy,
                 param_override: paramOverride,
+                outbound_format_override: outboundFormatOverride,
                 request_rewrite: requestRewrite.enabled ? requestRewrite : undefined,
                 match_regex: formData.match_regex.trim(),
             },

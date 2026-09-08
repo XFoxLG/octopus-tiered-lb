@@ -93,6 +93,9 @@ type Channel struct {
 	KeySelectionStrategy string                `json:"key_selection_strategy" gorm:"type:varchar(16);not null;default:''"`
 	CustomHeader         []CustomHeader        `json:"custom_header" gorm:"serializer:json"`
 	ParamOverride        *string               `json:"param_override"`
+	// OutboundFormatOverride 渠道级出站协议覆盖（issue: 只支持单一协议的公益站）。
+	// 空 = 跟随分组 outbound_format；合法值 chat_only / responses_only，渠道值优先。
+	OutboundFormatOverride string                `json:"outbound_format_override,omitempty" gorm:"column:outbound_format_override;type:varchar(20);not null;default:''"`
 	ChannelProxy         *string               `json:"channel_proxy,omitempty" gorm:"column:channel_proxy"`
 	RequestRewrite       *RequestRewriteConfig `json:"request_rewrite" gorm:"serializer:json"`
 	Stats                *StatsChannel         `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
@@ -117,6 +120,19 @@ type BaseUrl struct {
 type CustomHeader struct {
 	HeaderKey   string `json:"header_key"`
 	HeaderValue string `json:"header_value"`
+}
+
+// NormalizeOutboundFormatOverride 校验并规范化渠道级出站协议覆盖。
+// 空值合法（= 跟随分组）；仅接受 chat_only / responses_only；其他值报错，
+// 避免 UI/API 写入脏值后运行时静默忽略造成"设置了但不生效"的困惑。
+func NormalizeOutboundFormatOverride(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "", "chat_only", "responses_only":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("unsupported outbound format override: %s (allowed: chat_only, responses_only)", value)
+	}
 }
 
 type ChannelKey struct {
@@ -178,6 +194,7 @@ type ChannelUpdateRequest struct {
 	CustomHeader         *[]CustomHeader        `json:"custom_header,omitempty"`
 	ChannelProxy         *string                `json:"channel_proxy,omitempty"`
 	ParamOverride        *string                `json:"param_override,omitempty"`
+	OutboundFormatOverride *string              `json:"outbound_format_override,omitempty"`
 	RequestRewrite       *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
 	MatchRegex           *string                `json:"match_regex,omitempty"`
 

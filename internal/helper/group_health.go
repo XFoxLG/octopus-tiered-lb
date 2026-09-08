@@ -79,7 +79,7 @@ func candidateAdapterTypes(channel *appmodel.Channel, modelName, endpointType st
 	if err != nil {
 		return nil
 	}
-	return outbound.ResolveAttemptTypes(channel.Type, probeRequest, "")
+	return outbound.ResolveAttemptTypesForChannel(channel.Type, probeRequest, "", channel.OutboundFormatOverride)
 }
 
 // resolveGroupHealthProbeMode 解析拨测模式（仅首个 full 生效，其余回 standard）。

@@ -10,7 +10,7 @@ import (
 func TestOutboundAttemptTypesChatOnChatChannelAutoPrefersChat(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -26,7 +26,7 @@ func TestOutboundAttemptTypesChatOnChatChannelAutoPrefersChat(t *testing.T) {
 func TestOutboundAttemptTypesChatOnResponseChannelAutoPrefersChat(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIResponse, req, "")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIResponse, req, "", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -42,7 +42,7 @@ func TestOutboundAttemptTypesChatOnResponseChannelAutoPrefersChat(t *testing.T) 
 func TestOutboundAttemptTypesResponsesOnChatChannelAutoPrefersChat(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIResponse}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -58,7 +58,7 @@ func TestOutboundAttemptTypesResponsesOnChatChannelAutoPrefersChat(t *testing.T)
 func TestOutboundAttemptTypesResponsesOnResponseChannelAutoPrefersChat(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIResponse}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIResponse, req, "")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIResponse, req, "", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -74,14 +74,14 @@ func TestOutboundAttemptTypesResponsesOnResponseChannelAutoPrefersChat(t *testin
 func TestOutboundAttemptTypesEmbeddingNoFallback(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIEmbedding}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "", "")
 	if len(got) != 1 || got[0] != outbound.OutboundTypeOpenAIChat {
 		t.Fatalf("attempt types = %#v, want single channel type", got)
 	}
 }
 
 func TestOutboundAttemptTypesNilRequest(t *testing.T) {
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, nil, "")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, nil, "", "")
 	if len(got) != 1 || got[0] != outbound.OutboundTypeOpenAIChat {
 		t.Fatalf("attempt types = %#v, want single channel type", got)
 	}
@@ -90,7 +90,7 @@ func TestOutboundAttemptTypesNilRequest(t *testing.T) {
 func TestOutboundAttemptTypesChatFormatPrefersChatFirst(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "chat")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "chat", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -106,7 +106,7 @@ func TestOutboundAttemptTypesChatFormatPrefersChatFirst(t *testing.T) {
 func TestOutboundAttemptTypesResponsesFormatPrefersResponseFirst(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "responses")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "responses", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIResponse, outbound.OutboundTypeOpenAIChat}
 
 	if len(got) != len(want) {
@@ -122,7 +122,7 @@ func TestOutboundAttemptTypesResponsesFormatPrefersResponseFirst(t *testing.T) {
 func TestOutboundAttemptTypesChatOnlyDisablesFallback(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "chat_only")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "chat_only", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat}
 
 	if len(got) != len(want) {
@@ -138,7 +138,7 @@ func TestOutboundAttemptTypesChatOnlyDisablesFallback(t *testing.T) {
 func TestOutboundAttemptTypesResponsesOnlyDisablesFallback(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "responses_only")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "responses_only", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -154,7 +154,7 @@ func TestOutboundAttemptTypesResponsesOnlyDisablesFallback(t *testing.T) {
 func TestOutboundAttemptTypesMessagesFormatPrefersAnthropicFirst(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "messages")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "messages", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeAnthropic, outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -170,7 +170,7 @@ func TestOutboundAttemptTypesMessagesFormatPrefersAnthropicFirst(t *testing.T) {
 func TestOutboundAttemptTypesMessagesOnlyDisablesFallback(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "messages_only")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "messages_only", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeAnthropic}
 
 	if len(got) != len(want) {
@@ -186,7 +186,7 @@ func TestOutboundAttemptTypesMessagesOnlyDisablesFallback(t *testing.T) {
 func TestOutboundAttemptTypesPassthroughDisablesFallback(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "passthrough")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "passthrough", "")
 	want := []outbound.OutboundType{outbound.OutboundTypePassthrough}
 
 	if len(got) != len(want) {
@@ -202,7 +202,7 @@ func TestOutboundAttemptTypesPassthroughDisablesFallback(t *testing.T) {
 func TestOutboundAttemptTypesAnthropicMessagesOnlyUsesAnthropic(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatAnthropicMessage}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "messages_only")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "messages_only", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeAnthropic}
 
 	if len(got) != len(want) {
@@ -218,7 +218,7 @@ func TestOutboundAttemptTypesAnthropicMessagesOnlyUsesAnthropic(t *testing.T) {
 func TestOutboundAttemptTypesAnthropicMessagesPrefersAnthropicFirst(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatAnthropicMessage}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "messages")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "messages", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeAnthropic, outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -234,7 +234,7 @@ func TestOutboundAttemptTypesAnthropicMessagesPrefersAnthropicFirst(t *testing.T
 func TestOutboundAttemptTypesAnthropicPassthroughDisablesFallback(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatAnthropicMessage}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "passthrough")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "passthrough", "")
 	want := []outbound.OutboundType{outbound.OutboundTypePassthrough}
 
 	if len(got) != len(want) {
@@ -250,7 +250,7 @@ func TestOutboundAttemptTypesAnthropicPassthroughDisablesFallback(t *testing.T) 
 func TestOutboundAttemptTypesRawPassthroughUsesRawAdapter(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "raw")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "raw", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeRaw}
 
 	if len(got) != len(want) {
@@ -266,7 +266,7 @@ func TestOutboundAttemptTypesRawPassthroughUsesRawAdapter(t *testing.T) {
 func TestOutboundAttemptTypesAnthropicRawPassthroughUsesRawAdapter(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatAnthropicMessage}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "raw")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "raw", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeRaw}
 
 	if len(got) != len(want) {
@@ -284,7 +284,7 @@ func TestOutboundAttemptTypesAnthropicAutoStillPrefersChatFallbackChain(t *testi
 	// enter the LLM adapter-selection path instead of hard-coding channel type.
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatAnthropicMessage}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
 
 	if len(got) != len(want) {
@@ -302,8 +302,72 @@ func TestOutboundAttemptTypesAnthropicAutoStillPrefersChatFallbackChain(t *testi
 func TestOutboundAttemptTypesUnknownFormatFallsBackToAuto(t *testing.T) {
 	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
 
-	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "bogus")
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "bogus", "")
 	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeOpenAIResponse}
+
+	if len(got) != len(want) {
+		t.Fatalf("attempt types len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("attempt types = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestOutboundAttemptTypesChannelOverrideBeatsGroupFormat(t *testing.T) {
+	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
+
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "responses", "chat_only")
+	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat}
+
+	if len(got) != len(want) {
+		t.Fatalf("attempt types len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("attempt types = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestOutboundAttemptTypesChannelOverrideResponsesOnlyBeatsGroupChatOnly(t *testing.T) {
+	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
+
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "chat_only", "responses_only")
+	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIResponse}
+
+	if len(got) != len(want) {
+		t.Fatalf("attempt types len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("attempt types = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestOutboundAttemptTypesChannelOverrideInvalidFallsBackToGroup(t *testing.T) {
+	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
+
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "responses", "bogus")
+	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIResponse, outbound.OutboundTypeOpenAIChat}
+
+	if len(got) != len(want) {
+		t.Fatalf("attempt types len = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("attempt types = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestOutboundAttemptTypesChannelOverrideEmptyFallsBackToGroup(t *testing.T) {
+	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
+
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "responses", "  ")
+	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIResponse, outbound.OutboundTypeOpenAIChat}
 
 	if len(got) != len(want) {
 		t.Fatalf("attempt types len = %d, want %d: %#v", len(got), len(want), got)

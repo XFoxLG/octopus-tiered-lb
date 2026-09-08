@@ -492,6 +492,7 @@ type channelRequestPayload struct {
 	KeySelectionStrategy string                      `json:"key_selection_strategy"`
 	CustomHeader         []model.CustomHeader        `json:"custom_header"`
 	ParamOverride        *string                     `json:"param_override"`
+	OutboundFormatOverride *string                   `json:"outbound_format_override"`
 	ChannelProxy         *string                     `json:"channel_proxy"`
 	RequestRewrite       *model.RequestRewriteConfig `json:"request_rewrite"`
 	MatchRegex           *string                     `json:"match_regex"`
@@ -555,10 +556,19 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		AutoGroup:            p.AutoGroup,
 		CustomHeader:         p.CustomHeader,
 		ParamOverride:        p.ParamOverride,
+		OutboundFormatOverride: derefString(p.OutboundFormatOverride),
 		ChannelProxy:         channelProxy,
 		RequestRewrite:       p.RequestRewrite,
 		MatchRegex:           p.MatchRegex,
 	}
+}
+
+// derefString 空指针安全解引用，nil 返回空串。
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func listChannelGroup(c *gin.Context) {

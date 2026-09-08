@@ -120,8 +120,8 @@ func detectZenPreferredChannelTypes(requestModel string, isEmbeddingRequest bool
 	}
 }
 
-func outboundAttemptTypes(channelType outbound.OutboundType, request *model.InternalLLMRequest, outboundFormat string) []outbound.OutboundType {
-	return outbound.ResolveAttemptTypes(channelType, request, outboundFormat)
+func outboundAttemptTypes(channelType outbound.OutboundType, request *model.InternalLLMRequest, outboundFormat, channelOverride string) []outbound.OutboundType {
+	return outbound.ResolveAttemptTypesForChannel(channelType, request, outboundFormat, channelOverride)
 }
 
 func shouldTryAdapterFallback(result attemptResult, adapterIndex, attemptCount int) bool {
@@ -1837,7 +1837,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				continue
 			}
 
-			attemptTypes := outboundAttemptTypes(channel.Type, req.internalRequest, group.OutboundFormat)
+			attemptTypes := outboundAttemptTypes(channel.Type, req.internalRequest, group.OutboundFormat, channel.OutboundFormatOverride)
 			if len(attemptTypes) == 0 || outbound.Get(attemptTypes[0]) == nil {
 				routeIter.Skip(channel.ID, 0, channel.Name, fmt.Sprintf("unsupported channel type: %d", channel.Type))
 				continue

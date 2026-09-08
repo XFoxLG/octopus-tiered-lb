@@ -137,6 +137,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         custom_header: channel.custom_header ?? [],
         channel_proxy: channel.channel_proxy ?? '',
         param_override: channel.param_override ?? '',
+        outbound_format_override: channel.outbound_format_override ?? '',
         request_rewrite: normalizeRequestRewriteFormData(channel.request_rewrite),
         keys: channel.keys.length > 0
             ? channel.keys.map((k) => ({
@@ -238,6 +239,13 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         if (nextParamOverride !== curParamOverride) {
             // Empty string means "clear" for patch semantics; backend maps it to NULL.
             req.param_override = nextParamOverride;
+        }
+
+        const nextOutboundFormatOverride = formData.outbound_format_override.trim();
+        const curOutboundFormatOverride = channel.outbound_format_override ?? '';
+        if (nextOutboundFormatOverride !== curOutboundFormatOverride) {
+            // Empty string means "follow group outbound_format" (patch semantics).
+            req.outbound_format_override = nextOutboundFormatOverride;
         }
 
         if (!requestRewriteEqual(effectiveRequestRewrite, channel.request_rewrite)) {
