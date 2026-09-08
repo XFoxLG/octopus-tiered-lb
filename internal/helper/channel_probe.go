@@ -247,7 +247,7 @@ func performChannelModelFallback(ctx context.Context, channel *appmodel.Channel,
 	// 与 group probe 一致，对 OpenAI 类型渠道走 adapter 回退（issue #187）：
 	// 先尝试 Chat Completions，失败再回退 Responses API。
 	probeReqForResolve, _ := buildGroupProbeRequest(appmodel.EndpointTypeAll, modelName)
-	adapterTypes := outbound.ResolveAttemptTypes(channel.Type, probeReqForResolve, "")
+	adapterTypes := outbound.ResolveAttemptTypesForChannel(channel.Type, probeReqForResolve, "", channel.OutboundFormatOverride)
 	var lastErr error
 	for _, adapterType := range adapterTypes {
 		adapter := outbound.Get(adapterType)

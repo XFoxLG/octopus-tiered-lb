@@ -70,6 +70,7 @@ export interface ChannelFormData {
     custom_header: Channel['custom_header'];
     channel_proxy: string;
     param_override: string;
+    outbound_format_override: string;
     request_rewrite: RequestRewriteConfig;
     keys: ChannelKeyFormItem[];
     model: string;
@@ -634,6 +635,9 @@ export function ChannelForm({
     const { data: settings } = useSettingList();
     const { data: channelGroups = [] } = useChannelGroupList();
     const requestRewriteSupported = isRequestRewriteSupportedChannelType(formData.type);
+    // 出站格式覆盖仅对 OpenAI Chat / Response 类型生效（后端只在这两种渠道类型上分支），
+    // 其他类型不渲染该控件，避免"设置了但不生效"的误导。
+    const outboundFormatOverrideSupported = formData.type === ChannelType.OpenAIChat || formData.type === ChannelType.OpenAIResponse;
     const sectionClassName = 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
     const labelClassName = 'text-sm font-medium text-card-foreground';
     const fieldGroupClassName = 'space-y-2';
@@ -755,6 +759,7 @@ export function ChannelForm({
         auto_sync: formData.auto_sync,
         auto_group: formData.auto_group,
         param_override: formData.param_override.trim() || '',
+        outbound_format_override: formData.outbound_format_override.trim() || '',
     });
 
     const handleTestChannel = () => {
@@ -1497,6 +1502,28 @@ export function ChannelForm({
                                 className="min-h-28 w-full rounded-lg border border-border/35 bg-card px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             />
                         </div>
+
+                        {outboundFormatOverrideSupported ? (
+                            <div className={fieldGroupClassName}>
+                                <label htmlFor={`${idPrefix}-outbound-format-override`} className={labelClassName}>
+                                    {t('outboundFormatOverride')}
+                                    <Hint text={t('outboundFormatOverrideHint')} />
+                                </label>
+                                <Select
+                                    value={formData.outbound_format_override}
+                                    onValueChange={(value) => onFormDataChange({ ...formData, outbound_format_override: value })}
+                                >
+                                    <SelectTrigger id={`${idPrefix}-outbound-format-override`} className="w-full rounded-lg">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="min-w-0" style={{ width: 'var(--radix-select-trigger-width)' }}>
+                                        <SelectItem value="">{t('outboundFormatOverrideFollowGroup')}</SelectItem>
+                                        <SelectItem value="chat_only">{t('outboundFormatOverrideChatOnly')}</SelectItem>
+                                        <SelectItem value="responses_only">{t('outboundFormatOverrideResponsesOnly')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        ) : null}
 
                         <div className="space-y-4 pt-2 border-t border-border/20">
                             <div className="flex flex-wrap items-center justify-between gap-3">

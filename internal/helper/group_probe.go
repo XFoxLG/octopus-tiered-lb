@@ -432,7 +432,8 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 	// Completions (/v1/chat/completions)，失败再回退 Responses API
 	// (/v1/responses)。这与 relay 主流程的 outboundAttemptTypes 一致，
 	// 避免 type=1 渠道在只支持 chat completions 的上游上探测失败（issue #187）。
-	adapterTypes := outbound.ResolveAttemptTypes(channel.Type, probeRequest, "")
+	// 渠道级协议覆盖与主流程同规则：覆盖非空时禁用回退，探测与转发一致。
+	adapterTypes := outbound.ResolveAttemptTypesForChannel(channel.Type, probeRequest, "", channel.OutboundFormatOverride)
 
 	startTime := time.Now()
 	var logAttempts []appmodel.ChannelAttempt

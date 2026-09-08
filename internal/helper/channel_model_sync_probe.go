@@ -77,7 +77,7 @@ func TestChannelModelSync(
 	if err != nil {
 		return nil, err
 	}
-	adapterTypes := outbound.ResolveAttemptTypes(channel.Type, probeRequest, "")
+	adapterTypes := outbound.ResolveAttemptTypesForChannel(channel.Type, probeRequest, "", channel.OutboundFormatOverride)
 	if len(adapterTypes) == 0 {
 		return nil, fmt.Errorf("no available adapter for channel type: %d", channel.Type)
 	}
