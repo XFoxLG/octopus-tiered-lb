@@ -571,16 +571,8 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 		}
 	}
 
-	if logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
+	if _, logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
 		log.Warnf("failed to save test log: %v", logErr)
-	}
-
-	// 把每次尝试落表，使测试失败渠道可按 channel_id 检索（与正常日志一致）。
-	// relayLog.ID 已由 RelayLogAdd 分配。
-	if len(attempts) > 0 {
-		if attemptsErr := relaylog.RelayLogAttemptsAdd(ctx, relayLog.ID, attempts, relayLog.Time); attemptsErr != nil {
-			log.Warnf("failed to save test log attempts: %v", attemptsErr)
-		}
 	}
 }
 

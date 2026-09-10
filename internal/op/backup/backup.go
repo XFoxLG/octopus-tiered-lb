@@ -1,19 +1,25 @@
 package backup
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-const dbDumpVersion = 1
+const dbDumpVersion = 2
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
 const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（避免 SQLite 参数限制）
@@ -107,6 +113,9 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 			if err := logConn.WithContext(ctx).Order("id DESC").Limit(maxRelayLogsExport).Find(&d.RelayLogs).Error; err != nil {
 				return nil, fmt.Errorf("export relay_logs: %w", err)
 			}
+			if err := exportRelayLogFamily(ctx, logConn, d); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -116,6 +125,271 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	}
 
 	return d, nil
+}
+
+func exportRelayLogFamily(ctx context.Context, logConnection *gorm.DB, dump *model.DBDump) error {
+	if logConnection == nil || dump == nil || len(dump.RelayLogs) == 0 {
+		return nil
+	}
+	digestSet := make(map[string]struct{})
+	for offset := 0; offset < len(dump.RelayLogs); offset += batchInsertSize {
+		end := offset + batchInsertSize
+		if end > len(dump.RelayLogs) {
+			end = len(dump.RelayLogs)
+		}
+		relayLogIDs := make([]int64, 0, end-offset)
+		for relayLogIndex := offset; relayLogIndex < end; relayLogIndex++ {
+			relayLogIDs = append(relayLogIDs, dump.RelayLogs[relayLogIndex].ID)
+		}
+		var attempts []model.RelayLogAttempt
+		if err := logConnection.WithContext(ctx).
+			Where("relay_log_id IN ?", relayLogIDs).
+			Order("relay_log_id ASC, attempt_num ASC, id ASC").
+			Find(&attempts).Error; err != nil {
+			return fmt.Errorf("export relay_log_attempts: %w", err)
+		}
+		dump.RelayLogAttempts = append(dump.RelayLogAttempts, attempts...)
+
+		var contentRefs []model.RelayLogContentRef
+		if err := logConnection.WithContext(ctx).
+			Where("relay_log_id IN ?", relayLogIDs).
+			Order("relay_log_id ASC, attempt_num ASC, boundary ASC, slot ASC, id ASC").
+			Find(&contentRefs).Error; err != nil {
+			return fmt.Errorf("export relay_log_content_refs: %w", err)
+		}
+		for _, contentRef := range contentRefs {
+			if contentRef.BlobDigest != "" {
+				digestSet[contentRef.BlobDigest] = struct{}{}
+			}
+		}
+		dump.RelayLogContentRefs = append(dump.RelayLogContentRefs, contentRefs...)
+	}
+
+	digests := make([]string, 0, len(digestSet))
+	for digest := range digestSet {
+		digests = append(digests, digest)
+	}
+	for offset := 0; offset < len(digests); offset += batchInsertSize {
+		end := offset + batchInsertSize
+		if end > len(digests) {
+			end = len(digests)
+		}
+		var blobs []model.RelayLogContentBlob
+		if err := logConnection.WithContext(ctx).
+			Where("digest IN ?", digests[offset:end]).
+			Find(&blobs).Error; err != nil {
+			return fmt.Errorf("export relay_log_content_blobs: %w", err)
+		}
+		for _, blob := range blobs {
+			dump.RelayLogContentBlobs = append(dump.RelayLogContentBlobs, model.RelayLogContentBlobDump{
+				Digest:       blob.Digest,
+				Encoding:     blob.Encoding,
+				OriginalSize: blob.OriginalSize,
+				StoredSize:   blob.StoredSize,
+				Payload:      append([]byte(nil), blob.Payload...),
+				CreatedAt:    blob.CreatedAt,
+			})
+		}
+	}
+	return nil
+}
+
+func decodeRelayLogBackupBlob(blob model.RelayLogContentBlobDump) ([]byte, error) {
+	if blob.StoredSize != int64(len(blob.Payload)) {
+		return nil, fmt.Errorf("blob %s stored size is %d, payload has %d bytes", blob.Digest, blob.StoredSize, len(blob.Payload))
+	}
+	var decoded []byte
+	switch blob.Encoding {
+	case "", "identity":
+		decoded = append([]byte(nil), blob.Payload...)
+	case "gzip":
+		reader, err := gzip.NewReader(bytes.NewReader(blob.Payload))
+		if err != nil {
+			return nil, fmt.Errorf("blob %s gzip header: %w", blob.Digest, err)
+		}
+		decoded, err = io.ReadAll(reader)
+		closeErr := reader.Close()
+		if err != nil {
+			return nil, fmt.Errorf("blob %s gzip payload: %w", blob.Digest, err)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("blob %s gzip close: %w", blob.Digest, closeErr)
+		}
+	default:
+		return nil, fmt.Errorf("blob %s has unsupported encoding %q", blob.Digest, blob.Encoding)
+	}
+	if blob.OriginalSize != int64(len(decoded)) {
+		return nil, fmt.Errorf("blob %s original size is %d, decoded payload has %d bytes", blob.Digest, blob.OriginalSize, len(decoded))
+	}
+	digestBytes := sha256.Sum256(decoded)
+	if actualDigest := hex.EncodeToString(digestBytes[:]); actualDigest != blob.Digest {
+		return nil, fmt.Errorf("blob digest mismatch: expected %s, got %s", blob.Digest, actualDigest)
+	}
+	return decoded, nil
+}
+
+func relayLogBackupBlobs(dump *model.DBDump) ([]model.RelayLogContentBlob, map[string]struct{}, error) {
+	if dump == nil || len(dump.RelayLogContentBlobs) == 0 {
+		return nil, nil, nil
+	}
+	blobs := make([]model.RelayLogContentBlob, 0, len(dump.RelayLogContentBlobs))
+	digests := make(map[string]struct{}, len(dump.RelayLogContentBlobs))
+	for _, dumpBlob := range dump.RelayLogContentBlobs {
+		if strings.TrimSpace(dumpBlob.Digest) == "" {
+			return nil, nil, fmt.Errorf("relay log content blob has an empty digest")
+		}
+		if _, duplicate := digests[dumpBlob.Digest]; duplicate {
+			return nil, nil, fmt.Errorf("relay log content blob %s is duplicated", dumpBlob.Digest)
+		}
+		if _, err := decodeRelayLogBackupBlob(dumpBlob); err != nil {
+			return nil, nil, err
+		}
+		digests[dumpBlob.Digest] = struct{}{}
+		blobs = append(blobs, model.RelayLogContentBlob{
+			Digest:       dumpBlob.Digest,
+			Encoding:     dumpBlob.Encoding,
+			OriginalSize: dumpBlob.OriginalSize,
+			StoredSize:   dumpBlob.StoredSize,
+			Payload:      append([]byte(nil), dumpBlob.Payload...),
+			CreatedAt:    dumpBlob.CreatedAt,
+		})
+	}
+	return blobs, digests, nil
+}
+
+func deriveRelayLogAttemptRows(relayLogs []model.RelayLog) []model.RelayLogAttempt {
+	rows := make([]model.RelayLogAttempt, 0)
+	for _, relayLog := range relayLogs {
+		for _, attempt := range relayLog.Attempts {
+			if attempt.ChannelID == 0 {
+				continue
+			}
+			rows = append(rows, model.RelayLogAttempt{
+				RelayLogID:       relayLog.ID,
+				AttemptNum:       attempt.AttemptNum,
+				ChannelID:        attempt.ChannelID,
+				ChannelKeyID:     attempt.ChannelKeyID,
+				ChannelName:      attempt.ChannelName,
+				ModelName:        attempt.ModelName,
+				AdapterType:      attempt.AdapterType,
+				Status:           string(attempt.Status),
+				HTTPStatus:       attempt.HTTPStatus,
+				RequestPrepared:  attempt.RequestPrepared,
+				SendStarted:      attempt.SendStarted,
+				RequestBytes:     attempt.RequestBytes,
+				RequestComplete:  attempt.RequestComplete,
+				ResponseReceived: attempt.ResponseReceived,
+				ResponseBytes:    attempt.ResponseBytes,
+				ResponseComplete: attempt.ResponseComplete,
+				Duration:         attempt.Duration,
+				Sticky:           attempt.Sticky,
+				Msg:              attempt.Msg,
+				Time:             relayLog.Time,
+			})
+		}
+	}
+	return rows
+}
+
+func importRelayLogFamily(cfg *importConfig, dump *model.DBDump) error {
+	if cfg == nil || cfg.conn == nil || dump == nil || (!dump.IncludeLogs && !cfg.isFull) {
+		return nil
+	}
+
+	blobs, blobDigests, err := relayLogBackupBlobs(dump)
+	if err != nil {
+		return fmt.Errorf("validate relay log content blobs: %w", err)
+	}
+
+	acceptedRelayLogs := append([]model.RelayLog(nil), dump.RelayLogs...)
+	acceptedLogIDs := make(map[int64]struct{}, len(acceptedRelayLogs))
+	if !cfg.isFull && len(acceptedRelayLogs) > 0 {
+		candidateIDs := make([]int64, 0, len(acceptedRelayLogs))
+		for _, relayLog := range acceptedRelayLogs {
+			candidateIDs = append(candidateIDs, relayLog.ID)
+		}
+		var existingIDs []int64
+		if err := cfg.conn.Model(&model.RelayLog{}).Where("id IN ?", candidateIDs).Pluck("id", &existingIDs).Error; err != nil {
+			return fmt.Errorf("query existing relay logs: %w", err)
+		}
+		existingSet := make(map[int64]struct{}, len(existingIDs))
+		for _, relayLogID := range existingIDs {
+			existingSet[relayLogID] = struct{}{}
+		}
+		filtered := acceptedRelayLogs[:0]
+		for _, relayLog := range acceptedRelayLogs {
+			if _, exists := existingSet[relayLog.ID]; !exists {
+				filtered = append(filtered, relayLog)
+			}
+		}
+		acceptedRelayLogs = filtered
+	}
+	for _, relayLog := range acceptedRelayLogs {
+		if relayLog.ID == 0 {
+			return fmt.Errorf("relay log backup contains zero parent ID")
+		}
+		acceptedLogIDs[relayLog.ID] = struct{}{}
+	}
+
+	contentRefs := make([]model.RelayLogContentRef, 0, len(dump.RelayLogContentRefs))
+	requiredBlobDigests := make(map[string]struct{})
+	for _, contentRef := range dump.RelayLogContentRefs {
+		if _, accepted := acceptedLogIDs[contentRef.RelayLogID]; !accepted {
+			continue
+		}
+		if contentRef.State == model.RelayLogContentStateReady {
+			if contentRef.BlobDigest == "" {
+				return fmt.Errorf("ready relay log content ref for log %d has no blob digest", contentRef.RelayLogID)
+			}
+			if _, exists := blobDigests[contentRef.BlobDigest]; !exists {
+				return fmt.Errorf("relay log content ref for log %d points to missing blob %s", contentRef.RelayLogID, contentRef.BlobDigest)
+			}
+			requiredBlobDigests[contentRef.BlobDigest] = struct{}{}
+		}
+		contentRef.ID = 0
+		contentRefs = append(contentRefs, contentRef)
+	}
+	filteredBlobs := make([]model.RelayLogContentBlob, 0, len(requiredBlobDigests))
+	for _, blob := range blobs {
+		if _, required := requiredBlobDigests[blob.Digest]; required {
+			filteredBlobs = append(filteredBlobs, blob)
+		}
+	}
+	blobs = filteredBlobs
+
+	attemptRows := dump.RelayLogAttempts
+	if len(attemptRows) == 0 {
+		attemptRows = deriveRelayLogAttemptRows(acceptedRelayLogs)
+	}
+	filteredAttempts := make([]model.RelayLogAttempt, 0, len(attemptRows))
+	for _, attempt := range attemptRows {
+		if _, accepted := acceptedLogIDs[attempt.RelayLogID]; !accepted {
+			continue
+		}
+		attempt.ID = 0
+		filteredAttempts = append(filteredAttempts, attempt)
+	}
+
+	if cfg.isFull {
+		for _, table := range []string{"relay_log_content_refs", "relay_log_attempts", "relay_log_content_blobs", "relay_logs"} {
+			if err := cfg.deleteAll(table); err != nil {
+				return fmt.Errorf("full import: delete %s: %w", table, err)
+			}
+		}
+	}
+	if err := cfg.doNothing("relay_logs", &acceptedRelayLogs, len(acceptedRelayLogs)); err != nil {
+		return err
+	}
+	if err := cfg.doNothing("relay_log_content_blobs", &blobs, len(blobs)); err != nil {
+		return err
+	}
+	if err := cfg.doNothing("relay_log_attempts", &filteredAttempts, len(filteredAttempts)); err != nil {
+		return err
+	}
+	if err := cfg.doNothing("relay_log_content_refs", &contentRefs, len(contentRefs)); err != nil {
+		return err
+	}
+	return nil
 }
 
 type importConfig struct {
@@ -286,6 +560,11 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	// 迁移路径（target 为另开的库）不走这里，relay_logs 跟随 target 一起迁移，
 	// 行为与旧版一致。
 	logToSeparateDB := target == db.GetDB() && db.IsLogDBSeparate()
+	maintenanceSucceeded := false
+	if target == db.GetDB() && (dump.IncludeLogs || isFull) {
+		finishMaintenance := relaylog.BeginMaintenance(isFull)
+		defer func() { finishMaintenance(maintenanceSucceeded) }()
+	}
 
 	// 跨库迁移导入时，源库（尤其 SQLite，历史上 foreign_keys 默认 OFF）可能
 	// 残留孤立的子表行：父行已删但子行（stats_channel / channel_keys / site_*
@@ -316,7 +595,7 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			// locked out admin). The users table is auth infrastructure, not
 			// application data, and must survive a restore.
 			deleteOrder := []string{
-				"relay_logs", "stats_api_keys", "stats_channels", "stats_models",
+				"stats_api_keys", "stats_channels", "stats_models",
 				"stats_hourlies", "stats_dailies", "stats_totals",
 				"group_items", "channel_groups", "groups",
 				"notifications",
@@ -439,11 +718,10 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			}
 		}
 
-		// Relay logs
-		// 独立日志库 live 模式下，relay_logs 在主事务外单独写入日志库（见下方），
-		// 此处跳过；其余情况（共用主库、迁移）仍内联在主事务中，行为不变。
-		if dump.IncludeLogs && !logToSeparateDB {
-			if err := cfg.doNothing("relay_logs", &dump.RelayLogs, len(dump.RelayLogs)); err != nil {
+		// Relay logs, attempts, references, and blobs are restored as one family.
+		// In separate-log-DB live mode this runs in the dedicated transaction below.
+		if (dump.IncludeLogs || isFull) && !logToSeparateDB {
+			if err := importRelayLogFamily(cfg, dump); err != nil {
 				return err
 			}
 		}
@@ -468,18 +746,15 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	// 强制导入：无论「保留历史日志」开关是否开启，都把日志写入日志库。若日志库
 	// 此前被 CloseLogDB 断开（用户关闭了后台日志），先 ReopenLogDB 重连——导入
 	// 完成后日志库即处于开启（已连接）状态。
-	if logToSeparateDB && dump.IncludeLogs {
+	if logToSeparateDB && (dump.IncludeLogs || isFull) {
 		if err := db.ReopenLogDB(); err != nil {
 			return nil, fmt.Errorf("reopen log db before import: %w", err)
 		}
 		if logConn := db.GetLogDB(); logConn != nil {
-			logCfg := &importConfig{conn: logConn.WithContext(ctx), res: res, isFull: isFull, version: dump.Version}
-			if isFull {
-				if err := logCfg.deleteAll("relay_logs"); err != nil {
-					return nil, fmt.Errorf("full import: delete relay_logs (log db): %w", err)
-				}
-			}
-			if err := logCfg.doNothing("relay_logs", &dump.RelayLogs, len(dump.RelayLogs)); err != nil {
+			if err := logConn.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
+				logCfg := &importConfig{conn: transaction, res: res, isFull: isFull, version: dump.Version}
+				return importRelayLogFamily(logCfg, dump)
+			}); err != nil {
 				return nil, err
 			}
 		}
@@ -489,6 +764,7 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	for _, step := range res.Progress {
 		res.RowsAffected[step.Table] += step.RowsAffected
 	}
+	maintenanceSucceeded = true
 	return res, nil
 }
 

@@ -1,5 +1,5 @@
 import type { InfiniteData } from '@tanstack/react-query';
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../client';
 import { logger } from '@/lib/logger';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -21,6 +21,14 @@ export interface ChannelAttempt {
     adapter_type?: string;   // 适配器类型: response, chat, anthropic, gemini 等
     attempt_num: number;    // 第几次尝试
     status: AttemptStatus;
+    http_status?: number;
+    request_prepared?: boolean;
+    send_started?: boolean;
+    request_bytes?: number;
+    request_complete?: boolean;
+    response_received?: boolean;
+    response_bytes?: number;
+    response_complete?: boolean;
     duration: number;       // 耗时(毫秒)
     sticky?: boolean;
     msg?: string;
@@ -31,11 +39,15 @@ export interface ChannelAttempt {
  */
 export interface RelayLog {
     id: number;
+    trace_id?: string;
     time: number;                // 时间戳
     request_model_name: string;  // 请求模型名称
     request_api_key_id?: number;   // 请求使用的 API Key ID
     request_api_key_name?: string; // 请求使用的 API Key 名称
     client_ip?: string;          // 客户端 IP
+    reported_client_ip?: string;         // 展示轨来源 IP（转发头解析，仅展示）
+    reported_client_ip_source?: string;  // 来源头标注: cf-connecting-ip | x-forwarded-for | none
+    user_agent?: string;         // 客户端自报 User-Agent（详情页展示来源）
     endpoint_type?: string;      // 命中的端点分类
     channel: number;             // 实际使用的渠道ID
     channel_name: string;        // 渠道名称
@@ -51,6 +63,16 @@ export interface RelayLog {
     use_time: number;            // 总用时(毫秒)
     cost: number;                // 消耗费用
     billing_window?: string;     // 计费窗口（DeepSeek 峰谷: peak/offpeak，其余为空）
+    http_status?: number;
+    generation_outcome?: 'success' | 'failed' | 'not_started' | 'cache_hit' | 'session_replay' | 'unknown';
+    upstream_outcome?: 'success' | 'failed' | 'none' | 'unknown';
+    persistence_state?: 'pending' | 'ready' | 'unavailable';
+    client_delivery_state?: 'writer_accepted' | 'partial' | 'not_started' | 'unknown';
+    termination_cause?: string;
+    provider_termination_reason?: string;
+    client_write_bytes?: number;
+    client_write_complete?: boolean;
+    content_state?: RelayLogContentState;
     error: string;               // 错误信息
     attempts?: ChannelAttempt[]; // 所有尝试记录
     total_attempts?: number;     // 总尝试次数
@@ -60,9 +82,53 @@ export interface RelayLog {
 /**
  * 日志详情（包含 request_content 和 response_content）
  */
+export type RelayLogContentState = 'pending' | 'ready' | 'expired' | 'unavailable' | 'disabled';
+
+export type RelayLogBoundary = 'client_ingress' | 'upstream_request' | 'upstream_response' | 'client_egress';
+
+export interface RelayLogContentRef {
+    id: number;
+    relay_log_id: number;
+    attempt_num: number;
+    boundary: RelayLogBoundary;
+    slot: number;
+    kind: 'body' | 'attachment' | 'http_metadata' | 'normalized_response' | string;
+    protocol?: string;
+    field_name?: string;
+    file_name?: string;
+    content_type?: string;
+    http_status?: number;
+    state: RelayLogContentState;
+    complete: boolean;
+    captured_bytes: number;
+    digest?: string;
+    error?: string;
+    created_at: number;
+    text?: string;
+}
+
 export interface RelayLogDetail extends RelayLog {
-    request_content: string;     // 请求内容
-    response_content: string;    // 响应内容
+    request_content?: string;
+    response_content?: string;
+    client_write_error?: string;
+    content_unavailable_error?: string;
+    contents?: RelayLogContentRef[];
+}
+
+export interface RelayLogHealth {
+    pending_records: number;
+    pending_content_bytes: number;
+    oldest_pending_age_seconds: number;
+    dropped_records: number;
+    dropped_notifications: number;
+    unavailable_content_bundles: number;
+    persistence_failures: number;
+    last_persistence_failure_at?: number;
+    last_persistence_error?: string;
+    content_logical_bytes: number;
+    content_physical_bytes?: number;
+    content_physical_available: boolean;
+    content_budget_bytes: number;
 }
 
 /**
@@ -152,6 +218,48 @@ export function useClearLogContents() {
         },
         onError: (error) => {
             logger.error('日志内容清空失败:', error);
+        },
+    });
+}
+
+export function useLogHealth() {
+    return useQuery({
+        queryKey: ['logs', 'health'],
+        queryFn: () => apiClient.get<RelayLogHealth>('/api/v1/log/health'),
+        refetchInterval: 15_000,
+    });
+}
+
+export function useDownloadRelayLogContent() {
+    return useMutation({
+        mutationFn: async (content: RelayLogContentRef) => {
+            const token = useAuthStore.getState().token;
+            if (!token) throw new Error('Not authenticated');
+
+            const response = await fetch(`${API_BASE_URL}/api/v1/log/content?ref_id=${content.id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!response.ok) {
+                const responseText = await response.text();
+                throw new Error(responseText || `Content download failed: ${response.status}`);
+            }
+
+            const blob = await response.blob();
+            const objectURL = URL.createObjectURL(blob);
+            const fallbackName = `relay-log-${content.relay_log_id}-${content.boundary}-${content.id}`;
+            try {
+                const anchor = document.createElement('a');
+                anchor.href = objectURL;
+                anchor.download = content.file_name || fallbackName;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+            } finally {
+                URL.revokeObjectURL(objectURL);
+            }
+        },
+        onError: (error) => {
+            logger.error('下载日志内容失败:', error);
         },
     });
 }

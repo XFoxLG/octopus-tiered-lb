@@ -39,32 +39,71 @@ export interface GroupHealthSnapshot {
     probe_mode: string;
     request_model: string;
     started_at: string;
-    finished_at?: string;
+    finished_at?: string | null;
     duration_ms: number;
     message: string;
     attempts?: GroupHealthAttempt[];
 }
 
+export interface GroupHealthGroupView {
+    group_id: number;
+    group_name: string;
+    group_mode: GroupMode;
+    latest?: GroupHealthSnapshot | null;
+}
+
+export interface GroupHealthRunAccepted {
+    accepted: true;
+    group_id: number;
+}
+
+export function groupHealthLatestQueryKey(groupId: number | undefined) {
+    return ['group-health-latest', groupId] as const;
+}
+
+function fetchGroupHealthLatest(groupId: number) {
+    return apiClient.get<GroupHealthGroupView>(`/api/v1/group/health/latest/${groupId}`);
+}
+
 export function useRunGroupHealth() {
     const queryClient = useQueryClient();
     return useMutation({
+        onMutate: async ({ groupId }: { groupId: number; probeMode?: 'standard' | 'full' }) => {
+            // Capture the server's current snapshot, even if the row was collapsed.
+            // A POST acknowledgement must not turn an older result into a new success.
+            const view = await queryClient.fetchQuery({
+                queryKey: groupHealthLatestQueryKey(groupId),
+                queryFn: () => fetchGroupHealthLatest(groupId),
+                staleTime: 0,
+            });
+            return { previousSnapshotId: view.latest?.id ?? 0 };
+        },
         mutationFn: async ({ groupId, probeMode }: { groupId: number; probeMode?: 'standard' | 'full' }) => {
-            return apiClient.post<GroupHealthSnapshot>(`/api/v1/group/health/run/${groupId}`, {
+            return apiClient.post<GroupHealthRunAccepted>(`/api/v1/group/health/run/${groupId}`, {
                 probe_mode: probeMode ?? 'standard',
             });
         },
-        onSuccess: () => {
+        onSettled: (_result, _error, { groupId }) => {
+            void queryClient.invalidateQueries({ queryKey: groupHealthLatestQueryKey(groupId) });
             void queryClient.invalidateQueries({ queryKey: ['analytics', 'group-health'] });
         },
     });
 }
 
-export function useGroupHealthLatest(groupId: number | undefined, enabled = true) {
+export function useGroupHealthLatest(groupId: number | undefined, enabled = true, afterSnapshotId?: number) {
     return useQuery({
-        queryKey: ['group-health-latest', groupId],
-        queryFn: async () => apiClient.get<GroupHealthSnapshot>(`/api/v1/group/health/latest/${groupId}`),
-        enabled: enabled && typeof groupId === 'number' && groupId > 0,
-        refetchInterval: REFETCH_INTERVAL_DEFAULT,
+        queryKey: groupHealthLatestQueryKey(groupId),
+        queryFn: () => fetchGroupHealthLatest(groupId!),
+        enabled: (query) => {
+            const snapshot = query.state.data?.latest;
+            const awaitingSnapshot = afterSnapshotId !== undefined && (!snapshot || snapshot.id <= afterSnapshotId);
+            return typeof groupId === 'number' && groupId > 0 && (enabled || awaitingSnapshot || snapshot?.status === 'running');
+        },
+        refetchInterval: (query) => {
+            const snapshot = query.state.data?.latest;
+            const awaitingSnapshot = afterSnapshotId !== undefined && (!snapshot || snapshot.id <= afterSnapshotId);
+            return awaitingSnapshot || snapshot?.status === 'running' ? 1_000 : REFETCH_INTERVAL_DEFAULT;
+        },
     });
 }
 

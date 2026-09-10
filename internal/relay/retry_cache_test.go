@@ -7,7 +7,6 @@ import (
 	"time"
 
 	dbmodel "github.com/lingyuins/octopus/internal/model"
-	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
 func TestRetryRequestCache_ReusesLookupInput(t *testing.T) {
@@ -79,13 +78,28 @@ func TestFailureHintCacheExpires(t *testing.T) {
 	}
 }
 
-func TestRequestSingleflightKey_BypassesToolsAndStream(t *testing.T) {
-	stream := true
-	if _, ok := requestSingleflightKey(1, "chat", "gpt-4.1", "hello", &transmodel.InternalLLMRequest{Stream: &stream}); ok {
-		t.Fatal("expected stream request to bypass singleflight")
+func TestRetryRequestCache_DoesNotShareEmbeddingErrorsAcrossRequests(t *testing.T) {
+	firstRequestCache := newRetryRequestCache()
+	secondRequestCache := newRetryRequestCache()
+	firstFailure := errors.New("first request embedding failed")
+	computeCalls := 0
+	compute := func() ([]float64, error) {
+		computeCalls++
+		if computeCalls == 1 {
+			return nil, firstFailure
+		}
+		return []float64{1, 2, 3}, nil
 	}
-	if _, ok := requestSingleflightKey(1, "chat", "gpt-4.1", "hello", &transmodel.InternalLLMRequest{Tools: []transmodel.Tool{{Type: "function"}}}); ok {
-		t.Fatal("expected tool request to bypass singleflight")
+
+	for lookupIndex := 0; lookupIndex < 2; lookupIndex++ {
+		_, err, fromCache := firstRequestCache.getEmbedding("same-input", compute)
+		if !errors.Is(err, firstFailure) || fromCache != (lookupIndex > 0) {
+			t.Fatalf("first request lookup %d = (%v, cached=%t)", lookupIndex, err, fromCache)
+		}
+	}
+	embedding, err, fromCache := secondRequestCache.getEmbedding("same-input", compute)
+	if err != nil || fromCache || len(embedding) != 3 || computeCalls != 2 {
+		t.Fatalf("independent request = (%v, %v, cached=%t), compute calls=%d", embedding, err, fromCache, computeCalls)
 	}
 }
 

@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"crypto/sha256"
 
 	"errors"
 	"fmt"
@@ -80,11 +81,32 @@ func maybeServeSemanticCacheHit(c *gin.Context, req *relayRequest, endpointFamil
 	if c == nil || req == nil || req.internalRequest == nil {
 		return false, nil, nil
 	}
+	if !canReuseSemanticAnswer(req.internalRequest, endpointFamily) ||
+		strings.Contains(strings.ToLower(c.GetHeader("Cache-Control")), "no-cache") ||
+		strings.Contains(strings.ToLower(c.GetHeader("Cache-Control")), "no-store") {
+		semantic_cache.RecordBypass()
+		return false, nil, nil
+	}
+	if _, enabled := semanticCacheRuntimeConfig(); !enabled {
+		return false, nil, nil
+	}
 
 	namespace, text, ok, _ := getSemanticCacheLookupInput(req, endpointFamily)
 	if !ok {
 		return false, nil, nil
 	}
+	// Similarity may vary only the single question, never its sampling parameters
+	// or current group policy. Conversation and protocol-bearing inputs bypass.
+	parameters := *req.internalRequest
+	parameters.Messages = nil
+	identity, err := jsonAPI.Marshal(struct {
+		Parameters *transmodel.InternalLLMRequest `json:"parameters"`
+		Group      *dbmodel.Group                 `json:"group"`
+	}{Parameters: &parameters, Group: req.group})
+	if err != nil {
+		return false, nil, nil
+	}
+	namespace = fmt.Sprintf("%s:%x", namespace, sha256.Sum256(identity))
 
 	cfg, ok := semanticCacheRuntimeConfig()
 	if !ok {
@@ -126,6 +148,25 @@ func maybeServeSemanticCacheHit(c *gin.Context, req *relayRequest, endpointFamil
 	req.internalRequest.TransformerMetadata[semanticCacheTextMetadataKey] = text
 
 	return false, nil, nil
+}
+
+func canReuseSemanticAnswer(request *transmodel.InternalLLMRequest, endpointFamily string) bool {
+	if request == nil || endpointFamily != "chat" ||
+		(request.Stream != nil && *request.Stream) || request.ConversationID != "" ||
+		len(request.Messages) != 1 || request.Messages[0].Role != "user" ||
+		request.Temperature == nil || *request.Temperature != 0 ||
+		len(request.Tools) != 0 || request.ToolChoice != nil ||
+		len(request.Messages[0].ToolCalls) != 0 ||
+		request.ResponseFormat != nil || len(request.ExtraBody) != 0 ||
+		request.Audio != nil || len(request.Modalities) != 0 {
+		return false
+	}
+	for _, part := range request.Messages[0].Content.MultipleContent {
+		if part.Type != "text" || part.Text == nil {
+			return false
+		}
+	}
+	return true
 }
 
 func serveStreamingCacheHit(c *gin.Context, payload []byte, model string) error {
@@ -244,7 +285,7 @@ func sendSSEChunk(c *gin.Context, data []byte) error {
 }
 
 func storeSemanticCacheResponse(ctx context.Context, req *transmodel.InternalLLMRequest, responseJSON []byte) {
-	if req == nil || len(responseJSON) == 0 || !jsonAPI.Valid(responseJSON) {
+	if !canReuseSemanticAnswer(req, "chat") || len(responseJSON) == 0 || !jsonAPI.Valid(responseJSON) {
 		return
 	}
 

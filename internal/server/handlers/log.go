@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"github.com/lingyuins/octopus/internal/utils/json"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,6 +29,14 @@ func init() {
 		AddRoute(
 			router.NewRoute("/detail", http.MethodGet).
 				Handle(logDetail),
+		).
+		AddRoute(
+			router.NewRoute("/content", http.MethodGet).
+				Handle(logContent),
+		).
+		AddRoute(
+			router.NewRoute("/health", http.MethodGet).
+				Handle(logHealth),
 		).
 		AddRoute(
 			router.NewRoute("/clear", http.MethodDelete).
@@ -181,6 +190,40 @@ func logDetail(c *gin.Context) {
 	resp.Success(c, log)
 }
 
+func logContent(c *gin.Context) {
+	referenceID, err := strconv.ParseInt(c.Query("ref_id"), 10, 64)
+	if err != nil || referenceID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid ref_id")
+		return
+	}
+	contentRef, payload, err := relaylog.RelayLogContentGet(c.Request.Context(), referenceID)
+	if err != nil {
+		resp.InternalError(c)
+		return
+	}
+	if contentRef == nil {
+		resp.Error(c, http.StatusNotFound, "log content not found")
+		return
+	}
+	if payload == nil {
+		resp.Error(c, http.StatusGone, "log content is no longer available")
+		return
+	}
+
+	contentType := strings.TrimSpace(contentRef.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if contentRef.FileName != "" {
+		c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": contentRef.FileName}))
+	}
+	c.Data(http.StatusOK, contentType, payload)
+}
+
+func logHealth(c *gin.Context) {
+	resp.Success(c, relaylog.RelayLogHealthSnapshot())
+}
+
 func clearLog(c *gin.Context) {
 	if err := relaylog.RelayLogClear(c.Request.Context()); err != nil {
 		resp.InternalError(c)
@@ -232,9 +275,9 @@ func streamLog(c *gin.Context) {
 			if relaylog.RelayLogStreamExcluded(log.RequestModelName) {
 				continue
 			}
-			// 仅推送列表所需的轻量字段，剥离 request_content / response_content
-			// 大字段（详情按需单独拉取），避免高 QPS 下用大 payload 拖慢前端。
-			data, err := json.Marshal(log.ToListItem())
+			// relaylog 已在入队前转换为轻量列表项，正文和附件不会进入
+			// SSE 广播队列，避免慢订阅者长期持有大 payload。
+			data, err := json.Marshal(log)
 			if err != nil {
 				continue
 			}

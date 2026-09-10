@@ -24,6 +24,8 @@ export const SettingKey = {
     StreamSessionReplayEnabled: 'stream_session_replay_enabled',
     RelayLogKeepPeriod: 'relay_log_keep_period',
     RelayLogKeepCount: 'relay_log_keep_count',
+    RelayLogContentKeepSizeMB: 'relay_log_content_keep_size_mb',
+    RelayLogContentKeepPeriod: 'relay_log_content_keep_period',
     CORSAllowOrigins: 'cors_allow_origins',
     RelayRetryCount: 'relay_retry_count',
     RelayRouteRetries: 'relay_route_retries',
@@ -151,7 +153,7 @@ export function useSetSetting() {
             return apiClient.post<Setting>('/api/v1/setting/set', data);
         },
         onSuccess: (data) => {
-            logger.log('Setting 设置成功:', data);
+            logger.log('Setting saved:', data.key);
             queryClient.invalidateQueries({ queryKey: ['settings', 'list'] });
         },
         onError: (error) => {
@@ -179,25 +181,6 @@ export interface DBImportResult {
 export interface DBExportOptions {
     include_logs?: boolean;
     include_stats?: boolean;
-}
-
-export interface DatabaseMigrationRequest {
-    type: 'sqlite' | 'mysql' | 'postgres' | 'postgresql';
-    path: string;
-    include_logs?: boolean;
-    include_stats?: boolean;
-}
-
-export interface DatabaseMigrationResult {
-    type: string;
-    path: string;
-    include_logs: boolean;
-    include_stats: boolean;
-    restart_needed: boolean;
-    // 迁移成功后已删除的旧 SQLite 文件路径（issue #118）。
-    // 仅当源库为 SQLite、目标库为非 SQLite 时非空。
-    cleaned_files?: string[];
-    import_result: DBImportResult;
 }
 
 type ApiResponse<T> = {
@@ -331,28 +314,6 @@ export function useImportDB() {
     });
 }
 
-export function useTestDatabaseConnection() {
-    return useMutation({
-        mutationFn: async (data: DatabaseMigrationRequest) => {
-            return apiClient.post<boolean>('/api/v1/setting/database/test', data);
-        },
-        onError: (error) => {
-            logger.error('测试数据库连接失败:', error);
-        },
-    });
-}
-
-export function useMigrateDatabase() {
-    return useMutation({
-        mutationFn: async (data: DatabaseMigrationRequest) => {
-            return apiClient.post<DatabaseMigrationResult>('/api/v1/setting/database/migrate', data);
-        },
-        onError: (error) => {
-            logger.error('迁移数据库失败:', error);
-        },
-    });
-}
-
 /**
  * 缓存后端配置（Redis 可选，issue #123）
  */
@@ -364,11 +325,19 @@ export interface CacheRedisConfig {
     pool_size: number;
     dial_timeout: string;
     read_timeout: string;
+    tls: boolean;
+    ca_file: string;
 }
 
 export interface CacheConfig {
     type: '' | 'redis';
     redis: CacheRedisConfig;
+    config_source: 'file' | 'environment' | 'deployment';
+    runtime_backend: 'memory' | 'redis';
+    runtime_healthy: boolean;
+    runtime_tls: boolean;
+    restart_needed: boolean;
+    reconnecting: boolean;
 }
 
 export interface CacheConfigRequest {

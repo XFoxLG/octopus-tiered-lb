@@ -28,8 +28,9 @@ var (
 const minInitialAdminPasswordLength = 12
 
 var (
-	ErrBootstrapAlreadySetUp = errors.New("initial admin account is already set up")
-	ErrBootstrapCredentials  = errors.New("invalid bootstrap credentials")
+	ErrBootstrapAlreadySetUp  = errors.New("initial admin account is already set up")
+	ErrBootstrapCredentials   = errors.New("invalid bootstrap credentials")
+	ErrPrimaryAccountNotAdmin = errors.New("the primary console account is not an existing administrator")
 )
 
 // GetAdminCache returns the cached admin user (for backward compatibility).
@@ -70,54 +71,23 @@ func BootstrapStatus() (bool, string, error) {
 	return false, "initial admin account is not set up yet", nil
 }
 
-// DeleteLegacyAdmin deletes the legacy admin user.
-func DeleteLegacyAdmin(targetUsername string) error {
-	if targetUsername == "admin" {
-		return nil
-	}
-
-	result := db.GetDB().Where("username = ?", "admin").Delete(&model.User{})
-	if result.Error != nil {
-		return fmt.Errorf("delete legacy admin user: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return nil
-	}
-
-	adminCacheMu.Lock()
-	if adminCache.Username == "admin" {
-		adminCache = model.User{}
-	}
-	adminCacheMu.Unlock()
-	return nil
-}
-
-func ValidateRole(role string) error {
-	if role != model.UserRoleAdmin && role != model.UserRoleEditor && role != model.UserRoleViewer {
-		return fmt.Errorf("invalid role: %s", role)
-	}
-	return nil
-}
-
 func Init() error {
-	if err := bootstrapFromEnv(); err != nil {
-		return err
-	}
-
-	adminCacheMu.Lock()
-	result := db.GetDB().First(&adminCache)
+	SetCache(model.User{})
+	var primaryUser model.User
+	// Keep the original upstream First() identity; never replace it using env
+	// credentials or promote a legacy viewer/editor during an upgrade.
+	result := db.GetDB().First(&primaryUser)
 	if result.Error == nil {
-		adminCacheMu.Unlock()
+		if primaryUser.Role != model.UserRoleAdmin {
+			return ErrPrimaryAccountNotAdmin
+		}
+		SetCache(primaryUser)
 		return nil
 	}
-	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		adminCacheMu.Unlock()
+	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return result.Error
 	}
-
-	adminCache = model.User{}
-	adminCacheMu.Unlock()
-	return nil
+	return bootstrapFromEnv()
 }
 
 func bootstrapFromEnv() error {
@@ -129,19 +99,6 @@ func bootstrapFromEnv() error {
 	}
 	if username == "" || password == "" {
 		return fmt.Errorf("both OCTOPUS_INITIAL_ADMIN_USERNAME and OCTOPUS_INITIAL_ADMIN_PASSWORD must be set together")
-	}
-
-	if err := DeleteLegacyAdmin(username); err != nil {
-		return err
-	}
-
-	if Ready() {
-		adminCacheMu.RLock()
-		match := adminCache.Username == username
-		adminCacheMu.RUnlock()
-		if match {
-			return nil
-		}
 	}
 
 	if err := BootstrapCreate(username, password); err != nil {
@@ -160,7 +117,7 @@ func bootstrapFromEnv() error {
 }
 
 func BootstrapCreate(username, password string) error {
-	if err := validateManagedCredentials(username, password); err != nil {
+	if err := validateCredentials(username, password); err != nil {
 		return err
 	}
 	username = strings.TrimSpace(username)
@@ -176,6 +133,7 @@ func BootstrapCreate(username, password string) error {
 	user := model.User{
 		Username: username,
 		Password: password,
+		Role:     model.UserRoleAdmin,
 	}
 	if err := user.HashPassword(); err != nil {
 		return err
@@ -189,7 +147,7 @@ func BootstrapCreate(username, password string) error {
 	return nil
 }
 
-func validateManagedCredentials(username, password string) error {
+func validateCredentials(username, password string) error {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return fmt.Errorf("%w: username is required", ErrBootstrapCredentials)
@@ -203,39 +161,6 @@ func validateManagedCredentials(username, password string) error {
 	return nil
 }
 
-func Create(req model.UserCreateRequest, ctx context.Context) error {
-	req.Username = strings.TrimSpace(req.Username)
-	if err := validateManagedCredentials(req.Username, req.Password); err != nil {
-		return err
-	}
-	if err := ValidateRole(req.Role); err != nil {
-		return err
-	}
-
-	var count int64
-	if err := db.GetDB().WithContext(ctx).Model(&model.User{}).
-		Where("username = ?", req.Username).
-		Count(&count).Error; err != nil {
-		return fmt.Errorf("failed to inspect existing users: %w", err)
-	}
-	if count > 0 {
-		return fmt.Errorf("username already exists")
-	}
-
-	user := model.User{
-		Username: req.Username,
-		Password: req.Password,
-		Role:     req.Role,
-	}
-	if err := user.HashPassword(); err != nil {
-		return err
-	}
-	if err := db.GetDB().WithContext(ctx).Create(&user).Error; err != nil {
-		return fmt.Errorf("failed to create user: %w", err)
-	}
-	return nil
-}
-
 func ChangePassword(userID uint, oldPassword, newPassword string) error {
 	user, err := GetByID(userID, context.Background())
 	if err != nil {
@@ -243,7 +168,7 @@ func ChangePassword(userID uint, oldPassword, newPassword string) error {
 	}
 	// 与创建/引导流程一致：修改密码同样要求满足强度策略（≥12 位等），
 	// 避免管理员把密码改成弱口令。
-	if err := validateManagedCredentials(user.Username, newPassword); err != nil {
+	if err := validateCredentials(user.Username, newPassword); err != nil {
 		return err
 	}
 	if err := user.ComparePassword(oldPassword); err != nil {
@@ -329,66 +254,30 @@ func GetCurrent() model.User {
 }
 
 func GetByID(id uint, ctx context.Context) (model.User, error) {
+	primaryUser := GetCurrent()
+	if primaryUser.ID == 0 || id != primaryUser.ID {
+		return model.User{}, gorm.ErrRecordNotFound
+	}
 	var user model.User
 	if err := db.GetDB().WithContext(ctx).First(&user, id).Error; err != nil {
 		return model.User{}, err
+	}
+	// Role is retained only for compatibility. Never turn an old token or
+	// Passkey for a restricted account into console administrator access.
+	if user.Role != model.UserRoleAdmin {
+		return model.User{}, gorm.ErrRecordNotFound
 	}
 	return user, nil
 }
 
 func GetByUsername(username string, ctx context.Context) (model.User, error) {
-	var user model.User
-	if err := db.GetDB().WithContext(ctx).
-		Where("username = ?", username).
-		First(&user).Error; err != nil {
+	primaryUser := GetCurrent()
+	user, err := GetByID(primaryUser.ID, ctx)
+	if err != nil {
 		return model.User{}, err
 	}
+	if username != user.Username {
+		return model.User{}, gorm.ErrRecordNotFound
+	}
 	return user, nil
-}
-
-func List(ctx context.Context) ([]model.User, error) {
-	var users []model.User
-	if err := db.GetDB().WithContext(ctx).Find(&users).Error; err != nil {
-		return nil, err
-	}
-	return users, nil
-}
-
-func UpdateRole(id uint, role string, ctx context.Context) error {
-	if err := ValidateRole(role); err != nil {
-		return err
-	}
-	res := db.GetDB().WithContext(ctx).Model(&model.User{}).Where("id = ?", id).Update("role", role)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return fmt.Errorf("user not found")
-	}
-	adminCacheMu.Lock()
-	if adminCache.ID == id {
-		adminCache.Role = role
-	}
-	adminCacheMu.Unlock()
-	return nil
-}
-
-func Delete(id uint, currentUserID uint, ctx context.Context) error {
-	if currentUserID != 0 && id == currentUserID {
-		return fmt.Errorf("cannot delete the active user")
-	}
-	res := db.GetDB().WithContext(ctx).Delete(&model.User{}, id)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return fmt.Errorf("user not found")
-	}
-	adminCacheMu.RLock()
-	match := adminCache.ID == id
-	adminCacheMu.RUnlock()
-	if match {
-		_ = Init()
-	}
-	return nil
 }

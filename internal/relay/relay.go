@@ -28,7 +28,6 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/transformer/rewrite"
 	"github.com/lingyuins/octopus/internal/utils/log"
-	"github.com/lingyuins/octopus/internal/utils/semantic_cache"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 	"github.com/tmaxmax/go-sse"
 )
@@ -256,6 +255,8 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		streamSession = session
 		streamSessionOwned = created
 		if !created {
+			replayStartedAt := time.Now()
+			replayReportedIP := reportedClientIPFromContext(c)
 			req := &relayRequest{
 				c:               c,
 				clientCtx:       c.Request.Context(),
@@ -265,6 +266,22 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 				streamSession:   streamSession,
 			}
 			serveRelayStreamSession(c, req)
+			if replayTrace := relayRequestTraceFromContext(c); replayTrace != nil {
+				replayTrace.stageRelayLog(dbmodel.RelayLog{
+					Time:              replayStartedAt.Unix(),
+					RequestModelName:  requestModel,
+					RequestAPIKeyID:   apiKeyID,
+					ClientIP:          c.ClientIP(),
+					ReportedClientIP:  replayReportedIP.IP,
+					ReportedClientIPSource: string(replayReportedIP.Source),
+					UserAgent:         c.Request.UserAgent(),
+					EndpointType:      resolveRelayLogEndpointType(endpointType, endpointType),
+					ActualModelName:   requestModel,
+					UseTime:           int(time.Since(replayStartedAt).Milliseconds()),
+					GenerationOutcome: dbmodel.RelayLogGenerationReplay,
+					UpstreamOutcome:   dbmodel.RelayLogUpstreamNone,
+				})
+			}
 			return
 		}
 		defer func() {
@@ -331,7 +348,12 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 
 	// 初始化 Metrics
 	clientIP := c.ClientIP()
-	metrics := NewRelayMetrics(apiKeyID, requestModel, endpointType, group.EndpointType, clientIP, internalRequest)
+	reportedIP := reportedClientIPFromContext(c)
+	userAgent := c.Request.UserAgent()
+	metrics := NewRelayMetrics(apiKeyID, requestModel, endpointType, group.EndpointType, clientIP, userAgent, internalRequest)
+	metrics.ReportedClientIP = reportedIP.IP
+	metrics.ReportedClientIPSource = string(reportedIP.Source)
+	metrics.SetRequestTrace(relayRequestTraceFromContext(c))
 
 	// 请求级上下文
 	req := &relayRequest{
@@ -350,8 +372,6 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		retryCache:        newRetryRequestCache(),
 	}
 
-	var inflightKey string
-	var inflightEnabled bool
 	if endpointFamily := semanticCacheEndpointFamily(endpointType, inboundType); endpointFamily != "" {
 		served, payload, cacheErr := maybeServeSemanticCacheHit(c, req, endpointFamily)
 		if cacheErr != nil {
@@ -367,9 +387,6 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 			metrics.Save(true, nil, nil)
 			return
 		}
-		if _, text, ok, _ := getSemanticCacheLookupInput(req, endpointFamily); ok {
-			inflightKey, inflightEnabled = requestSingleflightKey(apiKeyID, endpointFamily, internalRequest.Model, text, internalRequest)
-		}
 	}
 
 	maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate()
@@ -383,50 +400,9 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		maxTotalAttempts = 1
 	}
 
-	if inflightEnabled {
-		result, sfErr, shared := relayInflightGroup.Do(inflightKey, func() (any, error) {
-			return executeRelay(req, group, requestModel, maxKeyRetriesPerRoute, maxRouteRetries, ratelimitCooldown, maxTotalAttempts)
-		})
-		if sfErr == nil {
-			if outcome, ok := result.(*inflightRelayResult); ok && outcome != nil {
-				if shared {
-					if outcome.namespace != "" && outcome.requestText != "" {
-						cfg, ok := semanticCacheRuntimeConfig()
-						if ok {
-							embedding, _, embErr := lookupSemanticEmbeddingWithCache(req.operationCtx, req, cfg, outcome.namespace, outcome.requestText)
-							if embErr == nil {
-								if payload, found := semantic_cache.Lookup(outcome.namespace, embedding); found {
-									normalizedPayload := semanticCacheHitPayload(payload, internalRequest)
-									c.Data(http.StatusOK, "application/json", normalizedPayload)
-									if internalResponse, parseErr := buildSemanticCacheHitInternalResponse(internalRequest, normalizedPayload); parseErr == nil {
-										metrics.SetInternalResponse(internalResponse, outcome.actualModel)
-									}
-									metrics.Save(true, nil, nil)
-									return
-								}
-							}
-						}
-					}
-					if resp := cloneInternalResponse(outcome.internalResp); resp != nil {
-						metrics.SetInternalResponse(resp, outcome.actualModel)
-						// Cache miss: the leader already wrote its own response.
-						// Transform the internal response to the inbound format and
-						// write it to the shared caller's context so the client
-						// receives a complete body instead of an empty 200 (4C-01).
-						if inResponse, terr := req.inAdapter.TransformResponse(req.clientCtx, resp); terr == nil && len(inResponse) > 0 {
-							c.Data(http.StatusOK, "application/json", inResponse)
-						} else if terr != nil {
-							logRelayErrorfByContext(terr, "shared caller transform response: %v", terr)
-						}
-					}
-					metrics.Save(true, nil, outcome.attempts)
-					return
-				}
-				return
-			}
-		}
-	}
-
+	// A cache miss owns its generation, even for identical concurrent prompts.
+	// executeRelay writes the response and metrics and owns the retry budget;
+	// neither its result nor its errors may be replayed by a second execution.
 	if _, err := executeRelay(req, group, requestModel, maxKeyRetriesPerRoute, maxRouteRetries, ratelimitCooldown, maxTotalAttempts); err != nil {
 		// Preserve the terminal failure for the stream-session owner. In
 		// particular, a no-output retry sequence must finish the session with
@@ -441,6 +417,7 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 func (ra *relayAttempt) attempt() attemptResult {
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name, ra.internalRequest.Model)
 	span.SetAdapterType(ra.adapterType.String())
+	ra.logAttemptNumber = span.AttemptNumber()
 
 	// 转发请求
 	statusCode, fwdErr := ra.forward()
@@ -684,6 +661,10 @@ func (ra *relayAttempt) forward() (int, error) {
 
 	// 复制请求头
 	ra.copyHeaders(outboundRequest, effectiveRewrite)
+	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+		trace.wrapUpstreamRequest(ra.logAttemptNumber, ra.adapterType.String(), outboundRequest)
+		trace.markUpstreamSendStarted(ra.logAttemptNumber)
+	}
 
 	// 发送请求
 	response, err := ra.sendRequest(outboundRequest)
@@ -691,6 +672,14 @@ func (ra *relayAttempt) forward() (int, error) {
 		return 0, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer response.Body.Close()
+	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+		trace.wrapUpstreamResponse(
+			ra.logAttemptNumber,
+			ra.adapterType.String(),
+			response,
+			ra.channel.RelayLogRawSSEUntil > time.Now().Unix(),
+		)
+	}
 
 	// 检查响应状态
 	statusCode, err := ra.handleForwardResponse(response)
@@ -1174,8 +1163,8 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 	for {
 		var (
-			r                                  sseReadResult
-			ok                                 bool
+			r                                 sseReadResult
+			ok                                bool
 			firstVisibleOutputDeadlineReached bool
 		)
 
@@ -1767,6 +1756,7 @@ func handleClientDisconnect(req *relayRequest, allAttempts []dbmodel.ChannelAtte
 func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxKeyRetriesPerRoute int, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) (*inflightRelayResult, error) {
 	var allAttempts []dbmodel.ChannelAttempt
 	var lastErr error
+	attemptNumberBase := 0
 	rateLimitHoldCfg := getRateLimitHoldConfig()
 
 	// 三种预算分离（修复 issue #95 -> #192 回归）。逻辑封装在 relayBudget，见 budget.go：
@@ -1799,6 +1789,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 		budget.markRoundStart()
 
 		routeIter := balancer.NewIterator(group, req.apiKeyID, requestModel, parseExcludedChannels(req.c.GetString("excluded_channels")))
+		routeIter.SetAttemptNumberBase(attemptNumberBase)
 		req.iter = routeIter
 
 		for routeIter.Next() {
@@ -2067,6 +2058,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 		// 轮次正常结束：把本轮迭代器的全部决策记录累加到 allAttempts（用于日志/metrics），
 		// 并把本轮真实转发次数累加到 forwardedBase，供下一轮的最大总尝试次数检查。
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
+		attemptNumberBase = routeIter.LastAttemptNumber()
 		budget.markRoundEnd(routeIter)
 	}
 

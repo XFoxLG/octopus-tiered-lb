@@ -1,7 +1,6 @@
 package op
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,9 +9,11 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 )
 
-func TestUserDeleteRejectsActiveUserEvenWhenIDIsNotOne(t *testing.T) {
+func TestUserInitPreservesExistingAccountWithNonDefaultID(t *testing.T) {
 	oldUserCache := userCache
 	userCache = model.User{}
+	t.Setenv("OCTOPUS_INITIAL_ADMIN_USERNAME", "alice")
+	t.Setenv("OCTOPUS_INITIAL_ADMIN_PASSWORD", "replacement-secret-123")
 	t.Cleanup(func() {
 		userCache = oldUserCache
 	})
@@ -26,8 +27,10 @@ func TestUserDeleteRejectsActiveUserEvenWhenIDIsNotOne(t *testing.T) {
 	})
 
 	legacy := model.User{
+		ID:       17,
 		Username: "admin",
 		Password: "legacy-secret-123",
+		Role:     model.UserRoleAdmin,
 	}
 	if err := legacy.HashPassword(); err != nil {
 		t.Fatalf("hash legacy password: %v", err)
@@ -39,30 +42,20 @@ func TestUserDeleteRejectsActiveUserEvenWhenIDIsNotOne(t *testing.T) {
 	if err := UserInit(); err != nil {
 		t.Fatalf("user init: %v", err)
 	}
-	if err := deleteLegacyAdminUser("alice"); err != nil {
-		t.Fatalf("delete legacy admin: %v", err)
-	}
-	if err := UserBootstrapCreate("alice", "super-secret-123"); err != nil {
-		t.Fatalf("bootstrap replacement user: %v", err)
-	}
-
 	activeUser := UserGet()
-	if activeUser.ID == 1 {
-		t.Fatalf("active user id = %d, want non-1 id to cover the regression scenario", activeUser.ID)
+	if activeUser != legacy {
+		t.Fatal("initialization must preserve the existing account and bcrypt hash")
 	}
-
-	err := UserDelete(activeUser.ID, activeUser.ID, context.Background())
-	if err == nil {
-		t.Fatal("UserDelete() error = nil, want active-user protection")
-	}
-	if !strings.Contains(err.Error(), "cannot delete the active user") {
-		t.Fatalf("UserDelete() error = %q, want active-user protection", err.Error())
+	if _, err := UserVerify("admin", "legacy-secret-123"); err != nil {
+		t.Fatalf("existing account login: %v", err)
 	}
 }
 
-func TestUserVerifySupportsNonCachedManagedUsers(t *testing.T) {
+func TestUserVerifyRejectsNonCachedLegacyUsers(t *testing.T) {
 	oldUserCache := userCache
 	userCache = model.User{}
+	t.Setenv("OCTOPUS_INITIAL_ADMIN_USERNAME", "")
+	t.Setenv("OCTOPUS_INITIAL_ADMIN_PASSWORD", "")
 	t.Cleanup(func() {
 		userCache = oldUserCache
 	})
@@ -78,22 +71,26 @@ func TestUserVerifySupportsNonCachedManagedUsers(t *testing.T) {
 	if err := UserBootstrapCreate("admin", "super-secret-123"); err != nil {
 		t.Fatalf("bootstrap user: %v", err)
 	}
-	if err := UserCreate(model.UserCreateRequest{
+	legacyViewer := model.User{
 		Username: "viewer",
 		Password: "viewer-secret-123",
 		Role:     model.UserRoleViewer,
-	}, context.Background()); err != nil {
-		t.Fatalf("create managed user: %v", err)
+	}
+	if err := legacyViewer.HashPassword(); err != nil {
+		t.Fatalf("hash legacy viewer password: %v", err)
+	}
+	if err := db.GetDB().Create(&legacyViewer).Error; err != nil {
+		t.Fatalf("seed legacy viewer: %v", err)
 	}
 
-	user, err := UserVerify("viewer", "viewer-secret-123")
-	if err != nil {
-		t.Fatalf("UserVerify() error = %v", err)
+	if _, err := UserVerify("viewer", "viewer-secret-123"); err == nil {
+		t.Fatal("legacy viewer must not authenticate to the console")
 	}
-	if user.Username != "viewer" {
-		t.Fatalf("UserVerify() username = %q, want viewer", user.Username)
+	var retainedViewer model.User
+	if err := db.GetDB().First(&retainedViewer, legacyViewer.ID).Error; err != nil {
+		t.Fatalf("load retained legacy viewer: %v", err)
 	}
-	if user.Role != model.UserRoleViewer {
-		t.Fatalf("UserVerify() role = %q, want %q", user.Role, model.UserRoleViewer)
+	if retainedViewer != legacyViewer {
+		t.Fatal("legacy viewer data must remain unchanged for rollback")
 	}
 }

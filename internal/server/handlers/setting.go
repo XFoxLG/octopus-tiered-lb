@@ -2,12 +2,12 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	utilsjson "github.com/lingyuins/octopus/internal/utils/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -17,8 +17,6 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
 	"github.com/lingyuins/octopus/internal/op/backup"
-	"github.com/lingyuins/octopus/internal/op/dbmigration"
-	notifop "github.com/lingyuins/octopus/internal/op/notification"
 	"github.com/lingyuins/octopus/internal/op/semanticcache"
 	stg "github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/server/auth"
@@ -58,18 +56,6 @@ func init() {
 			router.NewRoute("/import", http.MethodPost).
 				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
 				Handle(importDB),
-		).
-		AddRoute(
-			router.NewRoute("/database/test", http.MethodPost).
-				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
-				Use(middleware.RequireJSON()).
-				Handle(testDatabaseConnection),
-		).
-		AddRoute(
-			router.NewRoute("/database/migrate", http.MethodPost).
-				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
-				Use(middleware.RequireJSON()).
-				Handle(migrateDatabase),
 		).
 		AddRoute(
 			router.NewRoute("/cache/config", http.MethodGet).
@@ -204,26 +190,23 @@ func exportDB(c *gin.Context) {
 	includeLogs, _ := strconv.ParseBool(c.DefaultQuery("include_logs", "false"))
 	includeStats, _ := strconv.ParseBool(c.DefaultQuery("include_stats", "false"))
 
-	dump, err := backup.ExportAll(c.Request.Context(), includeLogs, includeStats)
+	exportFile, exportSize, err := backup.CreateJSONExportFile(c.Request.Context(), includeLogs, includeStats, true)
 	if err != nil {
 		resp.InternalError(c)
 		return
 	}
-
-	// User.Password is tagged json:"-", so passwords are lost during JSON
-	// serialisation. Exclude users from the export entirely. The import path
-	// (backup.ImportWithModeToDB) deliberately never deletes the users table
-	// in full mode, so existing admin accounts survive a restore.
-	dump.Users = nil
+	defer func() {
+		_ = exportFile.Close()
+		_ = os.Remove(exportFile.Name())
+	}()
 
 	c.Header("Content-Type", "application/json")
 	c.Header("Content-Disposition", "attachment; filename=\"octopus-export-"+time.Now().Format("20060102150405")+".json\"")
+	c.Header("Content-Length", strconv.FormatInt(exportSize, 10))
 	c.Status(http.StatusOK)
-
-	// Stream JSON to avoid buffering the entire dump in memory
-	encoder := utilsjson.NewEncoder(c.Writer)
-	encoder.SetEscapeHTML(false)
-	_ = encoder.Encode(dump)
+	if _, err := io.Copy(c.Writer, exportFile); err != nil {
+		log.Warnf("stream database export failed: %v", err)
+	}
 }
 
 func importDB(c *gin.Context) {
@@ -263,80 +246,6 @@ func importDB(c *gin.Context) {
 	resp.Success(c, result)
 }
 
-func testDatabaseConnection(c *gin.Context) {
-	var req model.DatabaseMigrationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
-		return
-	}
-	if err := dbmigration.TestConnection(c.Request.Context(), req); err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	resp.Success(c, true)
-}
-
-func migrateDatabase(c *gin.Context) {
-	var req model.DatabaseMigrationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
-		return
-	}
-	result, err := dbmigration.Migrate(c.Request.Context(), req)
-	if err != nil {
-		createDatabaseMigrationNotification(c.Request.Context(), req, nil, err)
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	createDatabaseMigrationNotification(c.Request.Context(), req, result, nil)
-	resp.Success(c, result)
-}
-
-func createDatabaseMigrationNotification(ctx context.Context, req model.DatabaseMigrationRequest, result *model.DatabaseMigrationResult, err error) {
-	severity := model.NotificationSeveritySuccess
-	restartNeeded := result != nil && result.RestartNeeded
-	var key notifop.NotifKey
-	var contentArgs map[string]any
-	var contentFmtArgs []any
-	if err != nil {
-		severity = model.NotificationSeverityCritical
-		key = notifop.KeyMigrationFail
-		contentArgs = map[string]any{"detail": err.Error()}
-		contentFmtArgs = []any{err.Error()}
-	} else {
-		key = notifop.KeyMigrationOK
-		contentArgs = map[string]any{"type": req.Type, "restart": restartNeeded}
-		contentFmtArgs = []any{req.Type, restartNeeded}
-	}
-	metadata := map[string]any{
-		"type":          req.Type,
-		"include_logs":  req.IncludeLogs,
-		"include_stats": req.IncludeStats,
-	}
-	if result != nil {
-		metadata["restart_needed"] = result.RestartNeeded
-		metadata["cleaned_files_count"] = len(result.CleanedFiles)
-		metadata["rows_affected"] = result.ImportResult.RowsAffected
-	}
-	if err != nil {
-		metadata["error"] = err.Error()
-	}
-	b, _ := utilsjson.Marshal(metadata)
-	n := &model.Notification{
-		Type:         model.NotificationTypeSystem,
-		Severity:     severity,
-		Source:       "database_migration",
-		SourceID:     req.Type,
-		DedupeKey:    fmt.Sprintf("database_migration:%s:%d", req.Type, time.Now().UnixMilli()),
-		MetadataJSON: string(b),
-		Link:         "setting",
-	}
-	notifop.SetMessage(n, key, key, nil, contentArgs, nil, contentFmtArgs)
-	if createErr := notifop.Create(ctx, n); createErr != nil {
-		log.Warnf("notification: failed to create database migration notification: %v", createErr)
-	}
-}
-
 // toModelRedis 把 conf.RedisConfig 转成 model.CacheRedisConfig（避免 model 反向依赖 conf）。
 // DialTimeout/ReadTimeout：Duration -> 可读字符串（"3s"），0 值转空串。
 func toModelRedis(r conf.RedisConfig) model.CacheRedisConfig {
@@ -348,6 +257,8 @@ func toModelRedis(r conf.RedisConfig) model.CacheRedisConfig {
 		PoolSize:    r.PoolSize,
 		DialTimeout: durationToString(r.DialTimeout),
 		ReadTimeout: durationToString(r.ReadTimeout),
+		TLS:         r.TLS,
+		CAFile:      r.CAFile,
 	}
 }
 
@@ -362,6 +273,8 @@ func toConfRedis(r model.CacheRedisConfig) conf.RedisConfig {
 		PoolSize:    r.PoolSize,
 		DialTimeout: parseDurationOrZero(r.DialTimeout),
 		ReadTimeout: parseDurationOrZero(r.ReadTimeout),
+		TLS:         r.TLS,
+		CAFile:      r.CAFile,
 	}
 }
 
@@ -389,14 +302,23 @@ func parseDurationOrZero(s string) time.Duration {
 // getCacheConfig 返回当前 cache 配置（config.json 中的 cache.type / cache.redis.*）。
 // 供设置页「缓存」卡片回显当前值。Redis 启用是启动时决策，此处只读运行中进程的配置。
 func getCacheConfig(c *gin.Context) {
+	configuration := conf.GetCacheConfig()
+	status := store.InspectBackend(c.Request.Context(), configuration)
 	cfg := model.CacheConfig{
-		Type:  conf.AppConfig.Cache.Type,
-		Redis: toModelRedis(conf.AppConfig.Cache.Redis),
+		Type:           configuration.Type,
+		Redis:          toModelRedis(configuration.Redis),
+		ConfigSource:   conf.CacheConfigSource(),
+		RuntimeBackend: status.Backend,
+		RuntimeHealthy: status.Healthy,
+		RuntimeTLS:     status.TLS,
+		RestartNeeded:  status.RestartNeeded,
+		Reconnecting:   status.Reconnecting,
 	}
 	// Redis 密码/用户名对 viewer 遮蔽：仅凭 settings:read 不应拿到明文凭据。
 	if isViewerRole(c.GetString("user_role")) {
 		cfg.Redis.Password = viewerMaskedDomain
 		cfg.Redis.Username = viewerMaskedDomain
+		cfg.Redis.Addr = store.SafeRedisAddress(cfg.Redis.Addr)
 	}
 	resp.Success(c, cfg)
 }
@@ -417,7 +339,12 @@ func testCacheConnection(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, "redis addr is required")
 		return
 	}
-	if err := store.TestConnection(toConfRedis(req.Redis)); err != nil {
+	configuration, err := validateRedisRequest(req.Redis)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := store.TestConnection(configuration); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -428,6 +355,10 @@ func testCacheConnection(c *gin.Context) {
 // Redis 启用是启动时决策（cmd/start.go 仅 boot 时读取），保存后需重启生效，
 // 故返回 restart_needed: true（与数据库迁移一致）。
 func saveCacheConfig(c *gin.Context) {
+	if conf.CacheConfigSource() != "file" {
+		resp.Error(c, http.StatusConflict, "cache configuration is managed by deployment environment; update it there")
+		return
+	}
 	var req model.CacheConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
@@ -441,7 +372,18 @@ func saveCacheConfig(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, "redis addr is required when type is redis")
 		return
 	}
-	if err := conf.SaveCacheConfig(req.Type, toConfRedis(req.Redis)); err != nil {
+	configuration, err := validateRedisRequest(req.Redis)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Type == "redis" {
+		if _, err := store.BuildRedisOptions(configuration); err != nil {
+			resp.Error(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if err := conf.SaveCacheConfig(req.Type, configuration); err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -449,6 +391,21 @@ func saveCacheConfig(c *gin.Context) {
 		Type:          req.Type,
 		RestartNeeded: true,
 	})
+}
+
+func validateRedisRequest(request model.CacheRedisConfig) (conf.RedisConfig, error) {
+	for _, timeout := range []string{request.DialTimeout, request.ReadTimeout} {
+		if strings.TrimSpace(timeout) == "" {
+			continue
+		}
+		duration, err := time.ParseDuration(strings.TrimSpace(timeout))
+		if err != nil || duration < 0 {
+			return conf.RedisConfig{}, fmt.Errorf("redis timeout must be empty or a non-negative duration such as 3s")
+		}
+	}
+	configuration := toConfRedis(request)
+	configuration.Addr = strings.TrimSpace(configuration.Addr)
+	return configuration, conf.ValidateRedisConfig(configuration)
 }
 
 func decodeDBDump(body []byte, dump *model.DBDump) error {

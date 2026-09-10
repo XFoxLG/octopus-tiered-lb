@@ -113,6 +113,8 @@ func TestForwardMediaRequestJSONRawProviderKeepsClientPathAndBody(t *testing.T) 
 		"sensenova-u1.5-lite", // 分组模型映射后模型名不变
 		false,
 		context.Background(),
+		nil,
+		0,
 	)
 	if err != nil {
 		t.Fatalf("forwardMediaRequestJSON() error = %v", err)
@@ -175,6 +177,8 @@ func TestForwardMediaRequestJSONRawProviderRewritesModelOnly(t *testing.T) {
 		"upstream-real-model",
 		false,
 		context.Background(),
+		nil,
+		0,
 	)
 	if err != nil {
 		t.Fatalf("forwardMediaRequestJSON() error = %v", err)
@@ -269,6 +273,8 @@ func TestForwardMediaRequestRoutesJSONBodyOnMultipartEndpoint(t *testing.T) {
 		"sensenova-u1.5-lite",
 		false,
 		context.Background(),
+		nil,
+		0,
 	)
 	if err != nil {
 		t.Fatalf("forwardMediaRequest() error = %v", err)

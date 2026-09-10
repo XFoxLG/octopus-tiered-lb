@@ -1359,46 +1359,9 @@
         "placeholder": "30"
       }
     },
-    "aiRoute": {
-      "title": "AI Routing Settings",
-      "badge": "Command Habitat",
-      "group": {
-        "label": "Default Target Group for Single-Group AI Routing",
-        "placeholder": "Select a default target group",
-        "hint": "Used by the compatibility single-group AI routing flow. Clicking “AI Route” on the route page generates the full routing table directly."
-      },
-      "baseUrl": {
-        "label": "AI Base URL",
-        "placeholder": "Enter an OpenAI-compatible base URL"
-      },
-      "apiKey": {
-        "label": "AI API Key",
-        "placeholder": "Enter the AI API key"
-      },
-      "model": {
-        "label": "AI Model",
-        "placeholder": "Enter the model used for route analysis"
-      },
-      "timeoutSeconds": {
-        "label": "AI Timeout (seconds)",
-        "placeholder": "Enter the per-request timeout",
-        "hint": "Applies to a single AI route analysis request. Increase it if the model is slow or the model list is large."
-      },
-      "parallelism": {
-        "label": "Batch Parallelism",
-        "placeholder": "Enter an integer greater than 0",
-        "hint": "Controls the maximum number of AI route buckets analyzed in parallel. Defaults to 3, allows higher values, and never exceeds the number of batches in the current task."
-      },
-      "services": {
-        "label": "AI Service Pool (JSON)",
-        "placeholder": "Enter a JSON array of AI services",
-        "hint": "Leave empty or [] to keep using the single-service settings above. A JSON array enables multi-service pooling and failover.",
-        "invalid": "AI service pool JSON must be an array"
-      }
-    },
     "semanticCache": {
       "title": "Semantic Cache",
-      "description": "Configure the semantic cache runtime and its dedicated embedding service without leaving the current card layout.",
+      "description": "Optional answer reuse for a single, non-streaming Chat question with explicit temperature=0. Conversations, system or character prompts, streaming, tools, multimodal inputs and Responses bypass it. Keep disabled for creative writing and companion chat. This is not the provider's prompt-prefix cache.",
       "enabled": {
         "label": "Enable Semantic Cache"
       },
@@ -1501,13 +1464,103 @@
         "advancedDSN": "Advanced: edit DSN directly"
       }
     },
+    "aiRoute": {
+      "title": "AI-Assisted Grouping",
+      "description": "Use an AI model to organize the channel model catalog into groups on demand. This does not select a channel for each incoming request.",
+      "badge": "On-demand catalog organization",
+      "writeWarning": "Running a grouping task may create or update groups and replace their members, including removing existing members the model did not choose. Saving these settings does not start generation.",
+      "group": {
+        "label": "Default target group",
+        "placeholder": "No default group",
+        "description": "The default target for single-group generation. Selecting a group here only updates the configuration; it does not run a task."
+      },
+      "selfApi": {
+        "description": "To use this Octopus API, choose an existing conversation group that already has model members. The preset fills its /v1 base URL and the group name as the model, then clears the key field. Enter an Octopus client API key, not the console login JWT. Applying the preset neither saves nor runs a task.",
+        "modelLabel": "Existing group model",
+        "selectModel": "Select an existing group model",
+        "apply": "Fill from this Octopus API",
+        "poolActive": "The advanced service pool overrides the single-service configuration. Set the pool to [] before using this preset.",
+        "groupsError": "Could not load groups. Reload the page before choosing a group model.",
+        "noGroups": "No eligible conversation group with model members is available. Create and configure one first.",
+        "invalidURL": "Could not build a valid Octopus API URL. Check the public API address; it must be an HTTP(S) URL without credentials, query parameters, or a fragment."
+      },
+      "baseUrl": {
+        "label": "Analysis API base URL",
+        "placeholder": "https://api.example.com/v1",
+        "description": "Enter the OpenAI-compatible API base URL, not a full chat/completions endpoint. For this Octopus service, use its public API URL ending in /v1."
+      },
+      "model": {
+        "label": "Analysis model",
+        "placeholder": "Existing group name or provider model ID",
+        "description": "The model that analyzes the catalog. When using Octopus, enter an existing group name that your client API key can access, not a new group you hope to generate."
+      },
+      "apiKey": {
+        "label": "Analysis API key",
+        "placeholder": "Enter the API key for this base URL",
+        "description": "Use a key issued by the configured API provider. For Octopus, use a client API key permitted to call the selected group model; the console login JWT cannot be used here."
+      },
+      "networkHint": "The Octopus server, not your browser, must be able to reach the analysis API. Using this Octopus API still requires a working existing group and may incur upstream model charges when a task runs.",
+      "timeoutSeconds": {
+        "label": "Analysis timeout (seconds)",
+        "hint": "A positive whole number of seconds allowed for an analysis request. Saving does not test the API."
+      },
+      "parallelism": {
+        "label": "Parallel analysis requests",
+        "hint": "A positive whole number limiting concurrent analysis requests. Higher values can increase API load and rate-limit failures."
+      },
+      "services": {
+        "advanced": "Advanced: analysis service pool",
+        "label": "Service pool (JSON)",
+        "placeholder": "[]",
+        "description": "Optional JSON array of analysis services. Each entry needs base_url, api_key, and model; name and enabled are optional. At least one service must be enabled. A non-empty pool overrides the single-service URL, key, and model above. Use [] to return to the single-service configuration.",
+        "active": "Advanced service pool selected: the single-service configuration is not used.",
+        "single": "Single-service configuration selected."
+      },
+      "validation": {
+        "baseURL": "Enter a valid HTTP(S) analysis API base URL.",
+        "apiKey": "Enter the API key for the analysis service.",
+        "model": "Enter an analysis model or an existing Octopus group name.",
+        "timeoutSeconds": "The analysis timeout must be a positive whole number of seconds.",
+        "parallelism": "Parallelism must be a positive whole number.",
+        "servicesJSON": "Enter a JSON array with a valid HTTP(S) base_url, non-empty api_key and model for every service, and at least one enabled service. Optional name must be a string and enabled a boolean. Use [] for a single service."
+      },
+      "save": {
+        "hint": "Changes stay in this form until you explicitly save. Fields are saved one at a time, so a failure can leave only some changes saved. Saving neither tests the connection nor starts generation.",
+        "action": "Save grouping settings",
+        "saving": "Saving settings...",
+        "error": "Saving did not complete. Some fields may already be saved, or the refresh may have failed. Your draft is retained; check the configuration and retry.",
+        "unsaved": "You have unsaved changes.",
+        "unchanged": "No unsaved changes."
+      },
+      "status": {
+        "loading": "Loading configuration...",
+        "loadError": "Could not load configuration. Reload the page before editing or saving.",
+        "incomplete": "Complete the required fields and correct the errors before saving.",
+        "notTested": "These settings do not verify API connectivity, key permissions, or model availability. Start a grouping task separately only when you are ready for it to modify groups."
+      }
+    },
     "redis": {
       "title": "Cache Backend",
-      "description": "Configure an optional Redis backend to offload stats, runtime state, rate-limit cooldowns, and failure hints from process memory (issue #123). Takes effect after restart.",
+      "description": "Redis / Valkey is optional storage for short-lived runtime state with TTL (expiry). PostgreSQL remains the permanent data store. This does not move all in-memory data to Redis or guarantee lossless distributed accounting. The configured backend may differ from the active backend shown below.",
+      "runtimeSummary": "Active backend: {backend}; health: {health}; transport: {tls}. These diagnostics describe the current process, not unsaved form values.",
+      "healthy": "Healthy",
+      "unhealthy": "Unavailable or degraded",
+      "noTls": "No TLS",
+      "source": {
+        "file": "Configuration source: local config file. Saved changes require a service restart before they can become active.",
+        "environment": "Configuration source: environment variables. Change the deployment environment and redeploy; this form cannot override it.",
+        "deployment": "Configuration source: deployment-managed settings. Update the deployment configuration and redeploy to change the service."
+      },
+      "reconnecting": "The service is trying to reconnect to Redis / Valkey. Check the active backend and health; a configured address alone does not mean Redis is active.",
+      "deploymentInstructions": "On Render, manage cache settings in the service's Environment configuration. Edit the environment variables below, then redeploy the service. Values entered here do not update Render or the running service configuration.",
+      "deploymentTestOnly": "In deployment-managed mode, these local form values are used only for a PING connection test. A successful test neither activates Redis nor proves permission for every required ACL command.",
+      "tlsLabel": "Use TLS (always enabled for rediss://)",
+      "caFileLabel": "Custom CA certificate file (optional, server path)",
+      "tlsHint": "For a certificate issued by a public CA, leave this empty to use the system trust store. For a private CA, provide the CA file path available to the Octopus server. TLS certificate and hostname verification are never disabled.",
       "type": {
-        "label": "Backend Type",
+        "label": "Configured backend type",
         "memory": "Memory (default)",
-        "redis": "Redis"
+        "redis": "Redis / Valkey"
       },
       "fields": {
         "addr": {
@@ -1539,15 +1592,15 @@
           "placeholder": "3s"
         }
       },
-      "testButton": "Test connection",
-      "testSuccess": "Redis connection successful",
+      "testButton": "Test connection (PING only)",
+      "testSuccess": "Redis / Valkey PING succeeded. This does not activate the backend or verify permission for all required ACL commands.",
       "testFailed": "Connection test failed: {error}",
       "saveButton": "Save",
       "saving": "Saving...",
-      "saved": "Cache configuration saved",
+      "saved": "Cache configuration saved to file; it is not active until the service restarts successfully.",
       "typeRedisRequired": "Select Redis as the backend type first",
       "addrRequired": "Redis address is required",
-      "restartNotice": "Changes take effect after service restart."
+      "restartNotice": "Saving or testing does not switch the active backend. Restart after saving a file-based configuration; on Render, edit environment variables and redeploy. Then check the active backend and health above."
     },
     "webdav": {
       "title": "WebDAV Cloud Backup",
@@ -1968,8 +2021,30 @@
         "removeHint": "Click to stop hiding this group's logs"
       },
       "contentEnabled": {
-        "label": "Record Request/Response Content",
-        "description": "When disabled, large request/response bodies are not stored, reducing write load and disk IO. Token counts and cache metrics are still recorded."
+        "label": "Record Four-Boundary Content",
+        "description": "Records client ingress, every upstream send/response, and server writer output. Lightweight token, channel, and error metadata remains when disabled."
+      },
+      "contentRetentionDays": {
+        "label": "Content and Attachment Retention Days",
+        "description": "Expires each request bundle as a whole while retaining metadata. Set to 0 to disable age cleanup."
+      },
+      "contentRetentionSize": {
+        "label": "Content and Attachment Budget (MiB)",
+        "description": "Expires the oldest complete bundles when exceeded. Set to 0 to disable logical-byte cleanup."
+      },
+      "health": {
+        "label": "Forensic Log Runtime Health",
+        "description": "Shows lightweight queue, gap, and PostgreSQL storage metrics without loading content.",
+        "pending": "Pending",
+        "oldestPending": "Oldest pending",
+        "dropped": "Dropped records",
+        "failures": "Persistence failures",
+        "unavailable": "Unavailable bundles",
+        "logical": "Logical content",
+        "physical": "PG physical size",
+        "budget": "Content budget",
+        "notAvailable": "Not available",
+        "diskCaveat": "PG physical size includes tables, indexes, and TOAST. Ordinary DELETE/VACUUM mainly makes space reusable inside PostgreSQL and does not imply immediate Aiven disk shrinkage."
       },
       "clearContents": {
         "label": "Clear Request/Response Content",
@@ -2209,7 +2284,17 @@
       "endpointType": "API Type: {value}",
       "healthScore": "Health Score",
       "healthLow": "At risk",
-      "lastTestFailed": "Last test failed"
+      "lastTestFailed": "Last test failed",
+      "runHealthProbe": "Run health probe (standard mode; failover groups stop at first success)",
+      "healthProbeStarting": "Starting health probe...",
+      "healthProbeAccepted": "Health probe accepted; waiting for results...",
+      "healthProbeStatus": {
+        "running": "Probing",
+        "success": "Probe passed",
+        "partial": "Partially passed",
+        "failed": "Probe failed"
+      },
+      "healthProbeDuration": "Took {ms} ms"
     },
     "healthStatus": {
       "healthy": "Healthy",
@@ -2265,6 +2350,36 @@
         "useGlobal": "Use global setting",
         "buffer": "Buffer (safe retry)",
         "immediate": "Immediate (real-time)"
+      },
+      "defaultReasoningEffort": {
+        "label": "Default reasoning effort",
+        "hint": "When a client request carries no reasoning parameters, this group fills in the selected effort level. Client levels are respected; explicit off is respected unless force override is enabled. Only applies to chat models that support reasoning.",
+        "off": "Off (no injection)",
+        "minimal": "minimal (cheapest)",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max (strongest)"
+      },
+      "reasoningForceOverride": {
+        "label": "Force override explicit off",
+        "hint": "When enabled, even requests that explicitly disable thinking (reasoning_effort=none or thinking disabled) get the default effort level injected. Requests that sent a concrete level are never rewritten.",
+        "enable": "Override client's explicit off"
+      },
+      "paramOverride": {
+        "label": "Param override (JSON)",
+        "hint": "Group-level request parameter overrides as a JSON object. Only max_tokens / max_completion_tokens / temperature / top_p are honored, and values already set by the client win. Precedence: client > channel > group.",
+        "placeholder": "{\"temperature\": 0.7}"
+      },
+      "customHeader": {
+        "label": "Custom headers",
+        "hint": "Group-level custom request headers, applied before channel-level ones; same-name headers are overridden by the channel. Not applied in passthrough mode.",
+        "add": "Add header",
+        "empty": "No custom headers",
+        "keyPlaceholder": "Header name",
+        "valuePlaceholder": "Header value",
+        "remove": "Remove this header"
       },
       "condition": {
         "label": "Condition (JSON)",
@@ -2617,6 +2732,8 @@
     "card": {
       "error": "Error",
       "errorInfo": "Error Info",
+      "clientDisconnected": "Client disconnected",
+      "clientDisconnectedHint": "This request was cancelled by the client itself; the channel is not at fault.",
       "firstToken": "TTFT",
       "totalTime": "Total",
       "input": "Input",
@@ -2675,7 +2792,77 @@
       "reasoningTokensUnit": " tokens",
       "billingWindowPeak": "Peak",
       "billingWindowOffPeak": "Off-peak",
-      "billingWindowHint": "DeepSeek peak/off-peak billing"
+      "billingWindowHint": "DeepSeek peak/off-peak billing",
+      "forensics": {
+        "detailUnavailable": "Log detail is unavailable",
+        "traceId": "Trace ID",
+        "userAgent": "Client UA",
+        "protocolA": "Client protocol A",
+        "protocolB": "Upstream protocol B",
+        "writerBytes": "Writer-accepted bytes",
+        "termination": "Canonical termination",
+        "providerTermination": "Provider termination",
+        "writerCaveat": "Writer accepted means only that the server-side writer accepted these bytes. It does not prove the client received, rendered, or saved them.",
+        "none": "None",
+        "partial": "Incomplete",
+        "download": "Download",
+        "downloadAria": "Download log content: {name}",
+        "boundaryMissing": "No readable content record exists for this boundary.",
+        "noUpstreamAttempt": "This request made no real upstream attempt; this is not missing upstream content.",
+        "upstreamContentMissing": "A real upstream attempt exists, but this boundary content is missing or unavailable.",
+        "attempt": "Real attempt #{number}",
+        "legacyRequest": "Legacy request content (read-only fallback)",
+        "legacyResponse": "Legacy response content (read-only fallback)",
+        "boundaries": {
+          "clientIngress": "Boundary 1: actual client ingress",
+          "upstreamRequest": "Boundary 2: actual upstream request",
+          "upstreamResponse": "Boundary 3: actual upstream response",
+          "clientEgress": "Boundary 4: actual server writer output"
+        },
+        "axes": {
+          "generation": "Generation",
+          "upstream": "Upstream",
+          "content": "Capture",
+          "persistence": "Persistence",
+          "delivery": "Delivery"
+        },
+        "states": {
+          "pending": "Pending",
+          "ready": "Ready",
+          "expired": "Expired",
+          "unavailable": "Unavailable",
+          "disabled": "Disabled"
+        },
+        "outcomes": {
+          "success": "Success",
+          "failed": "Failed",
+          "not_started": "Not started",
+          "cache_hit": "Cache hit",
+          "session_replay": "Session replay",
+          "unknown": "Unknown",
+          "none": "None",
+          "pending": "Pending",
+          "ready": "Ready",
+          "unavailable": "Unavailable",
+          "expired": "Expired",
+          "disabled": "Disabled",
+          "writer_accepted": "Writer accepted",
+          "partial": "Partial write"
+        },
+        "kinds": {
+          "body": "Body",
+          "attachment": "Attachment",
+          "http_metadata": "HTTP metadata",
+          "normalized_response": "Normalized response"
+        },
+        "phases": {
+          "prepared": "Request prepared",
+          "sendStarted": "Send started",
+          "responseReceived": "Response received",
+          "requestPartial": "Request partially sent",
+          "responsePartial": "Response read incomplete"
+        }
+      }
     },
     "view": {
       "relay": "Relay Logs",
@@ -2847,6 +3034,13 @@
       "baseUrlCustomHint": "For example, if you enter https://api.example.com/custom, the system does not add /v1 and only continues with /chat/completions, /responses, or /embeddings.",
       "baseUrlDelay": "Delay(ms)",
       "advanced": "Advanced Settings",
+      "rawSSECapture": "Temporary Provider-Native SSE Capture",
+      "rawSSECaptureHint": "Diagnostic only. Captures native frames before parsing, increases PostgreSQL usage, and stops automatically at expiry.",
+      "rawSSEDisabled": "Disabled",
+      "rawSSEOff": "Off",
+      "rawSSE15Minutes": "Enable for 15 minutes",
+      "rawSSE1Hour": "Enable for 1 hour",
+      "rawSSE6Hours": "Enable for 6 hours",
       "apiKeyConfig": "API Key Configuration",
       "apiKey": "API Key",
       "customHeader": "Custom Headers",
@@ -3226,6 +3420,20 @@
     "channel_expire": {
       "title": "Disposable channel expired",
       "content": "Disposable channel \"{name}\" (ID: {id}) expired at {expire_at} and has been automatically deleted."
+    },
+    "site": {
+      "batch": {
+        "title": "Site {phase} completed",
+        "content": "{trigger}: success={success} partial={partial} failed={failed} skipped={skipped} warnings={warnings}"
+      },
+      "account_ok": {
+        "title": "Site account {phase} completed",
+        "content": "Account {account_id} {phase} completed successfully."
+      },
+      "account_fail": {
+        "title": "Site account {phase} failed",
+        "content": "Account {account_id} {phase} failed: {detail}"
+      }
     },
     "report": {
       "sent": {

@@ -52,12 +52,12 @@ export function NotificationBell() {
                     {latest.length === 0 ? (
                         <div className="py-8 text-center text-sm text-muted-foreground">{t('empty')}</div>
                     ) : latest.map((item) => (
-                        <div key={item.id} className="rounded-xl px-3 py-2 hover:bg-muted/70">
-                            <div className="flex items-center gap-2">
-                                <Badge variant={item.read_at ? 'outline' : 'default'} className="text-[10px]">{t(`severity.${item.severity}`)}</Badge>
-                                <span className="truncate text-sm font-medium">{resolveNotifTitle(item, tn)}</span>
+                        <div key={item.id} className="min-w-0 rounded-xl px-3 py-2 hover:bg-muted/70">
+                            <div className="flex items-start gap-2">
+                                <Badge variant={item.read_at ? 'outline' : 'default'} className="shrink-0 text-[10px]">{t(`severity.${item.severity}`)}</Badge>
+                                <span className="min-w-0 line-clamp-2 break-words text-sm font-medium [overflow-wrap:anywhere]">{resolveNotifTitle(item, tn)}</span>
                             </div>
-                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{resolveNotifContent(item, tn)}</p>
+                            <p className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">{resolveNotifContent(item, tn)}</p>
                             <div className="mt-1 text-[11px] text-muted-foreground">{formatTime(item.created_at)}</div>
                         </div>
                     ))}

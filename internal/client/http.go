@@ -27,6 +27,7 @@ var (
 	systemProxyURL           string
 	shortTimeoutDirectClient *http.Client
 	shortTimeoutProxyClient  *http.Client
+	shortTimeoutProxyURL     string
 	clientLock               sync.RWMutex
 
 	// customProxyClients 缓存按 (timeout 分桶, proxyURL) 复用的 *http.Client。
@@ -70,6 +71,9 @@ func GetHTTPClientSystemProxy(useProxy bool) (*http.Client, error) {
 		client, err := newHTTPClientCustomProxy(currentProxyURL)
 		if err != nil {
 			return nil, err
+		}
+		if systemProxyClient != nil {
+			systemProxyClient.CloseIdleConnections()
 		}
 		systemProxyClient = client
 		systemProxyURL = currentProxyURL
@@ -176,7 +180,7 @@ func GetHTTPClientShortTimeout(useProxy bool) (*http.Client, error) {
 		}
 
 		clientLock.RLock()
-		if shortTimeoutProxyClient != nil && systemProxyURL == currentProxyURL {
+		if shortTimeoutProxyClient != nil && shortTimeoutProxyURL == currentProxyURL {
 			clientLock.RUnlock()
 			return shortTimeoutProxyClient, nil
 		}
@@ -185,7 +189,7 @@ func GetHTTPClientShortTimeout(useProxy bool) (*http.Client, error) {
 		clientLock.Lock()
 		defer clientLock.Unlock()
 
-		if shortTimeoutProxyClient != nil && systemProxyURL == currentProxyURL {
+		if shortTimeoutProxyClient != nil && shortTimeoutProxyURL == currentProxyURL {
 			return shortTimeoutProxyClient, nil
 		}
 
@@ -193,7 +197,11 @@ func GetHTTPClientShortTimeout(useProxy bool) (*http.Client, error) {
 		if err != nil {
 			return nil, err
 		}
+		if shortTimeoutProxyClient != nil {
+			shortTimeoutProxyClient.CloseIdleConnections()
+		}
 		shortTimeoutProxyClient = client
+		shortTimeoutProxyURL = currentProxyURL
 		return shortTimeoutProxyClient, nil
 	}
 
@@ -289,8 +297,12 @@ func newHTTPClientCustomProxyWithTimeout(proxyURLStr string, timeout time.Durati
 			return nil, fmt.Errorf("invalid socks proxy: %w", err)
 		}
 		cloned.Proxy = nil
+		contextDialer, ok := socksDialer.(proxy.ContextDialer)
+		if !ok {
+			return nil, fmt.Errorf("SOCKS proxy must support cancellable dialing")
+		}
 		cloned.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return socksDialer.Dial(network, addr)
+			return contextDialer.DialContext(ctx, network, addr)
 		}
 	case "ss", "vmess", "vless", "trojan":
 		dialContext, err := proxyx.NewDialContext(proxyURLStr)

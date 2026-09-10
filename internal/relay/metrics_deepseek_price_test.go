@@ -33,11 +33,11 @@ func TestSetInternalResponseDeepSeekPeakPricing(t *testing.T) {
 		},
 	}
 
-	peak := NewRelayMetrics(1, "deepseek-v4-flash", "chat", "chat", "127.0.0.1", nil)
+	peak := NewRelayMetrics(1, "deepseek-v4-flash", "chat", "chat", "127.0.0.1", "", nil)
 	peak.StartTime = beijingRelay(t, 10, 0)
 	peak.SetInternalResponse(resp, "deepseek-v4-flash")
 
-	off := NewRelayMetrics(1, "deepseek-v4-flash", "chat", "chat", "127.0.0.1", nil)
+	off := NewRelayMetrics(1, "deepseek-v4-flash", "chat", "chat", "127.0.0.1", "", nil)
 	off.StartTime = beijingRelay(t, 13, 0)
 	off.SetInternalResponse(resp, "deepseek-v4-flash")
 
@@ -62,11 +62,11 @@ func TestSetInternalResponseDeepSeekPeakPricing(t *testing.T) {
 			},
 		},
 	}
-	gptPeak := NewRelayMetrics(1, "gpt-4o", "chat", "chat", "127.0.0.1", nil)
+	gptPeak := NewRelayMetrics(1, "gpt-4o", "chat", "chat", "127.0.0.1", "", nil)
 	gptPeak.StartTime = beijingRelay(t, 10, 0)
 	gptPeak.SetInternalResponse(gptResp, "gpt-4o")
 
-	gptOff := NewRelayMetrics(1, "gpt-4o", "chat", "chat", "127.0.0.1", nil)
+	gptOff := NewRelayMetrics(1, "gpt-4o", "chat", "chat", "127.0.0.1", "", nil)
 	gptOff.StartTime = beijingRelay(t, 13, 0)
 	gptOff.SetInternalResponse(gptResp, "gpt-4o")
 
@@ -87,7 +87,7 @@ func TestSetInternalResponseUnknownModel(t *testing.T) {
 			},
 		},
 	}
-	m := NewRelayMetrics(1, "totally-unknown-model", "chat", "chat", "127.0.0.1", nil)
+	m := NewRelayMetrics(1, "totally-unknown-model", "chat", "chat", "127.0.0.1", "", nil)
 	m.StartTime = beijingRelay(t, 10, 0)
 	m.SetInternalResponse(resp, "totally-unknown-model")
 	if m.Stats.InputCost != 0 || m.Stats.OutputCost != 0 {

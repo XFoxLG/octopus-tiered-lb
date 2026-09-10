@@ -48,6 +48,7 @@ func TestSaveLogContentEnabledToggle(t *testing.T) {
 		RequestModel:    "gpt-4o",
 		EndpointType:    "chat",
 		ClientIP:        "127.0.0.1",
+		UserAgent:       "ua-regression/1.0",
 		StartTime:       time.Now().Add(-100 * time.Millisecond),
 		InternalRequest: &transformerModel.InternalLLMRequest{},
 	}
@@ -74,6 +75,9 @@ func TestSaveLogContentEnabledToggle(t *testing.T) {
 	}
 	if last1.CacheReadTokens != int(cachedTokens) {
 		t.Fatalf("content enabled: CacheReadTokens = %d, want %d", last1.CacheReadTokens, cachedTokens)
+	}
+	if last1.UserAgent != "ua-regression/1.0" {
+		t.Fatalf("content enabled: UserAgent = %q, want %q", last1.UserAgent, "ua-regression/1.0")
 	}
 
 	// 场景 2：关闭大字段记录。
