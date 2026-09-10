@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -81,27 +82,25 @@ func performWebDAVBackup(ctx context.Context, manual bool) error {
 
 	client := NewWebDAVClient(cfg.BaseURL, cfg.Username, cfg.Password)
 
-	dump, err := ExportAll(ctx, cfg.IncludeLogs, cfg.IncludeStats)
+	exportFile, exportSize, err := CreateJSONExportFile(ctx, cfg.IncludeLogs, cfg.IncludeStats, true)
 	if err != nil {
 		createWebDAVBackupNotification(ctx, manual, "", 0, cfg, fmt.Errorf("export: %w", err))
 		return fmt.Errorf("export: %w", err)
 	}
-
-	data, err := json.Marshal(dump)
-	if err != nil {
-		createWebDAVBackupNotification(ctx, manual, "", 0, cfg, fmt.Errorf("marshal dump: %w", err))
-		return fmt.Errorf("marshal dump: %w", err)
-	}
+	defer func() {
+		_ = exportFile.Close()
+		_ = os.Remove(exportFile.Name())
+	}()
 
 	filename := fmt.Sprintf("octopus-backup-%s.json", time.Now().UTC().Format("20060102-150405"))
 	remotePath := strings.TrimSuffix(cfg.RemotePath, "/") + "/" + filename
 
-	if err := client.Upload(remotePath, data); err != nil {
-		createWebDAVBackupNotification(ctx, manual, remotePath, len(data), cfg, fmt.Errorf("upload %s: %w", remotePath, err))
+	if err := client.UploadReader(remotePath, exportFile, exportSize); err != nil {
+		createWebDAVBackupNotification(ctx, manual, remotePath, int(exportSize), cfg, fmt.Errorf("upload %s: %w", remotePath, err))
 		return fmt.Errorf("upload %s: %w", remotePath, err)
 	}
 
-	log.Infof("webdav backup uploaded: %s (%d bytes, manual=%v)", remotePath, len(data), manual)
+	log.Infof("webdav backup uploaded: %s (%d bytes, manual=%v)", remotePath, exportSize, manual)
 
 	var cleanupErr error
 	if cfg.MaxBackups > 0 {
@@ -111,7 +110,7 @@ func performWebDAVBackup(ctx context.Context, manual bool) error {
 		}
 	}
 
-	createWebDAVBackupNotification(ctx, manual, remotePath, len(data), cfg, cleanupErr)
+	createWebDAVBackupNotification(ctx, manual, remotePath, int(exportSize), cfg, cleanupErr)
 	return nil
 }
 

@@ -365,9 +365,21 @@ export function GroupListItem({ group }: { group: Group }) {
     );
     const [expanded, setExpanded] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState(false);
-    const [healthSnapshotMessage, setHealthSnapshotMessage] = useState<string | null>(null);
-    // 最新一次健康拨测快照（Seller 移植后端 /group/health/*）：只读展示 + 手动触发。
-    const { data: healthSnapshot } = useGroupHealthLatest(group.id, expanded);
+    const previousHealthSnapshotId = runGroupHealth.isSuccess
+        ? runGroupHealth.context?.previousSnapshotId
+        : undefined;
+    const healthQuery = useGroupHealthLatest(group.id, expanded, previousHealthSnapshotId);
+    const healthSnapshot = healthQuery.data?.latest;
+    const awaitingHealthSnapshot = previousHealthSnapshotId !== undefined
+        && (!healthSnapshot || healthSnapshot.id <= previousHealthSnapshotId);
+    const isHealthProbeRunning = runGroupHealth.isPending || awaitingHealthSnapshot || healthSnapshot?.status === 'running';
+    const healthProbeLabel = runGroupHealth.isPending
+        ? t('card.healthProbeStarting')
+        : awaitingHealthSnapshot
+          ? t('card.healthProbeAccepted')
+          : isHealthProbeRunning
+            ? t('card.healthProbeStatus.running')
+            : t('card.runHealthProbe');
 
     // ---- Channel maps ----
     const channelNameByKey = useMemo(
@@ -755,10 +767,14 @@ export function GroupListItem({ group }: { group: Group }) {
             )
                 payload.session_keep_time = nextSessionKeepTime;
             const nextDefaultReasoningEffort = (
-                values.default_reasoning_effort ?? ''
+                values.default_reasoning_effort ?? group.default_reasoning_effort ?? ''
             );
             const nextReasoningForceOverride =
-                values.reasoning_force_override ?? false;
+                values.reasoning_force_override ?? group.reasoning_force_override ?? false;
+            const nextReasoningBufferStrategy =
+                values.reasoning_buffer_strategy ?? group.reasoning_buffer_strategy ?? '';
+            if (nextReasoningBufferStrategy !== (group.reasoning_buffer_strategy ?? ''))
+                payload.reasoning_buffer_strategy = nextReasoningBufferStrategy;
             if (
                 nextDefaultReasoningEffort !==
                 (group.default_reasoning_effort ?? '')
@@ -769,10 +785,10 @@ export function GroupListItem({ group }: { group: Group }) {
                 (group.reasoning_force_override ?? false)
             )
                 payload.reasoning_force_override = nextReasoningForceOverride;
-            const nextParamOverride = (values.param_override ?? '').trim();
+            const nextParamOverride = (values.param_override ?? group.param_override ?? '').trim();
             if (nextParamOverride !== ((group.param_override ?? '').trim()))
                 payload.param_override = nextParamOverride;
-            const nextCustomHeader = values.custom_header ?? [];
+            const nextCustomHeader = values.custom_header ?? group.custom_header ?? [];
             if (
                 JSON.stringify(nextCustomHeader) !==
                 JSON.stringify(group.custom_header ?? [])
@@ -808,6 +824,7 @@ export function GroupListItem({ group }: { group: Group }) {
             group.attempt_time_out,
             group.param_override,
             group.reasoning_force_override,
+            group.reasoning_buffer_strategy,
             group.stream_idle_timeout,
             group.session_keep_time,
             group.id,
@@ -1121,35 +1138,32 @@ export function GroupListItem({ group }: { group: Group }) {
                             <TooltipTrigger asChild>
                                 <button
                                     type="button"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setHealthSnapshotMessage(null);
+                                    onClick={(event) => {
+                                        event.stopPropagation();
                                         runGroupHealth.mutate(
                                             { groupId: group.id },
                                             {
-                                                onSuccess: (snapshot) => {
-                                                    setHealthSnapshotMessage(
-                                                        `${snapshot.status} · ${snapshot.duration_ms}ms`,
-                                                    );
-                                                },
                                                 onError: (error) => {
                                                     toast.error(error.message);
                                                 },
                                             },
                                         );
                                     }}
-                                    disabled={runGroupHealth.isPending}
+                                    disabled={isHealthProbeRunning}
+                                    aria-label={healthProbeLabel}
+                                    aria-busy={isHealthProbeRunning}
+                                    title={healthProbeLabel}
                                     className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                                 >
-                                    {runGroupHealth.isPending ? (
-                                        <Loader2 className="size-4 animate-spin" />
+                                    {isHealthProbeRunning ? (
+                                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                                     ) : (
-                                        <HeartPulse className="size-4" />
+                                        <HeartPulse className="size-4" aria-hidden="true" />
                                     )}
                                 </button>
                             </TooltipTrigger>
                             <TooltipContent>
-                                {healthSnapshotMessage ?? t('card.runHealthProbe')}
+                                {healthProbeLabel}
                             </TooltipContent>
                         </Tooltip>
                     ) : null}
@@ -1240,8 +1254,18 @@ export function GroupListItem({ group }: { group: Group }) {
                     >
                         <div className="space-y-3 border-t border-border/40 px-4 pb-4 pt-3">
                             {/* --- 健康拨测快照（只读，Seller 移植 /group/health/latest）--- */}
-                            {healthSnapshot && (
-                                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border/25 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                            {runGroupHealth.isPending || awaitingHealthSnapshot ? (
+                                <p role="status" className="text-xs text-muted-foreground">
+                                    {healthProbeLabel}
+                                </p>
+                            ) : null}
+                            {healthQuery.error || runGroupHealth.error ? (
+                                <p role="alert" className="break-words text-xs text-destructive">
+                                    {healthQuery.error?.message ?? runGroupHealth.error?.message}
+                                </p>
+                            ) : null}
+                            {healthSnapshot && !runGroupHealth.isPending && !awaitingHealthSnapshot && (
+                                <div role="status" className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-border/25 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                                     <span
                                         className={cn(
                                             'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold',
@@ -1256,10 +1280,12 @@ export function GroupListItem({ group }: { group: Group }) {
                                     >
                                         {t(`card.healthProbeStatus.${healthSnapshot.status}`)}
                                     </span>
-                                    <span>
-                                        {t('card.healthProbeDuration', { ms: healthSnapshot.duration_ms })}
-                                    </span>
-                                    {healthSnapshot.message ? <span className="truncate">{healthSnapshot.message}</span> : null}
+                                    {healthSnapshot.status !== 'running' ? (
+                                        <span>
+                                            {t('card.healthProbeDuration', { ms: healthSnapshot.duration_ms })}
+                                        </span>
+                                    ) : null}
+                                    {healthSnapshot.message ? <span className="min-w-0 break-words">{healthSnapshot.message}</span> : null}
                                 </div>
                             )}
                             {/* --- Mode switcher --- */}

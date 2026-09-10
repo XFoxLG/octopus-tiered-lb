@@ -72,6 +72,7 @@ export interface ChannelFormData {
     param_override: string;
     outbound_format_override: string;
     request_rewrite: RequestRewriteConfig;
+    relay_log_raw_sse_until: number;
     keys: ChannelKeyFormItem[];
     model: string;
     custom_model: string;
@@ -634,6 +635,7 @@ export function ChannelForm({
     const isMobile = useIsMobile();
     const { data: settings } = useSettingList();
     const { data: channelGroups = [] } = useChannelGroupList();
+    const [formOpenedAt] = useState(() => Math.floor(Date.now() / 1000));
     const requestRewriteSupported = isRequestRewriteSupportedChannelType(formData.type);
     // 出站格式覆盖仅对 OpenAI Chat / Response 类型生效（后端只在这两种渠道类型上分支），
     // 其他类型不渲染该控件，避免"设置了但不生效"的误导。
@@ -645,6 +647,17 @@ export function ChannelForm({
     const globalKeyStrategy = settings?.find((s) => s.key === SettingKey.KeySelectionStrategy)?.value ?? 'cost';
     const effectiveKeyStrategy = formData.key_selection_strategy || globalKeyStrategy;
     const showPriorityInput = effectiveKeyStrategy === 'priority';
+    const rawSSECaptureActive = formData.relay_log_raw_sse_until > formOpenedAt;
+    const rawSSEExpiry = rawSSECaptureActive
+        ? new Date(formData.relay_log_raw_sse_until * 1000).toLocaleString()
+        : t('rawSSEDisabled');
+
+    const setRawSSECaptureDuration = (durationSeconds: number) => {
+        onFormDataChange({
+            ...formData,
+            relay_log_raw_sse_until: durationSeconds > 0 ? Math.floor(Date.now() / 1000) + durationSeconds : 0,
+        });
+    };
 
     // Ensure the form always shows at least 1 row for base_urls / keys / custom_header.
     // This avoids "empty list" UI and also keeps URL + APIKEY layout consistent.
@@ -1510,20 +1523,49 @@ export function ChannelForm({
                                     <Hint text={t('outboundFormatOverrideHint')} />
                                 </label>
                                 <Select
-                                    value={formData.outbound_format_override}
-                                    onValueChange={(value) => onFormDataChange({ ...formData, outbound_format_override: value })}
+                                    value={formData.outbound_format_override || 'inherit'}
+                                    onValueChange={(value) => onFormDataChange({
+                                        ...formData,
+                                        outbound_format_override: value === 'inherit' ? '' : value,
+                                    })}
                                 >
-                                    <SelectTrigger id={`${idPrefix}-outbound-format-override`} className="w-full rounded-lg">
-                                        <SelectValue />
+                                    <SelectTrigger id={`${idPrefix}-outbound-format-override`} className="min-w-0 w-full max-w-full rounded-lg">
+                                        <SelectValue placeholder={t('outboundFormatOverrideFollowGroup')} />
                                     </SelectTrigger>
                                     <SelectContent className="min-w-0" style={{ width: 'var(--radix-select-trigger-width)' }}>
-                                        <SelectItem value="">{t('outboundFormatOverrideFollowGroup')}</SelectItem>
+                                        <SelectItem value="inherit">{t('outboundFormatOverrideFollowGroup')}</SelectItem>
                                         <SelectItem value="chat_only">{t('outboundFormatOverrideChatOnly')}</SelectItem>
                                         <SelectItem value="responses_only">{t('outboundFormatOverrideResponsesOnly')}</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
                         ) : null}
+
+                        <div className={`${fieldGroupClassName} rounded-lg border border-amber-500/20 bg-amber-500/5 p-3`}>
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <p className={labelClassName}>{t('rawSSECapture')}</p>
+                                    <p className="text-xs text-muted-foreground">{t('rawSSECaptureHint')}</p>
+                                </div>
+                                <Badge variant={rawSSECaptureActive ? 'default' : 'secondary'}>
+                                    {rawSSEExpiry}
+                                </Badge>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <Button type="button" size="sm" variant={!rawSSECaptureActive ? 'default' : 'outline'} onClick={() => setRawSSECaptureDuration(0)}>
+                                    {t('rawSSEOff')}
+                                </Button>
+                                <Button type="button" size="sm" variant="outline" onClick={() => setRawSSECaptureDuration(15 * 60)}>
+                                    {t('rawSSE15Minutes')}
+                                </Button>
+                                <Button type="button" size="sm" variant="outline" onClick={() => setRawSSECaptureDuration(60 * 60)}>
+                                    {t('rawSSE1Hour')}
+                                </Button>
+                                <Button type="button" size="sm" variant="outline" onClick={() => setRawSSECaptureDuration(6 * 60 * 60)}>
+                                    {t('rawSSE6Hours')}
+                                </Button>
+                            </div>
+                        </div>
 
                         <div className="space-y-4 pt-2 border-t border-border/20">
                             <div className="flex flex-wrap items-center justify-between gap-3">

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -327,47 +326,5 @@ func TestInitDBWithOptionsAppliesPragmaToMainDB(t *testing.T) {
 	}
 	if got != -30000 {
 		t.Fatalf("PRAGMA cache_size = %d, want -30000", got)
-	}
-}
-
-// TestCloseAndCleanupSQLiteDeletesFilesAndClosesConnection 验证迁移后清理
-// 旧 SQLite 文件的逻辑（issue #118）：关闭连接并删除 .db/.db-wal/.db-shm。
-func TestCloseAndCleanupSQLiteDeletesFilesAndClosesConnection(t *testing.T) {
-	mainPath := filepath.Join(t.TempDir(), "data.db")
-	if err := InitDB("sqlite", mainPath, false); err != nil {
-		t.Fatalf("InitDB() error = %v", err)
-	}
-	// 写入一行数据触发 WAL 创建（WAL 在首次写入后生成）。
-	if err := GetDB().Create(&model.Setting{Key: "test-key", Value: "v"}).Error; err != nil {
-		t.Fatalf("seed setting: %v", err)
-	}
-
-	removed := CloseAndCleanupSQLite()
-	t.Cleanup(func() {
-		// 确保全局 db 被重置，避免影响后续测试。
-		db = nil
-		currentDBType = ""
-		currentDBPath = ""
-	})
-
-	// 主 .db 文件应被删除。
-	found := false
-	for _, p := range removed {
-		if p == mainPath {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("removed list %v does not contain main db path %s", removed, mainPath)
-	}
-
-	// 文件应不再存在于磁盘上。
-	if _, err := os.Stat(mainPath); !os.IsNotExist(err) {
-		t.Fatalf("main db file still exists after cleanup, stat error = %v", err)
-	}
-
-	// 全局 db 应被置为 nil。
-	if GetDB() != nil {
-		t.Fatalf("GetDB() should be nil after CloseAndCleanupSQLite")
 	}
 }

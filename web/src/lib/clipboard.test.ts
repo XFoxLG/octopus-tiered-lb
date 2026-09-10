@@ -3,39 +3,34 @@ import assert from 'node:assert/strict';
 
 import { writeClipboardText } from './clipboard.ts';
 
-type ClipboardLike = {
-    writeText: (text: string) => Promise<void>;
-};
+type ClipboardOptions = NonNullable<Parameters<typeof writeClipboardText>[1]>;
+type ClipboardLike = NonNullable<ClipboardOptions['clipboard']>;
+type DocumentLike = NonNullable<ClipboardOptions['document']>;
 
-type TextAreaLike = {
-    value: string;
-    style: Record<string, string>;
-    setAttribute: (name: string, value: string) => void;
-    select: () => void;
-};
-
-type DocumentLike = {
-    body: {
-        appendChild: (node: TextAreaLike) => void;
-        removeChild: (node: TextAreaLike) => void;
-    };
-    createElement: (tag: string) => TextAreaLike;
-    execCommand: (command: string) => boolean;
+type TextAreaLike = Pick<HTMLTextAreaElement, 'value' | 'setAttribute' | 'select'> & {
+    style: Partial<CSSStyleDeclaration>;
 };
 
 test('writeClipboardText falls back to execCommand when clipboard permission is denied', async () => {
-    const appended: TextAreaLike[] = [];
-    const removed: TextAreaLike[] = [];
+    const appended: Node[] = [];
+    const removed: Node[] = [];
     let selected = false;
 
     const documentLike: DocumentLike = {
         body: {
-            appendChild: (node) => appended.push(node),
-            removeChild: (node) => removed.push(node),
+            appendChild: <NodeType extends Node>(node: NodeType): NodeType => {
+                appended.push(node);
+                return node;
+            },
+            removeChild: <NodeType extends Node>(node: NodeType): NodeType => {
+                removed.push(node);
+                return node;
+            },
         },
-        createElement: (tag) => {
+        // This partial DOM fixture only supports the textarea used by the fallback.
+        createElement: ((tag: string) => {
             assert.equal(tag, 'textarea');
-            return {
+            const textArea: TextAreaLike = {
                 value: '',
                 style: {},
                 setAttribute: () => {},
@@ -43,7 +38,8 @@ test('writeClipboardText falls back to execCommand when clipboard permission is 
                     selected = true;
                 },
             };
-        },
+            return textArea as HTMLTextAreaElement;
+        }) as DocumentLike['createElement'],
         execCommand: (command) => {
             assert.equal(command, 'copy');
             return true;
@@ -63,6 +59,7 @@ test('writeClipboardText falls back to execCommand when clipboard permission is 
     assert.equal(appended.length, 1);
     assert.equal(removed.length, 1);
     assert.equal(appended[0], removed[0]);
+    assert.ok('value' in appended[0]);
     assert.equal(appended[0].value, 'sk-octopus-test');
     assert.equal(selected, true);
 });

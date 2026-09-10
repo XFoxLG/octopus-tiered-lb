@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,8 +16,10 @@ import (
 	"github.com/lingyuins/octopus/internal/server/router"
 )
 
-func TestViewerRoleDowngradeInvalidatesWriteAccessAcrossHandlers(t *testing.T) {
+func TestPrimaryAccountRoleDowngradeInvalidatesConsoleAccessAcrossHandlers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("OCTOPUS_INITIAL_ADMIN_USERNAME", "")
+	t.Setenv("OCTOPUS_INITIAL_ADMIN_PASSWORD", "")
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(t.Name()))
 	if err := db.InitDB("sqlite", dsn, false); err != nil {
@@ -44,6 +45,21 @@ func TestViewerRoleDowngradeInvalidatesWriteAccessAcrossHandlers(t *testing.T) {
 	if err := router.RegisterAll(engine); err != nil {
 		t.Fatalf("register routes: %v", err)
 	}
+	for _, retiredRoute := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodPost, path: "/api/v1/user/create"},
+		{method: http.MethodGet, path: "/api/v1/user/list"},
+		{method: http.MethodPost, path: "/api/v1/user/update-role"},
+		{method: http.MethodDelete, path: "/api/v1/user/delete/17"},
+	} {
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, httptest.NewRequest(retiredRoute.method, retiredRoute.path, nil))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("retired route %s %s status = %d, want 404", retiredRoute.method, retiredRoute.path, recorder.Code)
+		}
+	}
 
 	currentUser := op.UserGet()
 	if currentUser.ID == 0 {
@@ -53,7 +69,7 @@ func TestViewerRoleDowngradeInvalidatesWriteAccessAcrossHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate token: %v", err)
 	}
-	if err := op.UserUpdateRole(currentUser.ID, model.UserRoleViewer, context.Background()); err != nil {
+	if err := db.GetDB().Model(&currentUser).Update("role", model.UserRoleViewer).Error; err != nil {
 		t.Fatalf("downgrade user role: %v", err)
 	}
 
@@ -95,8 +111,8 @@ func TestViewerRoleDowngradeInvalidatesWriteAccessAcrossHandlers(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			engine.ServeHTTP(recorder, req)
 
-			if recorder.Code != http.StatusForbidden {
-				t.Fatalf("%s %s status = %d, want %d; body=%s", tc.method, tc.target, recorder.Code, http.StatusForbidden, recorder.Body.String())
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("%s %s status = %d, want %d; body=%s", tc.method, tc.target, recorder.Code, http.StatusUnauthorized, recorder.Body.String())
 			}
 		})
 	}
@@ -106,7 +122,7 @@ func TestViewerRoleDowngradeInvalidatesWriteAccessAcrossHandlers(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("viewer read endpoint status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("viewer read endpoint status = %d, want %d; body=%s", recorder.Code, http.StatusUnauthorized, recorder.Body.String())
 	}
 }

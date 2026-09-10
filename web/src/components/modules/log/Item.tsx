@@ -1,12 +1,9 @@
 'use client';
 
-import { memo, useMemo, useState, useEffect } from 'react';
-import { Clock, Cpu, Gauge, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, JapaneseYen, ArrowRight, ArrowDown, Send, MessageSquare, Loader2, Percent, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound, Globe, ChevronsDownUp, ChevronsUpDown, TestTube2, Sigma, Brain, Type } from 'lucide-react';
+import { memo, useMemo, useState } from 'react';
+import { Clock, Cpu, Gauge, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, JapaneseYen, ArrowRight, ArrowDown, Percent, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound, Globe, TestTube2, Sigma, Brain, Type } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
-import JsonView from '@uiw/react-json-view';
-import { githubDarkTheme } from '@uiw/react-json-view/githubDark';
-import { githubLightTheme } from '@uiw/react-json-view/githubLight';
 import { useTheme } from 'next-themes';
 import { type RelayLog, type ChannelAttempt, useLogDetail } from '@/api/endpoints/log';
 import { getModelIcon, resolveBrandColor } from '@/lib/model-icons';
@@ -14,7 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
-import { resolveLogDisplayFields, formatJsonForCopy } from './display';
+import { resolveLogDisplayFields } from './display';
+import { BoundaryDetails } from './BoundaryDetails';
 import { useLogFieldVisibility } from './ui-store';
 import { useSettingStore } from '@/stores/setting';
 import { CopyIconButton } from '@/components/common/CopyButton';
@@ -26,7 +24,6 @@ import {
     MorphingDialogClose,
     MorphingDialogTitle,
     MorphingDialogDescription,
-    useMorphingDialog,
 } from '@/components/ui/morphing-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 
@@ -72,6 +69,14 @@ function formatTPS(tokens: number, timeMs: number): string {
     if (tps >= 100) return `${tps.toFixed(0)} tk/s`;
     if (tps >= 10) return `${tps.toFixed(1)} tk/s`;
     return `${tps.toFixed(2)} tk/s`;
+}
+
+/** 客户端主动断开的错误文本（relay 后端 errClientDisconnected 的固定文案）。
+ * 它表示客户端自己取消了请求，不是渠道故障，展示时降级为中性提示而不是红色错误。 */
+const CLIENT_DISCONNECT_TEXT = 'client disconnected';
+
+function isClientDisconnectText(text?: string | null): boolean {
+    return !!text && text.trim() === CLIENT_DISCONNECT_TEXT;
 }
 
 /** Format cache hit rate = cacheReadTokens / totalTokens. */
@@ -194,100 +199,13 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts, channelNameB
     );
 }
 
-function DeferredJsonContent({ content, fallbackText, collapsed }: { content: string | undefined; fallbackText: string; collapsed: boolean }) {
-    const { resolvedTheme } = useTheme();
-    const { isOpen } = useMorphingDialog();
-    const [shouldRender, setShouldRender] = useState(false);
-
-    const parsed = useMemo(() => {
-        if (!content) return { isJson: false, data: null };
-        try {
-            return { isJson: true, data: JSON.parse(content) };
-        } catch {
-            return { isJson: false, data: content };
-        }
-    }, [content]);
-
-    useEffect(() => {
-        if (isOpen) {
-            const timer = setTimeout(() => setShouldRender(true), 300);
-            return () => clearTimeout(timer);
-        }
-    }, [isOpen]);
-
-    if (!isOpen) {
-        if (shouldRender) setShouldRender(false);
-        return null;
-    }
-
-    if (!content) {
-        return (
-            <div className="h-full min-h-0 overflow-auto overscroll-contain overflow-x-auto">
-                <pre className="p-4 text-xs text-muted-foreground whitespace-pre-wrap wrap-break-word leading-relaxed">
-                    {fallbackText}
-                </pre>
-            </div>
-        );
-    }
-
-    return (
-        <AnimatePresence mode="wait">
-            {!shouldRender ? (
-                <motion.div
-                    key="loading"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.15 }}
-                    className="flex h-full min-h-0 items-center justify-center overflow-auto overscroll-contain p-4"
-                >
-                    <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
-                </motion.div>
-            ) : parsed.isJson ? (
-                <motion.div
-                    key="json"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="h-full min-h-0 overflow-auto overscroll-contain p-4 overflow-x-auto"
-                >
-                    <JsonView
-                        value={parsed.data as object}
-                        style={{
-                            ...(resolvedTheme === 'dark' ? githubDarkTheme : githubLightTheme),
-                            fontSize: '12px',
-                            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-                            backgroundColor: 'transparent',
-                        }}
-                        displayDataTypes={false}
-                        displayObjectSize={false}
-                        collapsed={collapsed}
-                        shortenTextAfterLength={collapsed ? 30 : 0}
-                    />
-                </motion.div>
-            ) : (
-                <motion.pre
-                    key="text"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="h-full min-h-0 overflow-auto overscroll-contain p-4 text-xs text-muted-foreground whitespace-pre-wrap wrap-break-word font-mono leading-relaxed overflow-x-auto"
-                >
-                    {content}
-                </motion.pre>
-            )}
-        </AnimatePresence>
-    );
-}
-
 export const LogCard = memo(function LogCard({ log, channelNameById }: { log: RelayLog; channelNameById?: ReadonlyMap<number, string> }) {
     const t = useTranslations('log.card');
     const tCommon = useTranslations('common');
     const tGroup = useTranslations('group');
     const { detail, isLoading: isDetailLoading, fetchDetail, reset: resetDetail } = useLogDetail();
     const hasError = !!log.error;
+    const clientDisconnected = isClientDisconnectText(log.error);
     const hasMultipleAttempts = log.attempts && log.attempts.length > 1;
     // forwardedCount 统计真实发往上游的尝试次数（成功+失败），排除冷却跳过与熔断跳过。
     // 当它小于总尝试次数时，单独展示以便区分「实际请求报错」与「冷却中未请求」
@@ -297,8 +215,6 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
         [log.attempts],
     );
     const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);
-    const [requestJsonCollapsed, setRequestJsonCollapsed] = useState(false);
-    const [responseJsonCollapsed, setResponseJsonCollapsed] = useState(false);
     const displayFields = useMemo(() => resolveLogDisplayFields(log, detail, channelNameById), [channelNameById, detail, log]);
     const vis = useLogFieldVisibility();
     const chinaMode = useSettingStore((s) => s.chinaMode);
@@ -310,8 +226,14 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     // Badge 文字会「黑字+透明黑底」看不清，按主题解析为可读颜色（issue: 日志深色模式对比度）
     const { resolvedTheme } = useTheme();
     const badgeColor = resolveBrandColor(brandColor, resolvedTheme === 'dark');
-    const requestAPIKeyName = displayFields.requestAPIKeyName;
-	const clientIP = log.client_ip || '';
+	const requestAPIKeyName = displayFields.requestAPIKeyName;
+	// 展示轨来源 IP 优先（转发头解析出的真实客户端），旧日志回退到安全轨 client_ip
+	const clientIP = log.reported_client_ip || log.client_ip || '';
+	const reportedIPSourceLabel = useMemo(() => {
+		if (!log.reported_client_ip_source || log.reported_client_ip_source === 'none') return '';
+		if (log.reported_client_ip_source === 'cf-connecting-ip') return 'CF';
+		return 'XFF';
+	}, [log.reported_client_ip_source]);
     const cacheReadTokens = displayFields.cacheReadTokens;
     const semanticCacheHit = displayFields.semanticCacheHit;
     const effectiveInputTokens = Math.max(0, log.input_tokens - cacheReadTokens);
@@ -339,10 +261,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const displayActualModelName = displayFields.actualModelName || '-';
     const displayRequestModelName = displayFields.requestModelName || log.request_model_name;
 
-    const requestContent = detail?.request_content;
     const responseContent = detail?.response_content;
-    const requestCopyText = useMemo(() => formatJsonForCopy(requestContent), [requestContent]);
-    const responseCopyText = useMemo(() => formatJsonForCopy(responseContent), [responseContent]);
     const usageKnown = useMemo(() => {
         if (log.input_tokens > 0 || log.output_tokens > 0 || Number(log.cost) > 0) {
             return true;
@@ -469,6 +388,11 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     <div className="flex items-center gap-1.5">
                                         <Globe className="size-3.5 shrink-0 text-sky-500" />
                                         <span className="truncate" title={clientIP}>{clientIP}</span>
+                                        {reportedIPSourceLabel && (
+                                            <span className="shrink-0 rounded-sm bg-sky-500/10 px-1 text-[10px] leading-4 text-sky-600 dark:text-sky-400" title={log.reported_client_ip_source}>
+                                                {reportedIPSourceLabel}
+                                            </span>
+                                        )}
                                     </div>
                                 )}
                                 <div className="flex items-center gap-1.5">
@@ -561,8 +485,16 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                 )}
                             </div>
                             {hasError && (
-                                <div className="p-2.5 rounded-xl bg-destructive/10 border border-destructive/20 overflow-hidden">
-                                    <p className="text-xs text-destructive line-clamp-2">{log.error}</p>
+                                <div
+                                    className={cn(
+                                        "p-2.5 rounded-xl border overflow-hidden",
+                                        clientDisconnected ? "bg-muted/60 border-border/60" : "bg-destructive/10 border-destructive/20",
+                                    )}
+                                    title={clientDisconnected ? t('clientDisconnectedHint') : undefined}
+                                >
+                                    <p className={cn("text-xs line-clamp-2", clientDisconnected ? "text-muted-foreground" : "text-destructive")}>
+                                        {clientDisconnected ? t('clientDisconnected') : log.error}
+                                    </p>
                                 </div>
                             )}
                         </div>
@@ -634,12 +566,15 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                             ? "bg-destructive/5 border-destructive/20"
                                             : "bg-secondary/30 border-border/50"
                                     )}>
-                                        <div
+                                        <button
+                                            type="button"
                                             className={cn(
-                                                "flex items-center gap-2 px-3 py-2.5 shrink-0 cursor-pointer select-none hover:bg-muted/50 transition-colors",
+                                                "flex w-full items-center gap-2 px-3 py-2.5 shrink-0 cursor-pointer select-none text-left hover:bg-muted/50 transition-colors",
                                                 hasError && "hover:bg-destructive/10"
                                             )}
                                             onClick={() => setIsDiagnosticExpanded(!isDiagnosticExpanded)}
+                                            aria-expanded={isDiagnosticExpanded}
+                                            aria-controls={`log-diagnostics-${log.id}`}
                                         >
                                             {hasError ? (
                                                 <AlertCircle className="size-4 text-destructive" />
@@ -681,11 +616,12 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                                     <ChevronDown className="size-4 text-muted-foreground" />
                                                 )}
                                             </div>
-                                        </div>
+                                        </button>
 
                                         <AnimatePresence initial={false}>
                                             {isDiagnosticExpanded && (
                                                 <motion.div
+                                                    id={`log-diagnostics-${log.id}`}
                                                     initial={{ height: 0, opacity: 0 }}
                                                     animate={{ height: "auto", opacity: 1 }}
                                                     exit={{ height: 0, opacity: 0 }}
@@ -719,17 +655,21 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                                                         key={idx}
                                                                         className={cn(
                                                                             "text-xs p-2.5 rounded-xl border transition-colors flex flex-col gap-2",
-                                                                            statusCard.card
+                                                                            isClientDisconnectText(attempt.msg)
+                                                                                ? "bg-muted/40 border-border/50 hover:bg-muted/60"
+                                                                                : statusCard.card
                                                                         )}
                                                                     >
                                                                         <div className="flex items-center gap-2">
                                                                             <Badge
                                                                                 className={cn(
                                                                                     "h-5 shrink-0 px-1.5 text-[10px] font-bold uppercase shadow-none border-0",
-                                                                                    statusBadge.className
+                                                                                    isClientDisconnectText(attempt.msg)
+                                                                                        ? "bg-muted text-muted-foreground"
+                                                                                        : statusBadge.className
                                                                                 )}
                                                                             >
-                                                                                {t(statusBadge.labelKey)}
+                                                                                {isClientDisconnectText(attempt.msg) ? t('clientDisconnected') : t(statusBadge.labelKey)}
                                                                             </Badge>
                                                                             <span className="font-semibold text-foreground">
                                                                                 {attempt.channel_name?.trim() || channelNameById?.get(attempt.channel_id) || `Channel #${attempt.channel_id}`}
@@ -749,9 +689,11 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                                                         {attempt.msg && (
                                                                             <div className={cn(
                                                                                 "pl-2 border-l-2 text-[11px] leading-relaxed",
-                                                                                statusCard.msg
+                                                                                isClientDisconnectText(attempt.msg)
+                                                                                    ? "text-muted-foreground border-border/60"
+                                                                                    : statusCard.msg
                                                                             )}>
-                                                                                {attempt.msg}
+                                                                                {isClientDisconnectText(attempt.msg) ? t('clientDisconnected') : attempt.msg}
                                                                             </div>
                                                                         )}
                                                                     </div>
@@ -765,76 +707,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         </AnimatePresence>
                                     </div>
                                 )}
-                                <div className="min-h-0 flex-1 overflow-hidden pb-1">
-                                    <div className="grid h-full min-h-0 grid-cols-1 gap-4 md:grid-cols-2">
-                                        <div className="flex min-h-0 flex-col rounded-2xl border border-border bg-muted/30 overflow-hidden">
-                                            <div className="flex items-center gap-2 px-3 md:px-4 py-2.5 md:py-3 border-b border-border bg-muted/50 shrink-0">
-                                                <Send className="size-4 text-green-500" />
-                                                <span className="text-sm font-medium text-card-foreground">{t('requestContent')}</span>
-                                                <div className="ml-auto flex items-center gap-1">
-                                                    <Badge variant="secondary" className="text-xs">
-                                                        {usageKnown ? `${fmt(formatCount(log.input_tokens).formatted)} ${t('tokens')}` : tCommon('unknown')}
-                                                    </Badge>
-                                                    {requestContent && (
-                                                        <>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setRequestJsonCollapsed((v) => !v)}
-                                                                className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                                                                title={requestJsonCollapsed ? t('expandAll') : t('collapseAll')}
-                                                            >
-                                                                {requestJsonCollapsed ? <ChevronsUpDown className="size-3.5" /> : <ChevronsDownUp className="size-3.5" />}
-                                                            </button>
-                                                            <CopyIconButton text={requestCopyText} className="text-muted-foreground hover:text-foreground" />
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="min-h-0 flex-1 overflow-hidden">
-                                                {isDetailLoading ? (
-                                                    <div className="p-4 flex items-center justify-center h-full">
-                                                        <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
-                                                    </div>
-                                                ) : (
-                                                    <DeferredJsonContent content={requestContent} fallbackText={t('noRequestContent')} collapsed={requestJsonCollapsed} />
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div className="flex min-h-0 flex-col rounded-2xl border border-border bg-muted/30 overflow-hidden">
-                                            <div className="flex items-center gap-2 px-3 md:px-4 py-2.5 md:py-3 border-b border-border bg-muted/50 shrink-0">
-                                                <MessageSquare className="size-4 text-purple-500" />
-                                                <span className="text-sm font-medium text-card-foreground">{t('responseContent')}</span>
-                                                <div className="ml-auto flex items-center gap-1">
-                                                    <Badge variant="secondary" className="text-xs">
-                                                        {usageKnown ? `${fmt(formatCount(log.output_tokens).formatted)} ${t('tokens')}` : tCommon('unknown')}
-                                                    </Badge>
-                                                    {responseContent && (
-                                                        <>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setResponseJsonCollapsed((v) => !v)}
-                                                                className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                                                                title={responseJsonCollapsed ? t('expandAll') : t('collapseAll')}
-                                                            >
-                                                                {responseJsonCollapsed ? <ChevronsUpDown className="size-3.5" /> : <ChevronsDownUp className="size-3.5" />}
-                                                            </button>
-                                                            <CopyIconButton text={responseCopyText} className="text-muted-foreground hover:text-foreground" />
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="min-h-0 flex-1 overflow-hidden">
-                                                {isDetailLoading ? (
-                                                    <div className="p-4 flex items-center justify-center h-full">
-                                                        <Loader2 className="h-5 w-5 text-muted-foreground animate-spin" />
-                                                    </div>
-                                                ) : (
-                                                    <DeferredJsonContent content={responseContent} fallbackText={t('noResponseContent')} collapsed={responseJsonCollapsed} />
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                                <BoundaryDetails detail={detail} isLoading={isDetailLoading} />
                             </div>
                         </MorphingDialogDescription>
 
@@ -939,4 +812,3 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
             </MorphingDialog>
     );
 });
-

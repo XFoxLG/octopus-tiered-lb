@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,11 +29,6 @@ func init() {
 		Use(middleware.Auth()).
 		Use(middleware.RequireJSON()).
 		AddRoute(
-			router.NewRoute("/create", http.MethodPost).
-				Use(middleware.RequirePermission(auth.PermUsersWrite)).
-				Handle(createUser),
-		).
-		AddRoute(
 			router.NewRoute("/change-password", http.MethodPost).
 				Handle(changePassword),
 		).
@@ -45,83 +39,7 @@ func init() {
 		AddRoute(
 			router.NewRoute("/status", http.MethodGet).
 				Handle(status),
-		).
-		AddRoute(
-			router.NewRoute("/list", http.MethodGet).
-				Use(middleware.RequirePermission(auth.PermUsersRead)).
-				Handle(listUsers),
-		).
-		AddRoute(
-			router.NewRoute("/update-role", http.MethodPost).
-				Use(middleware.RequirePermission(auth.PermUsersWrite)).
-				Handle(updateUserRole),
-		).
-		AddRoute(
-			router.NewRoute("/delete/:id", http.MethodDelete).
-				Use(middleware.RequirePermission(auth.PermUsersWrite)).
-				Handle(deleteUser),
 		)
-}
-
-func createUser(c *gin.Context) {
-	var req model.UserCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
-		return
-	}
-	if err := usr.Create(req, c.Request.Context()); err != nil {
-		resp.Error(c, http.StatusBadRequest, "failed to create user")
-		return
-	}
-	resp.Success(c, nil)
-}
-
-func listUsers(c *gin.Context) {
-	users, err := usr.List(c.Request.Context())
-	if err != nil {
-		resp.InternalError(c)
-		return
-	}
-	resp.Success(c, users)
-}
-
-func updateUserRole(c *gin.Context) {
-	var req struct {
-		ID   uint   `json:"id" binding:"required"`
-		Role string `json:"role" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
-		return
-	}
-	if err := usr.UpdateRole(req.ID, req.Role, c.Request.Context()); err != nil {
-		if status, msg, ok := classifyUserMutationError(err); ok {
-			resp.Error(c, status, msg)
-			return
-		}
-		resp.Error(c, http.StatusBadRequest, "failed to update role")
-		return
-	}
-	resp.Success(c, nil)
-}
-
-func deleteUser(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 64)
-	if err != nil {
-		resp.Error(c, http.StatusBadRequest, "invalid user id")
-		return
-	}
-	currentUserID := uint(c.GetInt("user_id"))
-	if err := usr.Delete(uint(id), currentUserID, c.Request.Context()); err != nil {
-		if status, msg, ok := classifyUserMutationError(err); ok {
-			resp.Error(c, status, msg)
-			return
-		}
-		resp.Error(c, http.StatusBadRequest, "failed to delete user")
-		return
-	}
-	resp.Success(c, nil)
 }
 
 func login(c *gin.Context) {
@@ -216,24 +134,4 @@ func status(c *gin.Context) {
 		return
 	}
 	resp.Success(c, "ok")
-}
-
-func classifyUserMutationError(err error) (int, string, bool) {
-	if err == nil {
-		return 0, "", false
-	}
-
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "user not found"):
-		return http.StatusNotFound, "user not found", true
-	case strings.Contains(msg, "invalid role"):
-		return http.StatusBadRequest, err.Error(), true
-	case strings.Contains(msg, "username already exists"):
-		return http.StatusConflict, "username already exists", true
-	case strings.Contains(msg, "cannot delete the active user"):
-		return http.StatusBadRequest, "cannot delete the active user", true
-	default:
-		return 0, "", false
-	}
 }

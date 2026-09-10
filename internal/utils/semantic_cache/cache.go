@@ -27,13 +27,15 @@ type CacheEntry struct {
 
 // SemanticCache is an in-memory vector store with cosine similarity lookup.
 type SemanticCache struct {
-	mu         sync.RWMutex
-	entries    []*CacheEntry
-	maxEntries int
-	threshold  float64
-	ttl        time.Duration
-	hits       atomic.Int64
-	misses     atomic.Int64
+	mu               sync.RWMutex
+	entries          []*CacheEntry
+	maxEntries       int
+	threshold        float64
+	ttl              time.Duration
+	hits             atomic.Int64
+	misses           atomic.Int64
+	embeddingBaseURL string
+	embeddingModel   string
 }
 
 // globalCacheMu protects the globalCache pointer itself from concurrent read/write.
@@ -87,15 +89,19 @@ func ApplyRuntimeConfig(cfg RuntimeConfig) {
 	if globalCache != nil &&
 		globalCache.maxEntries == cfg.MaxEntries &&
 		globalCache.threshold == cfg.Threshold &&
-		globalCache.ttl == ttl {
+		globalCache.ttl == ttl &&
+		globalCache.embeddingBaseURL == cfg.EmbeddingBaseURL &&
+		globalCache.embeddingModel == cfg.EmbeddingModel {
 		return
 	}
 
 	globalCache = &SemanticCache{
-		entries:    make([]*CacheEntry, 0, cfg.MaxEntries),
-		maxEntries: cfg.MaxEntries,
-		threshold:  cfg.Threshold,
-		ttl:        ttl,
+		entries:          make([]*CacheEntry, 0, cfg.MaxEntries),
+		maxEntries:       cfg.MaxEntries,
+		threshold:        cfg.Threshold,
+		ttl:              ttl,
+		embeddingBaseURL: cfg.EmbeddingBaseURL,
+		embeddingModel:   cfg.EmbeddingModel,
 	}
 }
 

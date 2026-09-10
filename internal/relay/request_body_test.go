@@ -172,6 +172,8 @@ func TestForwardMediaRequestMultipartRewritesModelAndStreamsFiles(t *testing.T) 
 		"whisper-1-rewritten",
 		false,
 		context.Background(),
+		nil,
+		0,
 	)
 	if err != nil {
 		t.Fatalf("forwardMediaRequestMultipart() error = %v", err)

@@ -96,10 +96,14 @@ type Channel struct {
 	// OutboundFormatOverride 渠道级出站协议覆盖（issue: 只支持单一协议的公益站）。
 	// 空 = 跟随分组 outbound_format；合法值 chat_only / responses_only，渠道值优先。
 	OutboundFormatOverride string                `json:"outbound_format_override,omitempty" gorm:"column:outbound_format_override;type:varchar(20);not null;default:''"`
-	ChannelProxy         *string               `json:"channel_proxy,omitempty" gorm:"column:channel_proxy"`
-	RequestRewrite       *RequestRewriteConfig `json:"request_rewrite" gorm:"serializer:json"`
-	Stats                *StatsChannel         `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
-	MatchRegex           *string               `json:"match_regex"`
+	ChannelProxy           *string               `json:"channel_proxy,omitempty" gorm:"column:channel_proxy"`
+	RequestRewrite         *RequestRewriteConfig `json:"request_rewrite" gorm:"serializer:json"`
+	// RelayLogRawSSEUntil enables bounded provider-native SSE capture until the
+	// Unix timestamp. Zero or an expired value keeps the normal semantic-only
+	// stream log path and avoids permanently retaining every raw event frame.
+	RelayLogRawSSEUntil int64         `json:"relay_log_raw_sse_until,omitempty" gorm:"column:relay_log_raw_sse_until;default:0"`
+	Stats               *StatsChannel `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
+	MatchRegex          *string       `json:"match_regex"`
 	// KeyHealthPassed 记录最近一次定时 Key 巡检是否全部通过（issue #142）。
 	// nil = 从未巡检；true = 全部通过；false = 存在失败。前端据此对失败渠道标灰。
 	KeyHealthPassed *bool `json:"key_health_passed,omitempty" gorm:"column:key_health_passed"`
@@ -174,29 +178,30 @@ var KeyCooldownFunc func(channelID, keyID int, modelName string) bool
 
 // ChannelUpdateRequest 渠道更新请求 - 仅包含变更的数据
 type ChannelUpdateRequest struct {
-	ID                   int                    `json:"id" binding:"required"`
-	Name                 *string                `json:"name,omitempty"`
-	GroupID              *int                   `json:"group_id,omitempty"`
-	Type                 *outbound.OutboundType `json:"type,omitempty"`
-	Enabled              *bool                  `json:"enabled,omitempty"`
-	BaseUrls             *[]BaseUrl             `json:"base_urls,omitempty"`
-	Model                *string                `json:"model,omitempty"`
-	CustomModel          *string                `json:"custom_model,omitempty"`
-	ProxyMode            *ProxyUsageMode        `json:"proxy_mode,omitempty"`
-	ProxyConfigID        *int                   `json:"proxy_config_id,omitempty"`
-	Proxy                *bool                  `json:"proxy,omitempty"`
-	AutoSync             *bool                  `json:"auto_sync,omitempty"`
-	SkipModelTest        *bool                  `json:"skip_model_test,omitempty"`
-	Disposable           *bool                  `json:"disposable,omitempty"`
-	ExpireAt             *time.Time             `json:"expire_at,omitempty"`
-	KeySelectionStrategy *string                `json:"key_selection_strategy,omitempty"`
-	AutoGroup            *AutoGroupType         `json:"auto_group,omitempty"`
-	CustomHeader         *[]CustomHeader        `json:"custom_header,omitempty"`
-	ChannelProxy         *string                `json:"channel_proxy,omitempty"`
-	ParamOverride        *string                `json:"param_override,omitempty"`
-	OutboundFormatOverride *string              `json:"outbound_format_override,omitempty"`
-	RequestRewrite       *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
-	MatchRegex           *string                `json:"match_regex,omitempty"`
+	ID                     int                    `json:"id" binding:"required"`
+	Name                   *string                `json:"name,omitempty"`
+	GroupID                *int                   `json:"group_id,omitempty"`
+	Type                   *outbound.OutboundType `json:"type,omitempty"`
+	Enabled                *bool                  `json:"enabled,omitempty"`
+	BaseUrls               *[]BaseUrl             `json:"base_urls,omitempty"`
+	Model                  *string                `json:"model,omitempty"`
+	CustomModel            *string                `json:"custom_model,omitempty"`
+	ProxyMode              *ProxyUsageMode        `json:"proxy_mode,omitempty"`
+	ProxyConfigID          *int                   `json:"proxy_config_id,omitempty"`
+	Proxy                  *bool                  `json:"proxy,omitempty"`
+	AutoSync               *bool                  `json:"auto_sync,omitempty"`
+	SkipModelTest          *bool                  `json:"skip_model_test,omitempty"`
+	Disposable             *bool                  `json:"disposable,omitempty"`
+	ExpireAt               *time.Time             `json:"expire_at,omitempty"`
+	KeySelectionStrategy   *string                `json:"key_selection_strategy,omitempty"`
+	AutoGroup              *AutoGroupType         `json:"auto_group,omitempty"`
+	CustomHeader           *[]CustomHeader        `json:"custom_header,omitempty"`
+	ChannelProxy           *string                `json:"channel_proxy,omitempty"`
+	ParamOverride          *string                `json:"param_override,omitempty"`
+	OutboundFormatOverride *string                `json:"outbound_format_override,omitempty"`
+	RequestRewrite         *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
+	RelayLogRawSSEUntil    *int64                 `json:"relay_log_raw_sse_until,omitempty"`
+	MatchRegex             *string                `json:"match_regex,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`
 	KeysToUpdate []ChannelKeyUpdateRequest `json:"keys_to_update,omitempty"`

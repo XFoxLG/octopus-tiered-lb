@@ -18,6 +18,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/errorlog"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/relay"
 	_ "github.com/lingyuins/octopus/internal/server/handlers"
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/resp"
@@ -41,6 +42,9 @@ func Start() error {
 	// server.trusted_proxies（或 OCTOPUS_SERVER_TRUSTED_PROXIES）配置实际代理网段，
 	// 否则日志/限流/白名单看到的都是网关地址（如 Docker 的 172.17.0.1）。
 	_ = setTrustedProxies(r)
+	// Must wrap recovery and authentication so panic responses and requests
+	// rejected before an upstream attempt still receive one truthful trace.
+	r.Use(relay.RelayRequestTraceMiddleware())
 	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
 		// 记录崩溃详情（值 + 完整堆栈 + 请求信息）到错误日志与系统日志，
 		// 便于排障"后端突然崩溃"。recovered 可能是 error / string / 任意值。
@@ -116,7 +120,7 @@ func Start() error {
 
 // setTrustedProxies 根据配置配置可信代理 CIDR 列表。
 //
-// 取值优先级：DB setting (trusted_proxies) > config.json / env (server.trusted_proxies)。
+// 取值优先级：DB setting (trusted_proxies) 非空值 > config.json / env (server.trusted_proxies)。
 // DB setting 在设置页可改，但需重启服务生效（Gin engine 的 trustedCIDRs 是启动期
 // 一次性配置，运行时热更新 SetTrustedProxies 会与并发请求的 ClientIP() 产生数据竞争）。
 //   - 空值（默认）：不信任任何代理，c.ClientIP() 只返回 TCP 直连地址。
@@ -146,11 +150,12 @@ func setTrustedProxies(r *gin.Engine) error {
 	return nil
 }
 
-// trustedProxiesValue 解析可信代理配置：DB setting 优先，回退到 config.json/env。
-// 启动阶段 op.InitCache 已完成，setting 缓存就绪；若 DB 中未设置该键（GetString
-// 返回 error）则回退到启动期配置，保持与旧版环境变量/config.json 兼容。
+// trustedProxiesValue 解析可信代理配置：DB setting 非空值优先；DB 为空串（默认
+// 未配置）时回退到 config.json/env 非空值。这样 Render 等托管部署通过环境变量
+// OCTOPUS_SERVER_TRUSTED_PROXIES 配置不会被 DB 默认空串行挡住；而 DB 里显式
+// 设置的值（设置页）仍然最高。保持与旧版环境变量/config.json 兼容。
 func trustedProxiesValue() string {
-	if v, err := setting.GetString(model.SettingKeyTrustedProxies); err == nil {
+	if v, err := setting.GetString(model.SettingKeyTrustedProxies); err == nil && strings.TrimSpace(v) != "" {
 		return strings.TrimSpace(v)
 	}
 	return strings.TrimSpace(conf.AppConfig.Server.TrustedProxies)

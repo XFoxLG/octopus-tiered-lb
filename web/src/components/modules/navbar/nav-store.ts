@@ -11,8 +11,7 @@ export type NavItem =
     | 'notification'
     | 'ops'
     | 'apikey'
-    | 'setting'
-    | 'user';
+    | 'setting';
 
 export const DEFAULT_NAV_ORDER: NavItem[] = [
     'home',
@@ -25,7 +24,6 @@ export const DEFAULT_NAV_ORDER: NavItem[] = [
     'ops',
     'apikey',
     'setting',
-    'user',
 ];
 export const MIN_VISIBLE_NAV_ITEMS = 5;
 export const FIXED_VISIBLE_NAV_ITEMS: NavItem[] = ['setting'];

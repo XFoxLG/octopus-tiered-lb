@@ -8,7 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/conf"
-	"github.com/lingyuins/octopus/internal/model"
 	ak "github.com/lingyuins/octopus/internal/op/apikey"
 	"github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/op/user"
@@ -24,7 +23,7 @@ func Auth() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		valid, userID, role := auth.VerifyJWTToken(strings.TrimPrefix(token, "Bearer "))
+		valid, userID, _ := auth.VerifyJWTToken(strings.TrimPrefix(token, "Bearer "))
 		if !valid {
 			resp.Error(c, http.StatusUnauthorized, resp.ErrUnauthorized)
 			c.Abort()
@@ -43,13 +42,9 @@ func Auth() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		role = currentUser.Role
-		if role == "" {
-			role = model.UserRoleViewer
-		}
 		c.Set("user_id", int(currentUser.ID))
 		c.Set("username", currentUser.Username)
-		c.Set("user_role", role)
+		c.Set("user_role", currentUser.Role)
 		c.Next()
 	}
 }

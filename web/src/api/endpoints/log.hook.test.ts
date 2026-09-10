@@ -15,15 +15,16 @@ import assert from 'node:assert/strict';
 
 import { installFakeTimers } from '../../test-utils/timers.ts';
 import { installFetchMock } from '../../test-utils/fetch-mock.ts';
+import type { RelayLog } from './log.ts';
 
 // ---- 从 log.ts 复制纯逻辑 / 内联提取 ----
 
 /**
  * 一条示例 RelayLog，用于测试断言。
  */
-function sampleLog(id: number, overrides: Partial<Record<string, unknown>> = {}) {
+function sampleLog(logId: number, overrides: Partial<RelayLog> = {}): RelayLog {
     return {
-        id,
+        id: logId,
         time: Date.now(),
         request_model_name: 'gpt-4',
         channel: 1,
@@ -36,7 +37,7 @@ function sampleLog(id: number, overrides: Partial<Record<string, unknown>> = {})
         cost: 0.001,
         error: '',
         ...overrides,
-    } as import('./log.ts').RelayLog;
+    };
 }
 
 /** 构造 SSE 文本帧 */
@@ -175,7 +176,7 @@ test('useLogs stream: connects and receives SSE log', async () => {
     const timers = installFakeTimers();
     const fetchMock = installFetchMock();
 
-    const receivedLogs: unknown[] = [];
+    const receivedLogs: RelayLog[] = [];
     let connected = false;
 
     // 构造一个 ReadableStream，推送一条 SSE 事件后挂起
@@ -210,7 +211,7 @@ test('useLogs stream: connects and receives SSE log', async () => {
     await timers.advanceTimersByTime(100);
 
     assert.equal(connected, true);
-    const ids = receivedLogs.map((l: { id: number }) => l.id);
+    const ids = receivedLogs.map((log) => log.id);
     assert.ok(ids.includes(42), `expected log id 42, got ${JSON.stringify(ids)}`);
 
     abort();

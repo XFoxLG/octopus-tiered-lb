@@ -7,12 +7,12 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
-	"github.com/lingyuins/octopus/internal/store"
-	"github.com/lingyuins/octopus/internal/utils/log"
 	"gorm.io/gorm"
 )
 
 // RefreshCache loads all statistics from the database into the in-memory caches.
+// Legacy Redis deltas have no committed-snapshot checkpoint, so they are neither
+// imported nor deleted. Only the database snapshot is used when restoring stats.
 func RefreshCache(ctx context.Context) error {
 	dbConn := db.GetDB().WithContext(ctx)
 	todayDate := today()
@@ -106,121 +106,5 @@ func RefreshCache(ctx context.Context) error {
 	}
 	hourlyCacheLock.Unlock()
 
-	// Redis 后端：叠加未落盘的增量（崩溃恢复，issue #123）。
-	// DB 存上次 SaveDB 的快照，Redis 存自上次 SaveDB 以来的增量，二者相加得当前值。
-	applyRedisDeltas(ctx)
-
 	return nil
-}
-
-// applyRedisDeltas 从 Redis 读取各 scope 的未落盘增量，叠加到内存镜像。
-// 仅在 Redis 启用时执行；失败时记录日志但不阻塞启动（DB 数据仍可用）。
-func applyRedisDeltas(ctx context.Context) {
-	if !store.Enabled() {
-		return
-	}
-	ss := store.GetStats()
-
-	// total
-	if m, err := ss.GetMetrics(ctx, statsScopeTotal, statsIDTotal); err == nil {
-		totalCacheLock.Lock()
-		totalCache.StatsMetrics.Add(m)
-		totalCacheLock.Unlock()
-	} else {
-		log.Warnf("stats redis restore total: %v", err)
-	}
-
-	// daily（今日）
-	if m, err := ss.GetMetrics(ctx, statsScopeDaily, today()); err == nil {
-		dailyCacheLock.Lock()
-		if dailyCache.Date == today() {
-			dailyCache.StatsMetrics.Add(m)
-		}
-		dailyCacheLock.Unlock()
-	} else {
-		log.Warnf("stats redis restore daily: %v", err)
-	}
-
-	// hourly（今日各小时）
-	nowTime := now()
-	todayDate := nowTime.Format("20060102")
-	hourlyCacheLock.Lock()
-	for h := 0; h < 24; h++ {
-		if m, err := ss.GetMetrics(ctx, statsScopeHourly, fmt.Sprintf("%s:%d", todayDate, h)); err == nil {
-			if hourlyCache[h].Date == todayDate {
-				hourlyCache[h].StatsMetrics.Add(m)
-			}
-		}
-	}
-	hourlyCacheLock.Unlock()
-	_ = nowTime
-
-	// channel（全量快照）
-	if snaps, err := ss.SnapshotAll(ctx, statsScopeChannel); err == nil {
-		channelMutationLock.Lock()
-		for idStr, m := range snaps {
-			var id int
-			if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id == 0 {
-				continue
-			}
-			entry, ok := channelCache.Get(id)
-			if !ok {
-				entry = model.StatsChannel{ChannelID: id}
-			}
-			entry.StatsMetrics.Add(m)
-			channelCache.Set(id, entry)
-			channelCacheNeedUpdateLock.Lock()
-			channelCacheNeedUpdate[id] = struct{}{}
-			channelCacheNeedUpdateLock.Unlock()
-		}
-		channelMutationLock.Unlock()
-	} else {
-		log.Warnf("stats redis restore channels: %v", err)
-	}
-
-	// model（全量快照）
-	if snaps, err := ss.SnapshotAll(ctx, statsScopeModel); err == nil {
-		modelMutationLock.Lock()
-		for idStr, m := range snaps {
-			var id int64
-			if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id == 0 {
-				continue
-			}
-			entry, ok := modelCache.Get(id)
-			if !ok {
-				entry = model.StatsModel{ID: id}
-			}
-			entry.StatsMetrics.Add(m)
-			modelCache.Set(id, entry)
-			modelCacheNeedUpdateLock.Lock()
-			modelCacheNeedUpdate[id] = struct{}{}
-			modelCacheNeedUpdateLock.Unlock()
-		}
-		modelMutationLock.Unlock()
-	} else {
-		log.Warnf("stats redis restore models: %v", err)
-	}
-
-	// apikey（全量快照）
-	if snaps, err := ss.SnapshotAll(ctx, statsScopeAPIKey); err == nil {
-		apiKeyMutationLock.Lock()
-		for idStr, m := range snaps {
-			var id int
-			if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil || id == 0 {
-				continue
-			}
-			entry, ok := apiKeyCache.Get(id)
-			if !ok {
-				entry = model.StatsAPIKey{APIKeyID: id}
-			}
-			entry.StatsMetrics.Add(m)
-			apiKeyCache.Set(id, entry)
-			apiKeyCacheNeedUpdateLock.Lock()
-			apiKeyCacheNeedUpdate[id] = struct{}{}
-			apiKeyCacheNeedUpdateLock.Unlock()
-		}
-		apiKeyMutationLock.Unlock()
-	} else {
-		log.Warnf("stats redis restore apikeys: %v", err)
-	}
 }

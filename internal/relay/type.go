@@ -44,12 +44,12 @@ const (
 )
 
 var (
-	errEmptyOutput                = errors.New("upstream returned empty output (no visible content)")
-	errTruncatedOutput            = errors.New("upstream returned truncated output (finish_reason=length)")
-	errMissingStreamTerminal      = errors.New("upstream stream ended without a terminal event")
-	errProviderTerminalFailure    = errors.New("upstream provider reported a terminal failure")
-	errFirstVisibleOutputTimeout  = errors.New("upstream stream did not produce visible output before timeout")
-	errStreamIdleTimeout          = errors.New("upstream stream became idle after visible output")
+	errEmptyOutput               = errors.New("upstream returned empty output (no visible content)")
+	errTruncatedOutput           = errors.New("upstream returned truncated output (finish_reason=length)")
+	errMissingStreamTerminal     = errors.New("upstream stream ended without a terminal event")
+	errProviderTerminalFailure   = errors.New("upstream provider reported a terminal failure")
+	errFirstVisibleOutputTimeout = errors.New("upstream stream did not produce visible output before timeout")
+	errStreamIdleTimeout         = errors.New("upstream stream became idle after visible output")
 )
 
 func init() {
@@ -110,6 +110,7 @@ func isRetryEmptyOutputEnabled() bool {
 	}
 	return v
 }
+
 // isRetryTruncationEnabled 返回是否启用截断重试（默认关闭）。
 // 当上游返回 200 且 finish_reason=length/max_tokens（回复被 token 上限掐断成半截）时
 // 换 Key/渠道重发。截断是内容质量问题而非渠道故障，与空输出重试同路径但独立开关：
@@ -296,6 +297,7 @@ func isEmptyOutputResponse(resp *model.InternalLLMResponse) bool {
 	}
 	return true
 }
+
 // isTruncatedOutput 判断响应是否被 max_tokens 截断：
 // 任一 Choice 的 FinishReason 为 "length"（各平台 inbound 转换层已把 Gemini
 // max_tokens、Anthropic max_tokens 统一映射为 OpenAI 语义的 "length"）。
@@ -386,6 +388,7 @@ type relayAttempt struct {
 	attemptTimeOutSec    int
 	tryIndex             int
 	tryTotal             int
+	logAttemptNumber     int
 
 	// filterCfg 缓存本次尝试的响应关键词过滤配置，避免在流式响应的每个
 	// chunk 上重复读取 setting 并解析关键词 JSON。通过 getResponseFilterConfig

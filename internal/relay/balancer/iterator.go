@@ -23,10 +23,33 @@ type Iterator struct {
 	modelName  string // 请求模型名（用于熔断检查）
 
 	// 内嵌追踪
-	attempts     []model.ChannelAttempt
-	count        int
-	skipCount    int // 已保留明细的跳过/熔断记录数
-	omittedSkips int // 超出 maxSkipAttemptRecords 后未保留明细的跳过记录数
+	attempts          []model.ChannelAttempt
+	count             int
+	attemptNumberBase int
+	skipCount         int // 已保留明细的跳过/熔断记录数
+	omittedSkips      int // 超出 maxSkipAttemptRecords 后未保留明细的跳过记录数
+}
+
+// SetAttemptNumberBase makes attempt identifiers request-global while each
+// route round still owns an independent Iterator. It must be called before the
+// iterator records its first skip or forwarded attempt.
+func (it *Iterator) SetAttemptNumberBase(base int) {
+	if it == nil || it.count != 0 {
+		return
+	}
+	if base < 0 {
+		base = 0
+	}
+	it.attemptNumberBase = base
+}
+
+// LastAttemptNumber returns the request-global decision sequence after this
+// iterator's route round, including omitted skip decisions.
+func (it *Iterator) LastAttemptNumber() int {
+	if it == nil {
+		return 0
+	}
+	return it.attemptNumberBase + it.count
 }
 
 // maxSkipAttemptRecords 限制单个迭代器保留的跳过/熔断明细条数。跳过记录不发起
@@ -169,7 +192,7 @@ func (it *Iterator) Skip(channelID, channelKeyID int, channelName, msg string) {
 		ChannelKeyID: channelKeyID,
 		ChannelName:  channelName,
 		ModelName:    it.candidates[it.index].ModelName,
-		AttemptNum:   it.count,
+		AttemptNum:   it.attemptNumberBase + it.count,
 		Status:       model.AttemptSkipped,
 		Sticky:       it.IsSticky(),
 		Msg:          msg,
@@ -192,7 +215,7 @@ func (it *Iterator) SkipCircuitBreak(channelID, channelKeyID int, channelName, m
 		ChannelKeyID: channelKeyID,
 		ChannelName:  channelName,
 		ModelName:    modelName,
-		AttemptNum:   it.count,
+		AttemptNum:   it.attemptNumberBase + it.count,
 		Status:       model.AttemptCircuitBreak,
 		Sticky:       it.IsSticky(),
 		Msg:          msg,
@@ -209,7 +232,7 @@ func (it *Iterator) StartAttempt(channelID, channelKeyID int, channelName, model
 			ChannelKeyID: channelKeyID,
 			ChannelName:  channelName,
 			ModelName:    modelName,
-			AttemptNum:   it.count,
+			AttemptNum:   it.attemptNumberBase + it.count,
 			Sticky:       it.IsSticky(),
 		},
 		startTime: time.Now(),
@@ -226,7 +249,7 @@ func (it *Iterator) Attempts() []model.ChannelAttempt {
 	out := make([]model.ChannelAttempt, len(it.attempts), len(it.attempts)+1)
 	copy(out, it.attempts)
 	return append(out, model.ChannelAttempt{
-		AttemptNum: it.count,
+		AttemptNum: it.attemptNumberBase + it.count,
 		Status:     model.AttemptSkipped,
 		Msg:        fmt.Sprintf("%d skip/circuit-break records omitted (cap %d per route round)", it.omittedSkips, maxSkipAttemptRecords),
 	})
@@ -259,6 +282,7 @@ func (s *AttemptSpan) End(status model.AttemptStatus, statusCode int, msg string
 	}
 	s.ended = true
 	s.attempt.Status = status
+	s.attempt.HTTPStatus = statusCode
 	s.attempt.Duration = int(time.Since(s.startTime).Milliseconds())
 	s.attempt.Msg = msg
 	s.iter.attempts = append(s.iter.attempts, s.attempt)
@@ -267,6 +291,16 @@ func (s *AttemptSpan) End(status model.AttemptStatus, statusCode int, msg string
 // SetAdapterType 设置适配器类型（response, chat, anthropic 等）
 func (s *AttemptSpan) SetAdapterType(adapterType string) {
 	s.attempt.AdapterType = adapterType
+}
+
+// AttemptNumber returns the stable decision-sequence number assigned before
+// the request is sent. Boundary logging uses it to pair wire data with the
+// corresponding ChannelAttempt row.
+func (s *AttemptSpan) AttemptNumber() int {
+	if s == nil {
+		return 0
+	}
+	return s.attempt.AttemptNum
 }
 
 // Duration 返回从开始到现在的耗时

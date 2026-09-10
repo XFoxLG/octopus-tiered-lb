@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/db/migrate"
 	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/driver/mysql"
@@ -148,6 +148,7 @@ func InitLogDBWithOptions(logType, logPath string, debug bool, opts SQLiteOption
 	if err != nil {
 		return fmt.Errorf("open log database: %w", err)
 	}
+	configureLogConnectionPool(conn, logType)
 	if err := MigrateLogDB(conn); err != nil {
 		_ = closeConn(conn)
 		return fmt.Errorf("migrate log database: %w", err)
@@ -157,9 +158,15 @@ func InitLogDBWithOptions(logType, logPath string, debug bool, opts SQLiteOption
 	return nil
 }
 
-// MigrateLogDB 仅迁移日志库需要的表结构（relay_logs + relay_log_attempts）。
+// MigrateLogDB 仅迁移日志库需要的表结构。内容表采用新增式迁移，旧版本
+// relay_logs / relay_log_attempts 数据保持可读，不执行破坏性回填或删除。
 func MigrateLogDB(conn *gorm.DB) error {
-	if err := conn.AutoMigrate(&model.RelayLog{}, &model.RelayLogAttempt{}); err != nil {
+	if err := conn.AutoMigrate(
+		&model.RelayLog{},
+		&model.RelayLogAttempt{},
+		&model.RelayLogContentBlob{},
+		&model.RelayLogContentRef{},
+	); err != nil {
 		return err
 	}
 	if conn.Dialector != nil && conn.Dialector.Name() == "postgres" {
@@ -212,6 +219,7 @@ func ReopenLogDB() error {
 	if err != nil {
 		return fmt.Errorf("reopen log database: %w", err)
 	}
+	configureLogConnectionPool(conn, logDBType)
 	if err := MigrateLogDB(conn); err != nil {
 		_ = closeConn(conn)
 		return fmt.Errorf("migrate log database on reopen: %w", err)
@@ -315,6 +323,8 @@ func Migrate(conn *gorm.DB) error {
 		&model.StatsAPIKey{},
 		&model.RelayLog{},
 		&model.RelayLogAttempt{},
+		&model.RelayLogContentBlob{},
+		&model.RelayLogContentRef{},
 		&model.ErrorLog{},
 		&model.AutoStrategyState{},
 		&model.CircuitBreakerState{},
@@ -375,6 +385,26 @@ func disableSQLiteForeignKeysForMigration(conn *gorm.DB) (func() error, error) {
 }
 
 func configureConnectionPool(sqlDB *sql.DB, dbType string) {
+	configuration := conf.AppConfig.Database.Pool
+	if configuration.MaxOpenConns == 0 {
+		configuration = conf.DefaultDatabasePoolConfig()
+	}
+	applyConnectionPool(sqlDB, dbType, configuration)
+}
+
+func configureLogConnectionPool(connection *gorm.DB, databaseType string) {
+	sqlDatabase, err := connection.DB()
+	if err != nil {
+		return
+	}
+	configuration := conf.AppConfig.Database.LogPool
+	if configuration.MaxOpenConns == 0 {
+		configuration = conf.DefaultLogDatabasePoolConfig()
+	}
+	applyConnectionPool(sqlDatabase, databaseType, configuration)
+}
+
+func applyConnectionPool(sqlDB *sql.DB, dbType string, configuration conf.DatabasePoolConfig) {
 	if dbType == "sqlite" {
 		// glebarez/sqlite uses a pure-Go SQLite driver. Under concurrent background
 		// tasks, multiple pooled connections can surface nested transaction errors such
@@ -387,10 +417,10 @@ func configureConnectionPool(sqlDB *sql.DB, dbType string) {
 		return
 	}
 
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
-	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
+	sqlDB.SetMaxOpenConns(configuration.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(configuration.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(configuration.ConnMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(configuration.ConnMaxIdleTime)
 }
 
 // sqlitePragmaParams 根据 SQLiteOptions 生成 glebarez/go-sqlite 驱动认识的 DSN
@@ -524,54 +554,6 @@ func CurrentLogDBPath() string {
 	logDBLock.RLock()
 	defer logDBLock.RUnlock()
 	return logDBPath
-}
-
-// CloseAndCleanupSQLite 关闭当前主库与日志库连接，并删除 SQLite 文件
-// （.db / .db-shm / .db-wal）。仅用于数据库迁移成功后清理旧 SQLite 文件
-// （issue #118）：迁移已把数据导入目标库并写好新配置，旧 SQLite 连接与文件
-// 不再需要，残留会导致进程持续读盘陷入 D 状态。
-//
-// 返回实际删除的文件路径列表（供 UI 提示用户）。删除失败不报错——文件可能
-// 被其它进程占用或已不存在，清理是「尽力而为」。
-//
-// 调用后 db / logDB 全局变量置为 nil，任何后续 DB 访问都会 panic，因此仅应在
-// 迁移完成、进程即将重启的终态下调用。
-func CloseAndCleanupSQLite() []string {
-	var removed []string
-
-	// 收集要删除的 SQLite 文件路径（主库 + 独立日志库）。
-	candidates := make([]string, 0, 6)
-	if p, ok := sqliteFilePath(currentDBPath); ok {
-		candidates = append(candidates, p)
-	}
-	logDBLock.RLock()
-	logP := logDBPath
-	logDBLock.RUnlock()
-	if logP != "" {
-		if p, ok := sqliteFilePath(logP); ok {
-			candidates = append(candidates, p)
-		}
-	}
-
-	// 先关闭连接释放文件句柄（Windows 下未关闭的文件无法删除）。
-	_ = CloseLogDB()
-	if db != nil {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-		db = nil
-	}
-
-	// 删除 SQLite 主文件及其 WAL/SHM 侧车文件。
-	for _, p := range candidates {
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			fp := p + suffix
-			if err := os.Remove(fp); err == nil {
-				removed = append(removed, fp)
-			}
-		}
-	}
-	return removed
 }
 
 // FastClearTable 以方言最快的方式清空整张表，并重建表结构与索引。

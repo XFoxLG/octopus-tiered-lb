@@ -139,6 +139,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         param_override: channel.param_override ?? '',
         outbound_format_override: channel.outbound_format_override ?? '',
         request_rewrite: normalizeRequestRewriteFormData(channel.request_rewrite),
+        relay_log_raw_sse_until: channel.relay_log_raw_sse_until ?? 0,
         keys: channel.keys.length > 0
             ? channel.keys.map((k) => ({
                 id: k.id,
@@ -250,6 +251,10 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
         if (!requestRewriteEqual(effectiveRequestRewrite, channel.request_rewrite)) {
             req.request_rewrite = effectiveRequestRewrite;
+        }
+
+        if (formData.relay_log_raw_sse_until !== (channel.relay_log_raw_sse_until ?? 0)) {
+            req.relay_log_raw_sse_until = formData.relay_log_raw_sse_until;
         }
 
         const nextMatchRegex = formData.match_regex.trim();

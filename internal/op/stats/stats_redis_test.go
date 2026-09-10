@@ -11,6 +11,22 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Legacy scopes remain test fixtures only. Production statistics must not read,
+// write, or delete these unacknowledged Redis deltas.
+const (
+	statsScopeTotal             = "total"
+	statsScopeDaily             = "daily"
+	statsScopeHourly            = "hourly"
+	statsScopeChannel           = "channel"
+	statsScopeModel             = "model"
+	statsScopeAPIKey            = "apikey"
+	statsScopeDailyChannel      = "daily_channel"
+	statsScopeDailyModel        = "daily_model"
+	statsScopeDailyAPIKey       = "daily_apikey"
+	statsScopeDailyChannelModel = "daily_channel_model"
+	statsIDTotal                = "1"
+)
+
 // newStatsTestRedis 启动 miniredis 并注入到 store，返回 miniredis 实例。
 func newStatsTestRedis(t *testing.T) *miniredis.Miniredis {
 	t.Helper()
@@ -19,10 +35,10 @@ func newStatsTestRedis(t *testing.T) *miniredis.Miniredis {
 		t.Fatalf("start miniredis: %v", err)
 	}
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	store.InjectForTest(c)
+	restoreStore := store.InjectForTest(c)
 	t.Cleanup(func() {
+		restoreStore()
 		_ = c.Close()
-		store.ResetForTest()
 		mr.Close()
 	})
 	return mr
@@ -137,24 +153,19 @@ func TestStatsRedisDelete(t *testing.T) {
 	}
 }
 
-// TestStatsUpdateWritesRedis 验证 *Update 函数在 Redis 启用时写入增量。
-func TestStatsUpdateWritesRedis(t *testing.T) {
-	newStatsTestRedis(t)
-	// 清空内存镜像避免历史干扰。
-	ClearAllCachesForTest()
-
-	_ = ChannelUpdate(1, model.StatsMetrics{InputToken: 100, RequestSuccess: 1})
-	_ = ChannelUpdate(1, model.StatsMetrics{InputToken: 50, RequestSuccess: 1})
-
-	// Redis 中应累加为 150。
-	got, err := store.GetStats().GetMetrics(context.Background(), statsScopeChannel, "1")
-	if err != nil {
-		t.Fatalf("GetMetrics: %v", err)
+func TestStatsUpdatesDoNotWriteRedis(t *testing.T) {
+	initializeStatsPersistenceTest(t, false)
+	redisServer := newStatsTestRedis(t)
+	commandsBefore := redisServer.CommandCount()
+	first := model.StatsMetrics{InputToken: 100, RequestSuccess: 1}
+	second := model.StatsMetrics{InputToken: 50, RequestSuccess: 1}
+	recordSnapshotMetricsForTest(t, first)
+	recordSnapshotMetricsForTest(t, second)
+	assertSnapshotMetricsForTest(t, model.StatsMetrics{InputToken: 150, RequestSuccess: 2})
+	if commandsAfter := redisServer.CommandCount(); commandsAfter != commandsBefore {
+		t.Fatalf("stats updates sent %d Redis commands, want none", commandsAfter-commandsBefore)
 	}
-	if got.InputToken != 150 {
-		t.Fatalf("redis InputToken = %d, want 150", got.InputToken)
-	}
-	if got.RequestSuccess != 2 {
-		t.Fatalf("redis RequestSuccess = %d, want 2", got.RequestSuccess)
+	if keys := redisServer.Keys(); len(keys) != 0 {
+		t.Fatalf("stats updates created Redis keys: %v", keys)
 	}
 }

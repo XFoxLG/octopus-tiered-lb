@@ -66,6 +66,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 	InflightInc()
 	defer InflightDec()
 	cfg := getMediaEndpointConfig(endpointType)
+	requestTrace := relayRequestTraceFromContext(c)
 
 	// 1. Extract model name from the request
 	requestModel, bodyBytes, streamRequested, err := extractModelFromRequest(c, cfg)
@@ -83,6 +84,8 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 
 	apiKeyID := c.GetInt("api_key_id")
 	clientIP := c.ClientIP()
+	mediaReportedIP := reportedClientIPFromContext(c)
+	userAgent := c.Request.UserAgent()
 	startTime := time.Now()
 
 	// 2. Resolve channel group
@@ -268,7 +271,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					routeRound, keyRound, maxKeyRetriesPerRoute)
 
 				span := routeIter.StartAttempt(channel.ID, usedKey.ID, channel.Name, resolvedModel)
-				statusCode, fwdErr := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx)
+				statusCode, fwdErr := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, span.AttemptNumber())
 
 				// 记录最后一次实际转发的通道信息
 				lastChannelID = channel.ID
@@ -303,7 +306,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
 
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, nil, clientIP)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, nil, clientIP, mediaReportedIP, userAgent, requestTrace)
 					return
 				}
 
@@ -348,14 +351,14 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				case ScopeNone:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace)
 					// 与 LLM relay 一致：客户端错误原样回给下游，不吞成 502。
 					writeClientTerminalError(c, channel.Type, decision.Code, fwdErr)
 					return
 				case ScopeAbortAll:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace)
 					return
 				case ScopeSameChannel:
 					lastErr = fwdErr
@@ -397,7 +400,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				default:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace)
 					resp.Error(c, http.StatusBadGateway, lastErr.Error())
 					return
 				}
@@ -406,7 +409,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
 	}
 	// All route rounds exhausted
-	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP)
+	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaReportedIP, userAgent, requestTrace)
 	// 对外返回通用文案，上游错误细节仅入日志（同 chat 路径）。
 	resp.Error(c, http.StatusBadGateway, "all channels failed")
 	return
@@ -416,12 +419,12 @@ mediaExhausted:
 	if routeIter != nil {
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
 	}
-	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP)
+	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaReportedIP, userAgent, requestTrace)
 	resp.Error(c, http.StatusBadGateway, "all channels failed")
 }
 
 // recordMediaRelayLog creates a RelayLog entry and updates global stats for media endpoints.
-func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string, bodyBytes []byte, channelID int, channelName string, resolvedModel string, duration time.Duration, attempts []dbmodel.ChannelAttempt, relayErr error, clientIP string) {
+func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string, bodyBytes []byte, channelID int, channelName string, resolvedModel string, duration time.Duration, attempts []dbmodel.ChannelAttempt, relayErr error, clientIP string, reportedIP reportedClientIP, userAgent string, requestTrace *relayRequestTrace) {
 	ctx, cancel := newRelayPersistenceContext()
 	defer cancel()
 
@@ -434,6 +437,9 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		RequestModelName: requestModel,
 		RequestAPIKeyID:  apiKeyID,
 		ClientIP:         clientIP,
+		ReportedClientIP: reportedIP.IP,
+		ReportedClientIPSource: string(reportedIP.Source),
+		UserAgent:        userAgent,
 		EndpointType:     endpointType,
 		ChannelId:        channelID,
 		ChannelName:      channelName,
@@ -464,7 +470,7 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		relayLog.Error = relayErr.Error()
 	}
 
-	if logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
+	if _, logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
 		log.Warnf("failed to save media relay log: %v", logErr)
 	}
 
@@ -575,11 +581,13 @@ func forwardMediaRequest(
 	resolvedModel string,
 	streamRequested bool,
 	operationCtx context.Context,
+	requestTrace *relayRequestTrace,
+	attemptNumber int,
 ) (int, error) {
 	if cfg.MultipartInput && len(bodyBytes) == 0 {
-		return forwardMediaRequestMultipart(c, cfg, channel, key, requestModel, resolvedModel, streamRequested, operationCtx)
+		return forwardMediaRequestMultipart(c, cfg, channel, key, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, attemptNumber)
 	}
-	return forwardMediaRequestJSON(c, cfg, group, channel, key, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx)
+	return forwardMediaRequestJSON(c, cfg, group, channel, key, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, attemptNumber)
 }
 
 // forwardMediaRequestJSON handles JSON-based media endpoint forwarding.
@@ -594,6 +602,8 @@ func forwardMediaRequestJSON(
 	resolvedModel string,
 	streamRequested bool,
 	operationCtx context.Context,
+	requestTrace *relayRequestTrace,
+	attemptNumber int,
 ) (int, error) {
 	ctx := operationCtx
 
@@ -695,6 +705,8 @@ func forwardMediaRequestMultipart(
 	resolvedModel string,
 	streamRequested bool,
 	operationCtx context.Context,
+	requestTrace *relayRequestTrace,
+	attemptNumber int,
 ) (int, error) {
 	ctx := operationCtx
 

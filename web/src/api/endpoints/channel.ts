@@ -127,6 +127,7 @@ export type Channel = {
     outbound_format_override?: string;
     channel_proxy?: string | null;
     request_rewrite?: RequestRewriteConfig | null;
+    relay_log_raw_sse_until?: number;
     match_regex?: string | null;
     key_health_passed?: boolean | null;
     key_health_all_failed?: boolean | null;
@@ -167,6 +168,7 @@ export type CreateChannelRequest = {
     param_override?: string | null;
     outbound_format_override?: string;
     request_rewrite?: RequestRewriteConfig;
+    relay_log_raw_sse_until?: number;
     match_regex?: string | null;
 };
 
@@ -196,6 +198,7 @@ export type UpdateChannelRequest = {
     param_override?: string | null;
     outbound_format_override?: string;
     request_rewrite?: RequestRewriteConfig;
+    relay_log_raw_sse_until?: number;
     match_regex?: string | null;
     // keys diff
     keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'priority' | 'remark' | 'supported_models'>>;

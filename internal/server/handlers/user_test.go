@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,14 +13,16 @@ import (
 	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
-	"github.com/lingyuins/octopus/internal/op"
+	usr "github.com/lingyuins/octopus/internal/op/user"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/resp"
 )
 
-func TestCreateUserThenLoginAsCreatedUser(t *testing.T) {
+func TestPrimaryAccountLoginAndOwnAccountChanges(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("OCTOPUS_INITIAL_ADMIN_USERNAME", "")
+	t.Setenv("OCTOPUS_INITIAL_ADMIN_PASSWORD", "")
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(t.Name()))
 	if err := db.InitDB("sqlite", dsn, false); err != nil {
@@ -31,32 +32,30 @@ func TestCreateUserThenLoginAsCreatedUser(t *testing.T) {
 		_ = db.Close()
 	})
 
+	previousSecret := conf.AppConfig.Auth.JWTSecret
+	previousUser := usr.GetCurrent()
 	conf.AppConfig.Auth.JWTSecret = "test-jwt-secret"
-
-	if err := op.UserInit(); err != nil {
-		t.Fatalf("user init: %v", err)
+	t.Cleanup(func() {
+		conf.AppConfig.Auth.JWTSecret = previousSecret
+		usr.SetCache(previousUser)
+		middleware.ClearLoginFailures("192.0.2.1")
+	})
+	admin := model.User{ID: 17, Username: "original", Password: "super-secret-123", Role: model.UserRoleAdmin}
+	if err := admin.HashPassword(); err != nil {
+		t.Fatalf("hash fixture password: %v", err)
 	}
-	if err := op.UserBootstrapCreate("admin", "super-secret-123"); err != nil {
-		t.Fatalf("bootstrap user: %v", err)
+	if err := db.GetDB().Create(&admin).Error; err != nil {
+		t.Fatalf("seed original account: %v", err)
 	}
-	if err := op.InitCache(); err != nil {
-		t.Fatalf("init cache: %v", err)
+	legacyUser := model.User{ID: 29, Username: "viewer", Password: admin.Password, Role: model.UserRoleViewer}
+	if err := db.GetDB().Create(&legacyUser).Error; err != nil {
+		t.Fatalf("seed legacy account: %v", err)
 	}
-
-	admin := op.UserGet()
-	token, _, err := auth.GenerateJWTToken(60, admin.ID, admin.Role)
-	if err != nil {
-		t.Fatalf("generate admin token: %v", err)
+	if err := usr.Init(); err != nil {
+		t.Fatalf("init existing account: %v", err)
 	}
 
 	engine := gin.New()
-	engine.POST(
-		"/api/v1/user/create",
-		middleware.Auth(),
-		middleware.RequireJSON(),
-		middleware.RequirePermission(auth.PermUsersWrite),
-		createUser,
-	)
 	engine.POST(
 		"/api/v1/user/login",
 		middleware.RequireJSON(),
@@ -64,18 +63,11 @@ func TestCreateUserThenLoginAsCreatedUser(t *testing.T) {
 		login,
 	)
 
-	createPayload := []byte(`{"username":"viewer","password":"viewer-secret-123","role":"viewer"}`)
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/user/create", bytes.NewReader(createPayload))
-	createReq.Header.Set("Authorization", "Bearer "+token)
-	createReq.Header.Set("Content-Type", "application/json")
-	createRecorder := httptest.NewRecorder()
-	engine.ServeHTTP(createRecorder, createReq)
+	engine.GET("/api/v1/user/status", middleware.Auth(), status)
+	engine.POST("/api/v1/user/change-username", middleware.Auth(), middleware.RequireJSON(), changeUsername)
+	engine.POST("/api/v1/user/change-password", middleware.Auth(), middleware.RequireJSON(), changePassword)
 
-	if createRecorder.Code != http.StatusOK {
-		t.Fatalf("create user status = %d, want %d; body=%s", createRecorder.Code, http.StatusOK, createRecorder.Body.String())
-	}
-
-	loginPayload := []byte(`{"username":"viewer","password":"viewer-secret-123","expire":60}`)
+	loginPayload := []byte(`{"username":"original","password":"super-secret-123","expire":60}`)
 	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/user/login", bytes.NewReader(loginPayload))
 	loginReq.Header.Set("Content-Type", "application/json")
 	loginRecorder := httptest.NewRecorder()
@@ -99,23 +91,51 @@ func TestCreateUserThenLoginAsCreatedUser(t *testing.T) {
 	}
 	tokenValue, _ := loginDataMap["token"].(string)
 	if strings.TrimSpace(tokenValue) == "" {
-		t.Fatal("created user login token is empty")
+		t.Fatal("primary account login token is empty")
 	}
 
 	valid, userID, role := auth.VerifyJWTToken(tokenValue)
 	if !valid {
-		t.Fatal("created user token is invalid")
+		t.Fatal("primary account token is invalid")
 	}
-	if role != model.UserRoleViewer {
-		t.Fatalf("created user token role = %q, want %q", role, model.UserRoleViewer)
+	if role != model.UserRoleAdmin || userID != admin.ID {
+		t.Fatal("login must preserve the original primary account identity and role")
 	}
 
-	createdUser, err := op.UserGetByUsername("viewer", context.Background())
-	if err != nil {
-		t.Fatalf("load created user: %v", err)
+	for _, testCase := range []struct {
+		method string
+		target string
+		body   string
+	}{
+		{method: http.MethodGet, target: "/api/v1/user/status"},
+		{method: http.MethodPost, target: "/api/v1/user/change-username", body: `{"new_username":"renamed"}`},
+		{method: http.MethodPost, target: "/api/v1/user/change-password", body: `{"old_password":"super-secret-123","new_password":"replacement-secret-123"}`},
+	} {
+		request := httptest.NewRequest(testCase.method, testCase.target, strings.NewReader(testCase.body))
+		request.Header.Set("Authorization", "Bearer "+tokenValue)
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status = %d; body=%s", testCase.target, recorder.Code, recorder.Body.String())
+		}
 	}
-	if userID != createdUser.ID {
-		t.Fatalf("created user token id = %d, want %d", userID, createdUser.ID)
+	if current, err := usr.Verify("renamed", "replacement-secret-123"); err != nil || current.ID != admin.ID {
+		t.Fatalf("login after own-account changes: %v", err)
+	}
+	if _, err := usr.Verify("original", "super-secret-123"); err == nil {
+		t.Fatal("previous credentials must not remain valid")
+	}
+	legacyRequest := httptest.NewRequest(http.MethodPost, "/api/v1/user/login", strings.NewReader(`{"username":"viewer","password":"super-secret-123","expire":60}`))
+	legacyRequest.Header.Set("Content-Type", "application/json")
+	legacyRecorder := httptest.NewRecorder()
+	engine.ServeHTTP(legacyRecorder, legacyRequest)
+	if legacyRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("legacy account login status = %d, want 401", legacyRecorder.Code)
+	}
+	var retainedUser model.User
+	if err := db.GetDB().First(&retainedUser, legacyUser.ID).Error; err != nil || retainedUser != legacyUser {
+		t.Fatal("own-account changes must not modify the retained legacy account")
 	}
 }
 
@@ -134,32 +154,5 @@ func TestIsCredentialErrorOnlyClassifiesCredentialFailures(t *testing.T) {
 	}
 	if isCredentialError(fmt.Errorf("failed to load user: database is locked (5) (SQLITE_BUSY)")) {
 		t.Fatal("expected database errors not to be classified as credential errors")
-	}
-}
-
-func TestUpdateUserRoleNotFoundReturns404(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(t.Name()))
-	if err := db.InitDB("sqlite", dsn, false); err != nil {
-		t.Fatalf("init db: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-
-	if err := op.InitCache(); err != nil {
-		t.Fatalf("init cache: %v", err)
-	}
-
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/user/update-role", strings.NewReader(`{"id":404,"role":"viewer"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	updateUserRole(c)
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }

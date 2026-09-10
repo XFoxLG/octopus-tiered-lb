@@ -37,10 +37,24 @@ type DBDump struct {
 	StatsChannel []StatsChannel `json:"stats_channel,omitempty"`
 	StatsAPIKey  []StatsAPIKey  `json:"stats_api_key,omitempty"`
 
-	RelayLogs []RelayLog `json:"relay_logs,omitempty"`
+	RelayLogs            []RelayLog                `json:"relay_logs,omitempty"`
+	RelayLogAttempts     []RelayLogAttempt         `json:"relay_log_attempts,omitempty"`
+	RelayLogContentRefs  []RelayLogContentRef      `json:"relay_log_content_refs,omitempty"`
+	RelayLogContentBlobs []RelayLogContentBlobDump `json:"relay_log_content_blobs,omitempty"`
 
 	// API credential profiles (Tools: CLI credential verification/export)
 	APICredentialProfiles []APICredentialProfile `json:"api_credential_profiles,omitempty"`
+}
+
+// RelayLogContentBlobDump exposes bytea payloads only inside the versioned
+// backup format. Runtime APIs never serialize RelayLogContentBlob.Payload.
+type RelayLogContentBlobDump struct {
+	Digest       string `json:"digest"`
+	Encoding     string `json:"encoding"`
+	OriginalSize int64  `json:"original_size"`
+	StoredSize   int64  `json:"stored_size"`
+	Payload      []byte `json:"payload"`
+	CreatedAt    int64  `json:"created_at"`
 }
 
 type DBImportResult struct {
@@ -57,30 +71,17 @@ type DBImportStep struct {
 	Error        string `json:"error,omitempty"`
 }
 
-type DatabaseMigrationRequest struct {
-	Type         string `json:"type"`
-	Path         string `json:"path"`
-	IncludeLogs  bool   `json:"include_logs"`
-	IncludeStats bool   `json:"include_stats"`
-}
-
-type DatabaseMigrationResult struct {
-	Type          string `json:"type"`
-	Path          string `json:"path"`
-	IncludeLogs   bool   `json:"include_logs"`
-	IncludeStats  bool   `json:"include_stats"`
-	RestartNeeded bool   `json:"restart_needed"`
-	// CleanedFiles 迁移成功后已删除的旧 SQLite 文件路径（issue #118）。
-	// 仅当源库为 SQLite、目标库为非 SQLite 时非空。
-	CleanedFiles []string       `json:"cleaned_files"`
-	ImportResult DBImportResult `json:"import_result"`
-}
-
 // CacheConfig 描述当前缓存后端配置（config.json 的 cache 字段镜像）。
 // Type 为空表示内存模式（向后兼容），"redis" 表示启用 Redis 后端（issue #123）。
 type CacheConfig struct {
-	Type  string           `json:"type"`
-	Redis CacheRedisConfig `json:"redis"`
+	Type           string           `json:"type"`
+	Redis          CacheRedisConfig `json:"redis"`
+	ConfigSource   string           `json:"config_source"`
+	RuntimeBackend string           `json:"runtime_backend"`
+	RuntimeHealthy bool             `json:"runtime_healthy"`
+	RuntimeTLS     bool             `json:"runtime_tls"`
+	RestartNeeded  bool             `json:"restart_needed"`
+	Reconnecting   bool             `json:"reconnecting"`
 }
 
 // CacheRedisConfig 是 CacheConfig 内的 Redis 连接参数（与 conf.RedisConfig 同构，
@@ -94,6 +95,8 @@ type CacheRedisConfig struct {
 	PoolSize    int    `json:"pool_size"`
 	DialTimeout string `json:"dial_timeout"`
 	ReadTimeout string `json:"read_timeout"`
+	TLS         bool   `json:"tls"`
+	CAFile      string `json:"ca_file"`
 }
 
 // CacheConfigRequest 用于测试连接 / 保存配置（POST body）。

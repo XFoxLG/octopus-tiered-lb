@@ -36,6 +36,10 @@ type RelayMetrics struct {
 	RequestModel string
 	EndpointType string
 	ClientIP     string
+	// 展示轨来源 IP（转发头解析，仅展示）。见 reported_client_ip.go。
+	ReportedClientIP       string
+	ReportedClientIPSource string
+	UserAgent    string
 	StartTime    time.Time
 
 	// 首 Token 时间
@@ -44,18 +48,20 @@ type RelayMetrics struct {
 	// 请求和响应内容
 	InternalRequest  *transformerModel.InternalLLMRequest
 	InternalResponse *transformerModel.InternalLLMResponse
+	RequestTrace     *relayRequestTrace
 
 	// 统计指标
 	ActualModel string
 	Stats       model.StatsMetrics
 }
 
-func NewRelayMetrics(apiKeyID int, requestModel string, requestedEndpointType string, matchedGroupEndpointType string, clientIP string, req *transformerModel.InternalLLMRequest) *RelayMetrics {
+func NewRelayMetrics(apiKeyID int, requestModel string, requestedEndpointType string, matchedGroupEndpointType string, clientIP string, userAgent string, req *transformerModel.InternalLLMRequest) *RelayMetrics {
 	return &RelayMetrics{
 		APIKeyID:        apiKeyID,
 		RequestModel:    requestModel,
 		EndpointType:    resolveRelayLogEndpointType(requestedEndpointType, matchedGroupEndpointType),
 		ClientIP:        clientIP,
+		UserAgent:       userAgent,
 		StartTime:       time.Now(),
 		InternalRequest: req,
 	}
@@ -63,6 +69,10 @@ func NewRelayMetrics(apiKeyID int, requestModel string, requestedEndpointType st
 
 func (m *RelayMetrics) SetFirstTokenTime(t time.Time) {
 	m.FirstTokenTime = t
+}
+
+func (m *RelayMetrics) SetRequestTrace(trace *relayRequestTrace) {
+	m.RequestTrace = trace
 }
 
 func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMResponse, actualModel string) {
@@ -292,6 +302,9 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		RequestModelName: m.RequestModel,
 		RequestAPIKeyID:  m.APIKeyID,
 		ClientIP:         m.ClientIP,
+		ReportedClientIP: m.ReportedClientIP,
+		ReportedClientIPSource: m.ReportedClientIPSource,
+		UserAgent:        m.UserAgent,
 		EndpointType:     m.EndpointType,
 		ChannelName:      channelName,
 		ChannelId:        channelID,
@@ -337,7 +350,7 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 	// SemanticCacheHit 与 CacheReadTokens 不依赖大字段：前者从请求判断，后者
 	// 从 InternalResponse.Usage.PromptTokensDetails.CachedTokens 直接提取。
 	contentEnabled, _ := setting.GetBool(model.SettingKeyRelayLogContentEnabled)
-	if contentEnabled {
+	if contentEnabled && m.RequestTrace == nil {
 		// 请求内容
 		if m.InternalRequest != nil {
 			if reqJSON, jsonErr := jsonAPI.Marshal(m.filterRequestForLog(m.InternalRequest)); jsonErr == nil {
@@ -370,8 +383,9 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 			relayLog.CacheReadTokens = opRelayLogCacheReadTokens(relayLog.ResponseContent)
 		}
 	} else {
-		// 关闭大字段时仍需维护 SemanticCacheHit 与 CacheReadTokens 两个列
-		// （它们在列表查询中被读取，不依赖大字段）。
+		// Four-boundary traces own new content through refs/blobs. The same
+		// lightweight path is also used when content capture is disabled, so the
+		// list-level cache indicators never depend on legacy inline columns.
 		relayLog.SemanticCacheHit = isSemanticCacheHitRequest(m.InternalRequest)
 		if relayLog.SemanticCacheHit && relayLog.ChannelName == "" {
 			relayLog.ChannelName = "Semantic Cache"
@@ -385,23 +399,63 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 	if err != nil {
 		relayLog.Error = err.Error()
 	}
+	if m.InternalResponse != nil {
+		termination := m.InternalResponse.Termination
+		if !termination.HasCause() {
+			for _, choice := range m.InternalResponse.Choices {
+				choiceTermination := terminationForChoice(choice)
+				if choiceTermination.HasCause() {
+					termination = choiceTermination
+					break
+				}
+			}
+		}
+		relayLog.TerminationCause = string(termination.Cause)
+		relayLog.ProviderTerminationReason = termination.ProviderReason
+	}
 
 	// 单条日志正文上限（XyzenSun 移植）：请求与响应正文合计超限则整条跳过，
 	// 避免超大 body（如长上下文原文）打爆日志库与内存。-1=不限。
 	if relaylog.RelayLogContentExceedsLimit(int64(len(relayLog.RequestContent)+len(relayLog.ResponseContent)), relaylog.GetRelayLogMaxContentSizeMB()) {
 		log.Warnf("relay log skipped: content size=%d bytes exceeds limit", len(relayLog.RequestContent)+len(relayLog.ResponseContent))
+		relayLog.RequestContent = ""
+		relayLog.ResponseContent = ""
+		relayLog.ContentState = model.RelayLogContentStateUnavailable
+		relayLog.ContentUnavailableError = "legacy normalized content exceeds configured limit"
+	}
+
+	if m.RequestTrace != nil {
+		if contentEnabled && m.InternalResponse != nil {
+			if normalizedResponse, marshalErr := jsonAPI.Marshal(m.InternalResponse); marshalErr == nil {
+				m.RequestTrace.addNormalizedJSON(
+					model.RelayLogBoundaryUpstreamResponse,
+					lastForwardedAttemptNumber(attempts),
+					"normalized_response",
+					m.EndpointType,
+					normalizedResponse,
+				)
+			}
+		}
+		// New traced requests store forensic content through boundary refs/blobs.
+		// Keep the legacy inline columns as a read-only fallback for old records.
+		relayLog.RequestContent = ""
+		relayLog.ResponseContent = ""
+		m.RequestTrace.stageRelayLog(relayLog)
 		return
 	}
-
-	if logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
+	if _, logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
 		log.Warnf("failed to save relay log: %v", logErr)
 	}
+}
 
-	// 把每次尝试（含失败）落表，使失败渠道可按 channel_id 检索（issue #67）。
-	// relayLog.ID 已由 RelayLogAdd 分配。
-	if attemptsErr := relaylog.RelayLogAttemptsAdd(ctx, relayLog.ID, attempts, relayLog.Time); attemptsErr != nil {
-		log.Warnf("failed to save relay log attempts: %v", attemptsErr)
+func lastForwardedAttemptNumber(attempts []model.ChannelAttempt) int {
+	for attemptIndex := len(attempts) - 1; attemptIndex >= 0; attemptIndex-- {
+		attempt := attempts[attemptIndex]
+		if attempt.Status == model.AttemptSuccess || attempt.Status == model.AttemptFailed {
+			return attempt.AttemptNum
+		}
 	}
+	return 0
 }
 
 func opRelayLogCacheReadTokens(responseContent string) int {

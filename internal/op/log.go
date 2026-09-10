@@ -18,11 +18,11 @@ func RelayLogStreamTokenVerify(token string) bool { return relaylog.RelayLogStre
 
 func RelayLogStreamTokenRevoke(token string) { relaylog.RelayLogStreamTokenRevoke(token) }
 
-func RelayLogSubscribe() chan model.RelayLog { return relaylog.RelayLogSubscribe() }
+func RelayLogSubscribe() chan model.RelayLogListItem { return relaylog.RelayLogSubscribe() }
 
-func RelayLogUnsubscribe(ch chan model.RelayLog) { relaylog.RelayLogUnsubscribe(ch) }
+func RelayLogUnsubscribe(ch chan model.RelayLogListItem) { relaylog.RelayLogUnsubscribe(ch) }
 
-func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
+func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (int64, error) {
 	return relaylog.RelayLogAdd(ctx, relayLog)
 }
 
