@@ -41,6 +41,7 @@ export function CreateDialogContent() {
         param_override: '',
         outbound_format_override: '',
         request_rewrite: createDefaultRequestRewriteFormData(),
+        relay_log_raw_sse_until: 0,
         keys: [{ enabled: true, channel_key: '', priority: 0, remark: '' }],
         model: '',
         custom_model: '',
@@ -70,6 +71,7 @@ export function CreateDialogContent() {
         param_override: '',
         outbound_format_override: '',
         request_rewrite: createDefaultRequestRewriteFormData(),
+        relay_log_raw_sse_until: 0,
             keys: [{ enabled: true, channel_key: '', priority: 0, remark: '' }],
             model: '',
             custom_model: '',
@@ -147,6 +149,7 @@ export function CreateDialogContent() {
                 param_override: paramOverride,
                 outbound_format_override: outboundFormatOverride,
                 request_rewrite: requestRewrite.enabled ? requestRewrite : undefined,
+                relay_log_raw_sse_until: formData.relay_log_raw_sse_until,
                 match_regex: formData.match_regex.trim(),
             },
             {

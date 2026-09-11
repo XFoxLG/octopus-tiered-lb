@@ -86,6 +86,9 @@ func decryptChannelKeysInPlace(keys []model.ChannelKey) {
 
 func Create(ch *model.Channel, ctx context.Context) error {
 	if ch != nil {
+		if ch.RelayLogRawSSEUntil < 0 {
+			return fmt.Errorf("relay log raw SSE expiry must be greater than or equal to 0")
+		}
 		if err := ch.RequestRewrite.Validate(ch.Type); err != nil {
 			return err
 		}
@@ -475,6 +478,14 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 	if req.RequestRewrite != nil {
 		selectFields = append(selectFields, "request_rewrite")
 		updates.RequestRewrite = req.RequestRewrite
+	}
+	if req.RelayLogRawSSEUntil != nil {
+		if *req.RelayLogRawSSEUntil < 0 {
+			tx.Rollback()
+			return nil, fmt.Errorf("relay log raw SSE expiry must be greater than or equal to 0")
+		}
+		selectFields = append(selectFields, "relay_log_raw_sse_until")
+		updates.RelayLogRawSSEUntil = *req.RelayLogRawSSEUntil
 	}
 	if req.MatchRegex != nil {
 		selectFields = append(selectFields, "match_regex")

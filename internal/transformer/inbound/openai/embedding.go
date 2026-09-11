@@ -13,6 +13,11 @@ type EmbeddingInbound struct {
 	storedResponse *model.InternalLLMResponse
 }
 
+// ResetResponseState prevents a failed attempt from supplying the final usage.
+func (adapter *EmbeddingInbound) ResetResponseState() {
+	*adapter = EmbeddingInbound{}
+}
+
 // OpenAIEmbeddingRequest 是 OpenAI 标准的 embedding 请求格式
 type OpenAIEmbeddingRequest struct {
 	Model          string               `json:"model"`

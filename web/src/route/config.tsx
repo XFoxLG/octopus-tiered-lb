@@ -1,7 +1,7 @@
 import { lazyWithPreload } from './lazy-with-preload';
 import { lazy, ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Home, Radio, Sparkles, FolderTree, Settings, Logs, Users, BarChart3, Wrench, KeyRound, Inbox } from 'lucide-react';
+import { Home, Radio, Sparkles, FolderTree, Settings, Logs, BarChart3, Wrench, KeyRound, Inbox } from 'lucide-react';
 import { DEFAULT_NAV_ORDER } from '@/components/modules/navbar';
 
 export type LazyComponent = ReturnType<typeof lazy> & {
@@ -25,7 +25,6 @@ const Analytics_Module = lazyWithPreload(() => import('@/components/modules/anal
 const Log_Module = lazyWithPreload(() => import('@/components/modules/log').then(m => ({ default: m.Log })));
 const APIKey_Module = lazyWithPreload(() => import('@/components/modules/apikey').then(m => ({ default: m.APIKeyPage })));
 const Setting_Module = lazyWithPreload(() => import('@/components/modules/setting').then(m => ({ default: m.Setting })));
-const User_Module = lazyWithPreload(() => import('@/components/modules/user').then(m => ({ default: m.User })));
 const Notification_Module = lazyWithPreload(() => import('@/components/modules/notification').then(m => ({ default: m.Notification })));
 const Ops_Module = lazyWithPreload(() => import('@/components/modules/ops').then(m => ({ default: m.Ops })));
 
@@ -40,7 +39,6 @@ export const ROUTES: RouteConfig[] = [
     { id: 'ops', icon: Wrench, component: Ops_Module },
     { id: 'apikey', icon: KeyRound, component: APIKey_Module },
     { id: 'setting', icon: Settings, component: Setting_Module },
-    { id: 'user', icon: Users, component: User_Module },
 ];
 
 export const CONTENT_MAP = ROUTES.reduce((acc, route) => {

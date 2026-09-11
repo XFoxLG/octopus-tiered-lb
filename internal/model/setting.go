@@ -12,43 +12,47 @@ import (
 
 type SettingKey string
 
+const DefaultRequestFilterErrorMessage = "The request contains blocked keywords and was not sent upstream."
+
 const (
 	SettingKeyProxyURL                           SettingKey = "proxy_url"
-	SettingKeyStatsSaveInterval                  SettingKey = "stats_save_interval"                     // 将统计信息写入数据库的周期(分钟)
-	SettingKeyModelInfoUpdateInterval            SettingKey = "model_info_update_interval"              // 模型信息更新间隔(小时)
-	SettingKeySyncLLMInterval                    SettingKey = "sync_llm_interval"                       // LLM 同步间隔(小时)
-	SettingKeyRelayLogKeepPeriod                 SettingKey = "relay_log_keep_period"                   // 日志保存时间范围(天)
-	SettingKeyRelayLogKeepCount                  SettingKey = "relay_log_keep_count"                    // 日志保留条数(0=不按条数)
-	SettingKeyRelayLogKeepEnabled                SettingKey = "relay_log_keep_enabled"                  // 是否保留历史日志
-	SettingKeyRelayLogContentEnabled             SettingKey = "relay_log_content_enabled"               // 是否记录请求/响应内容大字段（关闭可大幅降低写入量与磁盘 IO）
-	SettingKeyRelayLogQueueDropPolicy            SettingKey = "relay_log_queue_drop_policy"             // 日志队列满时的丢弃策略：disabled(阻塞触发刷盘) | oldest(丢弃最旧) | newest(丢弃最新)
-	SettingKeyStreamSessionReplayEnabled         SettingKey = "stream_session_replay_enabled"           // 是否保留完成会话的缓冲区以支持断线重连重放（关闭可降低内存占用）
-	SettingKeyCORSAllowOrigins                   SettingKey = "cors_allow_origins"                      // 跨域白名单(逗号分隔, 如 "example.com,example2.com"). 为空不允许跨域, "*"允许所有
-	SettingKeyRelayRetryCount                    SettingKey = "relay_retry_count"                       // 单个候选渠道内 Key 级最大重试次数
-	SettingKeyRelayRouteRetries                  SettingKey = "relay_route_retries"                     // 路由级最大重试次数（全部渠道遍历一轮算一次）
-	SettingKeyCircuitBreakerThreshold            SettingKey = "circuit_breaker_threshold"               // 熔断触发阈值（连续失败次数）
-	SettingKeyCircuitBreakerCooldown             SettingKey = "circuit_breaker_cooldown"                // 熔断基础冷却时间（秒）
-	SettingKeyCircuitBreakerMaxCooldown          SettingKey = "circuit_breaker_max_cooldown"            // 熔断最大冷却时间（秒），指数退避上限
-	SettingKeyCircuitBreakerHalfOpenProbeTimeout SettingKey = "circuit_breaker_half_open_probe_timeout" // 熔断 HalfOpen 探测超时（秒），0=禁用；试探请求被中途放弃时避免永久跳过（issue #162）
-	SettingKeyPublicAPIBaseURL                   SettingKey = "public_api_base_url"                     // 对外可访问的 API 基础地址，用于生成示例
-	SettingKeyRatelimitCooldown                  SettingKey = "ratelimit_cooldown"                      // 429 Key 冷却时间（秒），0=关闭
-	SettingKeyAuthErrorCooldown                  SettingKey = "auth_error_cooldown"                    // 401/403 Key 隔离时间（秒），0=关闭
-	SettingKeyServerErrorCooldown                SettingKey = "server_error_cooldown"                  // 408/5xx Key 冷却时间（秒），0=关闭
-	SettingKeyRateLimitChannelThreshold          SettingKey = "rate_limit_channel_threshold"            // 短窗口内触发渠道级限流所需的 429 次数
-	SettingKeyRateLimitChannelWindow             SettingKey = "rate_limit_channel_window"               // 渠道级限流统计窗口（秒）
-	SettingKeyRateLimitChannelCooldown           SettingKey = "rate_limit_channel_cooldown"             // 渠道级限流隔离时间（秒）
-	SettingKeyKeySelectionStrategy               SettingKey = "key_selection_strategy"                  // Key 选择策略：cost(默认) | availability | priority
-	SettingKeyRelayMaxTotalAttempts              SettingKey = "relay_max_total_attempts"                // 所有候选渠道的最大决策纪录次数，0/负数回退到内置默认上限（issue #192）
-	SettingKeyRetryEmptyOutput                   SettingKey = "retry_empty_output"                      // 输出为空(无可见内容)时自动重试，流式与非流式均适用（issue #106/#155）
-	SettingKeyRetryTruncationEnabled             SettingKey = "retry_truncation_enabled"                // 输出被 max_tokens 截断(finish_reason=length)时自动重试，默认关闭
+	SettingKeyStatsSaveInterval                  SettingKey = "stats_save_interval"                      // 将统计信息写入数据库的周期(分钟)
+	SettingKeyModelInfoUpdateInterval            SettingKey = "model_info_update_interval"               // 模型信息更新间隔(小时)
+	SettingKeySyncLLMInterval                    SettingKey = "sync_llm_interval"                        // LLM 同步间隔(小时)
+	SettingKeyRelayLogKeepPeriod                 SettingKey = "relay_log_keep_period"                    // 日志保存时间范围(天)
+	SettingKeyRelayLogKeepCount                  SettingKey = "relay_log_keep_count"                     // 日志保留条数(0=不按条数)
+	SettingKeyRelayLogKeepEnabled                SettingKey = "relay_log_keep_enabled"                   // 是否保留历史日志
+	SettingKeyRelayLogContentEnabled             SettingKey = "relay_log_content_enabled"                // 是否记录请求/响应内容大字段（关闭可大幅降低写入量与磁盘 IO）
+	SettingKeyRelayLogContentKeepSizeMB          SettingKey = "relay_log_content_keep_size_mb"           // 四边界正文/附件占用上限（MiB），0=不按空间清理
+	SettingKeyRelayLogContentKeepPeriod          SettingKey = "relay_log_content_keep_period"            // 四边界正文/附件保留天数，0=不按时间清理
+	SettingKeyRelayLogQueueDropPolicy            SettingKey = "relay_log_queue_drop_policy"              // 日志队列满时的丢弃策略：disabled(阻塞触发刷盘) | oldest(丢弃最旧) | newest(丢弃最新)
+	SettingKeyStreamSessionReplayEnabled         SettingKey = "stream_session_replay_enabled"            // 是否保留完成会话的缓冲区以支持断线重连重放（关闭可降低内存占用）
+	SettingKeyCORSAllowOrigins                   SettingKey = "cors_allow_origins"                       // 跨域白名单(逗号分隔, 如 "example.com,example2.com"). 为空不允许跨域, "*"允许所有
+	SettingKeyRelayRetryCount                    SettingKey = "relay_retry_count"                        // 单个候选渠道内 Key 级最大重试次数
+	SettingKeyRelayRouteRetries                  SettingKey = "relay_route_retries"                      // 路由级最大重试次数（全部渠道遍历一轮算一次）
+	SettingKeyCircuitBreakerThreshold            SettingKey = "circuit_breaker_threshold"                // 熔断触发阈值（连续失败次数）
+	SettingKeyCircuitBreakerCooldown             SettingKey = "circuit_breaker_cooldown"                 // 熔断基础冷却时间（秒）
+	SettingKeyCircuitBreakerMaxCooldown          SettingKey = "circuit_breaker_max_cooldown"             // 熔断最大冷却时间（秒），指数退避上限
+	SettingKeyCircuitBreakerHalfOpenProbeTimeout SettingKey = "circuit_breaker_half_open_probe_timeout"  // 熔断 HalfOpen 探测超时（秒），0=禁用；试探请求被中途放弃时避免永久跳过（issue #162）
+	SettingKeyPublicAPIBaseURL                   SettingKey = "public_api_base_url"                      // 对外可访问的 API 基础地址，用于生成示例
+	SettingKeyRatelimitCooldown                  SettingKey = "ratelimit_cooldown"                       // 429 Key 冷却时间（秒），0=关闭
+	SettingKeyAuthErrorCooldown                  SettingKey = "auth_error_cooldown"                      // 401/403 Key 隔离时间（秒），0=关闭
+	SettingKeyServerErrorCooldown                SettingKey = "server_error_cooldown"                    // 408/5xx Key 冷却时间（秒），0=关闭
+	SettingKeyRateLimitChannelThreshold          SettingKey = "rate_limit_channel_threshold"             // 短窗口内触发渠道级限流所需的 429 次数
+	SettingKeyRateLimitChannelWindow             SettingKey = "rate_limit_channel_window"                // 渠道级限流统计窗口（秒）
+	SettingKeyRateLimitChannelCooldown           SettingKey = "rate_limit_channel_cooldown"              // 渠道级限流隔离时间（秒）
+	SettingKeyKeySelectionStrategy               SettingKey = "key_selection_strategy"                   // Key 选择策略：cost(默认) | availability | priority
+	SettingKeyRelayMaxTotalAttempts              SettingKey = "relay_max_total_attempts"                 // 所有候选渠道的最大决策纪录次数，0/负数回退到内置默认上限（issue #192）
+	SettingKeyRetryEmptyOutput                   SettingKey = "retry_empty_output"                       // 输出为空(无可见内容)时自动重试，流式与非流式均适用（issue #106/#155）
+	SettingKeyRetryTruncationEnabled             SettingKey = "retry_truncation_enabled"                 // 输出被 max_tokens 截断(finish_reason=length)时自动重试，默认关闭
 	SettingKeyCustomRetryableCodes               SettingKey = "custom_retryable_codes"                   // 自定义可重试上游状态码（逗号分隔，如 "418,499"），命中则强制进入换 Key/换渠道重试
 	SettingKeyCustomErrorRules                   SettingKey = "custom_error_rules"                       // 自定义错误透传规则（JSON 数组，见 relay.CustomErrorRule），按渠道类型+错误码/关键词改写最终错误呈现
 	SettingKeyRelayLogMaxContentSizeMB           SettingKey = "relay_log_max_content_size_mb"            // 单条日志请求与响应正文合计上限（MiB），超限整条跳过，-1=不限
 	SettingKeyRelayLogMemoryLogMaxDimidiateTimes SettingKey = "relay_log_memory_log_max_dimidiate_times" // 仅内存日志模式下折半次数阈值，达到后主动 GC 一次，-1=关闭
-	SettingKeyReasoningBufferStrategy            SettingKey = "reasoning_buffer_strategy"               // 推理内容缓冲策略：buffer(缓冲) | immediate(立即)，默认 buffer（issue #155）
-	SettingKeyRateLimitHoldEnabled               SettingKey = "rate_limit_hold_enabled"                 // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
-	SettingKeyRateLimitHoldInterval              SettingKey = "rate_limit_hold_interval"                // 429 渠道内延时重试间隔（秒）
-	SettingKeyRateLimitHoldMaxWait               SettingKey = "rate_limit_hold_max_wait"                // 429 渠道内延时重试总等待上限（秒），超时后才换下一渠道
+	SettingKeyReasoningBufferStrategy            SettingKey = "reasoning_buffer_strategy"                // 推理内容缓冲策略：buffer(缓冲) | immediate(立即)，默认 buffer（issue #155）
+	SettingKeyRateLimitHoldEnabled               SettingKey = "rate_limit_hold_enabled"                  // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
+	SettingKeyRateLimitHoldInterval              SettingKey = "rate_limit_hold_interval"                 // 429 渠道内延时重试间隔（秒）
+	SettingKeyRateLimitHoldMaxWait               SettingKey = "rate_limit_hold_max_wait"                 // 429 渠道内延时重试总等待上限（秒），超时后才换下一渠道
 
 	SettingKeyAutoStrategyMinSamples               SettingKey = "auto_strategy_min_samples"                // Auto策略最小样本数阈值
 	SettingKeyAutoStrategyTimeWindow               SettingKey = "auto_strategy_time_window"                // Auto策略时间窗口（秒）
@@ -89,10 +93,9 @@ const (
 	SettingKeyFailureHintTTLRateLimit              SettingKey = "failure_hint_ttl_rate_limit"              // 限流失败提示缓存TTL（秒）
 	SettingKeyFailureHintTTLNetwork                SettingKey = "failure_hint_ttl_network"                 // 网络失败提示缓存TTL（秒）
 	SettingKeyWebDAVConfig                         SettingKey = "webdav_config"                            // WebDAV 云备份配置（JSON）
-	SettingKeyResponseFilterEnabled                SettingKey = "response_filter_enabled"                  // 输出结果关键词拦截开关
-	SettingKeyResponseFilterKeywords               SettingKey = "response_filter_keywords"                 // 拦截关键词列表(JSON 数组)
-	SettingKeyResponseFilterAction                 SettingKey = "response_filter_action"                   // 拦截动作: block(阻断) / replace(替换为*)
-	SettingKeyResponseFilterErrorMessage           SettingKey = "response_filter_error_message"            // 阻断时返回的错误信息
+	SettingKeyRequestFilterEnabled                 SettingKey = "request_filter_enabled"                   // 转发前输入关键词拦截开关
+	SettingKeyRequestFilterKeywords                SettingKey = "request_filter_keywords"                  // 最新一条用户文本的拦截关键词(JSON 数组)
+	SettingKeyRequestFilterErrorMessage            SettingKey = "request_filter_error_message"             // 本地拒绝请求时返回的错误信息
 	SettingKeyLogLevel                             SettingKey = "log_level"                                // 应用日志级别: debug, info, warn, error
 	SettingKeyLogExcludedGroups                    SettingKey = "log_excluded_groups"                      // 在日志列表/实时流中屏蔽的分组名称列表(JSON 数组)
 	SettingKeyModelNormalizeRouterPrefixes         SettingKey = "model_normalize_router_prefixes"          // 模型名归一化: 路由商/平台前缀列表(JSON 数组，元素如 "dmxapi-")
@@ -127,6 +130,8 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},                  // 默认日志保存7天
 		{Key: SettingKeyRelayLogKeepCount, Value: "0"},                   // 默认不按条数保留(0=禁用)
 		{Key: SettingKeyRelayLogContentEnabled, Value: "true"},           // 默认记录请求/响应内容，保持兼容；高负载可关闭以降低 IO
+		{Key: SettingKeyRelayLogContentKeepSizeMB, Value: "256"},         // Aiven Free 1GiB 磁盘下为正文预留有界空间
+		{Key: SettingKeyRelayLogContentKeepPeriod, Value: "7"},           // 正文默认随元数据保留7天，但可单独缩短
 		{Key: SettingKeyRelayLogQueueDropPolicy, Value: "oldest"},        // 默认丢弃最旧日志，防止队列溢出 OOM（高 QPS 下推荐）
 		{Key: SettingKeyStreamSessionReplayEnabled, Value: "true"},       // 默认启用重连重放，保持兼容；内存受限可关闭
 		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},              // 默认保留历史日志
@@ -136,8 +141,8 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},         // 默认最大冷却600秒（10分钟）
 		{Key: SettingKeyCircuitBreakerHalfOpenProbeTimeout, Value: "60"}, // 默认 HalfOpen 探测超时60秒；试探被中途放弃后避免永久跳过（issue #162）
 		{Key: SettingKeyRatelimitCooldown, Value: "300"},                 // 默认 Key 错误冷却300秒（5分钟），0=关闭
-		{Key: SettingKeyAuthErrorCooldown, Value: "300"},                // 默认认证错误隔离300秒（5分钟），0=关闭
-		{Key: SettingKeyServerErrorCooldown, Value: "30"},               // 默认服务错误冷却30秒，0=关闭
+		{Key: SettingKeyAuthErrorCooldown, Value: "300"},                 // 默认认证错误隔离300秒（5分钟），0=关闭
+		{Key: SettingKeyServerErrorCooldown, Value: "30"},                // 默认服务错误冷却30秒，0=关闭
 		{Key: SettingKeyRateLimitChannelThreshold, Value: "2"},           // 默认同窗口两个429即认为渠道容量受限
 		{Key: SettingKeyRateLimitChannelWindow, Value: "30"},             // 默认渠道限流统计窗口30秒
 		{Key: SettingKeyRateLimitChannelCooldown, Value: "30"},           // 默认渠道限流隔离30秒
@@ -145,9 +150,9 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRelayMaxTotalAttempts, Value: "0"},               // 0 回退到内置默认上限（issue #192 防止 attempts 无限膨胀）
 		{Key: SettingKeyRetryEmptyOutput, Value: "true"},                 // 默认启用空输出重试
 		{Key: SettingKeyRetryTruncationEnabled, Value: "false"},          // 默认关闭截断重试（按需在设置页开启）
-		{Key: SettingKeyCustomRetryableCodes, Value: ""},                // 默认无自定义可重试码
-		{Key: SettingKeyCustomErrorRules, Value: "[]"},                  // 默认无自定义错误透传规则
-		{Key: SettingKeyRelayLogMaxContentSizeMB, Value: "2"},           // 默认单条日志正文上限 2MiB
+		{Key: SettingKeyCustomRetryableCodes, Value: ""},                 // 默认无自定义可重试码
+		{Key: SettingKeyCustomErrorRules, Value: "[]"},                   // 默认无自定义错误透传规则
+		{Key: SettingKeyRelayLogMaxContentSizeMB, Value: "2"},            // 默认单条日志正文上限 2MiB
 		{Key: SettingKeyRelayLogMemoryLogMaxDimidiateTimes, Value: "15"}, // 默认折半 15 次后主动 GC 一次
 		{Key: SettingKeyReasoningBufferStrategy, Value: "buffer"},        // 默认缓冲策略：安全重试但可能 CF 超时
 		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},            // 默认关闭：429 仍立即换 Key/渠道
@@ -194,10 +199,9 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyFailureHintTTLRateLimit, Value: "5"},     // 默认5秒
 		{Key: SettingKeyFailureHintTTLNetwork, Value: "2"},       // 默认2秒
 		{Key: SettingKeyWebDAVConfig, Value: `{"enabled":false,"base_url":"","username":"","password":"","remote_path":"/octopus-backup/","interval_hours":6,"include_stats":true,"include_logs":false,"max_backups":10}`},
-		{Key: SettingKeyResponseFilterEnabled, Value: "false"},
-		{Key: SettingKeyResponseFilterKeywords, Value: "[]"},
-		{Key: SettingKeyResponseFilterAction, Value: "block"},
-		{Key: SettingKeyResponseFilterErrorMessage, Value: "The response contains blocked keywords and has been intercepted."},
+		{Key: SettingKeyRequestFilterEnabled, Value: "false"},
+		{Key: SettingKeyRequestFilterKeywords, Value: "[]"},
+		{Key: SettingKeyRequestFilterErrorMessage, Value: DefaultRequestFilterErrorMessage},
 		{Key: SettingKeyLogLevel, Value: "info"},
 		{Key: SettingKeyLogExcludedGroups, Value: "[]"},
 		{Key: SettingKeyModelNormalizeRouterPrefixes, Value: "[]"},        // 默认无自定义路由前缀，回退到前端内置默认
@@ -229,7 +233,7 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("invalid IANA timezone: %s", s.Value)
 		}
 		return nil
-	case SettingKeyModelInfoUpdateInterval, SettingKeySyncLLMInterval, SettingKeyRelayLogKeepPeriod, SettingKeyRelayLogKeepCount,
+	case SettingKeyModelInfoUpdateInterval, SettingKeySyncLLMInterval, SettingKeyRelayLogKeepPeriod, SettingKeyRelayLogKeepCount, SettingKeyRelayLogContentKeepSizeMB, SettingKeyRelayLogContentKeepPeriod,
 		SettingKeyRelayRetryCount, SettingKeyRelayRouteRetries, SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown,
 		SettingKeyCircuitBreakerMaxCooldown, SettingKeyCircuitBreakerHalfOpenProbeTimeout, SettingKeyRatelimitCooldown,
 		SettingKeyAuthErrorCooldown, SettingKeyServerErrorCooldown, SettingKeyRateLimitChannelThreshold,
@@ -258,7 +262,8 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("relay route retries must be greater than or equal to 1")
 		}
 		if (s.Key == SettingKeyRatelimitCooldown || s.Key == SettingKeyAuthErrorCooldown ||
-			s.Key == SettingKeyServerErrorCooldown || s.Key == SettingKeyRelayMaxTotalAttempts) && v < 0 {
+			s.Key == SettingKeyServerErrorCooldown || s.Key == SettingKeyRelayMaxTotalAttempts ||
+			s.Key == SettingKeyRelayLogContentKeepSizeMB || s.Key == SettingKeyRelayLogContentKeepPeriod) && v < 0 {
 			return fmt.Errorf("setting value must be greater than or equal to 0")
 		}
 		if s.Key == SettingKeyRateLimitChannelThreshold && v < 1 {
@@ -464,15 +469,20 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("webdav config must be a valid JSON object")
 		}
 		return nil
-	case SettingKeyResponseFilterEnabled, SettingKeyGroupUpstreamMetaDisplayEnabled:
+	case SettingKeyRequestFilterEnabled, SettingKeyGroupUpstreamMetaDisplayEnabled:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}
 		return nil
-	case SettingKeyResponseFilterKeywords:
+	case SettingKeyRequestFilterKeywords:
 		var keywords []string
-		if err := json.Unmarshal([]byte(s.Value), &keywords); err != nil {
-			return fmt.Errorf("response filter keywords must be a valid JSON array of strings")
+		if err := json.Unmarshal([]byte(s.Value), &keywords); err != nil || keywords == nil {
+			return fmt.Errorf("request filter keywords must be a valid JSON array of strings")
+		}
+		for _, keyword := range keywords {
+			if strings.TrimSpace(keyword) == "" {
+				return fmt.Errorf("request filter keywords must not be empty or whitespace")
+			}
 		}
 		return nil
 	case SettingKeyLogExcludedGroups:
@@ -500,14 +510,7 @@ func (s *Setting) Validate() error {
 			}
 		}
 		return nil
-	case SettingKeyResponseFilterAction:
-		switch s.Value {
-		case "block", "replace":
-			return nil
-		default:
-			return fmt.Errorf("response filter action must be block or replace")
-		}
-	case SettingKeyResponseFilterErrorMessage:
+	case SettingKeyRequestFilterErrorMessage:
 		return nil
 	case SettingKeyLogLevel:
 		switch s.Value {

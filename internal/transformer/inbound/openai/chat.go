@@ -14,6 +14,11 @@ type ChatInbound struct {
 	storedResponse *model.InternalLLMResponse
 }
 
+// ResetResponseState keeps discarded attempts out of later response aggregation.
+func (adapter *ChatInbound) ResetResponseState() {
+	*adapter = ChatInbound{}
+}
+
 func (i *ChatInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
 	var request model.InternalLLMRequest
 	if err := transformer.Unmarshal(body, &request); err != nil {

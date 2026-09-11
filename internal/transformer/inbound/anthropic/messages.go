@@ -37,6 +37,12 @@ type MessagesInbound struct {
 	storedResponse *model.InternalLLMResponse
 }
 
+// ResetResponseState preserves the input estimate computed while parsing the
+// request, but discards every response field from the previous attempt.
+func (adapter *MessagesInbound) ResetResponseState() {
+	*adapter = MessagesInbound{inputToken: adapter.inputToken}
+}
+
 func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
 	var anthropicReq MessageRequest
 	if err := transformer.Unmarshal(body, &anthropicReq); err != nil {

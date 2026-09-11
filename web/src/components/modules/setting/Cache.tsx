@@ -19,26 +19,31 @@ export function SettingCache() {
     const saveCache = useSaveCacheConfig();
 
     const [cacheType, setCacheType] = useState<CacheType>('');
-    const [addr, setAddr] = useState('127.0.0.1:6379');
+    const [addr, setAddr] = useState('');
     const [password, setPassword] = useState('');
     const [username, setUsername] = useState('');
     const [db, setDb] = useState('0');
     const [poolSize, setPoolSize] = useState('');
     const [dialTimeout, setDialTimeout] = useState('');
     const [readTimeout, setReadTimeout] = useState('');
+    const [tls, setTls] = useState(false);
+    const [caFile, setCaFile] = useState('');
+    const deploymentManaged = cacheConfig?.config_source !== 'file';
 
     // 挂载/配置到达时回填表单（从 config.json 的 cache 字段读取当前值）。
     useEffect(() => {
         if (!cacheConfig) return;
         setCacheType((cacheConfig.type || '') as CacheType);
         const r = cacheConfig.redis;
-        setAddr(r?.addr || '127.0.0.1:6379');
+        setAddr(r?.addr || '');
         setPassword(r?.password || '');
         setUsername(r?.username || '');
         setDb(r?.db != null ? String(r.db) : '0');
         setPoolSize(r?.pool_size ? String(r.pool_size) : '');
         setDialTimeout(r?.dial_timeout || '');
         setReadTimeout(r?.read_timeout || '');
+        setTls(r?.tls || false);
+        setCaFile(r?.ca_file || '');
     }, [cacheConfig]);
 
     const buildRequest = () => ({
@@ -51,6 +56,8 @@ export function SettingCache() {
             pool_size: poolSize.trim() === '' ? 0 : Number(poolSize),
             dial_timeout: dialTimeout.trim(),
             read_timeout: readTimeout.trim(),
+            tls,
+            ca_file: caFile.trim(),
         },
     });
 
@@ -90,11 +97,33 @@ export function SettingCache() {
                 <p className="text-xs leading-5 text-muted-foreground">{t('redis.description')}</p>
             </div>
 
+            {cacheConfig && (
+                <div className="space-y-2 rounded-lg border border-border/30 p-3 text-xs leading-5" role="status">
+                    <p>{t('redis.runtimeSummary', {
+                        backend: cacheConfig.runtime_backend === 'redis' ? 'Redis / Valkey' : t('redis.type.memory'),
+                        health: cacheConfig.runtime_healthy ? t('redis.healthy') : t('redis.unhealthy'),
+                        tls: cacheConfig.runtime_tls ? 'TLS' : t('redis.noTls'),
+                    })}</p>
+                    <p>{t(`redis.source.${cacheConfig.config_source}`)}</p>
+                    {cacheConfig.reconnecting && <p>{t('redis.reconnecting')}</p>}
+                    {cacheConfig.restart_needed && <p>{t('redis.restartNotice')}</p>}
+                </div>
+            )}
+
+            {deploymentManaged && (
+                <div className="space-y-2 rounded-lg border border-amber-500/30 p-3 text-xs leading-5">
+                    <p>{t('redis.deploymentInstructions')}</p>
+                    <p className="break-all font-mono">OCTOPUS_CACHE_TYPE=redis<br />OCTOPUS_CACHE_REDIS_ADDR=host:port<br />OCTOPUS_CACHE_REDIS_TLS=true<br />OCTOPUS_CACHE_REDIS_USERNAME<br />OCTOPUS_CACHE_REDIS_PASSWORD</p>
+                    <p>{t('redis.deploymentTestOnly')}</p>
+                </div>
+            )}
+
             <div className="space-y-3 rounded-lg border border-border/30 bg-card p-3 sm:p-4 shadow-sm">
                 <div className="space-y-1.5">
                     <label className="text-xs text-muted-foreground">{t('redis.type.label')}</label>
                     <select
                         value={cacheType}
+                        aria-label={t('redis.type.label')}
                         onChange={(e) => setCacheType(e.target.value as CacheType)}
                         className="h-10 rounded-xl border border-input bg-background px-3 text-sm w-full"
                     >
@@ -109,15 +138,19 @@ export function SettingCache() {
                             <label className="text-xs text-muted-foreground">{t('redis.fields.addr.label')}</label>
                             <Input
                                 className="rounded-xl"
+                                aria-label={t('redis.fields.addr.label')}
+                                type="password"
+                                autoComplete="off"
                                 value={addr}
                                 onChange={(e) => setAddr(e.target.value)}
-                                placeholder="127.0.0.1:6379"
+                                placeholder="host:port / rediss://host:port"
                             />
                         </div>
                         <div className="space-y-1.5">
                             <label className="text-xs text-muted-foreground">{t('redis.fields.password.label')}</label>
                             <Input
                                 type="password"
+                                aria-label={t('redis.fields.password.label')}
                                 className="rounded-xl"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
@@ -129,6 +162,7 @@ export function SettingCache() {
                             <Input
                                 className="rounded-xl"
                                 value={username}
+                                aria-label={t('redis.fields.username.label')}
                                 onChange={(e) => setUsername(e.target.value)}
                                 placeholder="default"
                             />
@@ -139,6 +173,9 @@ export function SettingCache() {
                                 type="number"
                                 className="rounded-xl"
                                 value={db}
+                                aria-label={t('redis.fields.db.label')}
+                                min={0}
+                                step={1}
                                 onChange={(e) => setDb(e.target.value)}
                                 placeholder="0"
                             />
@@ -149,8 +186,11 @@ export function SettingCache() {
                                 type="number"
                                 className="rounded-xl"
                                 value={poolSize}
+                                aria-label={t('redis.fields.poolSize.label')}
+                                min={1}
+                                step={1}
                                 onChange={(e) => setPoolSize(e.target.value)}
-                                placeholder="10"
+                                placeholder="5"
                             />
                         </div>
                         <div className="space-y-1.5">
@@ -158,6 +198,7 @@ export function SettingCache() {
                             <Input
                                 className="rounded-xl"
                                 value={dialTimeout}
+                                aria-label={t('redis.fields.dialTimeout.label')}
                                 onChange={(e) => setDialTimeout(e.target.value)}
                                 placeholder={t('redis.fields.dialTimeout.placeholder')}
                             />
@@ -167,9 +208,19 @@ export function SettingCache() {
                             <Input
                                 className="rounded-xl"
                                 value={readTimeout}
+                                aria-label={t('redis.fields.readTimeout.label')}
                                 onChange={(e) => setReadTimeout(e.target.value)}
                                 placeholder={t('redis.fields.readTimeout.placeholder')}
                             />
+                        </div>
+                        <label className="flex items-center gap-2 text-xs sm:col-span-2">
+                            <input type="checkbox" checked={tls || addr.trim().startsWith('rediss://')} disabled={addr.trim().startsWith('rediss://')} onChange={(event) => setTls(event.target.checked)} />
+                            {t('redis.tlsLabel')}
+                        </label>
+                        <div className="space-y-1.5 sm:col-span-2">
+                            <label htmlFor="redis-ca-file" className="text-xs text-muted-foreground">{t('redis.caFileLabel')}</label>
+                            <Input id="redis-ca-file" value={caFile} onChange={(event) => setCaFile(event.target.value)} placeholder="/etc/secrets/ca.pem" />
+                            <p className="text-xs leading-5 text-muted-foreground">{t('redis.tlsHint')}</p>
                         </div>
                     </div>
                 )}
@@ -189,7 +240,7 @@ export function SettingCache() {
                         type="button"
                         className="w-full sm:flex-1 rounded-xl"
                         onClick={onSave}
-                        disabled={saveCache.isPending || testCache.isPending || isLoading}
+                        disabled={saveCache.isPending || testCache.isPending || isLoading || deploymentManaged}
                     >
                         {saveCache.isPending ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
                         {saveCache.isPending ? t('redis.saving') : t('redis.saveButton')}

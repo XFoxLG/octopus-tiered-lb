@@ -421,7 +421,7 @@ export function GroupEditor({
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
                 <FieldGroup className="flex min-h-full flex-col gap-4 lg:h-full">
                     <div className="grid min-h-full gap-4 2xl:grid-cols-[minmax(21rem,0.9fr)_minmax(0,1.55fr)] 2xl:items-stretch">
-                        <section className="flex flex-col gap-3 rounded-xl border border-border/30 bg-card p-3 md:gap-4 md:p-5">
+                        <section className="@container/group-settings flex min-w-0 flex-col gap-3 rounded-xl border border-border/30 bg-card p-3 md:gap-4 md:p-5">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="space-y-2">
                                     <div className="inline-flex items-center gap-2 rounded-full border border-primary/14 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
@@ -436,7 +436,7 @@ export function GroupEditor({
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
+                            <div className="grid min-w-0 grid-cols-1 gap-3 @[28rem]/group-settings:grid-cols-2 md:gap-4 [&>[data-slot=field]]:min-w-0 [&_select]:min-w-0 [&_select]:max-w-full [&_select]:truncate [&_[data-slot=field-label]]:flex-wrap">
                                 <Field>
                                     <FieldLabel htmlFor="group-name">{t('form.name')}</FieldLabel>
                                     <Input
@@ -480,8 +480,8 @@ export function GroupEditor({
                                 {endpointType === 'music_generation' ? (
                                     <Field>
                                         <FieldLabel htmlFor="group-endpoint-provider">
-                                        {t('form.endpointProvider.musicLabel')}
-                                        <Hint text={t('form.endpointProvider.musicHint')} />
+                                            {t('form.endpointProvider.musicLabel')}
+                                            <Hint text={t('form.endpointProvider.musicHint')} />
                                         </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
@@ -500,8 +500,8 @@ export function GroupEditor({
                                 {endpointType === 'chat' ? (
                                     <Field>
                                         <FieldLabel htmlFor="group-endpoint-provider">
-                                        {t('form.endpointProvider.chatLabel')}
-                                        <Hint text={t('form.endpointProvider.chatHint')} />
+                                            {t('form.endpointProvider.chatLabel')}
+                                            <Hint text={t('form.endpointProvider.chatHint')} />
                                         </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
@@ -520,9 +520,9 @@ export function GroupEditor({
                                 {supportsOutboundFormat ? (
                                     <Field>
                                         <FieldLabel htmlFor="group-outbound-format">
-{t('form.outboundFormat.label')}
-<Hint text={t('form.outboundFormat.hint')} />
-</FieldLabel>
+                                            {t('form.outboundFormat.label')}
+                                            <Hint text={t('form.outboundFormat.hint')} />
+                                        </FieldLabel>
                                         <select
                                             id="group-outbound-format"
                                             value={outboundFormat}
@@ -540,8 +540,8 @@ export function GroupEditor({
                                 {endpointType === 'video_generation' ? (
                                     <Field>
                                         <FieldLabel htmlFor="group-endpoint-provider">
-                                        {t('form.endpointProvider.videoLabel')}
-                                        <Hint text={t('form.endpointProvider.videoHint')} />
+                                            {t('form.endpointProvider.videoLabel')}
+                                            <Hint text={t('form.endpointProvider.videoHint')} />
                                         </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
@@ -560,8 +560,8 @@ export function GroupEditor({
                                 {endpointType === 'image_generation' ? (
                                     <Field>
                                         <FieldLabel htmlFor="group-endpoint-provider">
-                                        {t('form.endpointProvider.imageLabel')}
-                                        <Hint text={t('form.endpointProvider.imageHint')} />
+                                            {t('form.endpointProvider.imageLabel')}
+                                            <Hint text={t('form.endpointProvider.imageHint')} />
                                         </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
@@ -580,8 +580,8 @@ export function GroupEditor({
                                 {endpointType === 'audio_speech' ? (
                                     <Field>
                                         <FieldLabel htmlFor="group-endpoint-provider">
-                                        {t('form.endpointProvider.audioSpeechLabel')}
-                                        <Hint text={t('form.endpointProvider.audioSpeechHint')} />
+                                            {t('form.endpointProvider.audioSpeechLabel')}
+                                            <Hint text={t('form.endpointProvider.audioSpeechHint')} />
                                         </FieldLabel>
                                         <select
                                             id="group-endpoint-provider"
@@ -597,7 +597,7 @@ export function GroupEditor({
                                         </select>
                                     </Field>
                                 ) : null}
-                                <Field className="md:col-span-2">
+                                <Field className="col-span-full">
                                     <FieldLabel htmlFor="group-match-regex">{t('form.matchRegex')}</FieldLabel>
                                     <Input
                                         id="group-match-regex"
@@ -693,151 +693,152 @@ export function GroupEditor({
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />
                                 </Field>
-                <Field>
-                    <FieldLabel htmlFor="group-session-keep-time">
-                        {t('form.sessionKeepTime')}
-                        <Hint text={t('form.sessionKeepTimeHint')} />
-                    </FieldLabel>
-                    <Input
-                        id="group-session-keep-time"
-                        type="number"
-                        inputMode="numeric"
-                        min={0}
-                        step={1}
-                        value={String(sessionKeepTime)}
-                        onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw.trim() === '') {
-                                setSessionKeepTime(0);
-                                return;
-                            }
-                            const n = Number.parseInt(raw, 10);
-                            setSessionKeepTime(Number.isFinite(n) && n > 0 ? n : 0);
-                        }}
-                        className="h-10 rounded-lg text-sm md:h-11"
-                    />
-                </Field>
-                <Field>
-                    <FieldLabel htmlFor="group-reasoning-buffer-strategy">
-                        {t('form.reasoningBufferStrategy.label')}
-                        <Hint text={t('form.reasoningBufferStrategy.hint')} />
-                        <Hint text={t('form.reasoningBufferStrategy.groupHint')} />
-                    </FieldLabel>
-                    <select
-                        id="group-reasoning-buffer-strategy"
-                        value={reasoningBufferStrategy}
-                        onChange={(e) => setReasoningBufferStrategy(e.target.value)}
-                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
-                    >
-                        <option value="">{t('form.reasoningBufferStrategy.useGlobal')}</option>
-                        <option value="buffer">{t('form.reasoningBufferStrategy.buffer')}</option>
-                        <option value="immediate">{t('form.reasoningBufferStrategy.immediate')}</option>
-                    </select>
-                </Field>
-                <Field>
-                    <FieldLabel htmlFor="group-default-reasoning-effort">
-                        {t('form.defaultReasoningEffort.label')}
-                        <Hint text={t('form.defaultReasoningEffort.hint')} />
-                    </FieldLabel>
-                    <select
-                        id="group-default-reasoning-effort"
-                        value={defaultReasoningEffort}
-                        onChange={(e) => setDefaultReasoningEffort(e.target.value)}
-                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
-                    >
-                        <option value="">{t('form.defaultReasoningEffort.off')}</option>
-                        <option value="minimal">{t('form.defaultReasoningEffort.minimal')}</option>
-                        <option value="low">{t('form.defaultReasoningEffort.low')}</option>
-                        <option value="medium">{t('form.defaultReasoningEffort.medium')}</option>
-                        <option value="high">{t('form.defaultReasoningEffort.high')}</option>
-                        <option value="xhigh">{t('form.defaultReasoningEffort.xhigh')}</option>
-                        <option value="max">{t('form.defaultReasoningEffort.max')}</option>
-                    </select>
-                </Field>
-                <Field className="md:col-span-2">
-                    <FieldLabel htmlFor="group-reasoning-force-override">
-                        {t('form.reasoningForceOverride.label')}
-                        <Hint text={t('form.reasoningForceOverride.hint')} />
-                    </FieldLabel>
-                    <label className="flex w-fit items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground">
-                        <Switch
-                            checked={reasoningForceOverride}
-                            onCheckedChange={setReasoningForceOverride}
-                        />
-                        <span>{t('form.reasoningForceOverride.enable')}</span>
-                    </label>
-                </Field>
-                <Field>
-                    <FieldLabel htmlFor="group-param-override">
-                        {t('form.paramOverride.label')}
-                        <Hint text={t('form.paramOverride.hint')} />
-                    </FieldLabel>
-                    <textarea
-                        id="group-param-override"
-                        value={paramOverride}
-                        onChange={(e) => setParamOverride(e.target.value)}
-                        rows={3}
-                        placeholder='{"temperature": 0.7}'
-                        className="w-full rounded-lg border border-border/40 bg-card px-3 py-2 font-mono text-xs shadow-sm transition-[border-color,box-shadow] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:text-sm"
-                    />
-                </Field>
-                <Field className="md:col-span-2">
-                    <div className="mb-1.5 flex items-center justify-between">
-                        <FieldLabel htmlFor="group-custom-header-key" className="mb-0">
-                            {t('form.customHeader.label')}
-                            <Hint text={t('form.customHeader.hint')} />
-                        </FieldLabel>
-                        <button
-                            type="button"
-                            onClick={() => setCustomHeaders([...customHeaders, { header_key: '', header_value: '' }])}
-                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/8"
-                        >
-                            <Plus className="size-3.5" />
-                            {t('form.customHeader.add')}
-                        </button>
-                    </div>
-                    {customHeaders.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">{t('form.customHeader.empty')}</p>
-                    ) : (
-                        <div className="space-y-2">
-                            {customHeaders.map((header, index) => (
-                                <div key={index} className="flex items-center gap-2">
+                                <Field>
+                                    <FieldLabel htmlFor="group-session-keep-time">
+                                        {t('form.sessionKeepTime')}
+                                        <Hint text={t('form.sessionKeepTimeHint')} />
+                                    </FieldLabel>
                                     <Input
-                                        value={header.header_key}
-                                        onChange={(e) => {
-                                            const next = [...customHeaders];
-                                            next[index] = { ...header, header_key: e.target.value };
-                                            setCustomHeaders(next);
+                                        id="group-session-keep-time"
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={0}
+                                        step={1}
+                                        value={String(sessionKeepTime)}
+                                        onChange={(event) => {
+                                            const rawValue = event.target.value;
+                                            if (rawValue.trim() === '') {
+                                                setSessionKeepTime(0);
+                                                return;
+                                            }
+                                            const durationSeconds = Number.parseInt(rawValue, 10);
+                                            setSessionKeepTime(Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0);
                                         }}
-                                        placeholder={t('form.customHeader.keyPlaceholder')}
-                                        className="h-9 flex-1 rounded-lg text-sm"
-                                        aria-label={t('form.customHeader.keyPlaceholder')}
+                                        className="h-10 rounded-lg text-sm md:h-11"
                                     />
-                                    <Input
-                                        value={header.header_value}
-                                        onChange={(e) => {
-                                            const next = [...customHeaders];
-                                            next[index] = { ...header, header_value: e.target.value };
-                                            setCustomHeaders(next);
-                                        }}
-                                        placeholder={t('form.customHeader.valuePlaceholder')}
-                                        className="h-9 flex-[1.6] rounded-lg text-sm"
-                                        aria-label={t('form.customHeader.valuePlaceholder')}
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setCustomHeaders(customHeaders.filter((_, i) => i !== index))}
-                                        className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-destructive/8 hover:text-destructive"
-                                        aria-label={t('form.customHeader.remove')}
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="group-reasoning-buffer-strategy">
+                                        {t('form.reasoningBufferStrategy.label')}
+                                        <Hint text={t('form.reasoningBufferStrategy.hint')} />
+                                        <Hint text={t('form.reasoningBufferStrategy.groupHint')} />
+                                    </FieldLabel>
+                                    <select
+                                        id="group-reasoning-buffer-strategy"
+                                        value={reasoningBufferStrategy}
+                                        onChange={(event) => setReasoningBufferStrategy(event.target.value)}
+                                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
                                     >
-                                        <Trash2 className="size-4" />
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </Field>
-                                <Field className="md:col-span-2">
+                                        <option value="">{t('form.reasoningBufferStrategy.useGlobal')}</option>
+                                        <option value="buffer">{t('form.reasoningBufferStrategy.buffer')}</option>
+                                        <option value="immediate">{t('form.reasoningBufferStrategy.immediate')}</option>
+                                    </select>
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="group-default-reasoning-effort">
+                                        {t('form.defaultReasoningEffort.label')}
+                                        <Hint text={t('form.defaultReasoningEffort.hint')} />
+                                    </FieldLabel>
+                                    <select
+                                        id="group-default-reasoning-effort"
+                                        value={defaultReasoningEffort}
+                                        onChange={(event) => setDefaultReasoningEffort(event.target.value)}
+                                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
+                                    >
+                                        <option value="">{t('form.defaultReasoningEffort.off')}</option>
+                                        <option value="minimal">{t('form.defaultReasoningEffort.minimal')}</option>
+                                        <option value="low">{t('form.defaultReasoningEffort.low')}</option>
+                                        <option value="medium">{t('form.defaultReasoningEffort.medium')}</option>
+                                        <option value="high">{t('form.defaultReasoningEffort.high')}</option>
+                                        <option value="xhigh">{t('form.defaultReasoningEffort.xhigh')}</option>
+                                        <option value="max">{t('form.defaultReasoningEffort.max')}</option>
+                                    </select>
+                                </Field>
+                                <Field className="col-span-full">
+                                    <FieldLabel htmlFor="group-reasoning-force-override">
+                                        {t('form.reasoningForceOverride.label')}
+                                        <Hint text={t('form.reasoningForceOverride.hint')} />
+                                    </FieldLabel>
+                                    <label className="flex min-w-0 items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground">
+                                        <Switch
+                                            id="group-reasoning-force-override"
+                                            checked={reasoningForceOverride}
+                                            onCheckedChange={setReasoningForceOverride}
+                                        />
+                                        <span className="min-w-0">{t('form.reasoningForceOverride.enable')}</span>
+                                    </label>
+                                </Field>
+                                <Field className="col-span-full">
+                                    <FieldLabel htmlFor="group-param-override">
+                                        {t('form.paramOverride.label')}
+                                        <Hint text={t('form.paramOverride.hint')} />
+                                    </FieldLabel>
+                                    <textarea
+                                        id="group-param-override"
+                                        value={paramOverride}
+                                        onChange={(event) => setParamOverride(event.target.value)}
+                                        rows={3}
+                                        placeholder={t.raw('form.paramOverride.placeholder')}
+                                        className="min-w-0 w-full max-w-full resize-y rounded-lg border border-border/40 bg-card px-3 py-2 font-mono text-xs shadow-sm transition-[border-color,box-shadow] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:text-sm"
+                                    />
+                                </Field>
+                                <Field className="col-span-full" aria-labelledby="group-custom-headers-label">
+                                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                                        <span id="group-custom-headers-label" className="inline-flex items-center gap-2 text-sm font-medium">
+                                            {t('form.customHeader.label')}
+                                            <Hint text={t('form.customHeader.hint')} />
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setCustomHeaders([...customHeaders, { header_key: '', header_value: '' }])}
+                                            className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/8"
+                                        >
+                                            <Plus className="size-3.5" aria-hidden="true" />
+                                            {t('form.customHeader.add')}
+                                        </button>
+                                    </div>
+                                    {customHeaders.length === 0 ? (
+                                        <p className="text-xs text-muted-foreground">{t('form.customHeader.empty')}</p>
+                                    ) : (
+                                        <div className="min-w-0 space-y-2">
+                                            {customHeaders.map((header, index) => (
+                                                <div key={index} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 @[28rem]/group-settings:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto]">
+                                                    <Input
+                                                        value={header.header_key}
+                                                        onChange={(event) => {
+                                                            const nextHeaders = [...customHeaders];
+                                                            nextHeaders[index] = { ...header, header_key: event.target.value };
+                                                            setCustomHeaders(nextHeaders);
+                                                        }}
+                                                        placeholder={t('form.customHeader.keyPlaceholder')}
+                                                        className="h-9 min-w-0 rounded-lg text-sm"
+                                                        aria-label={t('form.customHeader.keyPlaceholder')}
+                                                    />
+                                                    <Input
+                                                        value={header.header_value}
+                                                        onChange={(event) => {
+                                                            const nextHeaders = [...customHeaders];
+                                                            nextHeaders[index] = { ...header, header_value: event.target.value };
+                                                            setCustomHeaders(nextHeaders);
+                                                        }}
+                                                        placeholder={t('form.customHeader.valuePlaceholder')}
+                                                        className="col-start-1 row-start-2 h-9 min-w-0 rounded-lg text-sm @[28rem]/group-settings:col-start-2 @[28rem]/group-settings:row-start-1"
+                                                        aria-label={t('form.customHeader.valuePlaceholder')}
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setCustomHeaders(customHeaders.filter((_, headerIndex) => headerIndex !== index))}
+                                                        className="col-start-2 row-start-1 rounded-md p-2 text-muted-foreground transition-colors hover:bg-destructive/8 hover:text-destructive @[28rem]/group-settings:col-start-3"
+                                                        aria-label={t('form.customHeader.remove')}
+                                                    >
+                                                        <Trash2 className="size-4" aria-hidden="true" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </Field>
+                                <Field className="col-span-full">
                                     <FieldLabel htmlFor="group-condition">
                                         {t('form.condition.label')}
                                         <Hint text={`${t('form.condition.hint')}\n${conditionPlaceholder}`} />

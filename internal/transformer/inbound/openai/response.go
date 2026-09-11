@@ -52,6 +52,11 @@ type ResponseInbound struct {
 	storedResponse *model.InternalLLMResponse
 }
 
+// ResetResponseState restarts response IDs, event sequencing, and aggregation.
+func (adapter *ResponseInbound) ResetResponseState() {
+	*adapter = ResponseInbound{}
+}
+
 func (i *ResponseInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
 	var req ResponsesRequest
 	if err := transformer.Unmarshal(body, &req); err != nil {

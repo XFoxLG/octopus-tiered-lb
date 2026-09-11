@@ -19,8 +19,8 @@ import (
 //     defaultXxx 指向 memory 实现（零破坏），配置后切换到 redis 实现。
 //   - Redis key 统一前缀 octopus:{subsystem}:{key}，复用现有 "a:b:c" 冒号格式。
 //
-// 降级策略：Redis 宕机时各实现返回 err，调用方降级到内存行为（KV miss=不冷却/
-// 不提示；stats 退化为仅内存累积）。具体降级点见各子系统注释。
+// Runtime failures return errors to each caller; there is no universal
+// lossless fallback. Durable statistics do not depend on these Redis stores.
 
 // KVStore 是带 TTL 的键值存储，承载失败提示缓存 / key 冷却 / 分组探测进度。
 // 这些子系统都是 string key -> 小结构体 + TTL，天然适合 Redis SET ... EX。
@@ -52,13 +52,9 @@ type RateLimitStore interface {
 	RemoveByAPIKey(ctx context.Context, apiKeyID int) error
 }
 
-// StatsStore 承载统计指标的增量累加。
-//
-// 语义变更（issue #123）：从「内存累积 + 定时全行覆盖写 DB（snapshot/last-write-wins）」
-// 改为「实时增量写 Redis + 定时快照 DB」。计数器字段用 HINCRBY/HINCRBYFLOAT，
-// 百分位/max 字段（LatencyP50/95/99、Ftut*）用 Lua 原子 max 脚本。
-// 语义与增量 upsert 一致（col + EXCLUDED.col），崩溃不丢增量。scope/id 映射见
-// stats 包调用点。
+// StatsStore is the legacy counter primitive retained for compatibility tests.
+// Production statistics no longer write, replay, or delete these counters:
+// Redis deltas cannot be safely matched to committed SQL snapshots.
 type StatsStore interface {
 	// IncrMetrics 将 delta 增量累加到 scope:id 维度。
 	IncrMetrics(ctx context.Context, scope, id string, m model.StatsMetrics) error
@@ -149,6 +145,11 @@ var ErrBackendDisabled = fmt.Errorf("store: redis backend disabled")
 // 调用方自行降级，见 store.go 顶部降级策略注释）。
 func switchToRedis(c *redis.Client) {
 	mu.Lock()
+	switchToRedisLocked(c)
+	mu.Unlock()
+}
+
+func switchToRedisLocked(c *redis.Client) {
 	client = c
 	enabled = true
 	defaultKV = newRedisKV(c)
@@ -156,7 +157,6 @@ func switchToRedis(c *redis.Client) {
 	defaultStats = newRedisStats(c)
 	defaultRuntimeState = newRedisRuntimeState(c)
 	defaultChannelDelay = newRedisChannelDelay(c)
-	mu.Unlock()
 }
 
 // InjectForTest 为测试注入一个已连接的 Redis client 并切换所有后端到 Redis
@@ -198,6 +198,14 @@ func InjectForTest(c *redis.Client) (restore func()) {
 // 在 t.Cleanup 中需要无参调用，故提供此便捷函数。
 func ResetForTest() {
 	mu.Lock()
+	if reconnectCancel != nil {
+		reconnectCancel()
+		reconnectCancel = nil
+	}
+	reconnecting = false
+	if client != nil {
+		_ = client.Close()
+	}
 	client = nil
 	enabled = false
 	defaultKV = &memoryKV{}

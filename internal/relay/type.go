@@ -36,20 +36,20 @@ const (
 	defaultMaxRetryPerCandidate = 3
 	defaultMaxRouteRetries      = 2
 	defaultRatelimitCooldown    = 300
-	// defaultMaxTotalAttempts 是所有决策（真实转发 + 冷却跳过 + 熔断跳过）的最大纪录上限。
-	// 当 relay_max_total_attempts 未设置或为 0 时回退到此默认值，避免所有渠道都不可用时
-	// （key 全冷却 / 熔断）attempts 无上限膨胀导致 relay_logs 单行爆炸（见 issue #192）。
+	// defaultMaxTotalAttempts 限制真实转发尝试，包含协议回退；冷却/熔断跳过不计入。
+	// relay_max_total_attempts 未设置或为 0 时使用此值。日志明细另有条数限制，
+	// 所有候选都被跳过时由 relayBudget 的零进展检查快速结束。
 	defaultMaxTotalAttempts = 64
 	maxErrorBodyBytes       = 64 << 10 // 64 KiB — upstream error responses should be concise
 )
 
 var (
-	errEmptyOutput                = errors.New("upstream returned empty output (no visible content)")
-	errTruncatedOutput            = errors.New("upstream returned truncated output (finish_reason=length)")
-	errMissingStreamTerminal      = errors.New("upstream stream ended without a terminal event")
-	errProviderTerminalFailure    = errors.New("upstream provider reported a terminal failure")
-	errFirstVisibleOutputTimeout  = errors.New("upstream stream did not produce visible output before timeout")
-	errStreamIdleTimeout          = errors.New("upstream stream became idle after visible output")
+	errEmptyOutput               = errors.New("upstream returned empty output (no visible content)")
+	errTruncatedOutput           = errors.New("upstream returned truncated output (finish_reason=length)")
+	errMissingStreamTerminal     = errors.New("upstream stream ended without a terminal event")
+	errProviderTerminalFailure   = errors.New("upstream provider reported a terminal failure")
+	errFirstVisibleOutputTimeout = errors.New("upstream stream did not produce visible output before timeout")
+	errStreamIdleTimeout         = errors.New("upstream stream became idle after visible output")
 )
 
 func init() {
@@ -110,6 +110,7 @@ func isRetryEmptyOutputEnabled() bool {
 	}
 	return v
 }
+
 // isRetryTruncationEnabled 返回是否启用截断重试（默认关闭）。
 // 当上游返回 200 且 finish_reason=length/max_tokens（回复被 token 上限掐断成半截）时
 // 换 Key/渠道重发。截断是内容质量问题而非渠道故障，与空输出重试同路径但独立开关：
@@ -296,6 +297,7 @@ func isEmptyOutputResponse(resp *model.InternalLLMResponse) bool {
 	}
 	return true
 }
+
 // isTruncatedOutput 判断响应是否被 max_tokens 截断：
 // 任一 Choice 的 FinishReason 为 "length"（各平台 inbound 转换层已把 Gemini
 // max_tokens、Anthropic max_tokens 统一映射为 OpenAI 语义的 "length"）。
@@ -386,11 +388,7 @@ type relayAttempt struct {
 	attemptTimeOutSec    int
 	tryIndex             int
 	tryTotal             int
-
-	// filterCfg 缓存本次尝试的响应关键词过滤配置，避免在流式响应的每个
-	// chunk 上重复读取 setting 并解析关键词 JSON。通过 getResponseFilterConfig
-	// 懒加载，仅在首次需要时计算一次。
-	filterCfg *responseFilterConfig
+	logAttemptNumber     int
 
 	// streamFinishReason is retained for legacy log messages. Canonical policy
 	// decisions use streamTermination instead.
@@ -420,15 +418,6 @@ type relayAttempt struct {
 	// streamTermination records the most recent terminal cause decoded from the
 	// upstream stream. It is internal-only and never serialized to clients.
 	streamTermination model.TerminationMetadata
-}
-
-// getResponseFilterConfig 返回本次尝试的响应过滤配置，仅加载一次并缓存。
-func (ra *relayAttempt) getResponseFilterConfig() responseFilterConfig {
-	if ra.filterCfg == nil {
-		cfg := loadResponseFilterConfig()
-		ra.filterCfg = &cfg
-	}
-	return *ra.filterCfg
 }
 
 func (ra *relayAttempt) markStreamOutputCommitted() {

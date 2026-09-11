@@ -674,7 +674,7 @@
       }
     },
     "maintenance": {
-      "description": "調整熔斷器、重試與輸出攔截策略，保障中繼健壯性。修改即時生效。"
+      "description": "調整熔斷器、重試與輸入攔截策略。輸入命中後在本地拒絕，不發給上游。修改即時生效。"
     }
   },
   "user": {
@@ -1110,18 +1110,12 @@
       },
       "hint": "當渠道連續失敗達到閾值後觸發熔斷，冷卻時間按指數退避增長，上限為最大冷卻時間。半開探測逾時可在試探請求丟失（如客戶端斷連）後重新發起試探，避免渠道被永久跳過"
     },
-    "responseFilter": {
-      "title": "輸出關鍵詞攔截",
-      "description": "對模型輸出結果進行關鍵詞攔截檢查，支持阻斷或替換兩種動作模式。",
+    "requestFilter": {
+      "title": "輸入關鍵詞攔截",
+      "description": "僅檢查對話請求最新一條用戶訊息的文字。命中後回傳 HTTP 403，不發送上游、不重試、不修改模型回答。預設關閉，舊輸出規則不自動沿用。",
+      "saveFailed": "儲存失敗，此項已恢復為上次確認的值。請重試；不要把未儲存的規則當作已生效。",
       "enabled": {
-        "label": "啟用輸出關鍵詞攔截"
-      },
-      "action": {
-        "label": "攔截動作",
-        "block": "阻斷",
-        "replace": "替換",
-        "blockHint": "檢測到關鍵詞後立即終止響應，返回錯誤信息。",
-        "replaceHint": "將匹配到的關鍵詞替換為等長度的星號（*），響應繼續正常返回。"
+        "label": "啟用輸入關鍵詞攔截"
       },
       "keywords": {
         "label": "攔截關鍵詞",
@@ -1129,12 +1123,13 @@
         "add": "添加",
         "empty": "暫無關鍵詞，請添加需要攔截的關鍵詞。",
         "duplicate": "該關鍵詞已存在",
-        "removeHint": "點擊移除"
+        "removeHint": "移除關鍵詞",
+        "hint": "忽略大小寫，按包含關係比對，不是正則。建議填寫完整測活短語，避免用 hi、test 等短詞誤傷正常聊天。不能識別所有測活；禁止測活的渠道還應啟用「跳過模型測試」。"
       },
       "errorMessage": {
         "label": "阻斷錯誤信息",
         "placeholder": "請輸入攔截時返回的錯誤信息",
-        "hint": "當動作設為「阻斷」且檢測到關鍵詞時，返回給客戶端的錯誤提示文字。"
+        "hint": "僅作為本地拒絕的錯誤提示，不會發送給上游。留空使用預設提示。"
       }
     },
     "retry": {
@@ -1183,7 +1178,7 @@
       },
       "maxTotalAttempts": {
         "label": "最大總嘗試次數",
-        "hint": "限制一次請求在所有候選渠道上的決策紀錄總數（含轉發、冷卻跳過、熔斷跳過），避免所有渠道均不可用時 relay_logs 的 attempts 無限膨脹。0 回退到內置默認上限（約 64）。",
+        "hint": "限制一次請求實際嘗試轉發的總次數。換 Key、換渠道和切換協定都會消耗次數；冷卻或熔斷跳過不計入。0 使用內建預設上限 64 次。",
         "placeholder": "請輸入總嘗試次數"
       },
       "rateLimitHold": {
@@ -1203,11 +1198,11 @@
       },
       "emptyOutput": {
         "label": "空輸出自動重試",
-        "hint": "當上游回傳成功但輸出為空（非串流：CompletionTokens=0 且無內容；串流：無任何有效資料塊）時自動重試。"
+        "hint": "上游未產生有效回答，且尚未向用戶端傳送內容時，依重試預算換 Key/渠道。串流需使用推理緩衝策略；工具呼叫、拒絕回答不當作空回。已傳送正文或思考內容後不能重試。"
       },
       "truncation": {
         "label": "截斷自動重試",
-        "hint": "當上游回傳成功但內容被 max_tokens 掐斷（finish_reason=length，回覆只有半截）時換 Key/渠道重發。預設關閉：正常寫滿 token 上限的長回覆場景會被誤傷，按需開啟。"
+        "hint": "僅對尚未傳給用戶端的非串流回答生效：上游因 token 上限截斷時，依重試預算換 Key/渠道重新生成。預設關閉，可能增加耗時和費用。已傳送部分內容的串流回答不能重發，也不會自動續寫。"
       },
       "keySelectionStrategy": {
         "label": "Key 選擇策略",
@@ -1316,45 +1311,83 @@
       }
     },
     "aiRoute": {
-      "title": "AI 路由設定",
-      "badge": "指令棲息地",
+      "title": "AI 輔助分組",
+      "description": "按需呼叫 AI，整理渠道的模型目錄並產生分組。這不是每次聊天請求的渠道調度器。",
+      "badge": "按需整理模型目錄",
+      "writeWarning": "執行分組任務可能建立或修改分組、替換成員，也會移除未被選中的原有成員。儲存這裡的設定不會開始產生分組。",
       "group": {
-        "label": "單分組 AI 路由預設目標分組",
-        "placeholder": "請選擇預設目標分組",
-        "hint": "用於相容單分組 AI 路由模式；路由頁點擊「AI路由」會直接生成整張路由表。"
+        "label": "預設目標分組",
+        "placeholder": "不設定預設分組",
+        "description": "單分組產生流程使用的預設目標。這裡只選擇設定，不會立即執行任務。"
+      },
+      "selfApi": {
+        "description": "使用本實例 API 時，選擇一個已設定模型成員的對話分組。按鈕會填入 /v1 位址和分組名稱，並清空金鑰欄。請再填入本實例簽發的用戶端 API Key，不是後台登入權杖。填入設定不等於儲存或執行。",
+        "modelLabel": "現有分組模型",
+        "selectModel": "選擇現有分組模型",
+        "apply": "填入本實例 API 設定",
+        "poolActive": "進階服務池會覆蓋單服務設定。先將服務池設為 []，再使用此預設。",
+        "groupsError": "分組載入失敗，請重新整理後再選擇。",
+        "noGroups": "沒有包含模型成員的可用對話分組，請先設定一個。",
+        "invalidURL": "無法產生本實例 API 位址。請檢查公開 API 位址，應為不含憑據、查詢參數或片段的 HTTP(S) 位址。"
       },
       "baseUrl": {
-        "label": "AI Base URL",
-        "placeholder": "請輸入 OpenAI 相容 Base URL"
+        "label": "分析服務 API 位址",
+        "placeholder": "https://api.example.com/v1",
+        "description": "填入 OpenAI 相容 API 的基礎位址，不必加入 chat/completions。本實例使用以 /v1 結尾的公開 API 位址。"
       },
       "apiKey": {
-        "label": "AI API Key",
-        "placeholder": "請輸入 AI API Key"
+        "label": "分析服務 API Key",
+        "placeholder": "填入該 API 位址對應的金鑰",
+        "description": "填入服務方簽發的 API Key。使用 Octopus 時，金鑰必須有權呼叫選中的分組模型；後台登入 JWT 不能用於此處。"
       },
       "model": {
-        "label": "AI 模型",
-        "placeholder": "請輸入用於路由分析的模型名稱"
+        "label": "負責分析的模型",
+        "placeholder": "現有分組名稱或服務方模型 ID",
+        "description": "此模型負責分析目錄。接入 Octopus 時填入金鑰能夠存取的現有分組名稱，而不是準備讓 AI 新建的分組名稱。"
       },
+      "networkHint": "必須由 Octopus 伺服器能夠存取分析 API，而不只是你的瀏覽器能存取。使用本實例 API 也需要正常運作的現有分組，執行任務時可能產生上游模型費用。",
       "timeoutSeconds": {
-        "label": "AI 超時（秒）",
-        "placeholder": "請輸入單次請求超時時間",
-        "hint": "用於單次 AI 路由分析請求。模型較慢或模型列表較大時可適度調大。"
+        "label": "分析逾時（秒）",
+        "hint": "每次分析請求允許的時間，填入正整數。儲存不會測試 API。"
       },
       "parallelism": {
-        "label": "批次並發數",
-        "placeholder": "請輸入大於 0 的整數",
-        "hint": "控制 AI 路由 bucket 的最大並發分析數。預設 3，可自訂更高並發；實際執行不會超過目前任務批次數。"
+        "label": "同時分析請求數",
+        "hint": "填入正整數。同時請求越多，API 壓力和觸發限速的風險越大。"
       },
       "services": {
-        "label": "AI 服務池（JSON）",
-        "placeholder": "請輸入 AI 服務設定 JSON 陣列",
-        "hint": "留空或 [] 時會繼續使用上方單服務設定；填入 JSON 陣列後會啟用多服務池與失敗切換。",
-        "invalid": "AI 服務池 JSON 必須是陣列"
+        "advanced": "進階：分析服務池",
+        "label": "服務池（JSON）",
+        "placeholder": "[]",
+        "description": "可選的服務設定陣列。每項須填入 base_url、api_key、model；name 和 enabled 可選，且至少啟用一項。非空服務池會覆蓋上面的單服務位址、金鑰與模型。設為 [] 恢復單服務。",
+        "active": "目前使用進階服務池，上面的單服務設定不參與執行。",
+        "single": "目前使用單服務設定。"
+      },
+      "validation": {
+        "baseURL": "請填入有效的 HTTP(S) 分析 API 基礎位址。",
+        "apiKey": "請填入分析服務的 API Key。",
+        "model": "請填入分析模型或現有 Octopus 分組名稱。",
+        "timeoutSeconds": "分析逾時必須是正整數秒數。",
+        "parallelism": "同時分析請求數必須是正整數。",
+        "servicesJSON": "服務池須為 JSON 陣列，每項包含有效的 HTTP(S) base_url、非空 api_key 和 model，且至少啟用一項。可選 name 為字串、enabled 為布林值。單服務請填 []。"
+      },
+      "save": {
+        "hint": "修改後需按下儲存。各欄位逐一儲存，失敗時可能只有部分欄位已儲存。儲存既不測試連線，也不啟動產生任務。",
+        "action": "儲存分組設定",
+        "saving": "正在儲存設定...",
+        "error": "儲存未完整結束。部分欄位可能已儲存，也可能是重新整理失敗。草稿已保留，請檢查後重試。",
+        "unsaved": "有尚未儲存的修改。",
+        "unchanged": "沒有尚未儲存的修改。"
+      },
+      "status": {
+        "loading": "正在載入設定...",
+        "loadError": "設定載入失敗，請重新整理後再編輯與儲存。",
+        "incomplete": "請補全必填項並修正錯誤後儲存。",
+        "notTested": "這裡不會驗證 API 連通性、金鑰權限或模型可用性。確認允許修改分組後，再單獨啟動分組任務。"
       }
     },
     "semanticCache": {
       "title": "Semantic Cache",
-      "description": "在維持目前卡片布局的前提下，設定語意快取運行參數與獨立 embedding 服務。",
+      "description": "可選的答案重用，僅用於明確 temperature=0 的單問題、非串流 Chat 請求。多輪對話、系統或角色提示、串流、工具、多模態及 Responses 均略過。創作與 AI 伴侶建議保持關閉；這不是服務方的提示詞前綴快取。",
       "enabled": {
         "label": "啟用語意快取"
       },
@@ -1459,11 +1492,26 @@
     },
     "redis": {
       "title": "快取後端",
-      "description": "設定可選的 Redis 後端，將統計、執行時狀態、限流冷卻、失敗提示等從行程記憶體卸載到 Redis，支援多實例水平擴展（issue #123）。未設定時使用記憶體模式（預設）。",
+      "description": "Redis / Valkey 可選地保存帶有效期的執行狀態。資料庫仍是永久資料與統計的依據；接入不代表全部記憶體資料卸載，也不保證分散式記帳零遺失。已設定的後端可能與實際執行的後端不同。",
+      "runtimeSummary": "實際後端：{backend}；健康狀態：{health}；傳輸：{tls}。這裡反映目前行程，不是尚未儲存的表單值。",
+      "healthy": "正常",
+      "unhealthy": "無法使用或已降級",
+      "noTls": "未使用 TLS",
+      "source": {
+        "file": "設定來源：本機檔案。儲存後需重新啟動服務才會套用。",
+        "environment": "設定來源：環境變數。請修改部署環境並重新部署，此表單不能覆蓋它。",
+        "deployment": "設定來源：部署平台管理。請修改平台設定後重新部署。"
+      },
+      "reconnecting": "正在嘗試連線 Redis / Valkey。請以實際後端和健康狀態為準，僅填入位址不代表已啟用。",
+      "deploymentInstructions": "Render 請在服務的 Environment 中設定下列環境變數，然後重新部署。此處填入的值不會修改 Render 設定或目前執行的後端。",
+      "deploymentTestOnly": "部署平台管理模式下，此表單僅用於 PING 連線測試。成功不等於後端已啟用，也不證明具有全部所需命令的權限。",
+      "tlsLabel": "使用 TLS 加密（rediss:// 始終啟用）",
+      "caFileLabel": "自訂 CA 憑證檔案（可選，填入伺服器路徑）",
+      "tlsHint": "公共 CA 簽發的憑證通常無需填入，預設使用系統信任庫。私有 CA 需填入 Octopus 伺服器能讀取的憑證路徑。不會關閉憑證或主機名稱驗證。",
       "type": {
         "label": "後端類型",
         "memory": "記憶體（預設）",
-        "redis": "Redis"
+        "redis": "Redis / Valkey"
       },
       "fields": {
         "addr": {
@@ -1496,7 +1544,7 @@
         }
       },
       "testButton": "測試連線",
-      "testSuccess": "Redis 連線成功",
+      "testSuccess": "Redis / Valkey PING 成功；尚未啟用後端，也未驗證全部命令權限。",
       "testFailed": "連線測試失敗：{error}",
       "saveButton": "儲存設定",
       "saving": "儲存中…",
@@ -1924,8 +1972,30 @@
         "removeHint": "點擊取消屏蔽"
       },
       "contentEnabled": {
-        "label": "記錄請求/回應內容",
-        "description": "關閉後不再儲存請求與回應正文大欄位，可大幅降低寫入量與磁碟 IO。Token 用量與快取指標仍會記錄。"
+        "label": "記錄四邊界內容",
+        "description": "記錄用戶端傳入、每次上游收發與服務端寫出。關閉後仍保留 Token、渠道與錯誤等輕量元資料。"
+      },
+      "contentRetentionDays": {
+        "label": "正文與附件保留天數",
+        "description": "到期後整組正文與附件過期，元資料繼續保留；0 表示不按天數清理。"
+      },
+      "contentRetentionSize": {
+        "label": "正文與附件預算（MiB）",
+        "description": "超出後從最舊請求開始整組過期；0 表示不按邏輯位元組預算清理。"
+      },
+      "health": {
+        "label": "取證日誌執行狀態",
+        "description": "只顯示輕量佇列、缺口與 PostgreSQL 空間指標，不載入正文。",
+        "pending": "待寫",
+        "oldestPending": "最舊待寫",
+        "dropped": "丟棄記錄",
+        "failures": "持久化失敗",
+        "unavailable": "正文不可用",
+        "logical": "邏輯內容",
+        "physical": "PG 實際佔用",
+        "budget": "內容預算",
+        "notAvailable": "暫不可用",
+        "diskCaveat": "PG 實際佔用包含資料表、索引與 TOAST。一般 DELETE/VACUUM 主要讓空間供資料庫重用，不代表 Aiven 磁碟會立即縮小。"
       },
       "clearContents": {
         "label": "清空請求/回應內容",
@@ -2165,7 +2235,17 @@
       "endpointType": "API 分類：{value}",
       "healthScore": "健康分",
       "healthLow": "風險",
-      "lastTestFailed": "上次測試失敗"
+      "lastTestFailed": "上次測試失敗",
+      "runHealthProbe": "執行健康撥測（standard 模式；故障轉移分組遇首個成功即停）",
+      "healthProbeStarting": "正在啟動健康撥測...",
+      "healthProbeAccepted": "健康撥測已受理，正在等待結果...",
+      "healthProbeStatus": {
+        "running": "撥測中",
+        "success": "撥測通過",
+        "partial": "部分通過",
+        "failed": "撥測失敗"
+      },
+      "healthProbeDuration": "耗時 {ms} ms"
     },
     "detail": {
       "availability": {
@@ -2214,6 +2294,36 @@
         "useGlobal": "使用全域設定",
         "buffer": "緩衝（可重試）",
         "immediate": "立即（即時）"
+      },
+      "defaultReasoningEffort": {
+        "label": "預設思考強度",
+        "hint": "用戶端請求未攜帶思考參數時，本分組補上所選檔位。用戶端已發送的具體檔位不變；未開啟強制覆蓋時，也尊重明確關閉。僅對支援思考的對話模型生效。",
+        "off": "關閉（不注入）",
+        "minimal": "minimal（最省）",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max（最強）"
+      },
+      "reasoningForceOverride": {
+        "label": "強制覆蓋明確關閉",
+        "hint": "開啟後，連用戶端明確要求「關閉思考」（reasoning_effort=none 或 thinking disabled）的請求也會補上預設思考檔位；用戶端已發送具體檔位的請求不受影響。",
+        "enable": "覆蓋用戶端的明確關閉"
+      },
+      "paramOverride": {
+        "label": "參數覆蓋（JSON）",
+        "hint": "分組級請求參數覆蓋，JSON object。僅覆蓋 max_tokens / max_completion_tokens / temperature / top_p，且用戶端已設定的值優先。優先級：用戶端 > 渠道 > 分組。",
+        "placeholder": "{\"temperature\": 0.7}"
+      },
+      "customHeader": {
+        "label": "自訂請求標頭",
+        "hint": "分組級自訂請求標頭，先於渠道級應用，同名時渠道覆蓋分組。穿透模式不生效。",
+        "add": "新增請求標頭",
+        "empty": "暫無自訂請求標頭",
+        "keyPlaceholder": "標頭名稱",
+        "valuePlaceholder": "標頭值",
+        "remove": "刪除此請求標頭"
       },
       "condition": {
         "label": "條件匹配（JSON）",
@@ -2573,6 +2683,8 @@
     "card": {
       "error": "錯誤",
       "errorInfo": "錯誤訊息",
+      "clientDisconnected": "用戶端主動斷線",
+      "clientDisconnectedHint": "這次請求是用戶端自己取消的，不是渠道故障",
       "firstToken": "首字",
       "totalTime": "總耗時",
       "input": "輸入",
@@ -2631,7 +2743,78 @@
       "reasoningTokensUnit": "字",
       "billingWindowPeak": "高峰",
       "billingWindowOffPeak": "空閒",
-      "billingWindowHint": "DeepSeek 峰谷計費：工作日高峰 9–12 / 14–18，空閒減半；週末全天按空閒價"
+      "billingWindowHint": "DeepSeek 峰谷計費：工作日高峰 9–12 / 14–18，空閒減半；週末全天按空閒價",
+      "reportedIPHint": "來自 {source} 轉發標頭，僅作為來源線索展示；不保證是原始用戶端，也不用於 IP 白名單或登入限流。",
+      "forensics": {
+        "detailUnavailable": "無法讀取日誌詳情",
+        "traceId": "追蹤 ID",
+        "userAgent": "用戶端 UA",
+        "protocolA": "用戶端協定 A",
+        "protocolB": "上游協定 B",
+        "writerBytes": "Writer 接受位元組",
+        "termination": "規範化終態",
+        "providerTermination": "上游原始終態",
+        "writerCaveat": "Writer 已接受只證明服務端寫入介面接收了這些位元組，不代表用戶端已收到、顯示或儲存。",
+        "none": "不存在",
+        "partial": "不完整",
+        "download": "下載",
+        "downloadAria": "下載日誌內容：{name}",
+        "boundaryMissing": "此邊界沒有可讀取的內容記錄。",
+        "noUpstreamAttempt": "此請求沒有真實上游嘗試；這不是上游內容缺失。",
+        "upstreamContentMissing": "存在真實上游嘗試，但此邊界內容缺失或尚不可用。",
+        "attempt": "真實嘗試 #{number}",
+        "legacyRequest": "舊版請求內容（唯讀回退）",
+        "legacyResponse": "舊版回應內容（唯讀回退）",
+        "boundaries": {
+          "clientIngress": "邊界 1：用戶端實際傳入",
+          "upstreamRequest": "邊界 2：實際發向上游",
+          "upstreamResponse": "邊界 3：上游實際回傳",
+          "clientEgress": "邊界 4：服務端實際寫出"
+        },
+        "axes": {
+          "generation": "生成結果",
+          "upstream": "上游連線",
+          "content": "內容採集",
+          "persistence": "持久化",
+          "delivery": "用戶端投遞"
+        },
+        "states": {
+          "pending": "待寫入",
+          "ready": "可讀取",
+          "expired": "已過期",
+          "unavailable": "不可用",
+          "disabled": "未啟用"
+        },
+        "outcomes": {
+          "success": "成功",
+          "failed": "失敗",
+          "not_started": "未開始",
+          "cache_hit": "快取命中",
+          "session_replay": "工作階段重放",
+          "unknown": "未知",
+          "none": "不存在",
+          "pending": "待寫入",
+          "ready": "已就緒",
+          "unavailable": "不可用",
+          "expired": "已過期",
+          "disabled": "未啟用",
+          "writer_accepted": "Writer 已接受",
+          "partial": "部分寫入"
+        },
+        "kinds": {
+          "body": "正文",
+          "attachment": "附件",
+          "http_metadata": "HTTP 元資料",
+          "normalized_response": "規範化回應"
+        },
+        "phases": {
+          "prepared": "已準備請求",
+          "sendStarted": "已開始傳送",
+          "responseReceived": "已收到回應",
+          "requestPartial": "請求部分傳送",
+          "responsePartial": "回應讀取不完整"
+        }
+      }
     },
     "view": {
       "relay": "轉發日誌",
@@ -2803,6 +2986,13 @@
       "baseUrlCustomHint": "例如填寫 https://api.example.com/custom，系統不會補 /v1，只會繼續請求 /chat/completions、/responses 或 /embeddings。",
       "baseUrlDelay": "延遲(ms)",
       "advanced": "進階設定",
+      "rawSSECapture": "限時採集上游原生 SSE",
+      "rawSSECaptureHint": "僅供臨時診斷；在上游事件解析前記錄原生訊框，會增加正文與 PostgreSQL 佔用，過期後自動停止。",
+      "rawSSEDisabled": "未啟用",
+      "rawSSEOff": "關閉",
+      "rawSSE15Minutes": "啟用 15 分鐘",
+      "rawSSE1Hour": "啟用 1 小時",
+      "rawSSE6Hours": "啟用 6 小時",
       "apiKeyConfig": "API Key 設定",
       "apiKey": "API Key",
       "customHeader": "自定義 Header",
@@ -3226,6 +3416,20 @@
     "channel_expire": {
       "title": "一次性管道已到期刪除",
       "content": "一次性管道 \"{name}\" (ID: {id}) 已於 {expire_at} 到期並被自動刪除。"
+    },
+    "site": {
+      "batch": {
+        "title": "站點 {phase} 已完成",
+        "content": "{trigger}: 成功={success} 部分成功={partial} 失敗={failed} 跳過={skipped} 警告={warnings}"
+      },
+      "account_ok": {
+        "title": "站點帳號 {phase} 已完成",
+        "content": "帳號 {account_id} {phase} 已成功完成。"
+      },
+      "account_fail": {
+        "title": "站點帳號 {phase} 失敗",
+        "content": "帳號 {account_id} {phase} 失敗: {detail}"
+      }
     },
     "report": {
       "sent": {

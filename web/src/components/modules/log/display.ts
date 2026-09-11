@@ -151,9 +151,14 @@ export function resolveLogDisplayFields(
         lastAttemptValue(mergedAttempts, (attempt) => attempt.channel_name),
         channelId > 0 ? channelNameById?.get(channelId) : '',
     );
+    // Keep a reported address paired with the header that supplied it.
+    const reportedIPRecord = detail?.reported_client_ip?.trim() ? detail : log;
+    const reportedClientIP = firstNonEmpty(reportedIPRecord.reported_client_ip);
 
     return {
         requestAPIKeyName: firstNonEmpty(detail?.request_api_key_name, log.request_api_key_name),
+        clientIP: firstNonEmpty(reportedClientIP, detail?.client_ip, log.client_ip),
+        reportedClientIPSource: reportedClientIP ? firstNonEmpty(reportedIPRecord.reported_client_ip_source) : '',
         requestModelName,
         actualModelName,
         endpointType,
@@ -177,7 +182,6 @@ export function formatJsonForCopy(content: string | undefined | null): string {
         return content;
     }
 }
-
 
 
 

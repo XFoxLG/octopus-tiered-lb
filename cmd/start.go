@@ -68,26 +68,18 @@ func runStart() error {
 	}
 	shutdown.Register(db.Close)
 
-	// 可选 Redis 缓存与状态存储后端（issue #123）。
-	// cache.type="redis" 且 redis.addr 非空时启用，将统计/运行时状态/限流冷却/
-	// 失败提示/频道延迟等卸载到 Redis，支持多实例共享与低内存主机。
-	// 未配置时所有 store 后端保持内存实现，行为与旧版完全一致（零破坏性）。
-	// 必须在 op.InitCache 之前初始化--RefreshCache/LoadRuntimeState 会从 Redis 叠加增量。
-	//
-	// 降级策略（issue #135）：Redis 启动期不可达时不再硬失败退出，而是降级到内存
-	// 后端继续启动（服务立即监听端口），并启动后台退避重连。重连成功后热切换到
-	// Redis 后端；重连期间累积的内存统计不会回填（符合 issue #123 降级语义）。
+	// Redis is optional runtime state, not a statistics journal. Initialize it
+	// before loading balancer state; on failure continue with memory and retry.
+	// Register cleanup before reconnecting so shutdown also cancels pending work.
 	if conf.AppConfig.Cache.Type == "redis" && conf.AppConfig.Cache.Redis.Addr != "" {
+		shutdown.Register(store.Close)
 		if err := store.Init(conf.AppConfig.Cache.Redis); err != nil {
 			log.Warnf("redis unavailable, starting with memory backend: %v", err)
-			if rerr := store.StartReconnect(conf.AppConfig.Cache.Redis, func() {
-				shutdown.Register(store.Close)
-			}); rerr != nil {
+			if rerr := store.StartReconnect(conf.AppConfig.Cache.Redis, nil); rerr != nil {
 				log.Warnf("redis background reconnect not started: %v", rerr)
 			}
 		} else {
-			shutdown.Register(store.Close)
-			log.Infof("redis cache backend enabled: %s", conf.AppConfig.Cache.Redis.Addr)
+			log.Infof("redis cache backend enabled: %s", store.SafeRedisAddress(conf.AppConfig.Cache.Redis.Addr))
 		}
 	}
 

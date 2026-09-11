@@ -16,7 +16,6 @@ import (
 	"github.com/lingyuins/octopus/internal/store"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/utils/semantic_cache"
-	"golang.org/x/sync/singleflight"
 )
 
 func getFailureHintTTLUnauthorized() time.Duration {
@@ -112,8 +111,6 @@ func newInflightRelayResult(resp *transmodel.InternalLLMResponse, actualModel st
 		requestText:  requestText,
 	}
 }
-
-var relayInflightGroup singleflight.Group
 
 type failureHintEntry struct {
 	decision   RetryDecision
@@ -299,22 +296,6 @@ func cloneInternalResponse(resp *transmodel.InternalLLMResponse) *transmodel.Int
 
 func cloneSemanticEmbedding(src []float64) []float64 {
 	return append([]float64(nil), src...)
-}
-
-func requestSingleflightKey(apiKeyID int, endpointFamily, requestModel, text string, req *transmodel.InternalLLMRequest) (string, bool) {
-	if req == nil || apiKeyID <= 0 {
-		return "", false
-	}
-	if req.Stream != nil && *req.Stream {
-		return "", false
-	}
-	if strings.TrimSpace(endpointFamily) == "" || strings.TrimSpace(requestModel) == "" || strings.TrimSpace(text) == "" {
-		return "", false
-	}
-	if len(req.Tools) > 0 {
-		return "", false
-	}
-	return buildSemanticCacheKey(apiKeyID, endpointFamily, requestModel, text), true
 }
 
 func lookupSemanticEmbeddingWithCache(ctx context.Context, req *relayRequest, cfg semantic_cache.RuntimeConfig, cacheKey string, text string) ([]float64, bool, error) {

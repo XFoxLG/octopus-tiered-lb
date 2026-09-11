@@ -9,7 +9,6 @@ export const DEFAULT_NAV_ORDER = [
     'ops',
     'apikey',
     'setting',
-    'user',
 ] as const;
 
 export type NavOrderItem = (typeof DEFAULT_NAV_ORDER)[number];

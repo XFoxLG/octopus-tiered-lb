@@ -28,6 +28,7 @@ export function SettingRetry() {
         }, {});
         nextValues[SettingKey.KeySelectionStrategy] = settings.find((item) => item.key === SettingKey.KeySelectionStrategy)?.value ?? 'cost';
         nextValues[SettingKey.RetryEmptyOutput] = settings.find((item) => item.key === SettingKey.RetryEmptyOutput)?.value ?? 'true';
+        nextValues[SettingKey.RetryTruncationEnabled] = settings.find((item) => item.key === SettingKey.RetryTruncationEnabled)?.value ?? 'false';
         nextValues[SettingKey.ReasoningBufferStrategy] = settings.find((item) => item.key === SettingKey.ReasoningBufferStrategy)?.value ?? 'buffer';
         nextValues[SettingKey.RelayLogQueueDropPolicy] = settings.find((item) => item.key === SettingKey.RelayLogQueueDropPolicy)?.value ?? 'oldest';
         nextValues[SettingKey.StreamSessionReplayEnabled] = settings.find((item) => item.key === SettingKey.StreamSessionReplayEnabled)?.value ?? 'true';
@@ -98,6 +99,7 @@ export function SettingRetry() {
                     <span className="text-xs text-muted-foreground">{t('retry.truncation.hint')}</span>
                 </div>
                 <Switch
+                    aria-label={t('retry.truncation.label')}
                     checked={values[SettingKey.RetryTruncationEnabled] === 'true'}
                     onCheckedChange={(checked) => {
                         const value = checked ? 'true' : 'false';

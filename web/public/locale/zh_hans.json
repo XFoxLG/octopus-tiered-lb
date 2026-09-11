@@ -674,7 +674,7 @@
       }
     },
     "maintenance": {
-      "description": "调整熔断器、重试与输出拦截策略，保障中继健壮性。修改即时生效。"
+      "description": "调整熔断器、重试与输入拦截策略。输入命中后在本地拒绝，不发给上游。修改即时生效。"
     }
   },
   "user": {
@@ -1110,18 +1110,12 @@
       },
       "hint": "当渠道连续失败达到阈值后触发熔断，冷却时间按指数退避增长，上限为最大冷却时间。半开探测超时可在试探请求丢失（如客户端断连）后重新发起试探，避免渠道被永久跳过"
     },
-    "responseFilter": {
-      "title": "输出关键词拦截",
-      "description": "对模型输出结果进行关键词拦截检查，支持阻断或替换两种动作模式。",
+    "requestFilter": {
+      "title": "输入关键词拦截",
+      "description": "仅检查对话请求最新一条用户消息的文本。命中后返回 HTTP 403，不发送上游、不重试、不修改模型回答。默认关闭，旧输出规则不自动沿用。",
+      "saveFailed": "保存失败，此项已恢复为上次确认的值。请重试；不要把未保存的规则当作已生效。",
       "enabled": {
-        "label": "启用输出关键词拦截"
-      },
-      "action": {
-        "label": "拦截动作",
-        "block": "阻断",
-        "replace": "替换",
-        "blockHint": "检测到关键词后立即终止响应，返回错误信息。",
-        "replaceHint": "将匹配到的关键词替换为等长度的星号（*），响应继续正常返回。"
+        "label": "启用输入关键词拦截"
       },
       "keywords": {
         "label": "拦截关键词",
@@ -1129,12 +1123,13 @@
         "add": "添加",
         "empty": "暂无关键词，请添加需要拦截的关键词。",
         "duplicate": "该关键词已存在",
-        "removeHint": "点击移除"
+        "removeHint": "移除关键词",
+        "hint": "忽略大小写，按包含关系匹配，不是正则。建议填写完整测活短语，避免用 hi、test 等短词误伤正常聊天。不能识别所有测活；禁止测活的渠道还应启用「跳过模型测试」。"
       },
       "errorMessage": {
         "label": "阻断错误信息",
         "placeholder": "请输入拦截时返回的错误信息",
-        "hint": "当动作设为「阻断」且检测到关键词时，返回给客户端的错误提示文字。"
+        "hint": "仅作为本地拒绝的错误提示，不会发送给上游。留空使用默认提示。"
       }
     },
     "retry": {
@@ -1183,7 +1178,7 @@
       },
       "maxTotalAttempts": {
         "label": "最大总尝试次数",
-        "hint": "限制一次请求在所有候选渠道上的决策纪录总数（含转发、冷却跳过、熔断跳过），避免所有渠道均不可用时 relay_logs 的 attempts 无限膨胀。0 回退到内置默认上限（约 64）。",
+        "hint": "限制一次请求实际尝试转发的总次数。换 Key、换渠道和切换协议都会消耗次数；冷却或熔断跳过不计入。0 使用内置默认上限 64 次。",
         "placeholder": "请输入总尝试次数"
       },
       "rateLimitHold": {
@@ -1203,11 +1198,11 @@
       },
       "emptyOutput": {
         "label": "空输出自动重试",
-        "hint": "当上游返回成功但输出为空（非流式：CompletionTokens=0 且无内容；流式：无任何有效数据块）时自动重试。"
+        "hint": "上游未产生有效回答，且尚未向客户端发送内容时，按重试预算换 Key/渠道。流式需使用推理缓冲策略；工具调用、拒绝回答不当作空回。已发送正文或思考内容后不能重试。"
       },
       "truncation": {
         "label": "截断自动重试",
-        "hint": "当上游返回成功但内容被 max_tokens 掐断（finish_reason=length，回复只有半截）时换 Key/渠道重发。默认关闭：正常写满 token 上限的长回复场景会被误伤，按需开启。"
+        "hint": "仅对尚未发给客户端的非流式回答生效：上游因 token 上限截断时，按重试预算换 Key/渠道重新生成。默认关闭，可能增加耗时和费用。已发送部分内容的流式回答不能重发，也不会自动续写。"
       },
       "keySelectionStrategy": {
         "label": "Key 选择策略",
@@ -1316,45 +1311,83 @@
       }
     },
     "aiRoute": {
-      "title": "AI 路由设置",
-      "badge": "指令栖息地",
+      "title": "AI 辅助分组",
+      "description": "按需调用 AI，整理渠道中的模型目录并生成分组。它不是每次聊天请求的渠道调度器。",
+      "badge": "按需整理模型目录",
+      "writeWarning": "执行分组任务可能创建或修改分组、替换成员，也会移除未被选中的原有成员。保存此处设置不会开始生成。",
       "group": {
-        "label": "单分组 AI 路由默认目标分组",
-        "placeholder": "请选择默认目标分组",
-        "hint": "用于兼容单分组 AI 路由模式；路由页点击“AI路由”会直接生成整张路由表。"
+        "label": "默认目标分组",
+        "placeholder": "不设置默认分组",
+        "description": "单分组生成使用的默认目标。这里只选择配置，不会立即执行任务。"
+      },
+      "selfApi": {
+        "description": "使用本实例 API 时，选择一个已配置模型成员的对话分组。按钮会填写 /v1 地址和分组名，并清空密钥栏。请再填写本实例签发的客户端 API Key，不是后台登录令牌。填入配置不等于保存或执行。",
+        "modelLabel": "现有分组模型",
+        "selectModel": "选择现有分组模型",
+        "apply": "填入本实例 API 配置",
+        "poolActive": "高级服务池会覆盖单服务配置。先将服务池设为 []，再使用此预设。",
+        "groupsError": "分组加载失败，请刷新后再选择。",
+        "noGroups": "没有包含模型成员的可用对话分组，请先配置一个。",
+        "invalidURL": "无法生成本实例 API 地址。请检查公开 API 地址，应为不含凭据、查询参数或片段的 HTTP(S) 地址。"
       },
       "baseUrl": {
-        "label": "AI Base URL",
-        "placeholder": "请输入 OpenAI 兼容 Base URL"
+        "label": "分析服务 API 地址",
+        "placeholder": "https://api.example.com/v1",
+        "description": "填写 OpenAI 兼容 API 的基础地址，不必添加 chat/completions。本实例使用以 /v1 结尾的公开 API 地址。"
       },
       "apiKey": {
-        "label": "AI API Key",
-        "placeholder": "请输入 AI API Key"
+        "label": "分析服务 API Key",
+        "placeholder": "填写该 API 地址对应的密钥",
+        "description": "填写服务方签发的 API Key。使用 Octopus 时，密钥必须有权调用选中的分组模型；后台登录 JWT 不能用于此处。"
       },
       "model": {
-        "label": "AI 模型",
-        "placeholder": "请输入用于路由分析的模型名称"
+        "label": "负责分析的模型",
+        "placeholder": "现有分组名或服务方模型 ID",
+        "description": "此模型负责分析目录。接入 Octopus 时填写密钥能够访问的现有分组名，而不是准备让 AI 新建的分组名。"
       },
+      "networkHint": "必须由 Octopus 服务器能够访问分析 API，而不只是你的浏览器能访问。使用本实例 API 也需要正常工作的现有分组，执行任务时可能产生上游模型费用。",
       "timeoutSeconds": {
-        "label": "AI 超时（秒）",
-        "placeholder": "请输入单次请求超时时间",
-        "hint": "用于单次 AI 路由分析请求。模型较慢或模型列表较大时可适当调大。"
+        "label": "分析超时（秒）",
+        "hint": "每次分析请求允许的时间，填写正整数。保存不会测试 API。"
       },
       "parallelism": {
-        "label": "批次并发数",
-        "placeholder": "请输入大于 0 的整数",
-        "hint": "控制 AI 路由 bucket 的最大并发分析数。默认 3，可自定义更高并发；实际执行不会超过当前任务批次数。"
+        "label": "同时分析请求数",
+        "hint": "填写正整数。并发越高，API 压力和触发限速的风险越大。"
       },
       "services": {
-        "label": "AI 服务池（JSON）",
-        "placeholder": "请输入 AI 服务配置 JSON 数组",
-        "hint": "留空或 [] 时继续使用上面的单服务配置；填写 JSON 数组后会启用多服务池和失败切换。",
-        "invalid": "AI 服务池 JSON 必须是数组"
+        "advanced": "高级：分析服务池",
+        "label": "服务池（JSON）",
+        "placeholder": "[]",
+        "description": "可选的服务配置数组。每项须填写 base_url、api_key、model；name 和 enabled 可选，且至少启用一项。非空服务池会覆盖上面的单服务地址、密钥与模型。设为 [] 恢复单服务。",
+        "active": "当前使用高级服务池，上面的单服务配置不参与执行。",
+        "single": "当前使用单服务配置。"
+      },
+      "validation": {
+        "baseURL": "请填写有效的 HTTP(S) 分析 API 基础地址。",
+        "apiKey": "请填写分析服务的 API Key。",
+        "model": "请填写分析模型或现有 Octopus 分组名。",
+        "timeoutSeconds": "分析超时必须是正整数秒数。",
+        "parallelism": "同时分析请求数必须是正整数。",
+        "servicesJSON": "服务池须为 JSON 数组，每项包含有效的 HTTP(S) base_url、非空 api_key 和 model，且至少启用一项。可选 name 为字符串、enabled 为布尔值。单服务请填 []。"
+      },
+      "save": {
+        "hint": "修改后需点击保存。各字段逐个保存，失败时可能只有部分字段已保存。保存既不测试连接，也不启动生成。",
+        "action": "保存分组设置",
+        "saving": "正在保存设置...",
+        "error": "保存未完整结束。部分字段可能已保存，也可能是刷新失败。草稿已保留，请检查后重试。",
+        "unsaved": "有尚未保存的修改。",
+        "unchanged": "没有尚未保存的修改。"
+      },
+      "status": {
+        "loading": "正在加载配置...",
+        "loadError": "配置加载失败，请刷新后再编辑和保存。",
+        "incomplete": "请补全必填项并修正错误后保存。",
+        "notTested": "这里不会验证 API 连通性、密钥权限或模型可用性。确认允许修改分组后，再单独启动分组任务。"
       }
     },
     "semanticCache": {
       "title": "Semantic Cache",
-      "description": "在保持当前卡片布局的前提下，配置语义缓存运行参数和独立 embedding 服务。",
+      "description": "可选的答案复用，仅用于显式 temperature=0 的单问题、非流式 Chat 请求。多轮对话、系统或角色提示、流式、工具、多模态及 Responses 均绕过。创作和 AI 伴侣建议保持关闭；它不是服务方的提示词前缀缓存。",
       "enabled": {
         "label": "启用语义缓存"
       },
@@ -1459,11 +1492,26 @@
     },
     "redis": {
       "title": "缓存后端",
-      "description": "配置可选的 Redis 缓存与状态存储后端，将统计/运行时状态/限流冷却等卸载到 Redis，支持多实例水平扩展（issue #123）。未配置时使用内存模式。",
+      "description": "Redis / Valkey 可选地保存带有效期的运行状态。数据库仍是永久数据和统计的依据；接入不代表全部内存数据卸载，也不保证分布式记账零丢失。已配置的后端可能与实际运行的后端不同。",
+      "runtimeSummary": "实际后端：{backend}；健康状态：{health}；传输：{tls}。这里反映当前进程，不是尚未保存的表单值。",
+      "healthy": "正常",
+      "unhealthy": "不可用或已降级",
+      "noTls": "未使用 TLS",
+      "source": {
+        "file": "配置来源：本地文件。保存后需重启服务才会应用。",
+        "environment": "配置来源：环境变量。请修改部署环境并重新部署，此表单不能覆盖它。",
+        "deployment": "配置来源：部署平台管理。请修改平台配置后重新部署。"
+      },
+      "reconnecting": "正在尝试连接 Redis / Valkey。请以实际后端和健康状态为准，仅填写地址不代表已经启用。",
+      "deploymentInstructions": "Render 请在服务的 Environment 中设置下面的环境变量，然后重新部署。此处填写的值不会修改 Render 配置或当前运行后端。",
+      "deploymentTestOnly": "部署平台管理模式下，此表单仅用于 PING 连接测试。成功不等于后端已启用，也不证明具有全部所需命令的权限。",
+      "tlsLabel": "使用 TLS 加密（rediss:// 始终启用）",
+      "caFileLabel": "自定义 CA 证书文件（可选，填写服务器路径）",
+      "tlsHint": "公共 CA 签发的证书通常无需填写，默认使用系统信任库。私有 CA 需填写 Octopus 服务器能读取的证书路径。不会关闭证书或主机名验证。",
       "type": {
         "label": "后端类型",
         "memory": "内存（默认）",
-        "redis": "Redis"
+        "redis": "Redis / Valkey"
       },
       "fields": {
         "addr": {
@@ -1496,7 +1544,7 @@
         }
       },
       "testButton": "测试连接",
-      "testSuccess": "Redis 连接成功",
+      "testSuccess": "Redis / Valkey PING 成功；尚未启用后端，也未验证全部命令权限。",
       "testFailed": "连接测试失败：{error}",
       "saveButton": "保存配置",
       "saving": "保存中…",
@@ -1924,8 +1972,30 @@
         "removeHint": "点击取消屏蔽"
       },
       "contentEnabled": {
-        "label": "记录请求/响应内容",
-        "description": "关闭后不再存储请求与响应正文大字段，可大幅降低写入量与磁盘 IO。Token 用量与缓存指标仍会记录。"
+        "label": "记录四边界内容",
+        "description": "记录客户端传入、每次上游收发和服务端写出。关闭后仍保留 Token、渠道与错误等轻量元数据。"
+      },
+      "contentRetentionDays": {
+        "label": "正文与附件保留天数",
+        "description": "到期后整组正文和附件过期，元数据继续保留；0 表示不按天数清理。"
+      },
+      "contentRetentionSize": {
+        "label": "正文与附件预算（MiB）",
+        "description": "超出后从最旧请求开始整组过期；0 表示不按逻辑字节预算清理。"
+      },
+      "health": {
+        "label": "取证日志运行状态",
+        "description": "这里只显示轻量队列、缺口和 PostgreSQL 空间指标，不加载正文。",
+        "pending": "待写",
+        "oldestPending": "最老待写",
+        "dropped": "丢弃记录",
+        "failures": "持久化失败",
+        "unavailable": "正文不可用",
+        "logical": "逻辑内容",
+        "physical": "PG 实际占用",
+        "budget": "内容预算",
+        "notAvailable": "暂不可用",
+        "diskCaveat": "PG 实际占用包含表、索引和 TOAST。普通 DELETE/VACUUM 主要让空间供数据库复用，不代表 Aiven 磁盘会立即缩小。"
       },
       "clearContents": {
         "label": "清空请求/响应内容",
@@ -2165,7 +2235,17 @@
       "endpointType": "API 分类：{value}",
       "healthScore": "健康分",
       "healthLow": "风险",
-      "lastTestFailed": "上次测试失败"
+      "lastTestFailed": "上次测试失败",
+      "runHealthProbe": "运行健康拨测（standard 模式；故障转移分组遇首个成功即停）",
+      "healthProbeStarting": "正在启动健康拨测...",
+      "healthProbeAccepted": "健康拨测已受理，正在等待结果...",
+      "healthProbeStatus": {
+        "running": "拨测中",
+        "success": "拨测通过",
+        "partial": "部分通过",
+        "failed": "拨测失败"
+      },
+      "healthProbeDuration": "耗时 {ms} ms"
     },
     "healthStatus": {
       "healthy": "健康",
@@ -2221,6 +2301,36 @@
         "useGlobal": "使用全局设置",
         "buffer": "缓冲（可重试）",
         "immediate": "立即（实时）"
+      },
+      "defaultReasoningEffort": {
+        "label": "默认思考强度",
+        "hint": "客户端请求未携带思考参数时，本分组补上所选档位。客户端已发送的具体档位不变；未开启强制覆盖时，也尊重显式关闭。仅对支持思考的对话模型生效。",
+        "off": "关闭（不注入）",
+        "minimal": "minimal（最省）",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max（最强）"
+      },
+      "reasoningForceOverride": {
+        "label": "强制覆盖显式关闭",
+        "hint": "开启后，连客户端明确要求「关闭思考」（reasoning_effort=none 或 thinking disabled）的请求也会补上默认思考档位；客户端已发送具体档位的请求不受影响。",
+        "enable": "覆盖客户端的显式关闭"
+      },
+      "paramOverride": {
+        "label": "参数覆盖（JSON）",
+        "hint": "分组级请求参数覆盖，JSON object。仅覆盖 max_tokens / max_completion_tokens / temperature / top_p，且客户端已设置的值优先。优先级：客户端 > 渠道 > 分组。",
+        "placeholder": "{\"temperature\": 0.7}"
+      },
+      "customHeader": {
+        "label": "自定义请求头",
+        "hint": "分组级自定义请求头，先于渠道级应用，同名时渠道覆盖分组。穿透模式不生效。",
+        "add": "添加请求头",
+        "empty": "暂无自定义请求头",
+        "keyPlaceholder": "Header 名称",
+        "valuePlaceholder": "Header 值",
+        "remove": "删除此请求头"
       },
       "condition": {
         "label": "条件匹配（JSON）",
@@ -2573,6 +2683,8 @@
     "card": {
       "error": "错误",
       "errorInfo": "错误信息",
+      "clientDisconnected": "客户端主动断开连接",
+      "clientDisconnectedHint": "这次请求是客户端自己取消的，不是渠道故障",
       "firstToken": "首字",
       "totalTime": "总耗时",
       "input": "输入",
@@ -2631,7 +2743,78 @@
       "reasoningTokensUnit": "字",
       "billingWindowPeak": "高峰",
       "billingWindowOffPeak": "空闲",
-      "billingWindowHint": "DeepSeek 峰谷计费：工作日高峰 9–12 / 14–18，空闲减半；周末全天按空闲价"
+      "billingWindowHint": "DeepSeek 峰谷计费：工作日高峰 9–12 / 14–18，空闲减半；周末全天按空闲价",
+      "reportedIPHint": "来自 {source} 转发头，仅作为来源线索展示；不保证是原始客户端，也不用于 IP 白名单或登录限流。",
+      "forensics": {
+        "detailUnavailable": "无法读取日志详情",
+        "traceId": "追踪 ID",
+        "userAgent": "客户端 UA",
+        "protocolA": "客户端协议 A",
+        "protocolB": "上游协议 B",
+        "writerBytes": "Writer 接受字节",
+        "termination": "规范化终态",
+        "providerTermination": "上游原始终态",
+        "writerCaveat": "Writer 已接受只证明服务端写入接口接收了这些字节，不证明客户端已经收到、显示或保存。",
+        "none": "不存在",
+        "partial": "不完整",
+        "download": "下载",
+        "downloadAria": "下载日志内容：{name}",
+        "boundaryMissing": "该边界没有可读取的内容记录。",
+        "noUpstreamAttempt": "本请求没有真实上游尝试；这不是上游内容缺失。",
+        "upstreamContentMissing": "存在真实上游尝试，但该边界内容缺失或尚不可用。",
+        "attempt": "真实尝试 #{number}",
+        "legacyRequest": "旧版请求内容（只读回退）",
+        "legacyResponse": "旧版响应内容（只读回退）",
+        "boundaries": {
+          "clientIngress": "边界 1：客户端实际传入",
+          "upstreamRequest": "边界 2：实际发向上游",
+          "upstreamResponse": "边界 3：上游实际返回",
+          "clientEgress": "边界 4：服务端实际写出"
+        },
+        "axes": {
+          "generation": "生成结果",
+          "upstream": "上游连接",
+          "content": "内容采集",
+          "persistence": "持久化",
+          "delivery": "客户端投递"
+        },
+        "states": {
+          "pending": "待写入",
+          "ready": "可读取",
+          "expired": "已过期",
+          "unavailable": "不可用",
+          "disabled": "未启用"
+        },
+        "outcomes": {
+          "success": "成功",
+          "failed": "失败",
+          "not_started": "未开始",
+          "cache_hit": "缓存命中",
+          "session_replay": "会话重放",
+          "unknown": "未知",
+          "none": "不存在",
+          "pending": "待写入",
+          "ready": "已就绪",
+          "unavailable": "不可用",
+          "expired": "已过期",
+          "disabled": "未启用",
+          "writer_accepted": "Writer 已接受",
+          "partial": "部分写入"
+        },
+        "kinds": {
+          "body": "正文",
+          "attachment": "附件",
+          "http_metadata": "HTTP 元数据",
+          "normalized_response": "规范化响应"
+        },
+        "phases": {
+          "prepared": "已准备请求",
+          "sendStarted": "已开始发送",
+          "responseReceived": "已收到响应",
+          "requestPartial": "请求部分发送",
+          "responsePartial": "响应读取不完整"
+        }
+      }
     },
     "view": {
       "relay": "转发日志",
@@ -2803,6 +2986,13 @@
       "baseUrlCustomHint": "例如填写 https://api.example.com/custom，系统不会补 /v1，只会继续请求 /chat/completions、/responses 或 /embeddings。",
       "baseUrlDelay": "延迟(ms)",
       "advanced": "高级设置",
+      "rawSSECapture": "限时采集上游原生 SSE",
+      "rawSSECaptureHint": "仅用于临时诊断；在上游事件被解析前记录原生帧，会增加正文与 PostgreSQL 占用，过期后自动停止。",
+      "rawSSEDisabled": "未启用",
+      "rawSSEOff": "关闭",
+      "rawSSE15Minutes": "开启 15 分钟",
+      "rawSSE1Hour": "开启 1 小时",
+      "rawSSE6Hours": "开启 6 小时",
       "apiKeyConfig": "API Key 配置",
       "apiKey": "API Key",
       "customHeader": "自定义 Header",
@@ -3226,6 +3416,20 @@
     "channel_expire": {
       "title": "一次性渠道已到期删除",
       "content": "一次性渠道 \"{name}\" (ID: {id}) 已于 {expire_at} 到期并被自动删除。"
+    },
+    "site": {
+      "batch": {
+        "title": "站点 {phase} 已完成",
+        "content": "{trigger}: 成功={success} 部分成功={partial} 失败={failed} 跳过={skipped} 警告={warnings}"
+      },
+      "account_ok": {
+        "title": "站点账号 {phase} 已完成",
+        "content": "账号 {account_id} {phase} 已成功完成。"
+      },
+      "account_fail": {
+        "title": "站点账号 {phase} 失败",
+        "content": "账号 {account_id} {phase} 失败: {detail}"
+      }
     },
     "report": {
       "sent": {

@@ -126,11 +126,11 @@ type InternalLLMRequest struct {
 	// We generally recommend altering this or `temperature` but not both.
 	TopP *float64 `json:"top_p,omitempty"`
 
-	// Used by OpenAI to cache responses for similar requests to optimize your cache
-	// hit rates. Replaces the `user` field.
+	// Routes requests sharing a stable prompt prefix to the provider's prompt cache.
+	// This is a string identifier, not a switch for replaying cached answers.
 	// [Learn more](https://platform.openai.com/docs/guides/prompt-caching).
 	// omitempty: same jsoniter omitzero gap as Store (see above).
-	PromptCacheKey *bool `json:"prompt_cache_key,omitempty"`
+	PromptCacheKey *string `json:"prompt_cache_key,omitempty"`
 
 	// A stable identifier used to help detect users of your application that may be
 	// violating OpenAI's usage policies. The IDs should be a string that uniquely

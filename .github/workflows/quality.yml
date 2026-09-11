@@ -56,7 +56,7 @@ jobs:
         run: pnpm lint
 
       - name: Frontend tests
-        run: pnpm test:i18n && pnpm test:unit
+        run: pnpm test:i18n && pnpm test:unit && pnpm test:integration-ui && pnpm test:airoute
 
       - name: Static build
         env:

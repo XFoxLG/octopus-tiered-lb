@@ -346,23 +346,20 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 		return nil, fmt.Errorf("response body is empty")
 	}
 
-	// Check for error response
+	// Some compatible providers report failures inside an HTTP 200 body.
+	if responseError := parseChatResponseError(body, response.StatusCode); responseError != nil {
+		return nil, responseError
+	}
 	if response.StatusCode >= 400 {
-		var errResp struct {
-			Error model.ErrorDetail `json:"error"`
-		}
-		if err := transformer.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
-			return nil, &model.ResponseError{
-				StatusCode: response.StatusCode,
-				Detail:     errResp.Error,
-			}
-		}
 		return nil, fmt.Errorf("HTTP error %d: %s", response.StatusCode, string(body))
 	}
 
 	var resp model.InternalLLMResponse
 	if err := transformer.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("upstream chat response contains no choices")
 	}
 	normalizeOpenAICompatUsage(&resp)
 	return &resp, nil
@@ -375,13 +372,8 @@ func (o *ChatOutbound) TransformStream(ctx context.Context, eventData []byte) (*
 		}, nil
 	}
 
-	var errCheck struct {
-		Error *model.ErrorDetail `json:"error"`
-	}
-	if err := transformer.Unmarshal(eventData, &errCheck); err == nil && errCheck.Error != nil {
-		return nil, &model.ResponseError{
-			Detail: *errCheck.Error,
-		}
+	if responseError := parseChatResponseError(eventData, 0); responseError != nil {
+		return nil, responseError
 	}
 
 	var resp model.InternalLLMResponse
@@ -390,6 +382,50 @@ func (o *ChatOutbound) TransformStream(ctx context.Context, eventData []byte) (*
 	}
 	normalizeOpenAICompatUsage(&resp)
 	return &resp, nil
+}
+
+func parseChatResponseError(payload []byte, statusCode int) error {
+	var envelope struct {
+		Error transformer.RawMessage `json:"error"`
+	}
+	if err := transformer.Unmarshal(payload, &envelope); err != nil {
+		return nil // The normal response decoder reports malformed JSON.
+	}
+	errorPayload := bytes.TrimSpace(envelope.Error)
+	if len(errorPayload) == 0 || bytes.Equal(errorPayload, []byte("null")) {
+		return nil
+	}
+
+	var detail model.ErrorDetail
+	var fields struct {
+		Message   string                 `json:"message"`
+		Type      string                 `json:"type"`
+		Code      transformer.RawMessage `json:"code"`
+		Param     string                 `json:"param"`
+		RequestID string                 `json:"request_id"`
+	}
+	if err := transformer.Unmarshal(errorPayload, &fields); err == nil {
+		detail = model.ErrorDetail{
+			Message: fields.Message, Type: fields.Type,
+			Param: fields.Param, RequestID: fields.RequestID,
+		}
+		codePayload := bytes.TrimSpace(fields.Code)
+		if len(codePayload) > 0 && !bytes.Equal(codePayload, []byte("null")) {
+			// Numeric provider codes must not hide the original error message.
+			if err := transformer.Unmarshal(codePayload, &detail.Code); err != nil {
+				detail.Code = string(codePayload)
+			}
+		}
+	} else if err := transformer.Unmarshal(errorPayload, &detail.Message); err != nil {
+		detail.Message = string(errorPayload)
+	}
+	if strings.TrimSpace(detail.Message) == "" {
+		detail.Message = "upstream returned an error response"
+	}
+	if statusCode < http.StatusBadRequest {
+		statusCode = 0
+	}
+	return &model.ResponseError{StatusCode: statusCode, Detail: detail}
 }
 
 func normalizeOpenAICompatUsage(resp *model.InternalLLMResponse) {

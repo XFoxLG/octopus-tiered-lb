@@ -134,14 +134,23 @@ func (c *WebDAVClient) List(remotePath string) ([]WebDAVFile, error) {
 
 // Upload 上传文件
 func (c *WebDAVClient) Upload(remotePath string, data []byte) error {
+	return c.UploadReader(remotePath, bytes.NewReader(data), int64(len(data)))
+}
+
+// UploadReader streams an existing bounded source to WebDAV. It avoids
+// materializing a content-bearing database backup as a second []byte copy.
+func (c *WebDAVClient) UploadReader(remotePath string, source io.Reader, contentLength int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	fullURL := c.baseURL + "/" + strings.TrimPrefix(remotePath, "/")
 
-	req, err := http.NewRequestWithContext(ctx, "PUT", fullURL, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, "PUT", fullURL, source)
 	if err != nil {
 		return fmt.Errorf("创建请求失败: %w", err)
+	}
+	if contentLength >= 0 {
+		req.ContentLength = contentLength
 	}
 
 	req.Header.Set("Content-Type", "application/octet-stream")

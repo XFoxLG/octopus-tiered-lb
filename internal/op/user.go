@@ -28,24 +28,6 @@ func UserGetByUsername(username string, ctx context.Context) (model.User, error)
 	return user.GetByUsername(username, ctx)
 }
 
-// Deprecated: Use user.List from internal/op/user instead.
-func UserList(ctx context.Context) ([]model.User, error) { return user.List(ctx) }
-
-// Deprecated: Use user.Create from internal/op/user instead.
-func UserCreate(req model.UserCreateRequest, ctx context.Context) error {
-	return user.Create(req, ctx)
-}
-
-// Deprecated: Use user.UpdateRole from internal/op/user instead.
-func UserUpdateRole(id uint, role string, ctx context.Context) error {
-	return user.UpdateRole(id, role, ctx)
-}
-
-// Deprecated: Use user.Delete from internal/op/user instead.
-func UserDelete(id uint, currentUserID uint, ctx context.Context) error {
-	return user.Delete(id, currentUserID, ctx)
-}
-
 // Deprecated: Use user.ChangePassword from internal/op/user instead.
 func UserChangePassword(userID uint, oldPassword, newPassword string) error {
 	return user.ChangePassword(userID, oldPassword, newPassword)
@@ -73,14 +55,6 @@ func UserInit() error {
 func UserBootstrapCreate(username, password string) error {
 	user.SetCache(userCache) // push test-modified value to subpackage
 	err := user.BootstrapCreate(username, password)
-	userCache = user.GetCurrent()
-	return err
-}
-
-// deleteLegacyAdminUser is retained for backward compatibility (used by tests).
-func deleteLegacyAdminUser(targetUsername string) error {
-	user.SetCache(userCache) // push test-modified value
-	err := user.DeleteLegacyAdmin(targetUsername)
 	userCache = user.GetCurrent()
 	return err
 }

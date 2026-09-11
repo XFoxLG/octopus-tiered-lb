@@ -2,14 +2,14 @@
 
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
-import { ScrollText, Calendar, Hash, Trash2, Terminal, FolderX, FileText, RefreshCw } from 'lucide-react';
+import { ScrollText, Calendar, Hash, Trash2, Terminal, FolderX, FileText, RefreshCw, Activity, HardDrive } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
 import { useGroupList } from '@/api/endpoints/group';
-import { useClearLogs, useClearLogContents } from '@/api/endpoints/log';
+import { useClearLogs, useClearLogContents, useLogHealth } from '@/api/endpoints/log';
 import { toast } from '@/components/common/Toast';
 import { useLogAutoRefreshStore, LOG_AUTO_REFRESH_OPTIONS, type LogAutoRefreshInterval } from '@/components/modules/log/ui-store';
 
@@ -18,6 +18,12 @@ type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
+function formatBytes(byteCount: number): string {
+    if (byteCount < 1024) return `${byteCount} B`;
+    if (byteCount < 1024 * 1024) return `${(byteCount / 1024).toFixed(1)} KiB`;
+    return `${(byteCount / (1024 * 1024)).toFixed(2)} MiB`;
+}
+
 export function SettingLog() {
     const t = useTranslations('setting');
     const { data: settings } = useSettingList();
@@ -25,6 +31,7 @@ export function SettingLog() {
     const setSetting = useSetSetting();
     const clearLogs = useClearLogs();
     const clearLogContents = useClearLogContents();
+    const { data: logHealth } = useLogHealth();
     const autoRefresh = useLogAutoRefreshStore((s) => s.interval);
     const setAutoRefresh = useLogAutoRefreshStore((s) => s.setInterval);
 
@@ -34,6 +41,8 @@ export function SettingLog() {
     const [mode, setMode] = useState<KeepMode>('count');
     const [keepCount, setKeepCount] = useState('1000');
     const [keepDays, setKeepDays] = useState('7');
+    const [contentKeepDays, setContentKeepDays] = useState('7');
+    const [contentKeepSizeMB, setContentKeepSizeMB] = useState('256');
     const [isClearing, setIsClearing] = useState(false);
     const [isClearingContents, setIsClearingContents] = useState(false);
     const [excludedGroups, setExcludedGroups] = useState<string[]>([]);
@@ -56,12 +65,16 @@ export function SettingLog() {
     const initialMode = useRef<KeepMode>('count');
     const initialKeepCount = useRef('1000');
     const initialKeepDays = useRef('7');
+    const initialContentKeepDays = useRef('7');
+    const initialContentKeepSizeMB = useRef('256');
 
     useEffect(() => {
         if (settings) {
             const enabledSetting = settings.find(s => s.key === SettingKey.RelayLogKeepEnabled);
             const countSetting = settings.find(s => s.key === SettingKey.RelayLogKeepCount);
             const periodSetting = settings.find(s => s.key === SettingKey.RelayLogKeepPeriod);
+            const contentPeriodSetting = settings.find(s => s.key === SettingKey.RelayLogContentKeepPeriod);
+            const contentSizeSetting = settings.find(s => s.key === SettingKey.RelayLogContentKeepSizeMB);
 
             if (enabledSetting) {
                 const isEnabled = enabledSetting.value === 'true';
@@ -82,6 +95,14 @@ export function SettingLog() {
             // Determine mode: if keepCount > 0 → count mode, else days mode
             const countVal = countSetting?.value || '0';
             const daysVal = periodSetting?.value || '7';
+            const contentDaysVal = contentPeriodSetting?.value || '7';
+            const contentSizeVal = contentSizeSetting?.value || '256';
+            queueMicrotask(() => {
+                setContentKeepDays(contentDaysVal);
+                setContentKeepSizeMB(contentSizeVal);
+            });
+            initialContentKeepDays.current = contentDaysVal;
+            initialContentKeepSizeMB.current = contentSizeVal;
 
             if (parseInt(countVal) > 0) {
                 queueMicrotask(() => {
@@ -221,6 +242,36 @@ export function SettingLog() {
         );
     };
 
+    const handleContentKeepDaysSave = () => {
+        if (contentKeepDays === initialContentKeepDays.current) return;
+        const value = Math.max(0, parseInt(contentKeepDays) || 0).toString();
+        setContentKeepDays(value);
+        setSetting.mutate(
+            { key: SettingKey.RelayLogContentKeepPeriod, value },
+            {
+                onSuccess: () => {
+                    toast.success(t('saved'));
+                    initialContentKeepDays.current = value;
+                },
+            },
+        );
+    };
+
+    const handleContentKeepSizeSave = () => {
+        if (contentKeepSizeMB === initialContentKeepSizeMB.current) return;
+        const value = Math.max(0, parseInt(contentKeepSizeMB) || 0).toString();
+        setContentKeepSizeMB(value);
+        setSetting.mutate(
+            { key: SettingKey.RelayLogContentKeepSizeMB, value },
+            {
+                onSuccess: () => {
+                    toast.success(t('saved'));
+                    initialContentKeepSizeMB.current = value;
+                },
+            },
+        );
+    };
+
     const handleClearLogs = () => {
         setIsClearing(true);
         clearLogs.mutate(undefined, {
@@ -268,6 +319,7 @@ export function SettingLog() {
                 <Switch
                     checked={enabled}
                     onCheckedChange={handleEnabledChange}
+                    aria-label={t('log.enabled.label')}
                 />
             </div>
 
@@ -284,7 +336,77 @@ export function SettingLog() {
                     checked={contentEnabled}
                     onCheckedChange={handleContentEnabledChange}
                     disabled={!enabled}
+                    aria-label={t('log.contentEnabled.label')}
                 />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
+                    <div className="flex items-center gap-3">
+                        <Calendar className="h-5 w-5 text-muted-foreground" />
+                        <div className="flex flex-col">
+                            <label htmlFor="relay-log-content-days" className="text-sm font-medium">{t('log.contentRetentionDays.label')}</label>
+                            <span className="text-xs text-muted-foreground">{t('log.contentRetentionDays.description')}</span>
+                        </div>
+                    </div>
+                    <Input
+                        id="relay-log-content-days"
+                        type="number"
+                        min={0}
+                        value={contentKeepDays}
+                        onChange={(event) => setContentKeepDays(event.target.value)}
+                        onBlur={handleContentKeepDaysSave}
+                        disabled={!enabled || !contentEnabled}
+                        className="rounded-xl"
+                    />
+                </div>
+                <div className="flex flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
+                    <div className="flex items-center gap-3">
+                        <HardDrive className="h-5 w-5 text-muted-foreground" />
+                        <div className="flex flex-col">
+                            <label htmlFor="relay-log-content-size" className="text-sm font-medium">{t('log.contentRetentionSize.label')}</label>
+                            <span className="text-xs text-muted-foreground">{t('log.contentRetentionSize.description')}</span>
+                        </div>
+                    </div>
+                    <Input
+                        id="relay-log-content-size"
+                        type="number"
+                        min={0}
+                        value={contentKeepSizeMB}
+                        onChange={(event) => setContentKeepSizeMB(event.target.value)}
+                        onBlur={handleContentKeepSizeSave}
+                        disabled={!enabled || !contentEnabled}
+                        className="rounded-xl"
+                    />
+                </div>
+            </div>
+
+            <div className="space-y-3 rounded-lg border-border/30 bg-card p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                    <Activity className="h-5 w-5 text-muted-foreground" />
+                    <div className="flex flex-col">
+                        <span className="text-sm font-medium">{t('log.health.label')}</span>
+                        <span className="text-xs text-muted-foreground">{t('log.health.description')}</span>
+                    </div>
+                </div>
+                {logHealth ? (
+                    <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                        <div className="rounded-lg bg-muted/40 p-2">{t('log.health.pending')}: <strong>{logHealth.pending_records}</strong> / {formatBytes(logHealth.pending_content_bytes)}</div>
+                        <div className="rounded-lg bg-muted/40 p-2">{t('log.health.oldestPending')}: <strong>{logHealth.oldest_pending_age_seconds}s</strong></div>
+                        <div className="rounded-lg bg-muted/40 p-2">{t('log.health.dropped')}: <strong>{logHealth.dropped_records}</strong></div>
+                        <div className="rounded-lg bg-muted/40 p-2">{t('log.health.failures')}: <strong>{logHealth.persistence_failures}</strong></div>
+                        <div className="rounded-lg bg-muted/40 p-2">{t('log.health.unavailable')}: <strong>{logHealth.unavailable_content_bundles}</strong></div>
+                        <div className="rounded-lg bg-muted/40 p-2">{t('log.health.logical')}: <strong>{formatBytes(logHealth.content_logical_bytes)}</strong></div>
+                        <div className="rounded-lg bg-muted/40 p-2">{t('log.health.physical')}: <strong>{logHealth.content_physical_available ? formatBytes(logHealth.content_physical_bytes || 0) : t('log.health.notAvailable')}</strong></div>
+                        <div className="rounded-lg bg-muted/40 p-2">{t('log.health.budget')}: <strong>{formatBytes(logHealth.content_budget_bytes)}</strong></div>
+                    </div>
+                ) : (
+                    <p className="text-xs text-muted-foreground">{t('log.health.notAvailable')}</p>
+                )}
+                {logHealth?.last_persistence_error ? (
+                    <p className="rounded-lg border border-destructive/20 bg-destructive/5 p-2 text-xs text-destructive">{logHealth.last_persistence_error}</p>
+                ) : null}
+                <p className="text-xs text-muted-foreground">{t('log.health.diskCaveat')}</p>
             </div>
 
             {/* 日志列表自动刷新间隔（浏览器本地偏好） */}
@@ -379,6 +501,7 @@ export function SettingLog() {
                         </div>
                     </div>
                     <Input
+                        id="relay-log-keep-count"
                         type="number"
                         value={keepCount}
                         onChange={(e) => setKeepCount(e.target.value)}
@@ -402,6 +525,7 @@ export function SettingLog() {
                         </div>
                     </div>
                     <Input
+                        id="relay-log-keep-days"
                         type="number"
                         value={keepDays}
                         onChange={(e) => setKeepDays(e.target.value)}
@@ -433,16 +557,17 @@ export function SettingLog() {
                         {groupNames.map((name) => {
                             const active = excludedGroups.includes(name);
                             return (
-                                <Badge
+                                <Button
                                     key={name}
                                     variant={active ? 'default' : 'outline'}
+                                    size="sm"
                                     className="max-w-full cursor-pointer gap-1.5 rounded-lg px-2.5 py-1 text-xs transition-colors hover:bg-accent/60"
                                     onClick={() => toggleExcludedGroup(name)}
                                     title={active ? t('log.excludedGroups.removeHint') : t('log.excludedGroups.addHint')}
                                 >
                                     <span className="truncate">{name}</span>
                                     {active && <span className="text-muted-foreground">×</span>}
-                                </Badge>
+                                </Button>
                             );
                         })}
                     </div>

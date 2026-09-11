@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -23,6 +24,8 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
+
+var errModelTestSkipped = errors.New("channel skipped model test (issue #98)")
 
 type GroupModelTestRequest struct {
 	GroupID int `json:"group_id" binding:"required"`
@@ -571,16 +574,8 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 		}
 	}
 
-	if logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
+	if _, logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
 		log.Warnf("failed to save test log: %v", logErr)
-	}
-
-	// 把每次尝试落表，使测试失败渠道可按 channel_id 检索（与正常日志一致）。
-	// relayLog.ID 已由 RelayLogAdd 分配。
-	if len(attempts) > 0 {
-		if attemptsErr := relaylog.RelayLogAttemptsAdd(ctx, relayLog.ID, attempts, relayLog.Time); attemptsErr != nil {
-			log.Warnf("failed to save test log attempts: %v", attemptsErr)
-		}
 	}
 }
 
@@ -672,6 +667,9 @@ func cloneGroupModelProgress(progress *GroupModelTestProgress) GroupModelTestPro
 func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, channel *appmodel.Channel, key, endpointType, modelName string) (int, string, *transmodel.InternalLLMResponse, error) {
 	if channel == nil {
 		return 0, "", nil, fmt.Errorf("channel is nil")
+	}
+	if channel.SkipModelTest {
+		return 0, "", nil, errModelTestSkipped
 	}
 
 	httpClient, err := ChannelHttpClient(channel)

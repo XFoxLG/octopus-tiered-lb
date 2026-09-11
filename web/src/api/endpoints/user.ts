@@ -1,9 +1,8 @@
 import { useEffect } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { apiClient, setAuthStoreGetter } from '../client';
-import { REFETCH_INTERVAL_DEFAULT } from '../constants';
 import { logger } from '@/lib/logger';
 
 /**
@@ -253,69 +252,3 @@ export function useAuth() {
         logout: store.logout,
     };
 }
-
-export interface UserInfo {
-    id: number;
-    username: string;
-    role: string;
-}
-
-export interface UserCreateRequest {
-    username: string;
-    password: string;
-    role: string;
-}
-
-export function useUserList() {
-    return useQuery({
-        queryKey: ['users', 'list'],
-        queryFn: async () => apiClient.get<UserInfo[]>('/api/v1/user/list'),
-        refetchInterval: REFETCH_INTERVAL_DEFAULT,
-    });
-}
-
-export function useCreateUser() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: async (data: UserCreateRequest) => {
-            return apiClient.post<null>('/api/v1/user/create', data);
-        },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['users', 'list'] });
-        },
-        onError: (error) => {
-            logger.error('User create failed:', error);
-        },
-    });
-}
-
-export function useUpdateUserRole() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: async (data: { id: number; role: string }) => {
-            return apiClient.post<null>('/api/v1/user/update-role', data);
-        },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['users', 'list'] });
-        },
-        onError: (error) => {
-            logger.error('Role update failed:', error);
-        },
-    });
-}
-
-export function useDeleteUser() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: async (id: number) => {
-            return apiClient.delete<null>(`/api/v1/user/delete/${id}`);
-        },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['users', 'list'] });
-        },
-        onError: (error) => {
-            logger.error('User delete failed:', error);
-        },
-    });
-}
-

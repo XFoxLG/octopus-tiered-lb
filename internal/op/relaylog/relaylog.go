@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
@@ -18,7 +19,6 @@ import (
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/snowflake"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const relayLogMaxSize = 200
@@ -79,6 +79,14 @@ func halveMemoryLogCache(maxSize int) bool {
 	if len(relayLogCache) <= keepSize {
 		return false
 	}
+	droppedCount := len(relayLogCache) - keepSize
+	for index := 0; index < droppedCount; index++ {
+		relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLogCache[index])
+		releaseRelayLogCapturedPayloads(&relayLogCache[index])
+	}
+	if relayLogPendingContentBytes < 0 {
+		relayLogPendingContentBytes = 0
+	}
 	newCache := make([]model.RelayLog, keepSize, maxSize)
 	copy(newCache, relayLogCache[len(relayLogCache)-keepSize:])
 	relayLogCache = newCache
@@ -101,6 +109,16 @@ func noteMemoryLogDimidiate() bool {
 
 var relayLogCache = make([]model.RelayLog, 0, relayLogMaxSize)
 var relayLogCacheLock sync.Mutex
+var relayLogPendingContentBytes int64
+
+var relayLogDroppedRecords atomic.Int64
+var relayLogDroppedNotifications atomic.Int64
+var relayLogUnavailableContentBundles atomic.Int64
+var relayLogPersistenceFailures atomic.Int64
+var relayLogLastPersistenceFailureAt atomic.Int64
+var relayLogLastPersistenceError atomic.Value
+var relayLogEnqueueSequence atomic.Uint64
+var relayLogDiscardThroughSequence atomic.Uint64
 
 func GetCacheAndLock() ([]model.RelayLog, *sync.Mutex) { return relayLogCache, &relayLogCacheLock }
 
@@ -113,19 +131,116 @@ var flushCh = make(chan struct{}, 1)
 // 顺序广播给订阅者。这样避免了每条日志都启动一个短命 goroutine（高 QPS 下的
 // goroutine 风暴），并保证订阅者按写入顺序收到日志。channel 满时丢弃最新日志，
 // 与 notifySubscribers 对慢订阅者的丢弃语义一致。
-var notifyCh = make(chan model.RelayLog, 1024)
+var notifyCh = make(chan model.RelayLogListItem, 1024)
+
+type unavailableRelayLogMetadataWrite struct {
+	relayLog model.RelayLog
+	reason   string
+}
+
+var unavailableMetadataCh = make(chan unavailableRelayLogMetadataWrite, 128)
 
 func startNotifyWorker(ctx context.Context) {
 	go func() {
 		for {
 			select {
-			case relayLog := <-notifyCh:
-				notifySubscribers(relayLog)
+			case relayLogItem := <-notifyCh:
+				notifySubscribers(relayLogItem)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+}
+
+func startUnavailableMetadataWorker(ctx context.Context) {
+	go func() {
+		for {
+			select {
+			case pendingWrite := <-unavailableMetadataCh:
+				if relayLogWasDiscardedByMaintenance(pendingWrite.relayLog) {
+					continue
+				}
+				writeMetadata := func(writeContext context.Context) error {
+					relayLogFlushLock.Lock()
+					defer relayLogFlushLock.Unlock()
+					if relayLogWasDiscardedByMaintenance(pendingWrite.relayLog) {
+						return nil
+					}
+					persistUnavailableRelayLogMetadata(writeContext, pendingWrite.relayLog, pendingWrite.reason)
+					return nil
+				}
+				if db.IsLogSQLite() {
+					db.EnqueueWrite(db.WriteJob{Name: "relay_log_unavailable_metadata", Fn: writeMetadata})
+				} else {
+					_ = writeMetadata(context.Background())
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func relayLogWasDiscardedByMaintenance(relayLog model.RelayLog) bool {
+	return relayLog.QueueSequence > 0 && relayLog.QueueSequence <= relayLogDiscardThroughSequence.Load()
+}
+
+func enqueueUnavailableRelayLogMetadata(relayLog model.RelayLog, reason string) {
+	releaseRelayLogCapturedPayloads(&relayLog)
+	select {
+	case unavailableMetadataCh <- unavailableRelayLogMetadataWrite{
+		relayLog: relayLog,
+		reason:   reason,
+	}:
+	default:
+		relayLogPersistenceFailures.Add(1)
+		relayLogLastPersistenceFailureAt.Store(time.Now().Unix())
+		relayLogLastPersistenceError.Store("unavailable metadata fallback queue is full")
+	}
+}
+
+// RunMaintenance serializes restore/cleanup operations with normal flushes.
+// A full restore discards pre-restore pending logs and invalidates queued
+// metadata fallbacks so old content cannot reappear after the restore commits.
+func RunMaintenance(discardPending bool, operation func() error) error {
+	if operation == nil {
+		return nil
+	}
+	finish := BeginMaintenance(discardPending)
+	err := operation()
+	finish(err == nil)
+	return err
+}
+
+// BeginMaintenance acquires the shared log-family barrier. The returned
+// finish function must be called exactly once with the transaction result.
+func BeginMaintenance(discardPending bool) func(success bool) {
+	relayLogFlushLock.Lock()
+	discardThroughSequence := relayLogEnqueueSequence.Load()
+	return func(success bool) {
+		if discardPending && success {
+			relayLogDiscardThroughSequence.Store(discardThroughSequence)
+			relayLogCacheLock.Lock()
+			retainedLogs := relayLogCache[:0]
+			for relayLogIndex := range relayLogCache {
+				relayLog := relayLogCache[relayLogIndex]
+				isPreMaintenanceLog := relayLog.QueueSequence == 0 || relayLog.QueueSequence <= discardThroughSequence
+				if isPreMaintenanceLog {
+					relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLog)
+					releaseRelayLogCapturedPayloads(&relayLog)
+					continue
+				}
+				retainedLogs = append(retainedLogs, relayLog)
+			}
+			relayLogCache = retainedLogs
+			if relayLogPendingContentBytes < 0 {
+				relayLogPendingContentBytes = 0
+			}
+			relayLogCacheLock.Unlock()
+		}
+		relayLogFlushLock.Unlock()
+	}
 }
 
 func triggerFlush() {
@@ -137,6 +252,7 @@ func triggerFlush() {
 
 func StartFlushWorker(ctx context.Context) {
 	startNotifyWorker(ctx)
+	startUnavailableMetadataWorker(ctx)
 	go func() {
 		for {
 			select {
@@ -158,7 +274,7 @@ func StartFlushWorker(ctx context.Context) {
 	}()
 }
 
-var relayLogSubscribers = make(map[chan model.RelayLog]struct{})
+var relayLogSubscribers = make(map[chan model.RelayLogListItem]struct{})
 var relayLogSubscribersLock sync.RWMutex
 
 var relayLogStreamTokens = make(map[string]time.Time)
@@ -221,15 +337,15 @@ func PurgeExpiredStreamTokens() int {
 	return deleted
 }
 
-func RelayLogSubscribe() chan model.RelayLog {
-	ch := make(chan model.RelayLog, 10)
+func RelayLogSubscribe() chan model.RelayLogListItem {
+	ch := make(chan model.RelayLogListItem, 10)
 	relayLogSubscribersLock.Lock()
 	relayLogSubscribers[ch] = struct{}{}
 	relayLogSubscribersLock.Unlock()
 	return ch
 }
 
-func RelayLogUnsubscribe(ch chan model.RelayLog) {
+func RelayLogUnsubscribe(ch chan model.RelayLogListItem) {
 	relayLogSubscribersLock.Lock()
 	if _, ok := relayLogSubscribers[ch]; ok {
 		delete(relayLogSubscribers, ch)
@@ -238,13 +354,13 @@ func RelayLogUnsubscribe(ch chan model.RelayLog) {
 	relayLogSubscribersLock.Unlock()
 }
 
-func notifySubscribers(relayLog model.RelayLog) {
+func notifySubscribers(relayLogItem model.RelayLogListItem) {
 	relayLogSubscribersLock.RLock()
 	defer relayLogSubscribersLock.RUnlock()
 
 	for ch := range relayLogSubscribers {
 		select {
-		case ch <- relayLog:
+		case ch <- relayLogItem:
 		default:
 		}
 	}
@@ -282,17 +398,20 @@ func relayLogFlushToDB(ctx context.Context) error {
 		return nil
 	}
 
-	// Create 前剥离大字段的副本？不行——需要把 content 写入 DB。
-	// Create 成功后截断缓存即可释放内存；截断前 batch 持有 content 是短暂尖刺。
-	result := conn.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&batch)
-	if result.Error != nil {
-		return result.Error
+	// Parent rows, indexed attempts, and all four boundary references are one
+	// transaction. A failed flush leaves the cache intact for a safe retry.
+	if err := persistRelayLogBatch(ctx, conn, batch); err != nil {
+		relayLogPersistenceFailures.Add(1)
+		relayLogLastPersistenceFailureAt.Store(time.Now().Unix())
+		relayLogLastPersistenceError.Store(err.Error())
+		return err
 	}
 
 	// 尽快丢弃 batch 对大字段的引用，帮助 GC。
 	for i := range batch {
 		batch[i].RequestContent = ""
 		batch[i].ResponseContent = ""
+		releaseRelayLogCapturedPayloads(&batch[i])
 	}
 
 	relayLogCacheLock.Lock()
@@ -311,8 +430,13 @@ func relayLogFlushToDB(ctx context.Context) error {
 	if cutIdx > 0 {
 		// 显式清空被截断前缀的大字段，避免底层数组仍被引用时拖住内存。
 		for i := 0; i < cutIdx; i++ {
+			relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLogCache[i])
 			relayLogCache[i].RequestContent = ""
 			relayLogCache[i].ResponseContent = ""
+			releaseRelayLogCapturedPayloads(&relayLogCache[i])
+		}
+		if relayLogPendingContentBytes < 0 {
+			relayLogPendingContentBytes = 0
 		}
 		relayLogCache = relayLogCache[cutIdx:]
 	}
@@ -324,24 +448,29 @@ func relayLogFlushToDB(ctx context.Context) error {
 	return nil
 }
 
-func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
+func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (int64, error) {
 	enabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	maxSize := relayLogMaxSize
 	if !enabled {
 		maxSize = relayLogMaxSizeNoDB
 	}
-	relayLog.ID = snowflake.GenerateID()
-	// 非阻塞地推入通知 channel，由常驻分发 goroutine 顺序广播给订阅者。
-	// 避免每条日志启动一个短命 goroutine；channel 满时丢弃。
-	select {
-	case notifyCh <- relayLog:
-	default:
+	if relayLog.ID == 0 {
+		relayLog.ID = snowflake.GenerateID()
+	}
+	if relayLog.QueueSequence == 0 {
+		relayLog.QueueSequence = relayLogEnqueueSequence.Add(1)
+	}
+	if relayLog.PersistenceState == "" {
+		relayLog.PersistenceState = model.RelayLogPersistencePending
 	}
 
 	relayLogCacheLock.Lock()
+	payloadBytes := prepareRelayLogContentForQueue(&relayLog, relayLogPendingContentBytes)
+	var droppedRelayLog *model.RelayLog
+	var droppedReason string
 	needMemoryLogGC := false
 	// GC 必须在锁外触发，避免阻塞日志热路径。
 	defer func() {
@@ -363,7 +492,10 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 			if enabled {
 				relayLogCacheLock.Unlock()
 				triggerFlush()
-				return nil
+				releaseRelayLogCapturedPayloads(&relayLog)
+				relayLogDroppedRecords.Add(1)
+				enqueueUnavailableRelayLogMetadata(relayLog, "metadata queue is full while flush is pending")
+				return relayLog.ID, nil
 			}
 			// 不保存到数据库时，保留最近一半并重建底层数组，
 			// 否则旧数组仍引用被淘汰日志的大字段，内存无法回收。
@@ -372,29 +504,95 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) error {
 			}
 		case "oldest":
 			// 丢弃最旧日志（推荐：保留最新的诊断数据）
+			dropped := relayLogCache[0]
+			droppedRelayLog = &dropped
+			droppedReason = "oldest pending log was displaced by queue policy"
+			relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLogCache[0])
+			releaseRelayLogCapturedPayloads(&relayLogCache[0])
 			relayLogCache = relayLogCache[1:]
+			relayLogDroppedRecords.Add(1)
 		case "newest":
 			// 丢弃最新日志（保留历史序列完整性，但可能丢失最新错误）
 			// 不追加新日志，直接返回
 			relayLogCacheLock.Unlock()
-			return nil
+			releaseRelayLogCapturedPayloads(&relayLog)
+			relayLogDroppedRecords.Add(1)
+			enqueueUnavailableRelayLogMetadata(relayLog, "newest log was dropped by queue policy")
+			return relayLog.ID, nil
 		default:
 			// 未知策略，回退到丢弃最旧
+			dropped := relayLogCache[0]
+			droppedRelayLog = &dropped
+			droppedReason = "oldest pending log was displaced by unknown queue policy"
+			relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLogCache[0])
+			releaseRelayLogCapturedPayloads(&relayLogCache[0])
 			relayLogCache = relayLogCache[1:]
+			relayLogDroppedRecords.Add(1)
 		}
 	}
 
 	relayLogCache = append(relayLogCache, relayLog)
+	relayLogPendingContentBytes += payloadBytes
+	if relayLogPendingContentBytes < 0 {
+		relayLogPendingContentBytes = 0
+	}
 	relayLogCacheLock.Unlock()
-	return nil
+	if enabled && droppedRelayLog != nil {
+		enqueueUnavailableRelayLogMetadata(*droppedRelayLog, droppedReason)
+	}
+
+	// Notifications contain list metadata only; request bodies, response bodies,
+	// and attachments never enter the live-stream fan-out queue.
+	select {
+	case notifyCh <- relayLog.ToListItem():
+	default:
+		relayLogDroppedNotifications.Add(1)
+	}
+	return relayLog.ID, nil
 }
 
-// RelayLogAttemptsAdd 把一条 RelayLog 的各次尝试写入 relay_log_attempts 关联表，
-// 使失败尝试（尤其"渠道A 失败→重试到B 成功"中的渠道A）可被按 channel_id 过滤/聚合。
-// 日志关闭时不写（enabled=false）。所有数据库方言均同步写入，确保 attempts 在
-// relay_logs 异步刷盘并截断内存缓存之前已落库，消除"relay_logs 已入 DB 但 attempts
-// 尚未写入"的竞态窗口（issue #121）。relayLogID 必须已分配（即 RelayLogAdd 之后
-// 调用）。返回错误仅供记录，调用方通常忽略。
+func RelayLogHealthSnapshot() model.RelayLogHealth {
+	relayLogCacheLock.Lock()
+	pendingRecords := len(relayLogCache)
+	pendingContentBytes := relayLogPendingContentBytes
+	oldestPendingAgeSeconds := int64(0)
+	if pendingRecords > 0 && relayLogCache[0].Time > 0 {
+		oldestPendingAgeSeconds = time.Now().Unix() - relayLogCache[0].Time
+		if oldestPendingAgeSeconds < 0 {
+			oldestPendingAgeSeconds = 0
+		}
+	}
+	relayLogCacheLock.Unlock()
+
+	lastPersistenceError := ""
+	if storedError := relayLogLastPersistenceError.Load(); storedError != nil {
+		lastPersistenceError, _ = storedError.(string)
+	}
+	usageContext, cancelUsage := context.WithTimeout(context.Background(), time.Second)
+	logicalBytes, physicalBytes, physicalAvailable := relayLogContentStorageUsage(usageContext, db.GetLogDB())
+	cancelUsage()
+	contentBudgetBytes := int64(getRelayLogContentKeepSizeMB()) * 1024 * 1024
+	return model.RelayLogHealth{
+		PendingRecords:            pendingRecords,
+		PendingContentBytes:       pendingContentBytes,
+		OldestPendingAgeSeconds:   oldestPendingAgeSeconds,
+		DroppedRecords:            relayLogDroppedRecords.Load(),
+		DroppedNotifications:      relayLogDroppedNotifications.Load(),
+		UnavailableContentBundles: relayLogUnavailableContentBundles.Load(),
+		PersistenceFailures:       relayLogPersistenceFailures.Load(),
+		LastPersistenceFailureAt:  relayLogLastPersistenceFailureAt.Load(),
+		LastPersistenceError:      lastPersistenceError,
+		ContentLogicalBytes:       logicalBytes,
+		ContentPhysicalBytes:      physicalBytes,
+		ContentPhysicalAvailable:  physicalAvailable,
+		ContentBudgetBytes:        contentBudgetBytes,
+	}
+}
+
+// RelayLogAttemptsAdd remains for compatibility with tests and legacy helper
+// paths. Normal relay logging persists parent, attempts, blobs, and references
+// atomically through RelayLogAdd + relayLogFlushToDB and must not call this
+// helper separately.
 func RelayLogAttemptsAdd(ctx context.Context, relayLogID int64, attempts []model.ChannelAttempt, logTime int64) error {
 	if len(attempts) == 0 {
 		return nil
@@ -407,18 +605,50 @@ func RelayLogAttemptsAdd(ctx context.Context, relayLogID int64, attempts []model
 		return nil
 	}
 	rows := make([]model.RelayLogAttempt, 0, len(attempts))
+	usedAttemptNumbers := make(map[int]struct{}, len(attempts))
+	for _, attempt := range attempts {
+		if attempt.AttemptNum > 0 {
+			usedAttemptNumbers[attempt.AttemptNum] = struct{}{}
+		}
+	}
+	nextFallbackAttemptNumber := 1
 	for _, a := range attempts {
 		if a.ChannelID == 0 {
 			continue // 跳过无渠道归属的占位尝试
 		}
+		attemptNumber := a.AttemptNum
+		if attemptNumber <= 0 {
+			for {
+				if _, alreadyUsed := usedAttemptNumbers[nextFallbackAttemptNumber]; !alreadyUsed {
+					attemptNumber = nextFallbackAttemptNumber
+					usedAttemptNumbers[attemptNumber] = struct{}{}
+					nextFallbackAttemptNumber++
+					break
+				}
+				nextFallbackAttemptNumber++
+			}
+		}
 		rows = append(rows, model.RelayLogAttempt{
-			RelayLogID:  relayLogID,
-			ChannelID:   a.ChannelID,
-			ChannelName: a.ChannelName,
-			ModelName:   a.ModelName,
-			Status:      string(a.Status),
-			Duration:    a.Duration,
-			Time:        logTime,
+			RelayLogID:       relayLogID,
+			AttemptNum:       attemptNumber,
+			ChannelID:        a.ChannelID,
+			ChannelKeyID:     a.ChannelKeyID,
+			ChannelName:      a.ChannelName,
+			ModelName:        a.ModelName,
+			AdapterType:      a.AdapterType,
+			Status:           string(a.Status),
+			HTTPStatus:       a.HTTPStatus,
+			RequestPrepared:  a.RequestPrepared,
+			SendStarted:      a.SendStarted,
+			RequestBytes:     a.RequestBytes,
+			RequestComplete:  a.RequestComplete,
+			ResponseReceived: a.ResponseReceived,
+			ResponseBytes:    a.ResponseBytes,
+			ResponseComplete: a.ResponseComplete,
+			Duration:         a.Duration,
+			Sticky:           a.Sticky,
+			Msg:              a.Msg,
+			Time:             logTime,
 		})
 	}
 	if len(rows) == 0 {
@@ -449,7 +679,10 @@ func RelayLogSaveDBTask(ctx context.Context) error {
 		if err := relayLogFlushToDB(ctx); err != nil {
 			return err
 		}
-		return relayLogCleanup(ctx)
+		if err := relayLogCleanup(ctx); err != nil {
+			return err
+		}
+		return maintainRelayLogContent(ctx, db.GetLogDB())
 	}
 
 	// 日志关闭：清空数据库中所有历史日志以释放磁盘空间
@@ -489,6 +722,8 @@ func ApplyKeepEnabledChange(ctx context.Context, enabled bool) error {
 }
 
 func relayLogCleanup(ctx context.Context) error {
+	relayLogFlushLock.Lock()
+	defer relayLogFlushLock.Unlock()
 	conn := db.GetLogDB()
 	if conn == nil {
 		// 独立日志库已断开（如日志已关闭），无需清理。
@@ -527,17 +762,18 @@ func relayLogCleanup(ctx context.Context) error {
 		if thresholdID == 0 {
 			return nil
 		}
-		// 同步删除关联的 relay_log_attempts，避免 relay_logs 行被删后留下孤儿
-		// attempts（无外键级联）。否则 analytics 的 INNER JOIN 会排除这些孤儿，
-		// 表现为"数据消失"（issue #93）。
-		if err := conn.WithContext(ctx).
-			Where("relay_log_id < ?", thresholdID).
-			Delete(&model.RelayLogAttempt{}).Error; err != nil {
-			return err
-		}
-		return conn.WithContext(ctx).
-			Where("id < ?", thresholdID).
-			Delete(&model.RelayLog{}).Error
+		return conn.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
+			if err := transaction.Where("relay_log_id < ?", thresholdID).Delete(&model.RelayLogContentRef{}).Error; err != nil {
+				return err
+			}
+			if err := transaction.Where("relay_log_id < ?", thresholdID).Delete(&model.RelayLogAttempt{}).Error; err != nil {
+				return err
+			}
+			if err := transaction.Where("id < ?", thresholdID).Delete(&model.RelayLog{}).Error; err != nil {
+				return err
+			}
+			return deleteUnreferencedRelayLogContentBlobs(transaction)
+		})
 	}
 
 	// Fallback to days-based cleanup
@@ -551,15 +787,19 @@ func relayLogCleanup(ctx context.Context) error {
 	}
 
 	cutoffTime := time.Now().Add(-time.Duration(keepPeriod) * 24 * time.Hour).Unix()
-	// 先删 relay_log_attempts 中早于阈值的行，再删 relay_logs。两表无外键级联，
-	// 若只删 relay_logs 会留下指向已删 id 的孤儿 attempts 行，导致 analytics 的
-	// INNER JOIN 聚合查不到数据（渠道×模型/利用率卡片随旧日志清理逐渐清空）。
-	if err := conn.WithContext(ctx).
-		Where("time < ?", cutoffTime).
-		Delete(&model.RelayLogAttempt{}).Error; err != nil {
-		return err
-	}
-	return conn.WithContext(ctx).Where("time < ?", cutoffTime).Delete(&model.RelayLog{}).Error
+	return conn.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
+		expiredLogIDs := transaction.Model(&model.RelayLog{}).Select("id").Where("time < ?", cutoffTime)
+		if err := transaction.Where("relay_log_id IN (?)", expiredLogIDs).Delete(&model.RelayLogContentRef{}).Error; err != nil {
+			return err
+		}
+		if err := transaction.Where("time < ?", cutoffTime).Delete(&model.RelayLogAttempt{}).Error; err != nil {
+			return err
+		}
+		if err := transaction.Where("time < ?", cutoffTime).Delete(&model.RelayLog{}).Error; err != nil {
+			return err
+		}
+		return deleteUnreferencedRelayLogContentBlobs(transaction)
+	})
 }
 
 // relayLogCleanupAll 删除数据库中所有日志记录，用于日志关闭时释放磁盘空间。
@@ -571,10 +811,15 @@ func relayLogCleanup(ctx context.Context) error {
 // 残留的 attempts 孤儿行会在重新开启日志后被 analytics 的 INNER JOIN 排除，
 // 造成"渠道×模型/利用率查不到历史数据"的假象。
 func relayLogCleanupAll(ctx context.Context) error {
+	relayLogFlushLock.Lock()
+	defer relayLogFlushLock.Unlock()
 	conn := db.GetLogDB()
 	if conn == nil {
 		// 独立日志库已断开（日志关闭场景）：无需清理。
 		return nil
+	}
+	if err := clearAllRelayLogContentTables(ctx, conn); err != nil {
+		return err
 	}
 	if err := db.FastClearTable(conn.WithContext(ctx), &model.RelayLogAttempt{}, "relay_log_attempts"); err != nil {
 		return err
@@ -811,12 +1056,15 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 
 			query := conn.WithContext(ctx).
 				Select("id", "time", "request_model_name", "request_api_key_id", "request_api_key_name",
-					"client_ip",
+					"client_ip", "reported_client_ip", "reported_client_ip_source",
 					"endpoint_type", "channel_id", "channel_name", "actual_model_name",
 					"input_tokens", "output_tokens", "semantic_cache_hit", "cache_read_tokens",
 					"reasoning_effort", "reasoning_tokens", "reasoning_chars",
 					"ftut", "use_time",
-					"cost", "billing_window", "error", "attempts", "total_attempts", "is_test")
+					"cost", "billing_window", "http_status", "generation_outcome", "upstream_outcome",
+					"persistence_state", "client_delivery_state", "termination_cause", "provider_termination_reason",
+					"client_write_bytes", "client_write_complete", "content_state",
+					"error", "attempts", "total_attempts", "is_test")
 			if filter.StartTime != nil {
 				query = query.Where("time >= ?", *filter.StartTime)
 			}
@@ -914,12 +1162,18 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 func SetCacheForTest(logs []model.RelayLog) func() {
 	relayLogCacheLock.Lock()
 	old := relayLogCache
+	oldPendingContentBytes := relayLogPendingContentBytes
 	relayLogCache = make([]model.RelayLog, len(logs))
 	copy(relayLogCache, logs)
+	relayLogPendingContentBytes = 0
+	for index := range relayLogCache {
+		relayLogPendingContentBytes += relayLogCapturedPayloadBytes(&relayLogCache[index])
+	}
 	relayLogCacheLock.Unlock()
 	return func() {
 		relayLogCacheLock.Lock()
 		relayLogCache = old
+		relayLogPendingContentBytes = oldPendingContentBytes
 		relayLogCacheLock.Unlock()
 	}
 }
@@ -933,8 +1187,25 @@ func RelayLogCacheReadTokens(responseContent string) int {
 }
 
 func RelayLogClear(ctx context.Context) error {
+	relayLogFlushLock.Lock()
+	defer relayLogFlushLock.Unlock()
+	discardThroughSequence := relayLogEnqueueSequence.Load()
+	relayLogDiscardThroughSequence.Store(discardThroughSequence)
 	relayLogCacheLock.Lock()
-	relayLogCache = make([]model.RelayLog, 0, relayLogMaxSize)
+	retainedLogs := relayLogCache[:0]
+	for index := range relayLogCache {
+		relayLog := relayLogCache[index]
+		if relayLog.QueueSequence > discardThroughSequence {
+			retainedLogs = append(retainedLogs, relayLog)
+			continue
+		}
+		relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLog)
+		releaseRelayLogCapturedPayloads(&relayLog)
+	}
+	relayLogCache = retainedLogs
+	if relayLogPendingContentBytes < 0 {
+		relayLogPendingContentBytes = 0
+	}
 	relayLogCacheLock.Unlock()
 	conn := db.GetLogDB()
 	if conn == nil {
@@ -944,6 +1215,9 @@ func RelayLogClear(ctx context.Context) error {
 	// 整表清空走 FastClearTable，避免百万级逐行 DELETE 卡住数十分钟。
 	// 同步清空 relay_log_attempts，避免残留孤儿行（其 relay_log_id 指向已删
 	// 的 relay_logs）被 analytics 的 INNER JOIN 排除，造成统计莫名消失。
+	if err := clearAllRelayLogContentTables(ctx, conn); err != nil {
+		return err
+	}
 	if err := db.FastClearTable(conn.WithContext(ctx), &model.RelayLogAttempt{}, "relay_log_attempts"); err != nil {
 		return err
 	}
@@ -957,11 +1231,24 @@ func RelayLogClear(ctx context.Context) error {
 // 同时清空内存缓存中的大字段（在途未刷盘的日志），保证开关生效后缓存里也不残留。
 // relay_log_attempts 不受影响——它不含大字段。
 func RelayLogClearContents(ctx context.Context) error {
+	relayLogFlushLock.Lock()
+	defer relayLogFlushLock.Unlock()
+	clearThroughSequence := relayLogEnqueueSequence.Load()
 	// 清空内存缓存中在途日志的大字段。
 	relayLogCacheLock.Lock()
 	for i := range relayLogCache {
+		if relayLogCache[i].QueueSequence > clearThroughSequence {
+			continue
+		}
+		payloadBytes := relayLogCapturedPayloadBytes(&relayLogCache[i])
 		relayLogCache[i].RequestContent = ""
 		relayLogCache[i].ResponseContent = ""
+		relayLogCache[i].ContentState = model.RelayLogContentStateExpired
+		relayLogPendingContentBytes -= payloadBytes
+		releaseRelayLogCapturedPayloads(&relayLogCache[i])
+	}
+	if relayLogPendingContentBytes < 0 {
+		relayLogPendingContentBytes = 0
 	}
 	relayLogCacheLock.Unlock()
 
@@ -970,14 +1257,22 @@ func RelayLogClearContents(ctx context.Context) error {
 		// 独立日志库已断开：内存缓存已清，无需触碰数据库。
 		return nil
 	}
-	// 单条 UPDATE 清空两列，跨方言通用。不删行，故 relay_log_attempts 无孤儿风险。
-	return conn.WithContext(ctx).
-		Model(&model.RelayLog{}).
-		Where("1 = 1").
-		Updates(map[string]any{
-			"request_content":  "",
-			"response_content": "",
-		}).Error
+	return conn.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
+		if err := transaction.Where("1 = 1").Delete(&model.RelayLogContentRef{}).Error; err != nil {
+			return err
+		}
+		if err := transaction.Where("1 = 1").Delete(&model.RelayLogContentBlob{}).Error; err != nil {
+			return err
+		}
+		return transaction.Model(&model.RelayLog{}).
+			Where("1 = 1").
+			Updates(map[string]any{
+				"request_content":           "",
+				"response_content":          "",
+				"content_state":             model.RelayLogContentStateExpired,
+				"content_unavailable_error": "",
+			}).Error
+	})
 }
 
 // RelayLogGetByID 根据ID获取完整日志详情（包含 request_content 和 response_content）
@@ -989,6 +1284,7 @@ func RelayLogGetByID(ctx context.Context, id int64) (*model.RelayLog, error) {
 		for i := range relayLogCache {
 			if relayLogCache[i].ID == id {
 				cached := relayLogCache[i]
+				hydrateCachedRelayLogContents(&cached)
 				if usage, ok := cacheusage.ParseProviderPromptCacheUsageSignals(cached.ResponseContent); ok {
 					cached.SemanticCacheHit = usage.SemanticCacheHit
 					if !usage.SemanticCacheHit {
@@ -1019,6 +1315,9 @@ func RelayLogGetByID(ctx context.Context, id int64) (*model.RelayLog, error) {
 		if !usage.SemanticCacheHit {
 			relayLog.CacheReadTokens = int(usage.CachedTokens)
 		}
+	}
+	if err := hydrateRelayLogContents(ctx, conn, &relayLog); err != nil {
+		return nil, err
 	}
 	return &relayLog, nil
 }

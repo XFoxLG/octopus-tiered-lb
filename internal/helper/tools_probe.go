@@ -72,6 +72,9 @@ func TestToolsSupport(ctx context.Context, channel *appmodel.Channel, modelName,
 	if channel == nil {
 		return appmodel.ToolsProbeResult{}, fmt.Errorf("channel is nil")
 	}
+	if channel.SkipModelTest {
+		return appmodel.ToolsProbeResult{}, errModelTestSkipped
+	}
 	if !outbound.IsChatChannelType(channel.Type) {
 		return appmodel.ToolsProbeResult{}, fmt.Errorf("channel type %d is not a chat channel, tools probe skipped", channel.Type)
 	}

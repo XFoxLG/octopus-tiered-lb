@@ -78,19 +78,19 @@ test('isGenerateAIRouteTerminal: undefined returns false', () => {
 });
 
 test('isGenerateAIRouteTerminal: completed returns true', () => {
-    assert.equal(isGenerateAIRouteTerminal({ status: 'completed', channels: [] }), true);
+    assert.equal(isGenerateAIRouteTerminal({ id: 'task-completed', status: 'completed', channels: [] }), true);
 });
 
 test('isGenerateAIRouteTerminal: failed returns true', () => {
-    assert.equal(isGenerateAIRouteTerminal({ status: 'failed', channels: [] }), true);
+    assert.equal(isGenerateAIRouteTerminal({ id: 'task-failed', status: 'failed', channels: [] }), true);
 });
 
 test('isGenerateAIRouteTerminal: timeout returns true', () => {
-    assert.equal(isGenerateAIRouteTerminal({ status: 'timeout', channels: [] }), true);
+    assert.equal(isGenerateAIRouteTerminal({ id: 'task-timeout', status: 'timeout', channels: [] }), true);
 });
 
 test('isGenerateAIRouteTerminal: running returns false', () => {
-    assert.equal(isGenerateAIRouteTerminal({ status: 'running', channels: [] }), false);
+    assert.equal(isGenerateAIRouteTerminal({ id: 'task-running', status: 'running', channels: [] }), false);
 });
 
 test('normalizeGenerateAIRouteProgress: fills default channel status', () => {
@@ -247,10 +247,10 @@ function watchProgressStream(params: {
     };
 }
 
-function sampleProgress(status = 'running', id = 'task-1'): GenerateAIRouteProgress {
+function sampleProgress(status: AIRouteTaskStatus = 'running', progressId = 'task-1'): GenerateAIRouteProgress {
     return normalizeGenerateAIRouteProgress({
-        id,
-        status: status as AIRouteTaskStatus,
+        id: progressId,
+        status,
         channels: [{ channel_id: 1, total_models: 3 }],
     });
 }
@@ -392,7 +392,7 @@ test('progress stream: error surfaced on non-404 failure', async () => {
     const timers = installFakeTimers();
     const fetchMock = installFetchMock();
 
-    let receivedError: Error | null = null;
+    const observedState: { error: Error | null } = { error: null };
     fetchMock.setDefaultHandler((call) => {
         if (call.url.includes('/stream/')) {
             return new Response('{"code":500,"message":"internal"}', { status: 500 });
@@ -407,14 +407,15 @@ test('progress stream: error surfaced on non-404 failure', async () => {
         onConnected: () => {},
         onDisconnected: () => {},
         onProgress: () => {},
-        onError: (err) => { receivedError = err; },
+        onError: (error) => { observedState.error = error; },
         getLatestProgress: () => undefined,
         isTerminal: () => false,
     });
 
     await timers.advanceTimersByTime(100);
+    const receivedError = observedState.error;
     assert.ok(receivedError, 'expected error callback');
-    assert.ok(receivedError!.message.includes('500'), `expected 500 code, got '${receivedError!.message}'`);
+    assert.ok(receivedError.message.includes('500'), `expected 500 code, got '${receivedError.message}'`);
 
     abort();
     timers.uninstall();
