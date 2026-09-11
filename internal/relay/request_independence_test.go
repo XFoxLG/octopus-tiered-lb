@@ -57,7 +57,7 @@ func runIndependentRequestTestInSubprocess(t *testing.T) bool {
 	return true
 }
 
-func prepareIndependentRequestFixture(t *testing.T, respond independentRequestTransport) {
+func prepareIndependentRequestFixture(t *testing.T, respond independentRequestTransport) int {
 	t.Helper()
 	if err := db.InitDB("sqlite", filepath.Join(t.TempDir(), "independent-requests.db"), false); err != nil {
 		t.Fatalf("initialize isolated database: %v", err)
@@ -122,6 +122,7 @@ func prepareIndependentRequestFixture(t *testing.T, respond independentRequestTr
 		return respond(request)
 	})
 	t.Cleanup(func() { fixtureClient.Transport = originalTransport })
+	return fixtureID
 }
 
 func serveIndependentFixtureRequest(requestBody string) *httptest.ResponseRecorder {

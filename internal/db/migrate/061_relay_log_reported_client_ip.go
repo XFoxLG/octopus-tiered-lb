@@ -18,9 +18,9 @@ func init() {
 // reported_client_ip 记录按转发头（CF-Connecting-IP 优先、XFF 右起首个公网
 // 地址回退）解析出的客户端来源，仅用于日志展示；client_ip 保持 Gin 安全
 // 解析（可信代理链）语义不变，继续驱动限流与 IP 白名单。
-// reported_client_ip_source 标注取值来源头，兼作部署后的线上探测证据：
-// 三路请求来源均为 none 说明平台代理剥掉了转发头。
-// 既有行保持空串（前端回退显示原 client_ip），不回填。
+// reported_client_ip_source 仅标注取值来源头，不保证来源可信；none 表示没有
+// 可用地址（可能缺头、格式错误或只有内网地址）。既有行不回填，前端回退
+// 显示原 client_ip。
 func addRelayLogReportedClientIP(database *gorm.DB) error {
 	if database == nil {
 		return fmt.Errorf("db is nil")

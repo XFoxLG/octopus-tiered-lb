@@ -26,6 +26,49 @@ function buildLog(overrides: Partial<RelayLog> = {}): RelayLog {
     };
 }
 
+test('source IP prefers reported metadata while keeping legacy address fallback', () => {
+    const log = buildLog({
+        client_ip: '127.0.0.1',
+        reported_client_ip: '203.0.113.7',
+        reported_client_ip_source: 'cf-connecting-ip',
+    });
+    const reported = resolveLogDisplayFields(log);
+    assert.equal(reported.clientIP, '203.0.113.7');
+    assert.equal(reported.reportedClientIPSource, 'cf-connecting-ip');
+
+    const legacy = resolveLogDisplayFields(buildLog({ client_ip: '198.51.100.9' }));
+    assert.equal(legacy.clientIP, '198.51.100.9');
+    assert.equal(legacy.reportedClientIPSource, '');
+});
+
+test('source IP and header label both follow the loaded detail', () => {
+    const log = buildLog({
+        client_ip: '127.0.0.1',
+        reported_client_ip: '203.0.113.7',
+        reported_client_ip_source: 'cf-connecting-ip',
+    });
+    const detail: RelayLogDetail = {
+        ...log,
+        reported_client_ip: '198.51.100.9',
+        reported_client_ip_source: 'x-forwarded-for',
+        request_content: '',
+        response_content: '',
+    };
+    const result = resolveLogDisplayFields(log, detail);
+    assert.equal(result.clientIP, '198.51.100.9');
+    assert.equal(result.reportedClientIPSource, 'x-forwarded-for');
+});
+
+test('missing reported address never labels a direct address as forwarded', () => {
+    const result = resolveLogDisplayFields(buildLog({
+        client_ip: '127.0.0.1',
+        reported_client_ip: '  ',
+        reported_client_ip_source: 'cf-connecting-ip',
+    }));
+    assert.equal(result.clientIP, '127.0.0.1');
+    assert.equal(result.reportedClientIPSource, '');
+});
+
 test('resolveLogDisplayFields infers deepseek endpoint and uses attempt channel fallback', () => {
     const log = buildLog({
         attempts: [

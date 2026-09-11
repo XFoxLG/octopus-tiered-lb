@@ -226,14 +226,13 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     // Badge 文字会「黑字+透明黑底」看不清，按主题解析为可读颜色（issue: 日志深色模式对比度）
     const { resolvedTheme } = useTheme();
     const badgeColor = resolveBrandColor(brandColor, resolvedTheme === 'dark');
-	const requestAPIKeyName = displayFields.requestAPIKeyName;
-	// 展示轨来源 IP 优先（转发头解析出的真实客户端），旧日志回退到安全轨 client_ip
-	const clientIP = log.reported_client_ip || log.client_ip || '';
-	const reportedIPSourceLabel = useMemo(() => {
-		if (!log.reported_client_ip_source || log.reported_client_ip_source === 'none') return '';
-		if (log.reported_client_ip_source === 'cf-connecting-ip') return 'CF';
-		return 'XFF';
-	}, [log.reported_client_ip_source]);
+    const requestAPIKeyName = displayFields.requestAPIKeyName;
+    const clientIP = displayFields.clientIP;
+    const reportedIPSourceLabel = useMemo(() => {
+        if (displayFields.reportedClientIPSource === 'cf-connecting-ip') return 'CF';
+        if (displayFields.reportedClientIPSource === 'x-forwarded-for') return 'XFF';
+        return '';
+    }, [displayFields.reportedClientIPSource]);
     const cacheReadTokens = displayFields.cacheReadTokens;
     const semanticCacheHit = displayFields.semanticCacheHit;
     const effectiveInputTokens = Math.max(0, log.input_tokens - cacheReadTokens);
@@ -389,7 +388,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         <Globe className="size-3.5 shrink-0 text-sky-500" />
                                         <span className="truncate" title={clientIP}>{clientIP}</span>
                                         {reportedIPSourceLabel && (
-                                            <span className="shrink-0 rounded-sm bg-sky-500/10 px-1 text-[10px] leading-4 text-sky-600 dark:text-sky-400" title={log.reported_client_ip_source}>
+                                            <span className="shrink-0 rounded-sm bg-sky-500/10 px-1 text-[10px] leading-4 text-sky-600 dark:text-sky-400" title={t('reportedIPHint', { source: displayFields.reportedClientIPSource })}>
                                                 {reportedIPSourceLabel}
                                             </span>
                                         )}

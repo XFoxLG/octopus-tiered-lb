@@ -832,6 +832,11 @@ func saveUnclaimedRelayTrace(ginContext *gin.Context, trace *relayRequestTrace) 
 			relayLog.Error = fmt.Sprintf("request completed without an upstream attempt (HTTP %d)", statusCode)
 		}
 	}
+	if relayLog.ReportedClientIP == "" {
+		reportedIP := reportedClientIPFromContext(ginContext)
+		relayLog.ReportedClientIP = reportedIP.IP
+		relayLog.ReportedClientIPSource = string(reportedIP.Source)
+	}
 	relayLog.TraceID = traceID
 	relayLog.HTTPStatus = statusCode
 	relayLog.ClientWriteBytes = clientWriteBytes

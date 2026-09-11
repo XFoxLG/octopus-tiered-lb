@@ -12,6 +12,8 @@ import (
 
 type SettingKey string
 
+const DefaultRequestFilterErrorMessage = "The request contains blocked keywords and was not sent upstream."
+
 const (
 	SettingKeyProxyURL                           SettingKey = "proxy_url"
 	SettingKeyStatsSaveInterval                  SettingKey = "stats_save_interval"                      // 将统计信息写入数据库的周期(分钟)
@@ -91,10 +93,9 @@ const (
 	SettingKeyFailureHintTTLRateLimit              SettingKey = "failure_hint_ttl_rate_limit"              // 限流失败提示缓存TTL（秒）
 	SettingKeyFailureHintTTLNetwork                SettingKey = "failure_hint_ttl_network"                 // 网络失败提示缓存TTL（秒）
 	SettingKeyWebDAVConfig                         SettingKey = "webdav_config"                            // WebDAV 云备份配置（JSON）
-	SettingKeyResponseFilterEnabled                SettingKey = "response_filter_enabled"                  // 输出结果关键词拦截开关
-	SettingKeyResponseFilterKeywords               SettingKey = "response_filter_keywords"                 // 拦截关键词列表(JSON 数组)
-	SettingKeyResponseFilterAction                 SettingKey = "response_filter_action"                   // 拦截动作: block(阻断) / replace(替换为*)
-	SettingKeyResponseFilterErrorMessage           SettingKey = "response_filter_error_message"            // 阻断时返回的错误信息
+	SettingKeyRequestFilterEnabled                 SettingKey = "request_filter_enabled"                   // 转发前输入关键词拦截开关
+	SettingKeyRequestFilterKeywords                SettingKey = "request_filter_keywords"                  // 最新一条用户文本的拦截关键词(JSON 数组)
+	SettingKeyRequestFilterErrorMessage            SettingKey = "request_filter_error_message"             // 本地拒绝请求时返回的错误信息
 	SettingKeyLogLevel                             SettingKey = "log_level"                                // 应用日志级别: debug, info, warn, error
 	SettingKeyLogExcludedGroups                    SettingKey = "log_excluded_groups"                      // 在日志列表/实时流中屏蔽的分组名称列表(JSON 数组)
 	SettingKeyModelNormalizeRouterPrefixes         SettingKey = "model_normalize_router_prefixes"          // 模型名归一化: 路由商/平台前缀列表(JSON 数组，元素如 "dmxapi-")
@@ -198,10 +199,9 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyFailureHintTTLRateLimit, Value: "5"},     // 默认5秒
 		{Key: SettingKeyFailureHintTTLNetwork, Value: "2"},       // 默认2秒
 		{Key: SettingKeyWebDAVConfig, Value: `{"enabled":false,"base_url":"","username":"","password":"","remote_path":"/octopus-backup/","interval_hours":6,"include_stats":true,"include_logs":false,"max_backups":10}`},
-		{Key: SettingKeyResponseFilterEnabled, Value: "false"},
-		{Key: SettingKeyResponseFilterKeywords, Value: "[]"},
-		{Key: SettingKeyResponseFilterAction, Value: "block"},
-		{Key: SettingKeyResponseFilterErrorMessage, Value: "The response contains blocked keywords and has been intercepted."},
+		{Key: SettingKeyRequestFilterEnabled, Value: "false"},
+		{Key: SettingKeyRequestFilterKeywords, Value: "[]"},
+		{Key: SettingKeyRequestFilterErrorMessage, Value: DefaultRequestFilterErrorMessage},
 		{Key: SettingKeyLogLevel, Value: "info"},
 		{Key: SettingKeyLogExcludedGroups, Value: "[]"},
 		{Key: SettingKeyModelNormalizeRouterPrefixes, Value: "[]"},        // 默认无自定义路由前缀，回退到前端内置默认
@@ -469,15 +469,20 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("webdav config must be a valid JSON object")
 		}
 		return nil
-	case SettingKeyResponseFilterEnabled, SettingKeyGroupUpstreamMetaDisplayEnabled:
+	case SettingKeyRequestFilterEnabled, SettingKeyGroupUpstreamMetaDisplayEnabled:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}
 		return nil
-	case SettingKeyResponseFilterKeywords:
+	case SettingKeyRequestFilterKeywords:
 		var keywords []string
-		if err := json.Unmarshal([]byte(s.Value), &keywords); err != nil {
-			return fmt.Errorf("response filter keywords must be a valid JSON array of strings")
+		if err := json.Unmarshal([]byte(s.Value), &keywords); err != nil || keywords == nil {
+			return fmt.Errorf("request filter keywords must be a valid JSON array of strings")
+		}
+		for _, keyword := range keywords {
+			if strings.TrimSpace(keyword) == "" {
+				return fmt.Errorf("request filter keywords must not be empty or whitespace")
+			}
 		}
 		return nil
 	case SettingKeyLogExcludedGroups:
@@ -505,14 +510,7 @@ func (s *Setting) Validate() error {
 			}
 		}
 		return nil
-	case SettingKeyResponseFilterAction:
-		switch s.Value {
-		case "block", "replace":
-			return nil
-		default:
-			return fmt.Errorf("response filter action must be block or replace")
-		}
-	case SettingKeyResponseFilterErrorMessage:
+	case SettingKeyRequestFilterErrorMessage:
 		return nil
 	case SettingKeyLogLevel:
 		switch s.Value {

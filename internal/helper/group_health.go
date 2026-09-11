@@ -42,6 +42,14 @@ type GroupHealthProbeResult struct {
 func RunGroupHealthCandidate(ctx context.Context, channel *appmodel.Channel, usedKey appmodel.ChannelKey, modelName, endpointType string) GroupHealthProbeResult {
 	startedAt := time.Now()
 	result := GroupHealthProbeResult{}
+	if channel == nil {
+		result.ErrorMessage = "channel is nil"
+		return result
+	}
+	if channel.SkipModelTest {
+		result.ErrorMessage = errModelTestSkipped.Error()
+		return result
+	}
 
 	adapterTypes := candidateAdapterTypes(channel, modelName, endpointType)
 	if len(adapterTypes) == 0 {
@@ -153,13 +161,26 @@ func RunGroupHealth(ctx context.Context, groupID int, probeModes ...appmodel.Gro
 			attemptedCount++
 			if appendErr := repo.AppendAttempt(ctx, snapshot.ID, appmodel.GroupHealthAttempt{
 				GroupItemID: item.ID, ChannelID: item.ChannelID,
-				ChannelName:  fmt.Sprintf("channel-%d", item.ChannelID),
-				ModelName:    item.ModelName,
-				Priority:     item.Priority, Weight: item.Weight,
+				ChannelName: fmt.Sprintf("channel-%d", item.ChannelID),
+				ModelName:   item.ModelName,
+				Priority:    item.Priority, Weight: item.Weight,
 				Status:       appmodel.GroupHealthAttemptStatusFailed,
 				ErrorMessage: fmt.Sprintf("failed to load channel: %v", err),
 			}); appendErr != nil {
 				return appendErr
+			}
+			continue
+		}
+
+		if channel.SkipModelTest {
+			if err := repo.AppendAttempt(ctx, snapshot.ID, appmodel.GroupHealthAttempt{
+				GroupItemID: item.ID, ChannelID: item.ChannelID,
+				ChannelName: channel.Name, ModelName: item.ModelName,
+				Priority: item.Priority, Weight: item.Weight,
+				Status:       appmodel.GroupHealthAttemptStatusSkipped,
+				ErrorMessage: errModelTestSkipped.Error(),
+			}); err != nil {
+				return err
 			}
 			continue
 		}
@@ -169,9 +190,9 @@ func RunGroupHealth(ctx context.Context, groupID int, probeModes ...appmodel.Gro
 			attemptedCount++
 			if appendErr := repo.AppendAttempt(ctx, snapshot.ID, appmodel.GroupHealthAttempt{
 				GroupItemID: item.ID, ChannelID: item.ChannelID,
-				ChannelName:  channel.Name,
-				ModelName:    item.ModelName,
-				Priority:     item.Priority, Weight: item.Weight,
+				ChannelName: channel.Name,
+				ModelName:   item.ModelName,
+				Priority:    item.Priority, Weight: item.Weight,
 				Status:       appmodel.GroupHealthAttemptStatusFailed,
 				ErrorMessage: "no available key",
 			}); appendErr != nil {
@@ -186,9 +207,9 @@ func RunGroupHealth(ctx context.Context, groupID int, probeModes ...appmodel.Gro
 			GroupItemID: item.ID, ChannelID: item.ChannelID,
 			ChannelName:  channel.Name,
 			ChannelKeyID: usedKey.ID, KeyRemark: usedKey.Remark,
-			ModelName:    item.ModelName,
-			Priority:     item.Priority, Weight: item.Weight,
-			HTTPStatus:   result.HTTPStatus, DurationMS: result.DurationMS,
+			ModelName: item.ModelName,
+			Priority:  item.Priority, Weight: item.Weight,
+			HTTPStatus: result.HTTPStatus, DurationMS: result.DurationMS,
 			ErrorMessage: result.ErrorMessage,
 			Status:       appmodel.GroupHealthAttemptStatusFailed,
 		}
@@ -217,7 +238,7 @@ func RunGroupHealth(ctx context.Context, groupID int, probeModes ...appmodel.Gro
 						ChannelName: skippedName,
 						ModelName:   skipped.ModelName,
 						Priority:    skipped.Priority, Weight: skipped.Weight,
-						Status:      appmodel.GroupHealthAttemptStatusSkipped,
+						Status: appmodel.GroupHealthAttemptStatusSkipped,
 					}); err != nil {
 						return err
 					}
@@ -267,6 +288,9 @@ func resolveGroupHealthFinalStatus(groupMode appmodel.GroupMode, stopAfterSucces
 	if !successFound {
 		if len(items) == 0 {
 			return appmodel.GroupHealthStatusFailed, "group has no items"
+		}
+		if attemptedCount == 0 {
+			return appmodel.GroupHealthStatusPartial, "all candidates skipped model test; availability was not checked"
 		}
 		return appmodel.GroupHealthStatusFailed, "all candidates failed"
 	}

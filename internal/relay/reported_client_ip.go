@@ -12,15 +12,14 @@ import (
 //	安全轨 = c.ClientIP()（Gin 可信代理解析），继续驱动登录限速与 API Key IP
 //	         白名单；配置不变时取值不变，伪造头无法影响安全判定。
 //	展示轨 = 本文件解析的 reportedClientIP，写入 relay_logs.reported_client_ip，
-//	         仅用于日志展示。托管平台（Render）所有入站流量都经平台代理，
-//	         c.ClientIP() 在默认"不信任任何代理"下记录的是代理地址；而
-//	         CF-Connecting-IP 由 Render 边缘的 Cloudflare 写入（客户端无法伪造），
-//	         X-Forwarded-For 右起第一个公网地址是最难伪造的回退位。
+//	         仅用于日志展示。托管平台经代理转发时，默认不信任代理的
+//	         c.ClientIP() 可能是内网地址。转发头只能作为来源线索：是否被
+//	         平台正确覆盖需要实际部署验证，不能凭头名称保证真实性。
 
 const reportedClientIPContextKey = "octopus_reported_client_ip"
 
-// ReportedClientIPSource 标注展示 IP 的来源头，兼作部署后的线上探测证据：
-// 部署后若三路请求的 source 均为 none，说明平台代理剥掉了转发头，需要另行处理。
+// ReportedClientIPSource 标注展示 IP 的来源头。
+// none 仅表示没有可用地址，不能区分缺头、无效头或内网地址。
 type ReportedClientIPSource string
 
 const (
@@ -36,7 +35,7 @@ type reportedClientIP struct {
 
 // resolveReportedClientIP 依次尝试各来源头，返回第一个可用的公网地址。
 // 优先级：CF-Connecting-IP > X-Forwarded-For（右起首个公网）。
-// X-Real-IP 不采信：它没有任何可信代理校验，直连场景客户端可随意伪造。
+// X-Real-IP 不在展示回退范围内；以上来源也未经可信代理校验。
 func resolveReportedClientIP(headerGet func(string) string) reportedClientIP {
 	if headerGet == nil {
 		return reportedClientIP{Source: ReportedClientIPSourceNone}
@@ -60,9 +59,8 @@ func firstPublicIP(raw string) string {
 }
 
 // rightmostPublicForwardedIP 从 X-Forwarded-For（可能多段逗号分隔）右侧向左
-// 找第一个公网地址。链路上最后追加的是离服务器最近的代理；伪造者插入的
-// 假值位于左侧，其真实出口地址会被自己的代理追加在右侧，因此右起取值
-// 对伪造最不敏感。私有/保留段全部跳过；全部无效时返回空。
+// 找第一个非内网地址。这是展示用的启发式取值，不是可信代理链校验；
+// 结果也可能是中间代理。全部无效时返回空。
 func rightmostPublicForwardedIP(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -100,7 +98,8 @@ func parseIPTight(raw string) net.IP {
 // 与常见网关地址（10.x、172.16/12、192.168/16、CGNAT 100.64/10）保持一致，
 // 托管平台内网代理地址不会被误当成客户端。
 func isPrivateOrReservedIP(ip net.IP) bool {
-	return ip.IsLoopback() ||
+	return !ip.IsGlobalUnicast() ||
+		ip.IsLoopback() ||
 		ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() ||
 		ip.IsUnspecified() ||
@@ -123,7 +122,7 @@ func isInCIDR(ip net.IP, cidr string) bool {
 // captureReportedClientIP 在请求入口计算展示轨 IP 并存入 gin context，
 // 供各落盘点读取；每请求只解析一次。
 func captureReportedClientIP(c *gin.Context) {
-	if c == nil {
+	if c == nil || c.Request == nil {
 		return
 	}
 	resolved := resolveReportedClientIP(c.Request.Header.Get)

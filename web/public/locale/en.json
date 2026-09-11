@@ -674,7 +674,7 @@
       }
     },
     "maintenance": {
-      "description": "Tune circuit breaker, retry, and response-filter policies that keep relays resilient. Changes apply immediately."
+      "description": "Configure circuit breakers, retries, and input filtering. Matching input is rejected locally without contacting upstream. Changes apply immediately."
     }
   },
   "user": {
@@ -1154,18 +1154,12 @@
       },
       "hint": "When a channel fails consecutively up to the threshold, circuit breaker trips. Cooldown grows exponentially up to the max cooldown. Half-open probe timeout allows a lost probe (client disconnect, etc.) to retry after timeout, preventing channels from being permanently skipped"
     },
-    "responseFilter": {
-      "title": "Response Keyword Filter",
-      "description": "Intercept model output based on keywords. Supports blocking or replacing matched content.",
+    "requestFilter": {
+      "title": "Input Keyword Filter",
+      "description": "Check only the text of the latest user message in conversation requests. Matches return HTTP 403 before any upstream request or retry, without modifying model output. Disabled by default; legacy output rules are not reused.",
+      "saveFailed": "Save failed. This setting was restored to its last confirmed value. Please retry; unsaved rules are not active.",
       "enabled": {
-        "label": "Enable response keyword filter"
-      },
-      "action": {
-        "label": "Filter action",
-        "block": "Block",
-        "replace": "Replace",
-        "blockHint": "Immediately stop the response and return an error when a keyword is detected.",
-        "replaceHint": "Replace matched keywords with asterisks (*), the response continues normally."
+        "label": "Enable input keyword filter"
       },
       "keywords": {
         "label": "Blocked keywords",
@@ -1173,12 +1167,13 @@
         "add": "Add",
         "empty": "No keywords yet. Add keywords to block.",
         "duplicate": "This keyword already exists",
-        "removeHint": "Click to remove"
+        "removeHint": "Remove keyword",
+        "hint": "Case-insensitive substring matching, not regex. Use complete probe phrases; short words like hi or test can block ordinary chat. This cannot detect every probe. Also enable Skip model test for channels that prohibit probing."
       },
       "errorMessage": {
         "label": "Block error message",
         "placeholder": "Enter the error message returned when blocked",
-        "hint": "The error message text returned to the client when a keyword is detected in block mode."
+        "hint": "Returned only to the client on local rejection, never sent upstream. Leave empty to use the default message."
       }
     },
     "retry": {
@@ -1227,7 +1222,7 @@
       },
       "maxTotalAttempts": {
         "label": "Max total attempts",
-        "hint": "Caps the total decision records (forwards, cooldown skips, and circuit-break skips) across all candidate channels for one request, preventing relay_logs from exploding when every channel is unavailable. 0 falls back to the built-in default (~64).",
+        "hint": "Caps attempted forwards for one request. Key rotation, channel failover, and protocol fallback each consume an attempt; cooldown and circuit-break skips do not. 0 uses the built-in limit of 64 attempts.",
         "placeholder": "Enter max total attempts"
       },
       "rateLimitHold": {
@@ -1247,11 +1242,11 @@
       },
       "emptyOutput": {
         "label": "Retry on empty output",
-        "hint": "Automatically retry when the upstream returns success but output is empty (non-streaming: CompletionTokens=0 and no content; streaming: no valid data chunks)."
+        "hint": "Retry an empty answer within the attempt budget only before any content is sent to the client. Streaming requires reasoning buffering. Tool calls and refusals are not empty answers. Once text or reasoning is sent, the request cannot be retried."
       },
       "truncation": {
         "label": "Retry on truncated output",
-        "hint": "Automatically retry on another key/channel when the upstream returns success but the reply was cut off by max_tokens (finish_reason=length, half an answer). Off by default: replies that legitimately fill the token cap would be re-sent needlessly. Enable only if needed."
+        "hint": "Only applies to non-streaming answers not yet sent to the client. If the provider hits a token limit, regenerate using another key/channel within the attempt budget. Off by default; retries may add latency and cost. Partially delivered streams cannot be replayed or automatically continued."
       },
       "keySelectionStrategy": {
         "label": "Key selection strategy",
@@ -2793,6 +2788,7 @@
       "billingWindowPeak": "Peak",
       "billingWindowOffPeak": "Off-peak",
       "billingWindowHint": "DeepSeek peak/off-peak billing",
+      "reportedIPHint": "Reported by the {source} header for display only. It may identify a proxy rather than the original client and is not used for IP allowlists or login rate limits.",
       "forensics": {
         "detailUnavailable": "Log detail is unavailable",
         "traceId": "Trace ID",

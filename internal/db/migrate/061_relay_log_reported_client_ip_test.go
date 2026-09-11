@@ -19,8 +19,13 @@ func TestAddRelayLogReportedClientIP(t *testing.T) {
 		t.Fatalf("get sql db: %v", err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.RelayLog{}); err != nil {
-		t.Fatalf("auto migrate relay log: %v", err)
+	// Start from an actual legacy schema, not the current model which already
+	// contains both new columns and would make this migration a no-op.
+	if err := db.Exec("CREATE TABLE relay_logs (id INTEGER PRIMARY KEY, time INTEGER, client_ip TEXT)").Error; err != nil {
+		t.Fatalf("create legacy relay log table: %v", err)
+	}
+	if err := db.Exec("INSERT INTO relay_logs (id, time, client_ip) VALUES (1, 100, ?)", "172.17.0.1").Error; err != nil {
+		t.Fatalf("create legacy relay log: %v", err)
 	}
 
 	if err := addRelayLogReportedClientIP(db); err != nil {
@@ -37,11 +42,7 @@ func TestAddRelayLogReportedClientIP(t *testing.T) {
 		}
 	}
 
-	// 既有行不回填：新列保持空串，写入与读取不受影响
-	logEntry := model.RelayLog{ID: 1, Time: 100, ClientIP: "172.17.0.1"}
-	if err := db.Create(&logEntry).Error; err != nil {
-		t.Fatalf("create relay log: %v", err)
-	}
+	// Existing data survives; nullable new columns read as empty strings.
 	var stored model.RelayLogListItem
 	if err := db.Select("id", "client_ip", "reported_client_ip", "reported_client_ip_source").
 		First(&stored, 1).Error; err != nil {

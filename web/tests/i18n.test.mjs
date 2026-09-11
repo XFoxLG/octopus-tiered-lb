@@ -103,7 +103,7 @@ function collectLiteralTranslationPaths(relativePath, namespace) {
     };
     const visit = (node) => {
         const isTranslationCall = ts.isCallExpression(node) && (
-            (ts.isIdentifier(node.expression) && node.expression.text === 't')
+            (ts.isIdentifier(node.expression) && ['t', 'translate'].includes(node.expression.text))
             || (ts.isPropertyAccessExpression(node.expression) && node.expression.expression.getText(sourceFile) === 't' && node.expression.name.text === 'raw')
         );
         if (isTranslationCall) {
@@ -133,6 +133,7 @@ function assertSettingsUiTranslations() {
     const paths = new Set([
         ...collectLiteralTranslationPaths('src/components/modules/setting/AIRoute.tsx', 'setting'),
         ...collectLiteralTranslationPaths('src/components/modules/setting/Cache.tsx', 'setting'),
+        ...collectLiteralTranslationPaths('src/components/modules/setting/RequestFilter.tsx', 'setting'),
         ...['timeoutSeconds', 'parallelism'].flatMap((field) =>
             ['label', 'hint'].map((part) => `setting.aiRoute.${field}.${part}`)),
         ...['baseURL', 'apiKey', 'model', 'timeoutSeconds', 'parallelism', 'servicesJSON']

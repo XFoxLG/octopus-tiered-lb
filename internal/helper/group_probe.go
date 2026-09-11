@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -23,6 +24,8 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
+
+var errModelTestSkipped = errors.New("channel skipped model test (issue #98)")
 
 type GroupModelTestRequest struct {
 	GroupID int `json:"group_id" binding:"required"`
@@ -664,6 +667,9 @@ func cloneGroupModelProgress(progress *GroupModelTestProgress) GroupModelTestPro
 func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, channel *appmodel.Channel, key, endpointType, modelName string) (int, string, *transmodel.InternalLLMResponse, error) {
 	if channel == nil {
 		return 0, "", nil, fmt.Errorf("channel is nil")
+	}
+	if channel.SkipModelTest {
+		return 0, "", nil, errModelTestSkipped
 	}
 
 	httpClient, err := ChannelHttpClient(channel)

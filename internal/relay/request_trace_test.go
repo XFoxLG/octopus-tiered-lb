@@ -158,6 +158,7 @@ func TestRelayRequestTraceMiddlewareLogsRequestRejectedBeforeUpstream(t *testing
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"rejected-model","messages":[]}`))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("CF-Connecting-IP", "203.0.113.7")
 	responseRecorder := httptest.NewRecorder()
 	engine.ServeHTTP(responseRecorder, request)
 	if responseRecorder.Code != http.StatusUnauthorized {
@@ -174,6 +175,9 @@ func TestRelayRequestTraceMiddlewareLogsRequestRejectedBeforeUpstream(t *testing
 	}
 	if relayLog.HTTPStatus != http.StatusUnauthorized {
 		t.Fatalf("HTTPStatus = %d, want 401", relayLog.HTTPStatus)
+	}
+	if relayLog.ReportedClientIP != "203.0.113.7" || relayLog.ReportedClientIPSource != string(ReportedClientIPSourceCFConnectingIP) {
+		t.Fatalf("rejected request lost reported IP: %q (%q)", relayLog.ReportedClientIP, relayLog.ReportedClientIPSource)
 	}
 	if relayLog.ClientWriteBytes == 0 || !relayLog.ClientWriteComplete {
 		t.Fatalf("client write metadata = bytes:%d complete:%t", relayLog.ClientWriteBytes, relayLog.ClientWriteComplete)

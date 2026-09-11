@@ -33,7 +33,6 @@ import (
 )
 
 var errClientDisconnected = errors.New("client disconnected")
-var errResponseFilterBlocked = errors.New("response filter blocked by keyword")
 
 // streamInterruptionRenderer is intentionally optional. Each inbound protocol
 // can supply its native streaming error frame without widening the shared
@@ -219,6 +218,10 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		}
 	}
 
+	if rejectBlockedRequest(c, internalRequest) {
+		return
+	}
+
 	requestModel := internalRequest.Model
 	apiKeyID := c.GetInt("api_key_id")
 
@@ -268,18 +271,18 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 			serveRelayStreamSession(c, req)
 			if replayTrace := relayRequestTraceFromContext(c); replayTrace != nil {
 				replayTrace.stageRelayLog(dbmodel.RelayLog{
-					Time:              replayStartedAt.Unix(),
-					RequestModelName:  requestModel,
-					RequestAPIKeyID:   apiKeyID,
-					ClientIP:          c.ClientIP(),
-					ReportedClientIP:  replayReportedIP.IP,
+					Time:                   replayStartedAt.Unix(),
+					RequestModelName:       requestModel,
+					RequestAPIKeyID:        apiKeyID,
+					ClientIP:               c.ClientIP(),
+					ReportedClientIP:       replayReportedIP.IP,
 					ReportedClientIPSource: string(replayReportedIP.Source),
-					UserAgent:         c.Request.UserAgent(),
-					EndpointType:      resolveRelayLogEndpointType(endpointType, endpointType),
-					ActualModelName:   requestModel,
-					UseTime:           int(time.Since(replayStartedAt).Milliseconds()),
-					GenerationOutcome: dbmodel.RelayLogGenerationReplay,
-					UpstreamOutcome:   dbmodel.RelayLogUpstreamNone,
+					UserAgent:              c.Request.UserAgent(),
+					EndpointType:           resolveRelayLogEndpointType(endpointType, endpointType),
+					ActualModelName:        requestModel,
+					UseTime:                int(time.Since(replayStartedAt).Milliseconds()),
+					GenerationOutcome:      dbmodel.RelayLogGenerationReplay,
+					UpstreamOutcome:        dbmodel.RelayLogUpstreamNone,
 				})
 			}
 			return
@@ -415,6 +418,11 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 
 // attempt 统一管理一次通道尝试的完整生命周期
 func (ra *relayAttempt) attempt() attemptResult {
+	// Parsing belongs to the request; response IDs, terminal flags, and buffered
+	// chunks belong to one attempt. A retry must not inherit discarded output.
+	if adapter, supportsReset := ra.inAdapter.(interface{ ResetResponseState() }); supportsReset {
+		adapter.ResetResponseState()
+	}
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name, ra.internalRequest.Model)
 	span.SetAdapterType(ra.adapterType.String())
 	ra.logAttemptNumber = span.AttemptNumber()
@@ -431,17 +439,6 @@ func (ra *relayAttempt) attempt() attemptResult {
 			Written:  ra.streamOutputWasCommitted(),
 			Err:      fwdErr,
 			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "client disconnected", Code: statusCode},
-		}
-	}
-
-	// 输出结果关键词拦截 — 不重试，不记录渠道失败统计
-	if errors.Is(fwdErr, errResponseFilterBlocked) {
-		span.End(dbmodel.AttemptFailed, statusCode, "response filter blocked")
-		return attemptResult{
-			Success:  false,
-			Written:  ra.c.Writer.Written(),
-			Err:      fwdErr,
-			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "response filter blocked by keyword", Code: statusCode},
 		}
 	}
 
@@ -582,7 +579,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 	return attemptResult{
 		Success:  false,
 		Written:  written,
-		Err:      fmt.Errorf("channel %s adapter=%s attempt %d/%d: %v", ra.channel.Name, ra.adapterType, ra.tryIndex, ra.tryTotal, fwdErr),
+		Err:      fmt.Errorf("channel %s adapter=%s attempt %d/%d: %w", ra.channel.Name, ra.adapterType, ra.tryIndex, ra.tryTotal, fwdErr),
 		Decision: decision,
 	}
 }
@@ -887,6 +884,8 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
 func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http.Response) (retErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Canceling the reader goroutine alone cannot unblock a pending Body.Read.
+	defer response.Body.Close()
 	hasDownstreamOutput := false // Payload committed to a client or replay session.
 
 	// 安全网：确保 stream session 在所有退出路径上都被关闭，
@@ -908,6 +907,15 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
 		return fmt.Errorf("upstream returned non-SSE content-type %q for stream request: %s", ct, string(body))
 	}
+
+	previousContentType := ra.c.Writer.Header().Get("Content-Type")
+	defer func() {
+		// A failed, uncommitted stream may become a normal JSON error response.
+		// Leaving the SSE header in place makes clients parse that error as SSE.
+		if retErr != nil && !ra.streamOutputWasCommitted() {
+			ra.c.Header("Content-Type", previousContentType)
+		}
+	}()
 
 	// 设置 SSE 响应头
 	ra.c.Header("Content-Type", "text/event-stream")
@@ -1061,11 +1069,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 	firstVisibleOutputTimeoutError := func() error {
 		logClientDisconnected()
-		log.Warnf("first visible output timeout (%ds), switching channel", ra.firstTokenTimeOutSec)
+		log.Warnf("first visible output timeout (%ds), ending attempt", ra.firstTokenTimeOutSec)
 		if err := response.Body.Close(); err != nil {
 			log.Warnf("failed to close response body on first visible output timeout: %v", err)
 		}
-		return fmt.Errorf("%w (%ds)", errFirstVisibleOutputTimeout, ra.firstTokenTimeOutSec)
+		timeoutErr := fmt.Errorf("%w (%ds)", errFirstVisibleOutputTimeout, ra.firstTokenTimeOutSec)
+		emitStreamInterruption(timeoutErr, false)
+		return timeoutErr
 	}
 
 	streamIdleTimeoutSeconds := 0
@@ -1169,6 +1179,16 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		)
 
 		select {
+		case <-ctx.Done():
+			if ra.streamSession == nil && isClientDisconnected(ra.clientCtx) {
+				return errClientDisconnected
+			}
+			if ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && !ra.streamTermination.Cause.IsProviderFailure() {
+				return finishAcceptedTerminal()
+			}
+			interruptedErr := fmt.Errorf("stream interrupted: %w", ctx.Err())
+			emitStreamInterruption(interruptedErr, false)
+			return interruptedErr
 		case <-clientDone:
 			if ra.streamSession == nil {
 				log.Infof("client disconnected, stopping stream")
@@ -1224,10 +1244,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				return idleErr
 			}
 		case <-heartbeatTicker.C:
-			if hasDownstreamOutput {
+			if hasDownstreamOutput && !clientDisconnected {
 				if _, err := ra.c.Writer.Write([]byte(": ping\n\n")); err != nil {
 					markClientDisconnected()
 					logClientDisconnected()
+					if ra.streamSession == nil {
+						return errClientDisconnected
+					}
 					continue
 				}
 				ra.c.Writer.Flush()
@@ -1240,6 +1263,12 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			// results channel 被 SSE reader goroutine 关闭。
 			// 需要区分正常结束（上游 EOF）和异常中断（ctx 取消/超时）。
 			if ctxErr := ctx.Err(); ctxErr != nil {
+				if ra.streamSession == nil && isClientDisconnected(ra.clientCtx) {
+					return errClientDisconnected
+				}
+				if ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && !ra.streamTermination.Cause.IsProviderFailure() {
+					return finishAcceptedTerminal()
+				}
 				interruptedErr := fmt.Errorf("stream interrupted: %w", ctxErr)
 				emitStreamInterruption(interruptedErr, false)
 				return interruptedErr
@@ -1297,41 +1326,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 		data, chunkHasVisible, err := ra.transformStreamData(ctx, r.data)
 		if err != nil {
-			if errors.Is(err, errResponseFilterBlocked) {
-				// 关键词拦截：发送错误 SSE 事件并终止流
-				filterCfg := ra.getResponseFilterConfig()
-				// 先 flush 暂存的 reasoning buffer，再发送错误事件
-				if len(reasoningBuffer) > 0 {
-					writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
-					reasoningBuffer = nil
-					reasoningBufferBytes = 0
-				}
-				if ra.streamSession != nil {
-					errPayload, _ := jsonAPI.Marshal(map[string]any{
-						"error": map[string]any{
-							"message": filterCfg.ErrorMessage,
-							"type":    "content_filter",
-							"code":    "content_blocked",
-						},
-					})
-					if len(ra.streamSession.AddPayload(errPayload)) > 0 {
-						markStreamOutputCommitted()
-					}
-					ra.streamSession.Finish(nil)
-				} else if !clientDisconnected {
-					writeSSEErrorEvent(ra.c.Writer, filterCfg.ErrorMessage)
-					ra.c.Writer.Flush()
-					markStreamOutputCommitted()
-				}
-				if closeErr := response.Body.Close(); closeErr != nil {
-					log.Warnf("failed to close response body on response filter block: %v", closeErr)
-				}
-				return fmt.Errorf("response filter blocked streaming output")
-			}
-			if firstVisibleOutputDeadlineReached {
-				return firstVisibleOutputTimeoutError()
-			}
-			continue
+			transformErr := fmt.Errorf("failed to transform stream event: %w", err)
+			emitStreamInterruption(transformErr, false)
+			return transformErr
 		}
 		if firstVisibleOutputDeadlineReached && (!chunkHasVisible || len(data) == 0) {
 			// A declared terminal response (for example, a prompt block) is a
@@ -1379,6 +1376,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		// 可见内容到达，先 flush 暂存的 reasoning buffer
 		if len(reasoningBuffer) > 0 {
 			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+			if clientDisconnected && ra.streamSession == nil {
+				return errClientDisconnected
+			}
 			if ra.streamOutputWasCommitted() {
 				hasDownstreamOutput = true
 			}
@@ -1423,10 +1423,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		if _, err := ra.c.Writer.Write(data); err != nil {
 			markClientDisconnected()
 			logClientDisconnected()
-			if terminalProviderFailure {
-				return providerTerminalFailureError(ra.streamTermination)
-			}
-			continue
+			return errClientDisconnected
 		}
 		markStreamOutputCommitted()
 		ra.c.Writer.Flush()
@@ -1437,7 +1434,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 }
 
 // writeReasoningBuffer flushes buffered reasoning-only chunks to the client.
-// Used when visible content finally arrives (or on response-filter block) to
+// Used when visible content finally arrives (or a provider terminal arrives) to
 // release the reasoning that was buffered for retry-safety (issue #155).
 func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected *bool,
 	markClientDisconnected func(), logClientDisconnected func()) {
@@ -1495,13 +1492,6 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	hasVisible := streamChunkHasVisibleContent(internalStream)
 
 	ra.recordStreamTermination(internalStream)
-
-	// 输出结果关键词拦截（流式）
-	filterCfg := ra.getResponseFilterConfig()
-	if blocked, keyword := applyResponseFilter(internalStream, filterCfg); blocked {
-		log.Infof("response filter blocked streaming chunk with keyword %q", keyword)
-		return nil, false, errResponseFilterBlocked
-	}
 
 	inStream, err := ra.inAdapter.TransformStream(ctx, internalStream)
 	if err != nil {
@@ -1573,23 +1563,6 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform response: %v", err)
 		return fmt.Errorf("failed to transform outbound response: %w", err)
-	}
-
-	// 输出结果关键词拦截
-	filterCfg := ra.getResponseFilterConfig()
-	if blocked, keyword := applyResponseFilter(internalResponse, filterCfg); blocked {
-		log.Infof("response filter blocked keyword %q", keyword)
-		errMsg := filterCfg.ErrorMessage
-		errorResp := map[string]any{
-			"error": map[string]any{
-				"message": errMsg,
-				"type":    "content_filter",
-				"code":    "content_blocked",
-			},
-		}
-		data, _ := jsonAPI.Marshal(errorResp)
-		ra.c.Data(http.StatusOK, "application/json", data)
-		return nil
 	}
 
 	applyReasoningExhaustedHeader(ra.c, internalResponse)
@@ -1774,8 +1747,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 		if err := req.operationCtx.Err(); err != nil {
 			lastErr = err
 			logRelayErrorfByContext(err, "relay operation ended before request completed: %v", err)
-			req.metrics.Save(false, err, allAttempts)
-			return nil, err
+			goto exhausted
 		}
 
 		// 零进展快速失败（预算2）：上一轮完整跑完但零真实转发，所有渠道当前不可用。
@@ -1798,13 +1770,12 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				goto exhausted
 			}
 			if isClientDisconnected(req.clientCtx) {
-				return nil, handleClientDisconnect(req, allAttempts)
+				return nil, handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
 			}
 			if err := req.operationCtx.Err(); err != nil {
 				lastErr = err
 				logRelayErrorfByContext(err, "relay operation ended before request completed: %v", err)
-				req.metrics.Save(false, err, allAttempts)
-				return nil, err
+				goto exhausted
 			}
 
 			item := routeIter.Item()
@@ -1865,13 +1836,12 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					goto exhausted
 				}
 				if isClientDisconnected(req.clientCtx) {
-					return nil, handleClientDisconnect(req, allAttempts)
+					return nil, handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
 				}
 				if err := req.operationCtx.Err(); err != nil {
 					lastErr = err
 					logRelayErrorfByContext(err, "relay operation ended: %v", err)
-					req.metrics.Save(false, err, allAttempts)
-					return nil, err
+					goto exhausted
 				}
 
 				var usedKey dbmodel.ChannelKey
@@ -1916,6 +1886,18 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 				var result attemptResult
 				for adapterIndex, attemptType := range attemptTypes {
+					// Protocol fallback is another real HTTP request, not a free retry.
+					if budget.reachedMaxForwarded(routeIter) {
+						lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
+						goto exhausted
+					}
+					if isClientDisconnected(req.clientCtx) {
+						return nil, handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
+					}
+					if err := req.operationCtx.Err(); err != nil {
+						lastErr = err
+						goto exhausted
+					}
 					outAdapter := outbound.Get(attemptType)
 					if outAdapter == nil {
 						continue
@@ -1956,6 +1938,16 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					return newInflightRelayResult(cloneInternalResponse(req.metrics.InternalResponse), req.internalRequest.Model, currentAttempts, namespace, requestText), nil
 				}
 
+				// Cancellation is a request outcome, not a channel-health failure.
+				if errors.Is(result.Err, errClientDisconnected) {
+					req.metrics.Save(false, result.Err, currentAttempts)
+					return nil, result.Err
+				}
+				if err := req.operationCtx.Err(); err != nil {
+					lastErr = err
+					goto exhausted
+				}
+
 				if result.Decision.Code == http.StatusTooManyRequests {
 					channelRateLimited, remaining := balancer.RecordChannelRateLimit(
 						channel.ID,
@@ -1977,13 +1969,6 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
 					// 离群窗口：记录失败样本（与熔断器同级，避免 adapter 降级误触发）。
 					balancer.OutlierReport(channel.ID, false, result.Decision.Code, time.Now())
-				}
-
-				// Client disconnected — stop all retries immediately without
-				// recording failure hints or attempting further channels.
-				if errors.Is(result.Err, errClientDisconnected) {
-					req.metrics.Save(false, result.Err, currentAttempts)
-					return nil, result.Err
 				}
 
 				// hold 路径：本轮 429 会立刻再试同一渠道，不写 failure hint / 不记 failedKey，
@@ -2020,13 +2005,25 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					// 可选：429 时在当前渠道内延时重试，而不是立刻换 Key/渠道。
 					// 默认关闭，保持历史「马上 failover」行为。
 					if shouldHoldOnRateLimit(rateLimitHoldCfg, result.Decision) {
+						if budget.reachedMaxForwarded(routeIter) {
+							goto exhausted
+						}
 						if waitFor, canWait := rateLimitHoldWaitDuration(rateLimitHoldCfg, result.Decision, rateLimitHoldWaited); canWait {
-							holdCtx := req.clientCtx
-							if holdCtx == nil {
-								holdCtx = req.operationCtx
+							holdCtx, cancelHold := context.WithCancel(req.operationCtx)
+							clientContext := req.clientCtx
+							if clientContext == nil {
+								clientContext = req.operationCtx
 							}
-							if !waitRateLimitHoldFor(holdCtx, rateLimitHoldCfg, channel.Name, rateLimitHoldWaited, waitFor) {
-								return nil, handleClientDisconnect(req, currentAttempts)
+							stopClientCancellation := context.AfterFunc(clientContext, cancelHold)
+							waitCompleted := waitRateLimitHoldFor(holdCtx, rateLimitHoldCfg, channel.Name, rateLimitHoldWaited, waitFor)
+							stopClientCancellation()
+							cancelHold()
+							if !waitCompleted {
+								if isClientDisconnected(req.clientCtx) {
+									return nil, handleClientDisconnect(req, currentAttempts)
+								}
+								lastErr = req.operationCtx.Err()
+								goto exhausted
 							}
 							balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModelName)
 							// The held key is eligible again after the wait; keep other
@@ -2074,7 +2071,13 @@ exhausted:
 		req.internalRequest.RawAPIFormat, requestModel, len(allAttempts), lastErr)
 	// 对外返回通用文案，避免把上游内部错误体（可能含上游实现细节）回显给客户端；
 	// 完整错误已写入上方日志与 relay_log。
-	resp.Error(req.c, http.StatusBadGateway, "all channels failed")
+	if !req.c.Writer.Written() {
+		if errors.Is(req.operationCtx.Err(), context.DeadlineExceeded) {
+			resp.Error(req.c, http.StatusGatewayTimeout, "relay operation timed out")
+		} else {
+			resp.Error(req.c, http.StatusBadGateway, "all channels failed")
+		}
+	}
 	if lastErr != nil {
 		return nil, lastErr
 	}
