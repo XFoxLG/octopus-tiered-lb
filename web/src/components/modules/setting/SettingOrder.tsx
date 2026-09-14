@@ -19,7 +19,6 @@ export type SettingItemId =
     | 'ai-route'
     | 'auto-strategy'
     | 'account'
-    | 'semantic-cache'
     | 'log'
     | 'info'
     | 'system'
@@ -37,7 +36,6 @@ export const DEFAULT_SETTING_ORDER: SettingItemId[] = [
     'ai-route',
     'auto-strategy',
     'account',
-    'semantic-cache',
     'log',
     'system',
     'llmsync',
@@ -111,7 +109,6 @@ export function SettingOrder() {
             'ai-route': settingT('aiRoute.title'),
             'auto-strategy': settingT('autoStrategy.title'),
             account: settingT('account.title'),
-            'semantic-cache': settingT('semanticCache.title'),
             log: settingT('log.title'),
             info: settingT('info.title'),
             system: settingT('system'),

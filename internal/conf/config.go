@@ -138,6 +138,14 @@ func GetCacheConfig() Cache {
 	return AppConfig.Cache
 }
 
+// SetCacheConfig changes desired configuration only. The running store retains
+// its startup configuration until the service is restarted.
+func SetCacheConfig(configuration Cache) {
+	cacheConfigurationLock.Lock()
+	defer cacheConfigurationLock.Unlock()
+	AppConfig.Cache = configuration
+}
+
 // ephemeralJWTSecret marks whether the JWT secret was generated ephemerally
 // during Load() (because it was empty or a known placeholder). When true the
 // secret is NOT safe to derive an AES encryption key from — using it would
@@ -197,6 +205,15 @@ func Load(path string) error {
 		}
 	}
 
+	if HasCacheEnvironment() {
+		configuration, err := loadCacheEnvironment()
+		if err != nil {
+			return err
+		}
+		// Select a complete source. Never merge a deployment URL with a stale
+		// password, database index or TLS switch from the local file.
+		viper.Set("cache", configuration)
+	}
 	if err := viper.Unmarshal(&AppConfig); err != nil {
 		return fmt.Errorf("unable to decode config into struct: %w", err)
 	}
@@ -206,14 +223,13 @@ func Load(path string) error {
 	if err := validateDatabasePool("database.log_pool", AppConfig.Database.LogPool); err != nil {
 		return err
 	}
-	if AppConfig.Cache.Type != "" && AppConfig.Cache.Type != "redis" {
-		return fmt.Errorf("cache.type must be empty or redis")
-	}
-	if AppConfig.Cache.Type == "redis" {
-		if strings.TrimSpace(AppConfig.Cache.Redis.Addr) == "" {
-			return fmt.Errorf("cache.redis.addr is required when cache.type is redis")
-		}
-		if err := ValidateRedisConfig(AppConfig.Cache.Redis); err != nil {
+	// The local file is the lowest-priority cache source. An environment
+	// override already replaced this section above, and a service database
+	// record supersedes it once the store loads; failing here on file values
+	// would let a lower-priority typo block a higher-priority configuration.
+	// Only validate eagerly when this file selection is the effective one.
+	if CacheConfigSource() != "database" {
+		if err := ValidateCacheConfiguration(AppConfig.Cache); err != nil {
 			return err
 		}
 	}
@@ -301,21 +317,7 @@ func setDefaults() {
 	viper.SetDefault("external.update_url", "https://github.com/lingyuins/octopus/releases/latest/download")
 	viper.SetDefault("external.update_api_url", "https://api.github.com/repos/lingyuins/octopus/releases/latest")
 	viper.SetDefault("security.encryption_key", "")
-	// 缓存/状态后端默认留空：留空表示沿用内存 + 数据库策略（向后兼容）。
-	// 配置 "redis" 时启用 Redis 后端（见 issue #123）。
-	viper.SetDefault("cache.type", "")
-	// Unmarshal only visits known keys; AutomaticEnv alone misses fresh-container credentials.
-	viper.SetDefault("cache.redis.addr", "")
-	viper.SetDefault("cache.redis.password", "")
-	viper.SetDefault("cache.redis.username", "")
-	viper.SetDefault("cache.redis.db", 0)
-	viper.SetDefault("cache.redis.pool_size", 5)
-	viper.SetDefault("cache.redis.tls", false)
-	viper.SetDefault("cache.redis.ca_file", "")
-	// Redis 连接超时默认 3s（issue #135）：比 go-redis 默认 DialTimeout 5s 更激进，
-	// 避免远程 Redis 重启期间 TCP hang 导致启动期长时间无日志阻塞。
-	viper.SetDefault("cache.redis.dial_timeout", "3s")
-	viper.SetDefault("cache.redis.read_timeout", "3s")
+	setCacheDefaults(viper.GetViper())
 }
 
 func setDatabasePoolDefaults(prefix string, configuration DatabasePoolConfig) {
@@ -345,18 +347,23 @@ func ValidateRedisConfig(configuration RedisConfig) error {
 	return nil
 }
 
-// CacheConfigSource distinguishes durable deployment configuration from a local editable file.
-func CacheConfigSource() string {
-	for _, variable := range os.Environ() {
-		name, value, _ := strings.Cut(variable, "=")
-		if strings.HasPrefix(strings.ToUpper(name), "OCTOPUS_CACHE_") && value != "" {
-			return "environment"
+// ValidateCacheConfiguration checks an effective cache selection: the type
+// must be empty (memory) or redis, and a redis selection needs a usable
+// address. Callers may defer it while a higher-priority source still owns
+// the configuration, then run it once the effective source is known.
+func ValidateCacheConfiguration(configuration Cache) error {
+	if configuration.Type != "" && configuration.Type != "redis" {
+		return fmt.Errorf("cache.type must be empty or redis")
+	}
+	if configuration.Type == "redis" {
+		if strings.TrimSpace(configuration.Redis.Addr) == "" {
+			return fmt.Errorf("cache.redis.addr is required when cache.type is redis")
+		}
+		if err := ValidateRedisConfig(configuration.Redis); err != nil {
+			return err
 		}
 	}
-	if os.Getenv("RENDER") == "true" || os.Getenv("RENDER_SERVICE_ID") != "" {
-		return "deployment"
-	}
-	return "file"
+	return nil
 }
 
 func defaultDataDir() string {

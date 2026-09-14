@@ -26,10 +26,6 @@ func init() {
 				Handle(getAnalyticsUtilization),
 		).
 		AddRoute(
-			router.NewRoute("/evaluation", http.MethodGet).
-				Handle(getAnalyticsEvaluation),
-		).
-		AddRoute(
 			router.NewRoute("/group-health", http.MethodGet).
 				Handle(getAnalyticsGroupHealth),
 		).
@@ -80,15 +76,6 @@ func getAnalyticsUtilization(c *gin.Context) {
 	}
 
 	data, err := analytics.CachedAnalyticsUtilizationGet(c.Request.Context(), analyticsRange, parseCacheTTL(c))
-	if err != nil {
-		resp.InternalError(c)
-		return
-	}
-	resp.Success(c, data)
-}
-
-func getAnalyticsEvaluation(c *gin.Context) {
-	data, err := analytics.AnalyticsEvaluationGet(c.Request.Context())
 	if err != nil {
 		resp.InternalError(c)
 		return

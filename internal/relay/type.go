@@ -233,40 +233,6 @@ func responseProviderFailure(resp *model.InternalLLMResponse) (model.Termination
 	return model.TerminationMetadata{}, false
 }
 
-// responseHasNonCacheableTermination prevents incomplete, failed, and
-// provider-blocked outcomes from entering the semantic cache as if they were
-// successful assistant answers. The internal metadata is intentionally absent
-// from wire JSON, so checking it before serialization is essential.
-func responseHasNonCacheableTermination(resp *model.InternalLLMResponse) bool {
-	if resp == nil {
-		return false
-	}
-	if terminationPreventsSemanticCache(resp.Termination) {
-		return true
-	}
-	for _, choice := range resp.Choices {
-		if terminationPreventsSemanticCache(terminationForChoice(choice)) {
-			return true
-		}
-	}
-	return false
-}
-
-func terminationPreventsSemanticCache(termination model.TerminationMetadata) bool {
-	if !termination.HasCause() {
-		return false
-	}
-
-	switch termination.Cause {
-	case model.TerminationCauseComplete,
-		model.TerminationCauseStopSequence,
-		model.TerminationCauseToolCall:
-		return false
-	default:
-		return true
-	}
-}
-
 // isEmptyOutputResponse 判断非流式响应是否为"空输出"：
 // 所有 Choices 的 Message 均无可见内容（无文本、无工具调用、无多模态、无音频）。
 // 不依赖 CompletionTokens 判断——推理模型可能消耗大量 reasoning tokens
@@ -373,7 +339,6 @@ type relayRequest struct {
 	group             *dbmodel.Group // 新增：用于读取分组级推理缓冲策略
 	iter              *balancer.Iterator
 	streamSession     *relayStreamSession
-	retryCache        *retryRequestCache
 }
 
 // relayAttempt 尝试级上下文

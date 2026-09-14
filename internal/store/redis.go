@@ -44,8 +44,9 @@ func Init(cfg conf.RedisConfig) error {
 	defer cancel()
 	if err := c.Ping(ctx).Err(); err != nil {
 		_ = c.Close()
-		log.Warnf("redis init failed, falling back to memory backend: %v", err)
-		return fmt.Errorf("redis ping %s: %w", SafeRedisAddress(cfg.Addr), err)
+		connectionError := safeRedisConnectionError(err)
+		log.Warnf("redis init failed, falling back to memory backend: %v", connectionError)
+		return fmt.Errorf("redis ping %s: %w", SafeRedisAddress(cfg.Addr), connectionError)
 	}
 
 	switchToRedis(c)
@@ -71,7 +72,7 @@ func TestConnection(cfg conf.RedisConfig) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := c.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("redis ping %s: %w", SafeRedisAddress(cfg.Addr), err)
+		return fmt.Errorf("redis ping %s: %w", SafeRedisAddress(cfg.Addr), safeRedisConnectionError(err))
 	}
 	return nil
 }
@@ -176,7 +177,7 @@ func reconnectLoop(parentContext context.Context, cfg conf.RedisConfig, onConnec
 		if err != nil {
 			_ = c.Close()
 			next := reconnectBackoff(attempt + 1)
-			log.Warnf("redis reconnect attempt %d failed: %v (next in %s)", attempt, err, next)
+			log.Warnf("redis reconnect attempt %d failed: %v (next in %s)", attempt, safeRedisConnectionError(err), next)
 			continue
 		}
 		mu.Lock()

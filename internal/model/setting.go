@@ -115,6 +115,32 @@ const (
 	SettingKeyGroupUpstreamMetaDisplayEnabled      SettingKey = "group_upstream_meta_display_enabled"      // 分组编辑页展示上游价/余额/今日收入/性能指标
 )
 
+// Legacy keys remain identifiable so shared databases and backups retain their
+// values. This deployment no longer creates, exposes, or accepts these controls.
+var retiredSemanticCacheSettingKeys = [...]SettingKey{
+	SettingKeySemanticCacheEnabled,
+	SettingKeySemanticCacheTTL,
+	SettingKeySemanticCacheThreshold,
+	SettingKeySemanticCacheMaxEntries,
+	SettingKeySemanticCacheEmbeddingBaseURL,
+	SettingKeySemanticCacheEmbeddingAPIKey,
+	SettingKeySemanticCacheEmbeddingModel,
+	SettingKeySemanticCacheEmbeddingTimeoutSeconds,
+}
+
+func IsRetiredSemanticCacheSetting(key SettingKey) bool {
+	for _, retiredKey := range retiredSemanticCacheSettingKeys {
+		if key == retiredKey {
+			return true
+		}
+	}
+	return false
+}
+
+func RetiredSemanticCacheSettingKeys() []SettingKey {
+	return append([]SettingKey(nil), retiredSemanticCacheSettingKeys[:]...)
+}
+
 type Setting struct {
 	Key   SettingKey `json:"key" gorm:"primaryKey"`
 	Value string     `json:"value" gorm:"not null"`
@@ -164,14 +190,6 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyAutoStrategyTimeWindow, Value: "300"},      // 默认时间窗口300秒（5分钟）
 		{Key: SettingKeyAutoStrategySampleThreshold, Value: "100"}, // 默认滑动窗口大小100条
 		{Key: SettingKeyAutoStrategyLatencyWeight, Value: "30"},    // 默认延迟权重30%
-		{Key: SettingKeySemanticCacheEnabled, Value: "false"},      // 默认关闭语义缓存
-		{Key: SettingKeySemanticCacheTTL, Value: "3600"},           // 默认TTL 1小时
-		{Key: SettingKeySemanticCacheThreshold, Value: "98"},       // 默认相似度阈值 0.98（0-100）
-		{Key: SettingKeySemanticCacheMaxEntries, Value: "1000"},    // 默认最大1000条
-		{Key: SettingKeySemanticCacheEmbeddingBaseURL, Value: ""},
-		{Key: SettingKeySemanticCacheEmbeddingAPIKey, Value: ""},
-		{Key: SettingKeySemanticCacheEmbeddingModel, Value: ""},
-		{Key: SettingKeySemanticCacheEmbeddingTimeoutSeconds, Value: "10"},
 		{Key: SettingKeyNavOrder, Value: `["home","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
 		{Key: SettingKeyNavVisible, Value: `["home","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
 		{Key: SettingKeyAnalyticsTabOrder, Value: `["utilization","route-health","channel-model","evaluation","latency"]`},
@@ -223,6 +241,9 @@ func DefaultSettings() []Setting {
 }
 
 func (s *Setting) Validate() error {
+	if IsRetiredSemanticCacheSetting(s.Key) {
+		return fmt.Errorf("semantic cache setting %q is retired", s.Key)
+	}
 	switch s.Key {
 	case SettingKeyStatsTimezone:
 		// 空串合法（=未配置，回退到 stats_timezone_offset）。非空必须是合法 IANA 时区名。
@@ -239,8 +260,6 @@ func (s *Setting) Validate() error {
 		SettingKeyAuthErrorCooldown, SettingKeyServerErrorCooldown, SettingKeyRateLimitChannelThreshold,
 		SettingKeyRateLimitChannelWindow, SettingKeyRateLimitChannelCooldown, SettingKeyRelayMaxTotalAttempts,
 		SettingKeyRateLimitHoldInterval, SettingKeyRateLimitHoldMaxWait,
-		SettingKeySemanticCacheTTL, SettingKeySemanticCacheThreshold, SettingKeySemanticCacheMaxEntries,
-		SettingKeySemanticCacheEmbeddingTimeoutSeconds,
 		SettingKeyAutoStrategyMinSamples, SettingKeyAutoStrategyTimeWindow, SettingKeyAutoStrategySampleThreshold,
 		SettingKeyAutoStrategyLatencyWeight,
 		SettingKeyAIRouteGroupID, SettingKeyAIRouteTimeoutSeconds, SettingKeyAIRouteParallelism,
@@ -288,18 +307,6 @@ func (s *Setting) Validate() error {
 		if s.Key == SettingKeyAutoStrategyLatencyWeight && (v < 0 || v > 100) {
 			return fmt.Errorf("auto strategy latency weight must be between 0 and 100")
 		}
-		if s.Key == SettingKeySemanticCacheTTL && v < 1 {
-			return fmt.Errorf("semantic cache TTL must be greater than 0")
-		}
-		if s.Key == SettingKeySemanticCacheThreshold && (v < 0 || v > 100) {
-			return fmt.Errorf("semantic cache threshold must be between 0 and 100")
-		}
-		if s.Key == SettingKeySemanticCacheMaxEntries && v < 1 {
-			return fmt.Errorf("semantic cache max entries must be greater than 0")
-		}
-		if s.Key == SettingKeySemanticCacheEmbeddingTimeoutSeconds && v < 1 {
-			return fmt.Errorf("semantic cache embedding timeout must be greater than 0")
-		}
 		if s.Key == SettingKeyAIRouteGroupID && v < 0 {
 			return fmt.Errorf("ai route group id must be greater than or equal to 0")
 		}
@@ -322,7 +329,7 @@ func (s *Setting) Validate() error {
 				return fmt.Errorf("setting value must be greater than 0")
 			}
 		}
-	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeySemanticCacheEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRetryTruncationEnabled, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify:
+	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRetryTruncationEnabled, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}
@@ -388,28 +395,16 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("custom error rules must be a JSON array")
 		}
 		return nil
-	case SettingKeyProxyURL, SettingKeySemanticCacheEmbeddingBaseURL, SettingKeyAIRouteBaseURL:
+	case SettingKeyProxyURL, SettingKeyAIRouteBaseURL:
 		if s.Value == "" {
 			return nil
 		}
 		parsedURL, err := url.Parse(s.Value)
 		if err != nil {
-			if s.Key == SettingKeySemanticCacheEmbeddingBaseURL {
-				return fmt.Errorf("semantic cache embedding base URL is invalid: %w", err)
-			}
 			if s.Key == SettingKeyAIRouteBaseURL {
 				return fmt.Errorf("ai route base URL is invalid: %w", err)
 			}
 			return fmt.Errorf("proxy URL is invalid: %w", err)
-		}
-		if s.Key == SettingKeySemanticCacheEmbeddingBaseURL {
-			if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-				return fmt.Errorf("semantic cache embedding base URL scheme must be http or https")
-			}
-			if parsedURL.Host == "" {
-				return fmt.Errorf("semantic cache embedding base URL must have a host")
-			}
-			return nil
 		}
 		if s.Key == SettingKeyAIRouteBaseURL {
 			if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {

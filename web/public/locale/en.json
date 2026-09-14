@@ -1354,49 +1354,6 @@
         "placeholder": "30"
       }
     },
-    "semanticCache": {
-      "title": "Semantic Cache",
-      "description": "Optional answer reuse for a single, non-streaming Chat question with explicit temperature=0. Conversations, system or character prompts, streaming, tools, multimodal inputs and Responses bypass it. Keep disabled for creative writing and companion chat. This is not the provider's prompt-prefix cache.",
-      "enabled": {
-        "label": "Enable Semantic Cache"
-      },
-      "ttl": {
-        "label": "Cache TTL (seconds)",
-        "placeholder": "Enter TTL in seconds",
-        "hint": "Cached entries expire after this duration."
-      },
-      "threshold": {
-        "label": "Similarity Threshold (0-100)",
-        "placeholder": "Enter similarity threshold",
-        "hint": "Higher values require a closer semantic match before a cached response is reused."
-      },
-      "maxEntries": {
-        "label": "Max Entries",
-        "placeholder": "Enter the maximum number of cached entries",
-        "hint": "When the limit is reached, older cached entries are evicted first."
-      },
-      "embedding": {
-        "title": "Embedding Service",
-        "description": "These settings are used only for semantic-cache embedding requests and are not shared with AI Route."
-      },
-      "baseUrl": {
-        "label": "Embedding Base URL",
-        "placeholder": "Enter an OpenAI-compatible embedding base URL"
-      },
-      "apiKey": {
-        "label": "Embedding API Key",
-        "placeholder": "Enter the embedding API key"
-      },
-      "model": {
-        "label": "Embedding Model",
-        "placeholder": "Enter the embedding model name"
-      },
-      "timeoutSeconds": {
-        "label": "Embedding Timeout (seconds)",
-        "placeholder": "Enter the embedding request timeout",
-        "hint": "Applies only to semantic-cache embedding requests."
-      }
-    },
     "pageOrder": {
       "title": "Page Order",
       "description": "Drag the top-level pages into the order you want. Changes are saved globally as soon as the drop completes.",
@@ -1544,14 +1501,47 @@
       "source": {
         "file": "Configuration source: local config file. Saved changes require a service restart before they can become active.",
         "environment": "Configuration source: environment variables. Change the deployment environment and redeploy; this form cannot override it.",
-        "deployment": "Configuration source: deployment-managed settings. Update the deployment configuration and redeploy to change the service."
+        "deployment": "Configuration source: deployment-managed settings. Update the deployment configuration and redeploy to change the service.",
+        "database": "Configuration source: encrypted service configuration in the database, scoped by stable RENDER_SERVICE_ID. Restart after saving."
       },
       "reconnecting": "The service is trying to reconnect to Redis / Valkey. Check the active backend and health; a configured address alone does not mean Redis is active.",
-      "deploymentInstructions": "On Render, manage cache settings in the service's Environment configuration. Edit the environment variables below, then redeploy the service. Values entered here do not update Render or the running service configuration.",
+      "deploymentInstructions": "When environment or platform settings take precedence, edit them in the deployment platform and redeploy. This form cannot override them or switch the active backend.",
       "deploymentTestOnly": "In deployment-managed mode, these local form values are used only for a PING connection test. A successful test neither activates Redis nor proves permission for every required ACL command.",
-      "tlsLabel": "Use TLS (always enabled for rediss://)",
+      "savedConnection": "Existing connection (safe summary)",
+      "configuredType": "Configured backend: {value}",
+      "connectionSummary": "{value}; DB {count}; {tls}",
+      "passwordSaved": "A password is stored but never returned. Leave the replacement blank to keep the entire connection.",
+      "noPasswordSaved": "The existing connection has no password configured.",
+      "noSavedConnection": "No connection is available to reuse. Enter a complete new connection to enable Redis.",
+      "advanced": "Advanced: manual connection, certificate and timeouts",
+      "manualConnection": "Manual parameters for a new connection",
+      "replacementHint": "Paste a complete redis:// or rediss:// URL, or enter host:port. Blank keeps the existing connection; a new address replaces it without inheriting stored credentials or TLS. The server parses it.",
+      "urlIdentityHint": "The URL owns username, password, DB and TLS. Separate identity fields below are not sent. A rediss:// URL may use an explicit CA path.",
+      "manualIdentityHint": "Only used for a new host:port. A blank password means no password for that new connection. With the address blank, the entire existing connection is kept and these fields are not sent.",
+      "tuningHint": "Pool size and timeouts can be saved without re-entering credentials. Blank or 0 pool size uses the default; timeout examples: 3s, 500ms.",
+      "providerHint": "Aiven's CLICK_TO:REVEAL_PASSWORD is an invalid placeholder: reveal and copy the real password. A Powered off service cannot connect. Render Internal URLs require the same workspace and region.",
+      "memoryHint": "Saving Memory requires a restart. The stored Redis connection is retained for later reuse.",
+      "loading": "Loading cache configuration...",
+      "loadError": "Cannot confirm the configuration source. Reload before saving.",
+      "saveHint": "Identify only validates the format; Test only sends a temporary PING. After saving, restart and check the active backend and health above.",
+      "readOnlyHint": "Environment or platform settings take precedence, so saving here is disabled. You may still identify or test a candidate; edit the deployment platform to persist changes.",
+      "previewButton": "Identify configuration",
+      "previewSummary": "Candidate connection (server-parsed)",
+      "previewSuccess": "Configuration parsed. No Redis connection, save, or backend switch was performed.",
+      "previewFailed": "Could not parse the configuration. Check the complete address, real password and advanced fields. Nothing was connected or saved.",
+      "saveFailed": "Saving or validation failed. Your draft is retained; check it and retry. The active backend was not switched.",
+      "validationFailed": "Correct the marked connection or advanced fields, then retry.",
+      "validation": {
+        "addressRequired": "There is no existing connection to reuse. Enter a complete new connection.",
+        "passwordPlaceholder": "CLICK_TO:REVEAL_PASSWORD is not a password. Reveal and copy the real password in Aiven.",
+        "databaseInteger": "DB index must be an integer greater than or equal to 0.",
+        "poolSizeInteger": "Pool size must be an integer greater than or equal to 0; 0 uses the default."
+      },
+      "persistenceHint": "Render stores encrypted configuration by stable RENDER_SERVICE_ID; other installations fall back to a local file. UI configuration and environment variables have the same runtime request performance; configuration is not read per request.",
+      "sharedKeysHint": "Per-service storage isolates connection configuration only. Services using the same Redis endpoint and DB can still share runtime keys.",
+      "tlsLabel": "Use TLS (manual address only)",
       "caFileLabel": "Custom CA certificate file (optional, server path)",
-      "tlsHint": "For a certificate issued by a public CA, leave this empty to use the system trust store. For a private CA, provide the CA file path available to the Octopus server. TLS certificate and hostname verification are never disabled.",
+      "tlsHint": "Only new TLS connections accept a CA file. Public certificates normally use the system trust store; private CAs need a path readable by the Octopus server. Certificate and hostname verification remain enabled.",
       "type": {
         "label": "Configured backend type",
         "memory": "Memory (default)",
@@ -1559,12 +1549,12 @@
       },
       "fields": {
         "addr": {
-          "label": "Address",
-          "placeholder": "127.0.0.1:6379"
+          "label": "Replacement connection (blank keeps existing)",
+          "placeholder": "redis://... / rediss://... / host:port"
         },
         "password": {
           "label": "Password",
-          "placeholder": "••••••"
+          "placeholder": "New connection password (optional)"
         },
         "username": {
           "label": "Username (ACL)",
@@ -1587,15 +1577,15 @@
           "placeholder": "3s"
         }
       },
-      "testButton": "Test connection (PING only)",
+      "testButton": "Test PING",
       "testSuccess": "Redis / Valkey PING succeeded. This does not activate the backend or verify permission for all required ACL commands.",
-      "testFailed": "Connection test failed: {error}",
+      "testFailed": "Validation or PING failed. Check that the service is powered on, network access, credentials and TLS. Nothing was saved or activated.",
       "saveButton": "Save",
       "saving": "Saving...",
-      "saved": "Cache configuration saved to file; it is not active until the service restarts successfully.",
+      "saved": "Cache configuration saved. Saving does not activate it; check the active backend above.",
       "typeRedisRequired": "Select Redis as the backend type first",
       "addrRequired": "Redis address is required",
-      "restartNotice": "Saving or testing does not switch the active backend. Restart after saving a file-based configuration; on Render, edit environment variables and redeploy. Then check the active backend and health above."
+      "restartNotice": "Configuration is pending activation. Restart the service, then check the active backend and health. No hot switch is performed."
     },
     "webdav": {
       "title": "WebDAV Cloud Backup",

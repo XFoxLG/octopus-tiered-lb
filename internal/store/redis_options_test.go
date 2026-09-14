@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +40,9 @@ func TestBuildRedisOptionsRejectsUnsafeOrMalformedURI(t *testing.T) {
 	for _, address := range []string{
 		"https://user:secret@host:6379", "rediss://user:secret@host:6379?skip_verify=true",
 		"rediss://user:secret@host:6379?unknown=secret", "redis://host:6379/-1", "user:secret@host:6379",
+		"redis://", "redis:///2", "redis://:6379", "rediss://user:secret@:6379",
+		"redis://host:6379/#secret", "redis://host:0", "redis://host:65536", "host:redis",
+		"redis://CLICK_TO:REVEAL_PASSWORD@host:6379",
 	} {
 		_, err := BuildRedisOptions(conf.RedisConfig{Addr: address})
 		if err == nil {
@@ -139,5 +143,37 @@ func TestBackendStatusDistinguishesConfiguredAndRunning(t *testing.T) {
 	changed.DB = 1
 	if !InspectBackend(context.Background(), conf.Cache{Type: "redis", Redis: changed}).RestartNeeded {
 		t.Fatal("changing saved config must not pretend to hot-swap the running store")
+	}
+}
+
+func TestRedisURIParsesEncodedCredentialsAndIPv6WithoutRewriting(t *testing.T) {
+	options, err := BuildRedisOptions(conf.RedisConfig{
+		Addr: "rediss://service%40user:pass%3Aword%40%2F%23%25@[::1]:6379/2?db=3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Username != "service@user" || options.Password != "pass:word@/#%" || options.Addr != "[::1]:6379" || options.DB != 3 {
+		t.Fatal("URI decoding, IPv6 or query database precedence changed")
+	}
+	if options.TLSConfig == nil || options.TLSConfig.ServerName != "::1" {
+		t.Fatal("TLS must use the parsed host identity")
+	}
+	legacy, err := BuildRedisOptions(conf.RedisConfig{Addr: "localhost:6379", Username: "legacy-user", Password: "legacy-secret", DB: 4, TLS: true})
+	if err != nil || legacy.Username != "legacy-user" || legacy.Password != "legacy-secret" || legacy.DB != 4 || legacy.TLSConfig == nil {
+		t.Fatal("manual host:port configurations must retain explicit connection fields")
+	}
+}
+
+func TestRedisConnectionErrorsDoNotEchoRemoteSecrets(t *testing.T) {
+	for _, remoteMessage := range []string{
+		"WRONGPASS invalid username-password pair synthetic-secret",
+		"NOAUTH synthetic-secret", "NOPERM synthetic-secret",
+		"ERR redis://user:synthetic-secret@host:6379",
+	} {
+		message := safeRedisConnectionError(errors.New(remoteMessage)).Error()
+		if strings.Contains(message, "synthetic-secret") || strings.Contains(message, "redis://") {
+			t.Fatal("remote Redis error text leaked into a diagnostic")
+		}
 	}
 }

@@ -54,28 +54,6 @@ type AnalyticsOverview struct {
 	EnabledAPIKeyCount   int `json:"enabled_api_key_count"`
 }
 
-type AnalyticsEvaluationSummary struct {
-	SemanticCache SemanticCacheEvaluationSummary `json:"semantic_cache"`
-}
-
-type SemanticCacheEvaluationSummary struct {
-	Enabled           bool    `json:"enabled"`
-	RuntimeEnabled    bool    `json:"runtime_enabled"`
-	TTLSeconds        int     `json:"ttl_seconds"`
-	Threshold         int     `json:"threshold"`
-	MaxEntries        int     `json:"max_entries"`
-	CurrentEntries    int     `json:"current_entries"`
-	Hits              int64   `json:"hits"`
-	Misses            int64   `json:"misses"`
-	HitRate           float64 `json:"hit_rate"`
-	UsageRate         float64 `json:"usage_rate"`
-	EvaluatedRequests int64   `json:"evaluated_requests"`
-	CacheHitResponses int64   `json:"cache_hit_responses"`
-	CacheMissRequests int64   `json:"cache_miss_requests"`
-	BypassedRequests  int64   `json:"bypassed_requests"`
-	StoredResponses   int64   `json:"stored_responses"`
-}
-
 type AnalyticsProviderBreakdownItem struct {
 	ChannelID   int    `json:"channel_id"`
 	ChannelName string `json:"channel_name"`

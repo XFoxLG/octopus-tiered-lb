@@ -136,28 +136,6 @@ export interface AnalyticsEvaluationRuntime {
     isLoading: boolean;
 }
 
-export interface SemanticCacheEvaluationSummary {
-    enabled: boolean;
-    runtime_enabled: boolean;
-    ttl_seconds: number;
-    threshold: number;
-    max_entries: number;
-    current_entries: number;
-    hits: number;
-    misses: number;
-    hit_rate: number;
-    usage_rate: number;
-    evaluated_requests: number;
-    cache_hit_responses: number;
-    cache_miss_requests: number;
-    bypassed_requests: number;
-    stored_responses: number;
-}
-
-export interface AnalyticsEvaluationSummary {
-    semantic_cache: SemanticCacheEvaluationSummary;
-}
-
 function getErrorStatusCode(error: unknown) {
     if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'number') {
         return error.code;
@@ -248,14 +226,6 @@ export function useAnalyticsGroupHealth(cacheTtl: AnalyticsCacheTtl = '30s') {
         queryKey: ['analytics', 'group-health', cacheTtl],
         queryFn: async () => apiClient.get<AnalyticsGroupHealthItem[]>('/api/v1/analytics/group-health', cacheTtlParam(cacheTtl)),
         refetchInterval: CACHE_TTL_MS[cacheTtl],
-    });
-}
-
-export function useAnalyticsEvaluationSummary() {
-    return useQuery({
-        queryKey: ['analytics', 'evaluation'],
-        queryFn: async () => apiClient.get<AnalyticsEvaluationSummary>('/api/v1/analytics/evaluation'),
-        refetchInterval: REFETCH_INTERVAL_CONFIG,
     });
 }
 

@@ -13,9 +13,8 @@ import (
 
 var settingCache = cache.New[model.SettingKey, string](16)
 
-// generation 在每次设置发生变更时自增。调用方可以缓存基于设置派生的
-// 配置（如语义缓存运行时配置），只在代际变化时重新读取，避免在请求热
-// 路径上反复读取多个设置并重建配置。
+// generation changes after writes or refreshes so callers can reuse derived
+// configuration without repeatedly rebuilding it on the request path.
 var generation atomic.Uint64
 
 // Generation 返回当前设置代际。每当任意设置被写入（SetString/SetInt）或
@@ -28,6 +27,9 @@ func GetCache() cache.Cache[model.SettingKey, string] { return settingCache }
 func List(ctx context.Context) ([]model.Setting, error) {
 	settings := make([]model.Setting, 0, settingCache.Len())
 	for key, value := range settingCache.GetAll() {
+		if model.IsRetiredSemanticCacheSetting(key) {
+			continue
+		}
 		settings = append(settings, model.Setting{
 			Key:   key,
 			Value: value,
@@ -45,6 +47,9 @@ func GetString(key model.SettingKey) (string, error) {
 }
 
 func SetString(key model.SettingKey, value string) error {
+	if model.IsRetiredSemanticCacheSetting(key) {
+		return fmt.Errorf("semantic cache setting %q is retired", key)
+	}
 	valueCache, ok := settingCache.Get(key)
 	if !ok {
 		return fmt.Errorf("setting not found")
@@ -81,6 +86,9 @@ func GetBool(key model.SettingKey) (bool, error) {
 }
 
 func SetInt(key model.SettingKey, value int) error {
+	if model.IsRetiredSemanticCacheSetting(key) {
+		return fmt.Errorf("semantic cache setting %q is retired", key)
+	}
 	valueCache, ok := settingCache.Get(key)
 	if !ok {
 		return fmt.Errorf("setting not found")
@@ -121,6 +129,9 @@ func RefreshCache(ctx context.Context) error {
 	missingSettings := make([]model.Setting, 0, len(defaultSettings))
 
 	for _, defaultSetting := range defaultSettings {
+		if model.IsRetiredSemanticCacheSetting(defaultSetting.Key) {
+			continue
+		}
 		if !existingKeys[defaultSetting.Key] {
 			missingSettings = append(missingSettings, defaultSetting)
 		}
@@ -134,6 +145,9 @@ func RefreshCache(ctx context.Context) error {
 	}
 	settingCache.Clear()
 	for _, setting := range settings {
+		if model.IsRetiredSemanticCacheSetting(setting.Key) {
+			continue
+		}
 		settingCache.Set(setting.Key, setting.Value)
 	}
 	generation.Add(1)

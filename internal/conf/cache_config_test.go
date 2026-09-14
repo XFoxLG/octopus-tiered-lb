@@ -24,6 +24,13 @@ func resetConfigurationForTest(t *testing.T) {
 	t.Setenv("OCTOPUS_AUTH_JWT_SECRET", "test-secret-not-for-production")
 	t.Setenv("RENDER", "")
 	t.Setenv("RENDER_SERVICE_ID", "")
+	for key := range cacheDefaults {
+		variable := strings.ToUpper(APP_NAME + "_" + strings.ReplaceAll(key, ".", "_"))
+		t.Setenv(variable, "")
+		if err := os.Unsetenv(variable); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestLoadRedisEnvironmentInFreshContainer(t *testing.T) {
@@ -123,5 +130,66 @@ func TestCacheSaveRejectsNegativeTimeoutWithoutChangingFile(t *testing.T) {
 	after, err := os.ReadFile(configPath)
 	if err != nil || string(before) != string(after) {
 		t.Fatal("invalid configuration changed the saved file")
+	}
+}
+
+func TestCacheEnvironmentReplacesWholeFileConfiguration(t *testing.T) {
+	resetConfigurationForTest(t)
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	contents := `{"cache":{"type":"redis","redis":{"addr":"old.example.test:6379","username":"old-user","password":"old-secret","db":4,"tls":true}}}`
+	if err := os.WriteFile(configPath, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OCTOPUS_CACHE_TYPE", "redis")
+	t.Setenv("OCTOPUS_CACHE_REDIS_ADDR", "redis://new.example.test:6379")
+	if err := Load(configPath); err != nil {
+		t.Fatal(err)
+	}
+	configuration := GetCacheConfig()
+	if configuration.Type != "redis" || configuration.Redis.Addr != "redis://new.example.test:6379" {
+		t.Fatal("environment configuration was not selected")
+	}
+	if configuration.Redis.Username != "" || configuration.Redis.Password != "" || configuration.Redis.DB != 0 || configuration.Redis.TLS {
+		t.Fatal("environment target inherited the old file connection identity")
+	}
+}
+
+func TestExplicitEmptyCacheEnvironmentDisablesSavedConfiguration(t *testing.T) {
+	resetConfigurationForTest(t)
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"cache":{"type":"redis","redis":{"addr":"old.example.test:6379","password":"old-secret"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RENDER_SERVICE_ID", "srv-experimental")
+	t.Setenv("OCTOPUS_CACHE_TYPE", "")
+	if err := Load(configPath); err != nil {
+		t.Fatal(err)
+	}
+	if CacheConfigSource() != "environment" || GetCacheConfig().Type != "" || GetCacheConfig().Redis.Password != "" {
+		t.Fatal("explicit environment memory selection must override every saved source")
+	}
+}
+
+func TestCacheConfigurationRequiresStableServiceIdentity(t *testing.T) {
+	resetConfigurationForTest(t)
+	t.Setenv("RENDER", "true")
+	t.Setenv("RENDER_INSTANCE_ID", "unstable-instance")
+	for _, invalidID := range []string{"", "default", "srv-", "srv-first/second", " srv-valid", strings.Repeat("s", 129)} {
+		t.Setenv("RENDER_SERVICE_ID", invalidID)
+		if CacheServiceID() != "" || CacheConfigSource() != "deployment" {
+			t.Fatalf("invalid service identity %q enabled shared database writes", invalidID)
+		}
+	}
+	t.Setenv("RENDER_SERVICE_ID", "srv-experimental")
+	if CacheServiceID() != "srv-experimental" || CacheConfigSource() != "database" {
+		t.Fatal("stable service must support its own database configuration")
+	}
+	t.Setenv("RENDER_INSTANCE_ID", "another-unstable-instance")
+	if CacheServiceID() != "srv-experimental" {
+		t.Fatal("process instance must not change configuration ownership")
+	}
+	t.Setenv("OCTOPUS_CACHE_REDIS_ADDR", "")
+	if CacheConfigSource() != "environment" {
+		t.Fatal("explicit environment configuration must remain authoritative")
 	}
 }

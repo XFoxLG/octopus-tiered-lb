@@ -20,22 +20,32 @@ func InspectBackend(ctx context.Context, configured conf.Cache) BackendStatus {
 	currentClient := client
 	usingRedis := enabled
 	connectionPending := reconnecting
-	currentConfiguration := activeConfiguration
+	restartNeeded := requiresRestartLocked(configured)
 	mu.RUnlock()
 
-	status := BackendStatus{Backend: "memory", Healthy: true, Reconnecting: connectionPending}
+	status := BackendStatus{Backend: "memory", Healthy: true, Reconnecting: connectionPending, RestartNeeded: restartNeeded}
 	if !usingRedis || currentClient == nil {
-		status.RestartNeeded = configured.Type == "redis" && !connectionPending
-		if connectionPending {
-			status.RestartNeeded = configured.Type != "redis" || currentConfiguration != configured.Redis
-		}
 		return status
 	}
 	status.Backend = "redis"
 	status.TLS = currentClient.Options().TLSConfig != nil
-	status.RestartNeeded = configured.Type != "redis" || currentConfiguration != configured.Redis
 	probeContext, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	status.Healthy = currentClient.Ping(probeContext).Err() == nil
 	return status
+}
+
+// RequiresRestart compares desired and active configuration without performing
+// network I/O. Saving configuration must not depend on Redis being available.
+func RequiresRestart(configured conf.Cache) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return requiresRestartLocked(configured)
+}
+
+func requiresRestartLocked(configured conf.Cache) bool {
+	if reconnecting || (enabled && client != nil) {
+		return configured.Type != "redis" || activeConfiguration != configured.Redis
+	}
+	return configured.Type == "redis"
 }

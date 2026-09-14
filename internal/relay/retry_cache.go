@@ -14,8 +14,6 @@ import (
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/store"
-	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
-	"github.com/lingyuins/octopus/internal/utils/semantic_cache"
 )
 
 func getFailureHintTTLUnauthorized() time.Duration {
@@ -37,79 +35,6 @@ func getFailureHintTTLNetwork() time.Duration {
 		return time.Duration(v) * time.Second
 	}
 	return 2 * time.Second
-}
-
-type retryLookupInput struct {
-	namespace string
-	text      string
-	ok        bool
-}
-
-type retrySemanticEmbedding struct {
-	embedding []float64
-	err       error
-}
-
-type retryRequestCache struct {
-	mu sync.Mutex
-
-	lookupInput       map[string]retryLookupInput
-	lookupComputed    map[string]bool
-	embeddings        map[string]retrySemanticEmbedding
-	embeddingComputed map[string]bool
-}
-
-func newRetryRequestCache() *retryRequestCache {
-	return &retryRequestCache{
-		lookupInput:       make(map[string]retryLookupInput),
-		lookupComputed:    make(map[string]bool),
-		embeddings:        make(map[string]retrySemanticEmbedding),
-		embeddingComputed: make(map[string]bool),
-	}
-}
-
-func (c *retryRequestCache) getLookupInput(cacheKey string, compute func() (string, string, bool)) (string, string, bool, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.lookupComputed[cacheKey] {
-		entry := c.lookupInput[cacheKey]
-		return entry.namespace, entry.text, entry.ok, true
-	}
-	namespace, text, ok := compute()
-	c.lookupInput[cacheKey] = retryLookupInput{namespace: namespace, text: text, ok: ok}
-	c.lookupComputed[cacheKey] = true
-	return namespace, text, ok, false
-}
-
-func (c *retryRequestCache) getEmbedding(cacheKey string, compute func() ([]float64, error)) ([]float64, error, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.embeddingComputed[cacheKey] {
-		entry := c.embeddings[cacheKey]
-		return append([]float64(nil), entry.embedding...), entry.err, true
-	}
-	embedding, err := compute()
-	c.embeddings[cacheKey] = retrySemanticEmbedding{embedding: append([]float64(nil), embedding...), err: err}
-	c.embeddingComputed[cacheKey] = true
-	return append([]float64(nil), embedding...), err, false
-}
-
-type inflightRelayResult struct {
-	internalResp *transmodel.InternalLLMResponse
-	actualModel  string
-	attempts     []dbmodel.ChannelAttempt
-	namespace    string
-	requestText  string
-}
-
-func newInflightRelayResult(resp *transmodel.InternalLLMResponse, actualModel string, attempts []dbmodel.ChannelAttempt, namespace string, requestText string) *inflightRelayResult {
-	return &inflightRelayResult{
-		internalResp: resp,
-		actualModel:  actualModel,
-		attempts:     append([]dbmodel.ChannelAttempt(nil), attempts...),
-		namespace:    namespace,
-		requestText:  requestText,
-	}
 }
 
 type failureHintEntry struct {
@@ -277,34 +202,4 @@ func failureHintSkipReason(entry failureHintEntry) string {
 		return fmt.Sprintf("recent failure hint: %d cooldown %s remaining", codeLabel, remaining.Round(time.Second))
 	}
 	return fmt.Sprintf("recent failure hint: %s (%s remaining)", strings.TrimSpace(entry.reason), remaining.Round(time.Second))
-}
-
-func cloneInternalResponse(resp *transmodel.InternalLLMResponse) *transmodel.InternalLLMResponse {
-	if resp == nil {
-		return nil
-	}
-	payload, err := jsonAPI.Marshal(resp)
-	if err != nil {
-		return nil
-	}
-	var cloned transmodel.InternalLLMResponse
-	if err := jsonAPI.Unmarshal(payload, &cloned); err != nil {
-		return nil
-	}
-	return &cloned
-}
-
-func cloneSemanticEmbedding(src []float64) []float64 {
-	return append([]float64(nil), src...)
-}
-
-func lookupSemanticEmbeddingWithCache(ctx context.Context, req *relayRequest, cfg semantic_cache.RuntimeConfig, cacheKey string, text string) ([]float64, bool, error) {
-	if req == nil || req.retryCache == nil {
-		embedding, err := semantic_cache.NewEmbeddingClient(cfg).CreateEmbedding(ctx, text)
-		return embedding, false, err
-	}
-	embedding, err, fromCache := req.retryCache.getEmbedding(cacheKey, func() ([]float64, error) {
-		return semantic_cache.NewEmbeddingClient(cfg).CreateEmbedding(ctx, text)
-	})
-	return embedding, fromCache, err
 }

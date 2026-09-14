@@ -1,262 +1,308 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Database, Loader2, Check, AlertTriangle } from 'lucide-react';
+import { Database, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { toast } from '@/components/common/Toast';
-import { useGetCacheConfig, useTestCacheConnection, useSaveCacheConfig } from '@/api/endpoints/setting';
+import {
+    useGetCacheConfig, usePreviewCacheConfig, useTestCacheConnection, useSaveCacheConfig,
+    type CacheRedisSummary,
+} from '@/api/endpoints/setting';
+import {
+    allowsCacheCertificate, buildCacheConfigRequest, createCacheDraft, isCacheUrlInput, validateCacheDraft,
+    type CacheDraft, type CacheFieldErrors,
+} from './cache-config';
 
-// CacheType 缓存后端类型：空字符串=内存（默认，向后兼容），"redis"=启用 Redis 后端。
-type CacheType = '' | 'redis';
+type CacheAction = 'preview' | 'test' | 'save';
 
 export function SettingCache() {
-    const t = useTranslations('setting');
-
-    const { data: cacheConfig, isLoading } = useGetCacheConfig();
+    const translate = useTranslations('setting');
+    const formId = useId();
+    const { data: cacheConfig, isLoading, isError } = useGetCacheConfig();
+    const previewCache = usePreviewCacheConfig();
     const testCache = useTestCacheConnection();
     const saveCache = useSaveCacheConfig();
+    const [draft, setDraft] = useState<CacheDraft>(() => createCacheDraft(cacheConfig));
+    const [initialized, setInitialized] = useState(Boolean(cacheConfig));
+    const [fieldErrors, setFieldErrors] = useState<CacheFieldErrors>({});
+    const [preview, setPreview] = useState<CacheRedisSummary | null>(null);
+    const [feedback, setFeedback] = useState<{ message: string; error: boolean; restartNeeded?: boolean } | null>(null);
+    const [pendingAction, setPendingAction] = useState<CacheAction | null>(null);
+    const pendingActionRef = useRef<CacheAction | null>(null);
+    const draftRevision = useRef(0);
+    const advancedDetailsRef = useRef<HTMLDetailsElement>(null);
 
-    const [cacheType, setCacheType] = useState<CacheType>('');
-    const [addr, setAddr] = useState('');
-    const [password, setPassword] = useState('');
-    const [username, setUsername] = useState('');
-    const [db, setDb] = useState('0');
-    const [poolSize, setPoolSize] = useState('');
-    const [dialTimeout, setDialTimeout] = useState('');
-    const [readTimeout, setReadTimeout] = useState('');
-    const [tls, setTls] = useState(false);
-    const [caFile, setCaFile] = useState('');
-    const deploymentManaged = cacheConfig?.config_source !== 'file';
+    const source = cacheConfig?.config_source;
+    const editableSource = source === 'database' || source === 'file';
+    const knownSource = editableSource || source === 'environment' || source === 'deployment';
+    const formReady = initialized && !isLoading && !isError && Boolean(cacheConfig);
+    const urlInput = isCacheUrlInput(draft.address);
+    const manualIdentityDisabled = !draft.address.trim() || urlInput;
+    const busy = pendingAction !== null;
 
-    // 挂载/配置到达时回填表单（从 config.json 的 cache 字段读取当前值）。
+    // A query refresh may update diagnostics, but must never overwrite an unsaved draft.
     useEffect(() => {
-        if (!cacheConfig) return;
-        setCacheType((cacheConfig.type || '') as CacheType);
-        const r = cacheConfig.redis;
-        setAddr(r?.addr || '');
-        setPassword(r?.password || '');
-        setUsername(r?.username || '');
-        setDb(r?.db != null ? String(r.db) : '0');
-        setPoolSize(r?.pool_size ? String(r.pool_size) : '');
-        setDialTimeout(r?.dial_timeout || '');
-        setReadTimeout(r?.read_timeout || '');
-        setTls(r?.tls || false);
-        setCaFile(r?.ca_file || '');
-    }, [cacheConfig]);
+        if (!cacheConfig || initialized) return;
+        setDraft(createCacheDraft(cacheConfig));
+        setInitialized(true);
+    }, [cacheConfig, initialized]);
 
-    const buildRequest = () => ({
-        type: cacheType,
-        redis: {
-            addr: addr.trim(),
-            password,
-            username,
-            db: db.trim() === '' ? 0 : Number(db),
-            pool_size: poolSize.trim() === '' ? 0 : Number(poolSize),
-            dial_timeout: dialTimeout.trim(),
-            read_timeout: readTimeout.trim(),
-            tls,
-            ca_file: caFile.trim(),
-        },
+    const editDraft = <Field extends keyof CacheDraft>(field: Field, value: CacheDraft[Field]) => {
+        draftRevision.current += 1;
+        setDraft((currentDraft) => {
+            const nextDraft = { ...currentDraft, [field]: value };
+            return field === 'address'
+                ? { ...nextDraft, username: '', password: '', database: '0', tls: false, caFile: '' }
+                : nextDraft;
+        });
+        setPreview(null);
+        setFeedback(null);
+        setFieldErrors({});
+    };
+
+    const runAction = async (action: CacheAction) => {
+        if (pendingActionRef.current || !formReady) return;
+        if (action === 'save' && !editableSource) return;
+        if (action !== 'save' && draft.cacheType !== 'redis') return;
+
+        const errors = validateCacheDraft(draft, Boolean(cacheConfig?.has_saved_connection));
+        setFieldErrors(errors);
+        setFeedback(null);
+        if (Object.keys(errors).length > 0) {
+            if ((errors.password || errors.database || errors.poolSize) && advancedDetailsRef.current) {
+                advancedDetailsRef.current.open = true;
+            }
+            setFeedback({ message: translate('redis.validationFailed'), error: true });
+            return;
+        }
+
+        const submittedRevision = draftRevision.current;
+        const request = buildCacheConfigRequest(draft);
+        pendingActionRef.current = action;
+        setPendingAction(action);
+        if (action === 'preview') setPreview(null);
+
+        try {
+            if (action === 'preview') {
+                const summary = await previewCache.mutateAsync(request);
+                if (draftRevision.current !== submittedRevision) return;
+                setPreview(summary);
+                setFeedback({ message: translate('redis.previewSuccess'), error: false });
+            } else if (action === 'test') {
+                const connected = await testCache.mutateAsync(request);
+                if (draftRevision.current !== submittedRevision) return;
+                setFeedback({
+                    message: connected ? translate('redis.testSuccess') : translate('redis.testFailed'),
+                    error: !connected,
+                });
+            } else {
+                const result = await saveCache.mutateAsync(request);
+                if (draftRevision.current !== submittedRevision) return;
+                setPreview(null);
+                setDraft((currentDraft) => ({
+                    ...currentDraft, address: '', username: '', password: '', database: '0', tls: false, caFile: '',
+                }));
+                setFeedback({ message: translate('redis.saved'), error: false, restartNeeded: result.restart_needed });
+            }
+        } catch {
+            // Do not echo server exceptions: they may contain a submitted credential URI.
+            if (draftRevision.current !== submittedRevision) return;
+            setFeedback({
+                message: action === 'preview' ? translate('redis.previewFailed')
+                    : action === 'test' ? translate('redis.testFailed') : translate('redis.saveFailed'),
+                error: true,
+            });
+        } finally {
+            previewCache.reset();
+            testCache.reset();
+            saveCache.reset();
+            pendingActionRef.current = null;
+            setPendingAction(null);
+        }
+    };
+
+    const renderSummary = (summary: CacheRedisSummary) => translate('redis.connectionSummary', {
+        value: summary.addr,
+        count: summary.db,
+        tls: summary.tls ? 'TLS' : translate('redis.noTls'),
     });
 
-    const onTest = () => {
-        if (cacheType !== 'redis') {
-            toast.error(t('redis.testFailed', { error: t('redis.typeRedisRequired') }));
-            return;
-        }
-        if (!addr.trim()) {
-            toast.error(t('redis.testFailed', { error: t('redis.fields.addr.label') }));
-            return;
-        }
-        testCache.mutate(buildRequest(), {
-            onSuccess: () => toast.success(t('redis.testSuccess')),
-            onError: (err) => toast.error(t('redis.testFailed', { error: (err as Error).message })),
-        });
-    };
-
-    const onSave = () => {
-        if (cacheType === 'redis' && !addr.trim()) {
-            toast.error(t('redis.testFailed', { error: t('redis.fields.addr.label') }));
-            return;
-        }
-        saveCache.mutate(buildRequest(), {
-            onSuccess: () => toast.success(t('redis.saved')),
-            onError: (err) => toast.error(t('redis.testFailed', { error: (err as Error).message })),
-        });
-    };
-
     return (
-        <div className="space-y-5 p-4 sm:p-6">
+        <div className="space-y-4 p-4 sm:p-6" aria-busy={isLoading || busy}>
             <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                    <Database className="size-5 text-muted-foreground" />
-                    <h2 className="text-lg font-semibold text-card-foreground">{t('redis.title')}</h2>
+                    <Database aria-hidden="true" className="size-5 text-muted-foreground" />
+                    <h2 className="text-lg font-semibold text-card-foreground">{translate('redis.title')}</h2>
                 </div>
-                <p className="text-xs leading-5 text-muted-foreground">{t('redis.description')}</p>
+                <p className="text-xs leading-5 text-muted-foreground">{translate('redis.description')}</p>
             </div>
 
             {cacheConfig && (
                 <div className="space-y-2 rounded-lg border border-border/30 p-3 text-xs leading-5" role="status">
-                    <p>{t('redis.runtimeSummary', {
-                        backend: cacheConfig.runtime_backend === 'redis' ? 'Redis / Valkey' : t('redis.type.memory'),
-                        health: cacheConfig.runtime_healthy ? t('redis.healthy') : t('redis.unhealthy'),
-                        tls: cacheConfig.runtime_tls ? 'TLS' : t('redis.noTls'),
+                    <p>{translate('redis.runtimeSummary', {
+                        backend: cacheConfig.runtime_backend === 'redis' ? 'Redis / Valkey' : translate('redis.type.memory'),
+                        health: cacheConfig.runtime_healthy ? translate('redis.healthy') : translate('redis.unhealthy'),
+                        tls: cacheConfig.runtime_tls ? 'TLS' : translate('redis.noTls'),
                     })}</p>
-                    <p>{t(`redis.source.${cacheConfig.config_source}`)}</p>
-                    {cacheConfig.reconnecting && <p>{t('redis.reconnecting')}</p>}
-                    {cacheConfig.restart_needed && <p>{t('redis.restartNotice')}</p>}
+                    {knownSource && <p>{translate(`redis.source.${source}`)}</p>}
+                    {cacheConfig.reconnecting && <p>{translate('redis.reconnecting')}</p>}
+                    {cacheConfig.restart_needed && <p>{translate('redis.restartNotice')}</p>}
                 </div>
             )}
 
-            {deploymentManaged && (
-                <div className="space-y-2 rounded-lg border border-amber-500/30 p-3 text-xs leading-5">
-                    <p>{t('redis.deploymentInstructions')}</p>
-                    <p className="break-all font-mono">OCTOPUS_CACHE_TYPE=redis<br />OCTOPUS_CACHE_REDIS_ADDR=host:port<br />OCTOPUS_CACHE_REDIS_TLS=true<br />OCTOPUS_CACHE_REDIS_USERNAME<br />OCTOPUS_CACHE_REDIS_PASSWORD</p>
-                    <p>{t('redis.deploymentTestOnly')}</p>
-                </div>
-            )}
-
-            <div className="space-y-3 rounded-lg border border-border/30 bg-card p-3 sm:p-4 shadow-sm">
-                <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground">{t('redis.type.label')}</label>
-                    <select
-                        value={cacheType}
-                        aria-label={t('redis.type.label')}
-                        onChange={(e) => setCacheType(e.target.value as CacheType)}
-                        className="h-10 rounded-xl border border-input bg-background px-3 text-sm w-full"
-                    >
-                        <option value="">{t('redis.type.memory')}</option>
-                        <option value="redis">{t('redis.type.redis')}</option>
-                    </select>
-                </div>
-
-                {cacheType === 'redis' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="space-y-1.5 sm:col-span-2">
-                            <label className="text-xs text-muted-foreground">{t('redis.fields.addr.label')}</label>
-                            <Input
-                                className="rounded-xl"
-                                aria-label={t('redis.fields.addr.label')}
-                                type="password"
-                                autoComplete="off"
-                                value={addr}
-                                onChange={(e) => setAddr(e.target.value)}
-                                placeholder="host:port / rediss://host:port"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-xs text-muted-foreground">{t('redis.fields.password.label')}</label>
-                            <Input
-                                type="password"
-                                aria-label={t('redis.fields.password.label')}
-                                className="rounded-xl"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                placeholder="••••••"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-xs text-muted-foreground">{t('redis.fields.username.label')}</label>
-                            <Input
-                                className="rounded-xl"
-                                value={username}
-                                aria-label={t('redis.fields.username.label')}
-                                onChange={(e) => setUsername(e.target.value)}
-                                placeholder="default"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-xs text-muted-foreground">{t('redis.fields.db.label')}</label>
-                            <Input
-                                type="number"
-                                className="rounded-xl"
-                                value={db}
-                                aria-label={t('redis.fields.db.label')}
-                                min={0}
-                                step={1}
-                                onChange={(e) => setDb(e.target.value)}
-                                placeholder="0"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-xs text-muted-foreground">{t('redis.fields.poolSize.label')}</label>
-                            <Input
-                                type="number"
-                                className="rounded-xl"
-                                value={poolSize}
-                                aria-label={t('redis.fields.poolSize.label')}
-                                min={1}
-                                step={1}
-                                onChange={(e) => setPoolSize(e.target.value)}
-                                placeholder="5"
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-xs text-muted-foreground">{t('redis.fields.dialTimeout.label')}</label>
-                            <Input
-                                className="rounded-xl"
-                                value={dialTimeout}
-                                aria-label={t('redis.fields.dialTimeout.label')}
-                                onChange={(e) => setDialTimeout(e.target.value)}
-                                placeholder={t('redis.fields.dialTimeout.placeholder')}
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <label className="text-xs text-muted-foreground">{t('redis.fields.readTimeout.label')}</label>
-                            <Input
-                                className="rounded-xl"
-                                value={readTimeout}
-                                aria-label={t('redis.fields.readTimeout.label')}
-                                onChange={(e) => setReadTimeout(e.target.value)}
-                                placeholder={t('redis.fields.readTimeout.placeholder')}
-                            />
-                        </div>
-                        <label className="flex items-center gap-2 text-xs sm:col-span-2">
-                            <input type="checkbox" checked={tls || addr.trim().startsWith('rediss://')} disabled={addr.trim().startsWith('rediss://')} onChange={(event) => setTls(event.target.checked)} />
-                            {t('redis.tlsLabel')}
-                        </label>
-                        <div className="space-y-1.5 sm:col-span-2">
-                            <label htmlFor="redis-ca-file" className="text-xs text-muted-foreground">{t('redis.caFileLabel')}</label>
-                            <Input id="redis-ca-file" value={caFile} onChange={(event) => setCaFile(event.target.value)} placeholder="/etc/secrets/ca.pem" />
-                            <p className="text-xs leading-5 text-muted-foreground">{t('redis.tlsHint')}</p>
-                        </div>
+            <div className="space-y-3 rounded-lg border border-border/30 bg-card p-3 shadow-sm sm:p-4">
+                {cacheConfig && (
+                    <div className="space-y-1 text-xs leading-5">
+                        <h3 className="font-medium">{translate('redis.savedConnection')}</h3>
+                        <p>{translate('redis.configuredType', {
+                            value: cacheConfig.type === 'redis' ? 'Redis / Valkey' : translate('redis.type.memory'),
+                        })}</p>
+                        {cacheConfig.has_saved_connection ? (
+                            <>
+                                <p className="break-all">{renderSummary(cacheConfig.redis)}</p>
+                                <p className="text-muted-foreground">{translate(cacheConfig.has_password ? 'redis.passwordSaved' : 'redis.noPasswordSaved')}</p>
+                            </>
+                        ) : <p className="text-muted-foreground">{translate('redis.noSavedConnection')}</p>}
                     </div>
                 )}
 
-                <div className="flex flex-col gap-2 sm:flex-row">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full sm:flex-1 rounded-xl"
-                        onClick={onTest}
-                        disabled={testCache.isPending || saveCache.isPending || cacheType !== 'redis'}
-                    >
-                        {testCache.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-                        {t('redis.testButton')}
+                <fieldset disabled={!formReady || pendingAction === 'save'} className="min-w-0 space-y-3">
+                    <legend className="sr-only">{translate('redis.title')}</legend>
+                    <div className="space-y-1.5">
+                        <label htmlFor={`${formId}-type`} className="text-xs text-muted-foreground">{translate('redis.type.label')}</label>
+                        <select
+                            id={`${formId}-type`}
+                            value={draft.cacheType}
+                            onChange={(event) => editDraft('cacheType', event.target.value as CacheDraft['cacheType'])}
+                            className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+                        >
+                            <option value="">{translate('redis.type.memory')}</option>
+                            <option value="redis">{translate('redis.type.redis')}</option>
+                        </select>
+                    </div>
+
+                    {draft.cacheType === 'redis' ? (
+                        <>
+                            <div className="space-y-1.5">
+                                <label htmlFor={`${formId}-address`} className="text-xs text-muted-foreground">{translate('redis.fields.addr.label')}</label>
+                                <Input
+                                    id={`${formId}-address`}
+                                    className="rounded-xl"
+                                    type="password"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    required={!cacheConfig?.has_saved_connection}
+                                    value={draft.address}
+                                    onChange={(event) => editDraft('address', event.target.value)}
+                                    placeholder={translate('redis.fields.addr.placeholder')}
+                                    aria-invalid={Boolean(fieldErrors.address)}
+                                    aria-describedby={`${formId}-address-hint${fieldErrors.address ? ` ${formId}-address-error` : ''}`}
+                                />
+                                <p id={`${formId}-address-hint`} className="text-xs leading-5 text-muted-foreground">{translate('redis.replacementHint')}</p>
+                                {fieldErrors.address && <p id={`${formId}-address-error`} className="text-xs text-destructive" role="alert">{translate(`redis.validation.${fieldErrors.address}`)}</p>}
+                            </div>
+
+                            <details ref={advancedDetailsRef} className="rounded-lg border border-border/30 p-3">
+                                <summary className="cursor-pointer text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">{translate('redis.advanced')}</summary>
+                                <div className="mt-3 space-y-3">
+                                    <p id={`${formId}-identity-hint`} className="text-xs leading-5 text-muted-foreground">{translate(urlInput ? 'redis.urlIdentityHint' : 'redis.manualIdentityHint')}</p>
+                                    <fieldset disabled={manualIdentityDisabled} aria-describedby={`${formId}-identity-hint`} className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                                        <legend className="sr-only">{translate('redis.manualConnection')}</legend>
+                                        <div className="space-y-1.5">
+                                            <label htmlFor={`${formId}-username`} className="text-xs text-muted-foreground">{translate('redis.fields.username.label')}</label>
+                                            <Input id={`${formId}-username`} value={draft.username} disabled={manualIdentityDisabled} autoComplete="off" onChange={(event) => editDraft('username', event.target.value)} placeholder="default" />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label htmlFor={`${formId}-password`} className="text-xs text-muted-foreground">{translate('redis.fields.password.label')}</label>
+                                            <Input
+                                                id={`${formId}-password`} type="password" value={draft.password} autoComplete="new-password" disabled={manualIdentityDisabled}
+                                                onChange={(event) => editDraft('password', event.target.value)} placeholder={translate('redis.fields.password.placeholder')}
+                                                aria-invalid={Boolean(fieldErrors.password)} aria-describedby={fieldErrors.password ? `${formId}-password-error` : `${formId}-identity-hint`}
+                                            />
+                                            {fieldErrors.password && <p id={`${formId}-password-error`} className="text-xs text-destructive" role="alert">{translate(`redis.validation.${fieldErrors.password}`)}</p>}
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label htmlFor={`${formId}-database`} className="text-xs text-muted-foreground">{translate('redis.fields.db.label')}</label>
+                                            <Input
+                                                id={`${formId}-database`} type="number" min={0} step={1} value={draft.database} disabled={manualIdentityDisabled}
+                                                onChange={(event) => editDraft('database', event.target.value)} aria-invalid={Boolean(fieldErrors.database)}
+                                                aria-describedby={fieldErrors.database ? `${formId}-database-error` : `${formId}-identity-hint`}
+                                            />
+                                            {fieldErrors.database && <p id={`${formId}-database-error`} className="text-xs text-destructive" role="alert">{translate(`redis.validation.${fieldErrors.database}`)}</p>}
+                                        </div>
+                                        <label htmlFor={`${formId}-tls`} className="flex items-center gap-2 text-xs">
+                                            <input id={`${formId}-tls`} type="checkbox" checked={draft.tls} disabled={manualIdentityDisabled} onChange={(event) => editDraft('tls', event.target.checked)} />
+                                            {translate('redis.tlsLabel')}
+                                        </label>
+                                    </fieldset>
+                                    <div className="space-y-1.5">
+                                        <label htmlFor={`${formId}-ca-file`} className="text-xs text-muted-foreground">{translate('redis.caFileLabel')}</label>
+                                        <Input id={`${formId}-ca-file`} value={draft.caFile} disabled={!allowsCacheCertificate(draft)} onChange={(event) => editDraft('caFile', event.target.value)} placeholder="/etc/secrets/ca.pem" aria-describedby={`${formId}-ca-hint`} />
+                                        <p id={`${formId}-ca-hint`} className="text-xs leading-5 text-muted-foreground">{translate('redis.tlsHint')}</p>
+                                    </div>
+
+                                    <p id={`${formId}-tuning-hint`} className="text-xs leading-5 text-muted-foreground">{translate('redis.tuningHint')}</p>
+                                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                        {(['poolSize', 'dialTimeout', 'readTimeout'] as const).map((field) => (
+                                            <div key={field} className="space-y-1.5">
+                                                <label htmlFor={`${formId}-${field}`} className="text-xs text-muted-foreground">{translate(`redis.fields.${field}.label`)}</label>
+                                                <Input
+                                                    id={`${formId}-${field}`} type={field === 'poolSize' ? 'number' : 'text'}
+                                                    min={field === 'poolSize' ? 0 : undefined} step={field === 'poolSize' ? 1 : undefined}
+                                                    value={draft[field]} onChange={(event) => editDraft(field, event.target.value)}
+                                                    placeholder={translate(`redis.fields.${field}.placeholder`)}
+                                                    aria-invalid={field === 'poolSize' && Boolean(fieldErrors.poolSize)}
+                                                    aria-describedby={field === 'poolSize' && fieldErrors.poolSize ? `${formId}-poolSize-error` : `${formId}-tuning-hint`}
+                                                />
+                                                {field === 'poolSize' && fieldErrors.poolSize && <p id={`${formId}-poolSize-error`} className="text-xs text-destructive" role="alert">{translate(`redis.validation.${fieldErrors.poolSize}`)}</p>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs leading-5 text-muted-foreground">{translate('redis.providerHint')}</p>
+                                </div>
+                            </details>
+                        </>
+                    ) : <p className="text-xs leading-5 text-muted-foreground">{translate('redis.memoryHint')}</p>}
+                </fieldset>
+
+                <p id={`${formId}-save-hint`} className="text-xs leading-5 text-muted-foreground" role={isError ? 'alert' : 'status'}>
+                    {isLoading ? translate('redis.loading') : !formReady || !knownSource ? translate('redis.loadError')
+                        : editableSource ? translate('redis.saveHint') : translate('redis.readOnlyHint')}
+                </p>
+
+                <div className="flex flex-wrap gap-2">
+                    <Button id={`${formId}-preview`} type="button" variant="outline" className="flex-1 rounded-xl" onClick={() => runAction('preview')} disabled={!formReady || busy || draft.cacheType !== 'redis'}>
+                        {pendingAction === 'preview' && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
+                        {translate('redis.previewButton')}
                     </Button>
-                    <Button
-                        type="button"
-                        className="w-full sm:flex-1 rounded-xl"
-                        onClick={onSave}
-                        disabled={saveCache.isPending || testCache.isPending || isLoading || deploymentManaged}
-                    >
-                        {saveCache.isPending ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
-                        {saveCache.isPending ? t('redis.saving') : t('redis.saveButton')}
+                    <Button id={`${formId}-test`} type="button" variant="outline" className="flex-1 rounded-xl" onClick={() => runAction('test')} disabled={!formReady || busy || draft.cacheType !== 'redis'}>
+                        {pendingAction === 'test' && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
+                        {translate('redis.testButton')}
+                    </Button>
+                    <Button id={`${formId}-save`} type="button" className="flex-1 rounded-xl" onClick={() => runAction('save')} disabled={!formReady || !editableSource || busy} aria-describedby={`${formId}-save-hint`}>
+                        {pendingAction === 'save' && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}
+                        {translate(pendingAction === 'save' ? 'redis.saving' : 'redis.saveButton')}
                     </Button>
                 </div>
 
-                {saveCache.data ? (
-                    <div className="space-y-1 rounded-lg border border-emerald-500/20 bg-emerald-500/8 p-3 text-xs text-emerald-700 dark:text-emerald-300 break-words">
-                        <div className="font-semibold text-amber-600 dark:text-amber-400">{t('redis.restartNotice')}</div>
+                {preview && (
+                    <div className="space-y-1 rounded-lg border border-border/30 p-3 text-xs leading-5" role="status">
+                        <h3 className="font-medium">{translate('redis.previewSummary')}</h3>
+                        <p className="break-all">{renderSummary(preview)}</p>
                     </div>
-                ) : null}
+                )}
+                {feedback && (
+                    <div className={`space-y-1 rounded-lg border p-3 text-xs leading-5 ${feedback.error ? 'border-destructive/30 text-destructive' : 'border-border/30'}`} role={feedback.error ? 'alert' : 'status'}>
+                        <p>{feedback.message}</p>
+                        {feedback.restartNeeded && <p>{translate('redis.restartNotice')}</p>}
+                    </div>
+                )}
             </div>
 
-            <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                <div className="leading-5">{t('redis.restartNotice')}</div>
+            <div className="space-y-1 text-xs leading-5 text-muted-foreground">
+                <p>{translate('redis.persistenceHint')}</p>
+                <p>{translate('redis.sharedKeysHint')}</p>
             </div>
         </div>
     );

@@ -14,6 +14,7 @@ import (
 // logging because they are read-only in practice (tests, probes), authentication
 // endpoints (would flood the audit log), or one-time bootstrap operations.
 var exemptFromAudit = map[string]string{
+	"POST /api/v1/setting/cache/preview":        "configuration parsing only; no network or persistence",
 	"POST /api/v1/channel/test":                 "connectivity probe — no state change",
 	"POST /api/v1/channel/test-model":           "single model availability probe — no state change",
 	"POST /api/v1/channel/test-model-sync":      "single model sync probe — no state change",

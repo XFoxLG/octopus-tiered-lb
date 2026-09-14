@@ -10,13 +10,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
-	"github.com/lingyuins/octopus/internal/utils/semantic_cache"
 )
 
 func TestDecodeDBDumpReaderSupportsWrappedDump(t *testing.T) {
@@ -127,7 +125,7 @@ func TestReadDBDumpRejectsMultipartEnvelopeLargerThanImportLimit(t *testing.T) {
 	}
 }
 
-func TestImportDBRefreshesSemanticCacheRuntime(t *testing.T) {
+func TestImportDBPreservesLegacySemanticSettingsWithoutControls(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(t.Name()))
@@ -138,20 +136,12 @@ func TestImportDBRefreshesSemanticCacheRuntime(t *testing.T) {
 		t.Fatalf("init cache: %v", err)
 	}
 	t.Cleanup(func() {
-		semantic_cache.Reset()
 		_ = db.Close()
 	})
 
-	semantic_cache.ApplyRuntimeConfig(semantic_cache.RuntimeConfig{
-		Enabled:          true,
-		MaxEntries:       8,
-		Threshold:        0.98,
-		TTL:              time.Hour,
-		EmbeddingBaseURL: "https://stale.example.com",
-		EmbeddingModel:   "text-embedding-3-small",
-	})
-	if !semantic_cache.RuntimeEnabled() {
-		t.Fatal("expected seeded semantic cache runtime to be enabled")
+	legacy := model.Setting{Key: model.SettingKeySemanticCacheEnabled, Value: "true"}
+	if err := db.GetDB().Save(&legacy).Error; err != nil {
+		t.Fatal(err)
 	}
 
 	dump := model.DBDump{
@@ -176,8 +166,24 @@ func TestImportDBRefreshesSemanticCacheRuntime(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	if semantic_cache.RuntimeEnabled() {
-		t.Fatal("expected importDB to refresh semantic cache runtime and clear stale state")
+	var preserved model.Setting
+	if err := db.GetDB().First(&preserved, "key = ?", legacy.Key).Error; err != nil || preserved.Value != "true" {
+		t.Fatal("import must preserve a shared legacy setting instead of changing production behavior")
+	}
+	listRecorder := httptest.NewRecorder()
+	listContext, _ := gin.CreateTestContext(listRecorder)
+	listContext.Request = httptest.NewRequest(http.MethodGet, "/api/v1/setting/list", nil)
+	getSettingList(listContext)
+	if listRecorder.Code != http.StatusOK || strings.Contains(listRecorder.Body.String(), "semantic_cache_") {
+		t.Fatal("retired semantic cache controls must not be exposed by settings/list")
+	}
+	writeRecorder := httptest.NewRecorder()
+	writeContext, _ := gin.CreateTestContext(writeRecorder)
+	writeContext.Request = httptest.NewRequest(http.MethodPost, "/api/v1/setting/set", strings.NewReader(`{"key":"semantic_cache_enabled","value":"false"}`))
+	writeContext.Request.Header.Set("Content-Type", "application/json")
+	setSetting(writeContext)
+	if writeRecorder.Code != http.StatusBadRequest {
+		t.Fatal("ordinary writes to retired settings must fail instead of modifying the shared row")
 	}
 }
 
