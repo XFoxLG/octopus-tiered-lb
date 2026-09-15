@@ -12,12 +12,10 @@ import (
 	"github.com/lingyuins/octopus/internal/op/apikey"
 	"github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/group"
-	"github.com/lingyuins/octopus/internal/op/navorder"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
-	"github.com/lingyuins/octopus/internal/utils/semantic_cache"
 	"gorm.io/gorm"
 )
 
@@ -365,41 +363,6 @@ func AnalyticsGroupHealthGet(ctx context.Context) ([]model.AnalyticsGroupHealthI
 	minSamples := balancer.GetAutoStrategyMinSamples()
 
 	return buildGroupHealth(groups, channelByID, failures, autoSnapshot, minSamples), nil
-}
-
-func AnalyticsEvaluationGet(_ context.Context) (*model.AnalyticsEvaluationSummary, error) {
-	enabled, err := setting.GetBool(model.SettingKeySemanticCacheEnabled)
-	if err != nil {
-		return nil, err
-	}
-	ttlSeconds, err := setting.GetInt(model.SettingKeySemanticCacheTTL)
-	if err != nil {
-		return nil, err
-	}
-	threshold, err := setting.GetInt(model.SettingKeySemanticCacheThreshold)
-	if err != nil {
-		return nil, err
-	}
-	maxEntries, err := setting.GetInt(model.SettingKeySemanticCacheMaxEntries)
-	if err != nil {
-		return nil, err
-	}
-
-	hits, misses, currentEntries := semantic_cache.Stats()
-	summary := &model.AnalyticsEvaluationSummary{
-		SemanticCache: navorder.BuildSemanticCacheEvaluationSummary(
-			enabled,
-			semantic_cache.RuntimeEnabled(),
-			ttlSeconds,
-			threshold,
-			maxEntries,
-			currentEntries,
-			hits,
-			misses,
-			semantic_cache.GetRuntimeStats(),
-		),
-	}
-	return summary, nil
 }
 
 func mergeAnalyticsDailyWithToday(daily []model.StatsDaily, today model.StatsDaily) []model.StatsDaily {

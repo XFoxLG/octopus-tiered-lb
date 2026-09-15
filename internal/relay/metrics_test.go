@@ -57,17 +57,6 @@ func TestRouteIteratorAttemptsCarrySuccessfulChannel(t *testing.T) {
 	}
 }
 
-func TestInflightRelayResultCarriesAttemptsSnapshot(t *testing.T) {
-	attempts := []model.ChannelAttempt{{ChannelID: 23, ChannelName: "mimo-channel", Status: model.AttemptSuccess}}
-	result := newInflightRelayResult(nil, "mimo-v2.5", attempts, "", "")
-	attempts[0].ChannelName = "mutated"
-
-	channelID, channelName := finalChannel(result.attempts)
-	if channelID != 23 || channelName != "mimo-channel" {
-		t.Fatalf("finalChannel(result.attempts) = (%d, %q), want (%d, %q)", channelID, channelName, 23, "mimo-channel")
-	}
-}
-
 func TestTruncateRelayLogStringPreservesUTF8(t *testing.T) {
 	value := strings.Repeat("界", relayLogTextFieldMaxBytes)
 	got := truncateRelayLogString(value, relayLogTextFieldMaxBytes)

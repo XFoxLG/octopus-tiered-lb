@@ -311,6 +311,7 @@ func Migrate(conn *gorm.DB) error {
 		&model.APIKey{},
 		&model.AuditLog{},
 		&model.Setting{},
+		&model.ServiceCacheConfig{},
 		&model.StatsTotal{},
 		&model.StatsDaily{},
 		&model.StatsDailyChannel{},

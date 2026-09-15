@@ -8,6 +8,7 @@ import (
 	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/op"
+	"github.com/lingyuins/octopus/internal/op/cacheconfig"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	"github.com/lingyuins/octopus/internal/server"
 	"github.com/lingyuins/octopus/internal/store"
@@ -68,18 +69,27 @@ func runStart() error {
 	}
 	shutdown.Register(db.Close)
 
+	cacheConfigContext, cancelCacheConfig := context.WithTimeout(context.Background(), 5*time.Second)
+	cacheConfigError := cacheconfig.Load(cacheConfigContext)
+	cancelCacheConfig()
+	if cacheConfigError != nil {
+		shutdown.Shutdown()
+		return fmt.Errorf("cache configuration error: %w", cacheConfigError)
+	}
+	cacheConfiguration := conf.GetCacheConfig()
+
 	// Redis is optional runtime state, not a statistics journal. Initialize it
 	// before loading balancer state; on failure continue with memory and retry.
 	// Register cleanup before reconnecting so shutdown also cancels pending work.
-	if conf.AppConfig.Cache.Type == "redis" && conf.AppConfig.Cache.Redis.Addr != "" {
+	if cacheConfiguration.Type == "redis" && cacheConfiguration.Redis.Addr != "" {
 		shutdown.Register(store.Close)
-		if err := store.Init(conf.AppConfig.Cache.Redis); err != nil {
+		if err := store.Init(cacheConfiguration.Redis); err != nil {
 			log.Warnf("redis unavailable, starting with memory backend: %v", err)
-			if rerr := store.StartReconnect(conf.AppConfig.Cache.Redis, nil); rerr != nil {
+			if rerr := store.StartReconnect(cacheConfiguration.Redis, nil); rerr != nil {
 				log.Warnf("redis background reconnect not started: %v", rerr)
 			}
 		} else {
-			log.Infof("redis cache backend enabled: %s", store.SafeRedisAddress(conf.AppConfig.Cache.Redis.Addr))
+			log.Infof("redis cache backend enabled: %s", store.SafeRedisAddress(cacheConfiguration.Redis.Addr))
 		}
 	}
 

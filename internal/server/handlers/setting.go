@@ -13,17 +13,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
 	"github.com/lingyuins/octopus/internal/op/backup"
-	"github.com/lingyuins/octopus/internal/op/semanticcache"
 	stg "github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/server/auth"
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/server/router"
-	"github.com/lingyuins/octopus/internal/store"
 	"github.com/lingyuins/octopus/internal/task"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
@@ -60,6 +57,12 @@ func init() {
 		AddRoute(
 			router.NewRoute("/cache/config", http.MethodGet).
 				Handle(getCacheConfig),
+		).
+		AddRoute(
+			router.NewRoute("/cache/preview", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermSettingsWrite)).
+				Use(middleware.RequireJSON()).
+				Handle(previewCacheConnection),
 		).
 		AddRoute(
 			router.NewRoute("/cache/test", http.MethodPost).
@@ -104,11 +107,6 @@ func setSetting(c *gin.Context) {
 	// Setting is now persisted. All downstream effects are best-effort:
 	// log failures but do not return an error status to the client,
 	// which would misleadingly suggest the setting was NOT saved.
-	if shouldRefreshSemanticCacheRuntime(setting.Key) {
-		if err := semanticcache.RefreshSemanticCacheRuntime(); err != nil {
-			log.Warnf("semantic cache refresh failed after setting %s: %v", setting.Key, err)
-		}
-	}
 	if shouldInvalidateModelMarket(setting.Key) {
 		op.ModelMarketInvalidateCache()
 	}
@@ -151,22 +149,6 @@ func setSetting(c *gin.Context) {
 		}
 	}
 	resp.Success(c, setting)
-}
-
-func shouldRefreshSemanticCacheRuntime(key model.SettingKey) bool {
-	switch key {
-	case model.SettingKeySemanticCacheEnabled,
-		model.SettingKeySemanticCacheTTL,
-		model.SettingKeySemanticCacheThreshold,
-		model.SettingKeySemanticCacheMaxEntries,
-		model.SettingKeySemanticCacheEmbeddingBaseURL,
-		model.SettingKeySemanticCacheEmbeddingAPIKey,
-		model.SettingKeySemanticCacheEmbeddingModel,
-		model.SettingKeySemanticCacheEmbeddingTimeoutSeconds:
-		return true
-	default:
-		return false
-	}
 }
 
 func shouldInvalidateModelMarket(key model.SettingKey) bool {
@@ -238,174 +220,7 @@ func importDB(c *gin.Context) {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := semanticcache.RefreshSemanticCacheRuntime(); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-
 	resp.Success(c, result)
-}
-
-// toModelRedis 把 conf.RedisConfig 转成 model.CacheRedisConfig（避免 model 反向依赖 conf）。
-// DialTimeout/ReadTimeout：Duration -> 可读字符串（"3s"），0 值转空串。
-func toModelRedis(r conf.RedisConfig) model.CacheRedisConfig {
-	return model.CacheRedisConfig{
-		Addr:        r.Addr,
-		Password:    r.Password,
-		Username:    r.Username,
-		DB:          r.DB,
-		PoolSize:    r.PoolSize,
-		DialTimeout: durationToString(r.DialTimeout),
-		ReadTimeout: durationToString(r.ReadTimeout),
-		TLS:         r.TLS,
-		CAFile:      r.CAFile,
-	}
-}
-
-// toConfRedis 把 model.CacheRedisConfig 转成 conf.RedisConfig。
-// DialTimeout/ReadTimeout：字符串 -> Duration，空串或解析失败视为 0（用默认值）。
-func toConfRedis(r model.CacheRedisConfig) conf.RedisConfig {
-	return conf.RedisConfig{
-		Addr:        r.Addr,
-		Password:    r.Password,
-		Username:    r.Username,
-		DB:          r.DB,
-		PoolSize:    r.PoolSize,
-		DialTimeout: parseDurationOrZero(r.DialTimeout),
-		ReadTimeout: parseDurationOrZero(r.ReadTimeout),
-		TLS:         r.TLS,
-		CAFile:      r.CAFile,
-	}
-}
-
-// durationToString 将 time.Duration 转为可读字符串；d<=0 返回空串（表示用默认值）。
-func durationToString(d time.Duration) string {
-	if d <= 0 {
-		return ""
-	}
-	return d.String()
-}
-
-// parseDurationOrZero 解析时长字符串（如 "3s"）；空串或解析失败返回 0（用默认值）。
-func parseDurationOrZero(s string) time.Duration {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return 0
-	}
-	return d
-}
-
-// getCacheConfig 返回当前 cache 配置（config.json 中的 cache.type / cache.redis.*）。
-// 供设置页「缓存」卡片回显当前值。Redis 启用是启动时决策，此处只读运行中进程的配置。
-func getCacheConfig(c *gin.Context) {
-	configuration := conf.GetCacheConfig()
-	status := store.InspectBackend(c.Request.Context(), configuration)
-	cfg := model.CacheConfig{
-		Type:           configuration.Type,
-		Redis:          toModelRedis(configuration.Redis),
-		ConfigSource:   conf.CacheConfigSource(),
-		RuntimeBackend: status.Backend,
-		RuntimeHealthy: status.Healthy,
-		RuntimeTLS:     status.TLS,
-		RestartNeeded:  status.RestartNeeded,
-		Reconnecting:   status.Reconnecting,
-	}
-	// Redis 密码/用户名对 viewer 遮蔽：仅凭 settings:read 不应拿到明文凭据。
-	if isViewerRole(c.GetString("user_role")) {
-		cfg.Redis.Password = viewerMaskedDomain
-		cfg.Redis.Username = viewerMaskedDomain
-		cfg.Redis.Addr = store.SafeRedisAddress(cfg.Redis.Addr)
-	}
-	resp.Success(c, cfg)
-}
-
-// testCacheConnection 测试 Redis 连接连通性（不改变全局 store 状态）。
-// 供设置页「测试连接」按钮调用，验证填写的 addr/password 等是否可达。
-func testCacheConnection(c *gin.Context) {
-	var req model.CacheConfigRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
-		return
-	}
-	if req.Type != "redis" {
-		resp.Error(c, http.StatusBadRequest, "cache type is not redis")
-		return
-	}
-	if req.Redis.Addr == "" {
-		resp.Error(c, http.StatusBadRequest, "redis addr is required")
-		return
-	}
-	configuration, err := validateRedisRequest(req.Redis)
-	if err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := store.TestConnection(configuration); err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	resp.Success(c, true)
-}
-
-// saveCacheConfig 将 cache 配置写入 config.json 并更新内存中的 AppConfig。
-// Redis 启用是启动时决策（cmd/start.go 仅 boot 时读取），保存后需重启生效，
-// 故返回 restart_needed: true（与数据库迁移一致）。
-func saveCacheConfig(c *gin.Context) {
-	if conf.CacheConfigSource() != "file" {
-		resp.Error(c, http.StatusConflict, "cache configuration is managed by deployment environment; update it there")
-		return
-	}
-	var req model.CacheConfigRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
-		return
-	}
-	if req.Type != "" && req.Type != "redis" {
-		resp.Error(c, http.StatusBadRequest, "cache type must be empty or redis")
-		return
-	}
-	if req.Type == "redis" && req.Redis.Addr == "" {
-		resp.Error(c, http.StatusBadRequest, "redis addr is required when type is redis")
-		return
-	}
-	configuration, err := validateRedisRequest(req.Redis)
-	if err != nil {
-		resp.Error(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.Type == "redis" {
-		if _, err := store.BuildRedisOptions(configuration); err != nil {
-			resp.Error(c, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-	if err := conf.SaveCacheConfig(req.Type, configuration); err != nil {
-		resp.Error(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	resp.Success(c, model.CacheConfigResult{
-		Type:          req.Type,
-		RestartNeeded: true,
-	})
-}
-
-func validateRedisRequest(request model.CacheRedisConfig) (conf.RedisConfig, error) {
-	for _, timeout := range []string{request.DialTimeout, request.ReadTimeout} {
-		if strings.TrimSpace(timeout) == "" {
-			continue
-		}
-		duration, err := time.ParseDuration(strings.TrimSpace(timeout))
-		if err != nil || duration < 0 {
-			return conf.RedisConfig{}, fmt.Errorf("redis timeout must be empty or a non-negative duration such as 3s")
-		}
-	}
-	configuration := toConfRedis(request)
-	configuration.Addr = strings.TrimSpace(configuration.Addr)
-	return configuration, conf.ValidateRedisConfig(configuration)
 }
 
 func decodeDBDump(body []byte, dump *model.DBDump) error {

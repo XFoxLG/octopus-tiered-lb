@@ -36,8 +36,3 @@ func AnalyticsAPIKeyBreakdownGet(ctx context.Context, r model.AnalyticsRange) ([
 func AnalyticsGroupHealthGet(ctx context.Context) ([]model.AnalyticsGroupHealthItem, error) {
 	return analytics.AnalyticsGroupHealthGet(ctx)
 }
-
-// Deprecated: Use analytics.AnalyticsEvaluationGet from internal/op/analytics instead.
-func AnalyticsEvaluationGet(ctx context.Context) (*model.AnalyticsEvaluationSummary, error) {
-	return analytics.AnalyticsEvaluationGet(ctx)
-}

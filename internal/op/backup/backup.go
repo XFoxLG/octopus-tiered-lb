@@ -470,10 +470,31 @@ func (c *importConfig) upsertSettings(rows []model.Setting) error {
 	if len(rows) == 0 {
 		return nil
 	}
+	activeSettings := make([]model.Setting, 0, len(rows))
+	legacySettings := make([]model.Setting, 0)
+	for _, setting := range rows {
+		if model.IsRetiredSemanticCacheSetting(setting.Key) {
+			legacySettings = append(legacySettings, setting)
+		} else {
+			activeSettings = append(activeSettings, setting)
+		}
+	}
+	// Keep old backups readable without overwriting another deployment's
+	// retired-feature configuration in a shared database.
+	if len(legacySettings) > 0 {
+		result := c.conn.Clauses(clause.OnConflict{DoNothing: true}).Create(&legacySettings)
+		appendStep(c.res, "settings", "preserve-legacy", result.RowsAffected, result.Error)
+		if result.Error != nil {
+			return fmt.Errorf("legacy settings: %w", result.Error)
+		}
+	}
+	if len(activeSettings) == 0 {
+		return nil
+	}
 	result := c.conn.Table("settings").Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value"}),
-	}).Create(&rows)
+	}).Create(&activeSettings)
 	appendStep(c.res, "settings", "upsert", result.RowsAffected, result.Error)
 	if result.Error != nil {
 		return fmt.Errorf("settings: %w", result.Error)
@@ -482,6 +503,11 @@ func (c *importConfig) upsertSettings(rows []model.Setting) error {
 }
 
 func (c *importConfig) deleteAll(table string) error {
+	if table == "settings" {
+		result := c.conn.Where("key NOT IN ?", model.RetiredSemanticCacheSettingKeys()).Delete(&model.Setting{})
+		appendStep(c.res, table, "delete", result.RowsAffected, result.Error)
+		return result.Error
+	}
 	// 用方言感知的引号转义表名（MySQL 反引号、Postgres 双引号、SQLite 反引号），
 	// 避免 groups 等 MySQL 保留字导致 Error 1064 语法错误。
 	quoted := quoteTableName(c.conn, table)
@@ -594,6 +620,8 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			// leave an empty table with no way to log in (issue: full restore
 			// locked out admin). The users table is auth infrastructure, not
 			// application data, and must survive a restore.
+			// service_cache_configs is also deliberately absent: deployment
+			// credentials must neither travel in app backups nor be reset by one.
 			deleteOrder := []string{
 				"stats_api_keys", "stats_channels", "stats_models",
 				"stats_hourlies", "stats_dailies", "stats_totals",

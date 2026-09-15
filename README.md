@@ -30,9 +30,9 @@
 - 📅 **Usage Reports** - Schedule daily / weekly / monthly usage reports delivered through notification channels
 - 💎 **Model Market** - Unified model catalog with pricing, channel coverage, enabled key counts, latency, and success metrics, plus create / edit / delete / refresh price workflows
 - 🔃 **Model Sync** - Automatic synchronization of available model lists with channels
-- 📊 **Analytics & Evaluation** - Overview, provider / model / API key utilization, route health, latency distribution, semantic-cache evaluation, provider prompt-cache analytics, and live entry points for group testing / AI routing
+- 📊 **Analytics & Evaluation** - Overview, provider / model / API key utilization, route health, latency distribution, provider prompt-cache analytics, and live entry points for group testing / AI routing
 - 🛠️ **Ops & Audit** - Telemetry, quota, health, system, and audit dashboards for daily operations, plus a management-write audit trail
-- 🧠 **Semantic Cache** - Embedding-backed semantic cache for non-streaming and streaming OpenAI Chat / OpenAI Responses text requests, with runtime status and effectiveness metrics
+- **Redis / Valkey Configuration** - Paste a connection URI, identify and test it, then save encrypted per-service configuration on Render; restart to apply, with environment overrides remaining authoritative
 - 🧭 **Configurable Navigation** - Persist top-level console page order and visibility in settings and reuse it across browsers
 - 💾 **Runtime State Persistence** - Persist auto strategy windows and circuit breaker state to the database
 - 🔗 **Site Management** - Manage upstream relay platforms (New-API, One-API, One-Hub, Sub2API, etc.) with multi-account support, projected channels, auto-sync, and auto-checkin
@@ -214,7 +214,13 @@ The configuration file is located at `data/config.json` by default and is automa
 }
 ```
 
-Most operational knobs are not stored in `config.json`. Retry policy, circuit breaker thresholds, auto-strategy tuning, relay log retention, public API base URL, AI-route service settings, semantic-cache switches, WebDAV backup, proxy pool, and model mapping rules are managed at runtime from the Settings page / management API and stored in the database.
+Most operational knobs are not stored in `config.json`. Retry policy, circuit breaker thresholds, auto-strategy tuning, relay log retention, public API base URL, AI-route service settings, WebDAV backup, proxy pool, and model mapping rules are managed at runtime from the Settings page / management API and stored in the database.
+
+Semantic answer caching is retired in this fork; ordinary embeddings, rerank, AI grouping and provider prompt caching remain. Existing semantic settings and historical logs are preserved, not cleared in the shared database.
+
+For Redis, the Settings cache form accepts `redis://` and verified-TLS `rediss://` URLs. On Render it saves the complete encrypted configuration under the server's stable `RENDER_SERVICE_ID`; restart that service to apply it. Explicit `OCTOPUS_CACHE_*` environment configuration takes priority, including an empty `OCTOPUS_CACHE_TYPE` to select memory. Remove those overrides to enable database-backed web saves. Without a valid Render service ID, file installations retain their existing configuration behavior. Saved passwords are not returned to the browser, and replacing a connection never inherits the old password.
+
+Configuration storage adds no per-chat query or connection pool. App JSON/WebDAV backups exclude the service-specific Redis credentials; keep the original encryption key for whole-database recovery. Different domains sharing SQL are not isolated, and the same Redis endpoint/DB shares runtime keys. Existing migration 059 is destructive to old site/hub tables: validate mixed-version compatibility on a database copy before deploying. See [deployment, cache and chat compatibility](docs/deployment-cache-and-chat.md).
 
 **Configuration Options:**
 
@@ -1132,4 +1138,3 @@ The three layers are independent: the container timezone affects the server runt
 - 💡 [qixing-jk/all-api-hub](https://github.com/qixing-jk/all-api-hub) - The Hub concept and feature design inspiration
 - 🛠️ [Hureru/octopus](https://github.com/Hureru/octopus) - The original Hub implementation
 - 🏊 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) - The account-pool OAuth flows (Anthropic / OpenAI / Gemini CLI / xAI) and account-management UX are ported from this project
-

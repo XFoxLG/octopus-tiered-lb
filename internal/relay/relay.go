@@ -372,24 +372,6 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		group:             &group, // 传递分组对象用于策略读取
 		iter:              iter,
 		streamSession:     streamSession,
-		retryCache:        newRetryRequestCache(),
-	}
-
-	if endpointFamily := semanticCacheEndpointFamily(endpointType, inboundType); endpointFamily != "" {
-		served, payload, cacheErr := maybeServeSemanticCacheHit(c, req, endpointFamily)
-		if cacheErr != nil {
-			log.Warnf("semantic cache lookup failed: %v", cacheErr)
-		}
-		if served {
-			log.Infof("semantic cache hit: model=%s endpoint=%s", requestModel, endpointFamily)
-			if normalizedPayload := semanticCacheHitPayload(payload, internalRequest); len(normalizedPayload) > 0 {
-				if internalResponse, parseErr := buildSemanticCacheHitInternalResponse(internalRequest, normalizedPayload); parseErr == nil {
-					metrics.SetInternalResponse(internalResponse, internalRequest.Model)
-				}
-			}
-			metrics.Save(true, nil, nil)
-			return
-		}
 	}
 
 	maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate()
@@ -403,10 +385,10 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		maxTotalAttempts = 1
 	}
 
-	// A cache miss owns its generation, even for identical concurrent prompts.
+	// Each request owns its generation, even for identical concurrent prompts.
 	// executeRelay writes the response and metrics and owns the retry budget;
 	// neither its result nor its errors may be replayed by a second execution.
-	if _, err := executeRelay(req, group, requestModel, maxKeyRetriesPerRoute, maxRouteRetries, ratelimitCooldown, maxTotalAttempts); err != nil {
+	if err := executeRelay(req, group, requestModel, maxKeyRetriesPerRoute, maxRouteRetries, ratelimitCooldown, maxTotalAttempts); err != nil {
 		// Preserve the terminal failure for the stream-session owner. In
 		// particular, a no-output retry sequence must finish the session with
 		// its actual last error rather than the generic defer fallback.
@@ -503,7 +485,6 @@ func (ra *relayAttempt) attempt() attemptResult {
 	if decision.Scope == ScopeNone && !decision.IsError {
 		// ====== 成功 ======
 		ra.collectResponse()
-		ra.collectAndStoreStreamResponse()
 		ra.usedKey.TotalCost += ra.metrics.Stats.InputCost + ra.metrics.Stats.OutputCost
 		ch.KeyUpdate(ra.usedKey)
 
@@ -1594,10 +1575,6 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 		return providerTerminalFailureError(termination)
 	}
 
-	if !responseHasNonCacheableTermination(internalResponse) {
-		storeSemanticCacheResponse(ctx, ra.internalRequest, inResponse)
-	}
-
 	ra.c.Data(http.StatusOK, "application/json", inResponse)
 	return nil
 }
@@ -1638,26 +1615,6 @@ func (ra *relayAttempt) collectResponse() {
 	}
 
 	ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
-}
-
-// collectAndStoreStreamResponse stores the already-aggregated stream response
-// in the semantic cache (success path only). It reuses the InternalResponse
-// previously collected by collectResponse() to avoid a second call to
-// GetInternalResponse(), which would return nil after stream chunks are consumed.
-func (ra *relayAttempt) collectAndStoreStreamResponse() {
-	if ra.internalRequest.Stream == nil || !*ra.internalRequest.Stream {
-		return
-	}
-	internalResponse := ra.metrics.InternalResponse
-	if internalResponse == nil {
-		return
-	}
-	if responseHasNonCacheableTermination(internalResponse) {
-		return
-	}
-	if responseJSON, err := jsonAPI.Marshal(internalResponse); err == nil {
-		storeSemanticCacheResponse(ra.operationCtx, ra.internalRequest, responseJSON)
-	}
 }
 
 func rewriteConversationRequestByProvider(group dbmodel.Group, req *model.InternalLLMRequest) *model.InternalLLMRequest {
@@ -1726,7 +1683,7 @@ func handleClientDisconnect(req *relayRequest, allAttempts []dbmodel.ChannelAtte
 	return errClientDisconnected
 }
 
-func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxKeyRetriesPerRoute int, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) (*inflightRelayResult, error) {
+func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxKeyRetriesPerRoute int, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) error {
 	var allAttempts []dbmodel.ChannelAttempt
 	var lastErr error
 	attemptNumberBase := 0
@@ -1742,7 +1699,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 	for routeRound := 1; routeRound <= maxRouteRetries; routeRound++ {
 		if isClientDisconnected(req.clientCtx) {
-			return nil, handleClientDisconnect(req, allAttempts)
+			return handleClientDisconnect(req, allAttempts)
 		}
 		if err := req.operationCtx.Err(); err != nil {
 			lastErr = err
@@ -1770,7 +1727,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				goto exhausted
 			}
 			if isClientDisconnected(req.clientCtx) {
-				return nil, handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
+				return handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
 			}
 			if err := req.operationCtx.Err(); err != nil {
 				lastErr = err
@@ -1836,7 +1793,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					goto exhausted
 				}
 				if isClientDisconnected(req.clientCtx) {
-					return nil, handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
+					return handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
 				}
 				if err := req.operationCtx.Err(); err != nil {
 					lastErr = err
@@ -1892,7 +1849,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						goto exhausted
 					}
 					if isClientDisconnected(req.clientCtx) {
-						return nil, handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
+						return handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
 					}
 					if err := req.operationCtx.Err(); err != nil {
 						lastErr = err
@@ -1933,15 +1890,14 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
 					// 离群窗口：记录成功样本（与熔断器同级证据）。
 					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
-					namespace, requestText, _ := semanticCacheStoreMetadata(req.internalRequest)
 					req.metrics.Save(true, nil, currentAttempts)
-					return newInflightRelayResult(cloneInternalResponse(req.metrics.InternalResponse), req.internalRequest.Model, currentAttempts, namespace, requestText), nil
+					return nil
 				}
 
 				// Cancellation is a request outcome, not a channel-health failure.
 				if errors.Is(result.Err, errClientDisconnected) {
 					req.metrics.Save(false, result.Err, currentAttempts)
-					return nil, result.Err
+					return result.Err
 				}
 				if err := req.operationCtx.Err(); err != nil {
 					lastErr = err
@@ -1984,11 +1940,11 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					// 400 类客户端错误不再重试，把上游错误体原样回给下游，
 					// 避免吞成 502 导致客户端无法识别 context_length_exceeded。
 					writeClientTerminalError(req.c, channel.Type, result.Decision.Code, result.Err)
-					return nil, result.Err
+					return result.Err
 				case ScopeAbortAll:
 					lastErr = result.Err
 					req.metrics.Save(false, result.Err, currentAttempts)
-					return nil, result.Err
+					return result.Err
 				case ScopeSameChannel:
 					lastErr = result.Err
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
@@ -2020,7 +1976,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 							cancelHold()
 							if !waitCompleted {
 								if isClientDisconnected(req.clientCtx) {
-									return nil, handleClientDisconnect(req, currentAttempts)
+									return handleClientDisconnect(req, currentAttempts)
 								}
 								lastErr = req.operationCtx.Err()
 								goto exhausted
@@ -2048,7 +2004,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					lastErr = result.Err
 					req.metrics.Save(false, lastErr, currentAttempts)
 					resp.BadGateway(req.c)
-					return nil, result.Err
+					return result.Err
 				}
 			}
 		}
@@ -2079,7 +2035,7 @@ exhausted:
 		}
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return lastErr
 	}
-	return nil, errors.New("all channels failed")
+	return errors.New("all channels failed")
 }

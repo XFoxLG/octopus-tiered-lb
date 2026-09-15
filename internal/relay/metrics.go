@@ -347,8 +347,8 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 
 	// 大字段（请求/响应内容）记录开关。关闭时跳过 JSON 构造与存储，可大幅
 	// 降低每条日志的写入量与磁盘 IO（高负载日志性能优化的主要杠杆）。
-	// SemanticCacheHit 与 CacheReadTokens 不依赖大字段：前者从请求判断，后者
-	// 从 InternalResponse.Usage.PromptTokensDetails.CachedTokens 直接提取。
+	// Provider prompt-cache tokens remain available directly from response usage
+	// even when response content is not retained.
 	contentEnabled, _ := setting.GetBool(model.SettingKeyRelayLogContentEnabled)
 	if contentEnabled && m.RequestTrace == nil {
 		// 请求内容
@@ -368,31 +368,16 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 					insert := fmt.Sprintf(`"usage":{"cache_creation_input_tokens":%d,`, m.InternalResponse.Usage.CacheCreationInputTokens)
 					respJSON = []byte(strings.Replace(respStr, old, insert, 1))
 				}
-				if isSemanticCacheHitRequest(m.InternalRequest) {
-					relayLog.SemanticCacheHit = true
-					if relayLog.ChannelName == "" {
-						relayLog.ChannelName = "Semantic Cache"
-					}
-					respJSON = semanticCacheHitPayload(respJSON, m.InternalRequest)
-				}
 				relayLog.ResponseContent = string(respJSON)
 			}
 		}
 
-		if !relayLog.SemanticCacheHit {
-			relayLog.CacheReadTokens = opRelayLogCacheReadTokens(relayLog.ResponseContent)
-		}
+		relayLog.CacheReadTokens = opRelayLogCacheReadTokens(relayLog.ResponseContent)
 	} else {
 		// Four-boundary traces own new content through refs/blobs. The same
 		// lightweight path is also used when content capture is disabled, so the
 		// list-level cache indicators never depend on legacy inline columns.
-		relayLog.SemanticCacheHit = isSemanticCacheHitRequest(m.InternalRequest)
-		if relayLog.SemanticCacheHit && relayLog.ChannelName == "" {
-			relayLog.ChannelName = "Semantic Cache"
-		}
-		if !relayLog.SemanticCacheHit {
-			relayLog.CacheReadTokens = cacheReadTokensFromUsage(m.InternalResponse)
-		}
+		relayLog.CacheReadTokens = cacheReadTokensFromUsage(m.InternalResponse)
 	}
 
 	// 错误信息

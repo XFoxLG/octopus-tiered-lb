@@ -61,14 +61,6 @@ export const SettingKey = {
     AutoStrategyTimeWindow: 'auto_strategy_time_window',
     AutoStrategySampleThreshold: 'auto_strategy_sample_threshold',
     AutoStrategyLatencyWeight: 'auto_strategy_latency_weight',
-    SemanticCacheEnabled: 'semantic_cache_enabled',
-    SemanticCacheTTL: 'semantic_cache_ttl',
-    SemanticCacheThreshold: 'semantic_cache_threshold',
-    SemanticCacheMaxEntries: 'semantic_cache_max_entries',
-    SemanticCacheEmbeddingBaseURL: 'semantic_cache_embedding_base_url',
-    SemanticCacheEmbeddingAPIKey: 'semantic_cache_embedding_api_key',
-    SemanticCacheEmbeddingModel: 'semantic_cache_embedding_model',
-    SemanticCacheEmbeddingTimeoutSeconds: 'semantic_cache_embedding_timeout_seconds',
     NavOrder: 'nav_order',
     NavVisible: 'nav_visible',
     AnalyticsTabOrder: 'analytics_tab_order',
@@ -313,25 +305,34 @@ export function useImportDB() {
     });
 }
 
-/**
- * 缓存后端配置（Redis 可选，issue #123）
- */
-export interface CacheRedisConfig {
-    addr: string;
-    password: string;
-    username: string;
-    db: number;
+export interface CacheRedisTuning {
     pool_size: number;
     dial_timeout: string;
     read_timeout: string;
+}
+
+// Read responses deliberately contain no credentials or certificate paths.
+export interface CacheRedisSummary extends CacheRedisTuning {
+    addr: string;
+    db: number;
     tls: boolean;
-    ca_file: string;
+}
+
+export interface CacheRedisConfig extends Partial<CacheRedisTuning> {
+    addr: string;
+    password?: string;
+    username?: string;
+    db?: number;
+    tls?: boolean;
+    ca_file?: string;
 }
 
 export interface CacheConfig {
     type: '' | 'redis';
-    redis: CacheRedisConfig;
-    config_source: 'file' | 'environment' | 'deployment';
+    redis: CacheRedisSummary;
+    has_saved_connection: boolean;
+    has_password: boolean;
+    config_source: 'file' | 'environment' | 'deployment' | 'database';
     runtime_backend: 'memory' | 'redis';
     runtime_healthy: boolean;
     runtime_tls: boolean;
@@ -341,7 +342,9 @@ export interface CacheConfig {
 
 export interface CacheConfigRequest {
     type: '' | 'redis';
-    redis: CacheRedisConfig;
+    // Omit redis to keep the stored connection, including its secret fields.
+    redis?: CacheRedisConfig;
+    tuning?: CacheRedisTuning;
 }
 
 export interface CacheConfigResult {
@@ -349,9 +352,7 @@ export interface CacheConfigResult {
     restart_needed: boolean;
 }
 
-/**
- * 获取当前缓存后端配置（回显 config.json 的 cache 字段）
- */
+/** Read sanitized configuration metadata and the active runtime separately. */
 export function useGetCacheConfig() {
     return useQuery({
         queryKey: ['settings', 'cache-config'],
@@ -361,34 +362,34 @@ export function useGetCacheConfig() {
     });
 }
 
-/**
- * 测试 Redis 连接连通性（不改变运行中状态）
- */
+/** Parse on the server without connecting, writing, or activating a backend. */
+export function usePreviewCacheConfig() {
+    return useMutation({
+        mutationFn: async (data: CacheConfigRequest) => {
+            return apiClient.post<CacheRedisSummary>('/api/v1/setting/cache/preview', data);
+        },
+        gcTime: 0,
+    });
+}
+
+/** PING a temporary connection without saving or changing the active backend. */
 export function useTestCacheConnection() {
     return useMutation({
         mutationFn: async (data: CacheConfigRequest) => {
             return apiClient.post<boolean>('/api/v1/setting/cache/test', data);
         },
-        onError: (error) => {
-            logger.error('测试 Redis 连接失败:', error);
-        },
+        gcTime: 0,
     });
 }
 
-/**
- * 保存缓存配置到 config.json（需重启生效）
- */
+/** Save to the service database or local file; activation requires a restart. */
 export function useSaveCacheConfig() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async (data: CacheConfigRequest) => {
             return apiClient.post<CacheConfigResult>('/api/v1/setting/cache/save', data);
         },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['settings', 'cache-config'] });
-        },
-        onError: (error) => {
-            logger.error('保存缓存配置失败:', error);
-        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings', 'cache-config'] }),
+        gcTime: 0,
     });
 }

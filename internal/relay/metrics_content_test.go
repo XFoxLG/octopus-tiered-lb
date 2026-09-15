@@ -15,8 +15,7 @@ import (
 
 // TestSaveLogContentEnabledToggle 验证 RelayLogContentEnabled 开关：
 //   - 开启时（默认）：RequestContent/ResponseContent 被记录；
-//   - 关闭时：两个大字段为空，但 CacheReadTokens 仍从 Usage 直接提取，
-//     SemanticCacheHit 仍正确判定。
+//   - 关闭时：两个大字段为空，但 CacheReadTokens 仍从 Usage 直接提取。
 func TestSaveLogContentEnabledToggle(t *testing.T) {
 	dsn := filepath.Join(t.TempDir(), "metrics-content.db")
 	if err := db.InitDB("sqlite", dsn, false); err != nil {
@@ -75,6 +74,9 @@ func TestSaveLogContentEnabledToggle(t *testing.T) {
 	}
 	if last1.CacheReadTokens != int(cachedTokens) {
 		t.Fatalf("content enabled: CacheReadTokens = %d, want %d", last1.CacheReadTokens, cachedTokens)
+	}
+	if last1.SemanticCacheHit {
+		t.Fatal("provider prompt-cache usage must not become a semantic cache hit")
 	}
 	if last1.UserAgent != "ua-regression/1.0" {
 		t.Fatalf("content enabled: UserAgent = %q, want %q", last1.UserAgent, "ua-regression/1.0")

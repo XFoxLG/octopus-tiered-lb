@@ -202,26 +202,6 @@ func TestTerminationForChoiceDerivesRefusalFallback(t *testing.T) {
 	}
 }
 
-func TestResponseHasNonCacheableTerminationRejectsPromptBlock(t *testing.T) {
-	promptBlockedResponse := &model.InternalLLMResponse{
-		Termination: model.TerminationMetadata{
-			Cause: model.TerminationCausePromptBlocked,
-		},
-	}
-	if !responseHasNonCacheableTermination(promptBlockedResponse) {
-		t.Fatal("prompt-blocked response must not enter the semantic cache")
-	}
-
-	completedResponse := &model.InternalLLMResponse{
-		Termination: model.TerminationMetadata{
-			Cause: model.TerminationCauseComplete,
-		},
-	}
-	if responseHasNonCacheableTermination(completedResponse) {
-		t.Fatal("completed response must remain eligible for semantic caching")
-	}
-}
-
 func TestResponseProviderFailureDistinguishesFailureFromRefusal(t *testing.T) {
 	providerFailure := &model.InternalLLMResponse{
 		Termination: model.TerminationMetadata{

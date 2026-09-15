@@ -1385,49 +1385,6 @@
         "notTested": "這裡不會驗證 API 連通性、金鑰權限或模型可用性。確認允許修改分組後，再單獨啟動分組任務。"
       }
     },
-    "semanticCache": {
-      "title": "Semantic Cache",
-      "description": "可選的答案重用，僅用於明確 temperature=0 的單問題、非串流 Chat 請求。多輪對話、系統或角色提示、串流、工具、多模態及 Responses 均略過。創作與 AI 伴侶建議保持關閉；這不是服務方的提示詞前綴快取。",
-      "enabled": {
-        "label": "啟用語意快取"
-      },
-      "ttl": {
-        "label": "快取 TTL（秒）",
-        "placeholder": "請輸入 TTL 秒數",
-        "hint": "快取條目會在該時長後過期。"
-      },
-      "threshold": {
-        "label": "相似度閾值（0-100）",
-        "placeholder": "請輸入相似度閾值",
-        "hint": "值越高，命中快取前要求的語意相似度越接近。"
-      },
-      "maxEntries": {
-        "label": "最大條目數",
-        "placeholder": "請輸入最大快取條目數",
-        "hint": "達到上限後會優先淘汰較早的快取條目。"
-      },
-      "embedding": {
-        "title": "Embedding 服務",
-        "description": "以下設定僅用於語意快取的 embedding 請求，不與 AI Route 共用。"
-      },
-      "baseUrl": {
-        "label": "Embedding Base URL",
-        "placeholder": "請輸入 OpenAI 相容 embedding Base URL"
-      },
-      "apiKey": {
-        "label": "Embedding API Key",
-        "placeholder": "請輸入 embedding API Key"
-      },
-      "model": {
-        "label": "Embedding 模型",
-        "placeholder": "請輸入 embedding 模型名稱"
-      },
-      "timeoutSeconds": {
-        "label": "Embedding 超時（秒）",
-        "placeholder": "請輸入 embedding 請求超時時間",
-        "hint": "僅作用於語意快取的 embedding 請求。"
-      }
-    },
     "pageOrder": {
       "title": "Page Order",
       "description": "拖曳調整頂級頁面順序，放開後會立即儲存為全域設定。",
@@ -1500,14 +1457,47 @@
       "source": {
         "file": "設定來源：本機檔案。儲存後需重新啟動服務才會套用。",
         "environment": "設定來源：環境變數。請修改部署環境並重新部署，此表單不能覆蓋它。",
-        "deployment": "設定來源：部署平台管理。請修改平台設定後重新部署。"
+        "deployment": "設定來源：部署平台管理。請修改平台設定後重新部署。",
+        "database": "設定來源：目前服務的加密資料庫設定，以穩定的 RENDER_SERVICE_ID 區分服務。儲存後需重新啟動。"
       },
       "reconnecting": "正在嘗試連線 Redis / Valkey。請以實際後端和健康狀態為準，僅填入位址不代表已啟用。",
-      "deploymentInstructions": "Render 請在服務的 Environment 中設定下列環境變數，然後重新部署。此處填入的值不會修改 Render 設定或目前執行的後端。",
+      "deploymentInstructions": "環境變數或平台設定優先時，請在部署平台修改後重新部署。此處填入的值不會覆蓋平台設定或切換目前後端。",
       "deploymentTestOnly": "部署平台管理模式下，此表單僅用於 PING 連線測試。成功不等於後端已啟用，也不證明具有全部所需命令的權限。",
-      "tlsLabel": "使用 TLS 加密（rediss:// 始終啟用）",
+      "savedConnection": "現有連線（安全摘要）",
+      "configuredType": "已設定的後端：{value}",
+      "connectionSummary": "{value}；DB {count}；{tls}",
+      "passwordSaved": "已有密碼，不回顯。留空保留整條連線。",
+      "noPasswordSaved": "現有連線未設定密碼。",
+      "noSavedConnection": "尚無可重用的連線；啟用 Redis 時請填入完整的新連線。",
+      "advanced": "進階：手動連線、憑證與逾時",
+      "manualConnection": "新連線的手動參數",
+      "replacementHint": "貼上完整 redis:// 或 rediss://，也可填 host:port。留空保留現有連線；填入新位址會整條替換，不繼承舊密碼或 TLS。辨識由伺服器完成。",
+      "urlIdentityHint": "URL 決定使用者名稱、密碼、DB 和 TLS；以下手動身分參數不會傳送。rediss:// 可另填 CA 路徑。",
+      "manualIdentityHint": "僅用於新填的 host:port。新連線的空密碼表示不使用密碼；位址留空則完整保留現有連線，以下參數不會傳送。",
+      "tuningHint": "連線池與逾時可單獨儲存，無需重輸密碼。池大小留空或 0 使用預設值；逾時範例：3s、500ms。",
+      "providerHint": "Aiven 的 CLICK_TO:REVEAL_PASSWORD 是無效佔位符，需替換為真實密碼；Powered off 的服務無法連線。Render Internal URL 僅限同一 workspace、同一 region 的服務。",
+      "memoryHint": "儲存記憶體後端後需重新啟動；已儲存的 Redis 連線仍保留，方便以後重用。",
+      "loading": "正在載入快取設定...",
+      "loadError": "無法確認設定來源。請重新整理後再儲存。",
+      "saveHint": "辨識只驗證格式；測試只暫時 PING；儲存後仍需重新啟動，並檢查上方實際後端與健康狀態。",
+      "readOnlyHint": "環境變數或平台設定優先，禁止在此儲存。仍可辨識或測試候選連線；要持久修改，請在部署平台操作。",
+      "previewButton": "辨識設定",
+      "previewSummary": "候選連線（伺服器解析）",
+      "previewSuccess": "設定解析通過；未連線 Redis、未儲存，也未切換後端。",
+      "previewFailed": "設定解析失敗。請核對完整位址、真實密碼和進階參數；未連線或儲存。",
+      "saveFailed": "儲存失敗或設定未通過驗證。草稿已保留，請檢查後重試；未切換目前後端。",
+      "validationFailed": "請修正標出的連線或進階參數，再重試。",
+      "validation": {
+        "addressRequired": "沒有現有連線可重用，請填入完整的新連線。",
+        "passwordPlaceholder": "CLICK_TO:REVEAL_PASSWORD 不是密碼，請在 Aiven 顯示並複製真實密碼。",
+        "databaseInteger": "DB 索引必須是大於或等於 0 的整數。",
+        "poolSizeInteger": "連線池大小必須是大於或等於 0 的整數，0 使用預設值。"
+      },
+      "persistenceHint": "Render 按穩定 RENDER_SERVICE_ID 加密存入資料庫，其他安裝退回本機檔案。網頁設定與環境變數不改變執行階段請求效能，設定不會逐請求讀取。",
+      "sharedKeysHint": "按服務儲存只隔離連線設定；連線同一 Redis 位址和 DB 的服務仍可能共用執行階段鍵。",
+      "tlsLabel": "使用 TLS（僅手動位址）",
       "caFileLabel": "自訂 CA 憑證檔案（可選，填入伺服器路徑）",
-      "tlsHint": "公共 CA 簽發的憑證通常無需填入，預設使用系統信任庫。私有 CA 需填入 Octopus 伺服器能讀取的憑證路徑。不會關閉憑證或主機名稱驗證。",
+      "tlsHint": "僅 TLS 新連線可填寫 CA。公共憑證通常留空，使用系統信任庫；私有 CA 需填入 Octopus 伺服器可讀的路徑。不會關閉憑證或主機名稱驗證。",
       "type": {
         "label": "後端類型",
         "memory": "記憶體（預設）",
@@ -1515,12 +1505,12 @@
       },
       "fields": {
         "addr": {
-          "label": "位址",
-          "placeholder": "127.0.0.1:6379"
+          "label": "替換連線（留空保留現有連線）",
+          "placeholder": "redis://... / rediss://... / host:port"
         },
         "password": {
           "label": "密碼",
-          "placeholder": "••••••"
+          "placeholder": "僅新連線的密碼（可留空）"
         },
         "username": {
           "label": "使用者名稱（ACL）",
@@ -1543,15 +1533,15 @@
           "placeholder": "3s"
         }
       },
-      "testButton": "測試連線",
-      "testSuccess": "Redis / Valkey PING 成功；尚未啟用後端，也未驗證全部命令權限。",
-      "testFailed": "連線測試失敗：{error}",
+      "testButton": "測試 PING",
+      "testSuccess": "Redis / Valkey PING 成功；本次測試不啟用或切換後端，也未驗證全部命令權限。",
+      "testFailed": "設定驗證或 PING 失敗。請檢查服務是否開啟、網路、憑證與 TLS；未儲存或切換後端。",
       "saveButton": "儲存設定",
       "saving": "儲存中…",
-      "saved": "快取設定已儲存",
+      "saved": "快取設定已儲存；儲存不是啟用，請以上方實際後端為準。",
       "typeRedisRequired": "請先選擇 Redis 作為後端類型",
       "addrRequired": "Redis 位址不能為空",
-      "restartNotice": "變更需重啟服務後生效。"
+      "restartNotice": "有待套用的設定。請重新啟動服務，然後檢查實際後端和健康狀態；不會熱切換。"
     },
     "webdav": {
       "title": "WebDAV 雲端備份",

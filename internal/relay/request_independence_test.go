@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,7 +69,6 @@ func prepareIndependentRequestFixture(t *testing.T, respond independentRequestTr
 	}
 	t.Cleanup(relaylog.SetCacheForTest(nil))
 	for settingKey, settingValue := range map[dbmodel.SettingKey]string{
-		dbmodel.SettingKeySemanticCacheEnabled:  "false",
 		dbmodel.SettingKeyRelayRetryCount:       "0",
 		dbmodel.SettingKeyRelayRouteRetries:     "1",
 		dbmodel.SettingKeyRelayMaxTotalAttempts: "1",
@@ -141,6 +141,83 @@ func newIndependentFixtureResponse(request *http.Request, statusCode int, respon
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(strings.NewReader(responseBody)),
 		Request:    request,
+	}
+}
+
+func TestHandlerRetiredSemanticCacheAlwaysCallsUpstream(test *testing.T) {
+	if runIndependentRequestTestInSubprocess(test) {
+		return
+	}
+	var upstreamCalls atomic.Int64
+	var embeddingCalls atomic.Int64
+	var unexpectedCalls atomic.Int64
+	prepareIndependentRequestFixture(test, func(request *http.Request) (*http.Response, error) {
+		generation := upstreamCalls.Add(1)
+		body := fmt.Sprintf(`{"id":"fresh-%d","object":"chat.completion","model":"creative-fixture","choices":[{"index":0,"message":{"role":"assistant","content":"fresh answer %d"},"finish_reason":"stop"}]}`, generation, generation)
+		return newIndependentFixtureResponse(request, http.StatusOK, body), nil
+	})
+	originalDefaultTransport := http.DefaultTransport
+	http.DefaultTransport = independentRequestTransport(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host == "192.0.2.2" && request.URL.Path == "/v1/embeddings" {
+			embeddingCalls.Add(1)
+			return newIndependentFixtureResponse(request, http.StatusOK, `{"data":[{"embedding":[1,0,0]}]}`), nil
+		}
+		unexpectedCalls.Add(1)
+		return nil, fmt.Errorf("unexpected default-transport request: %s", request.URL)
+	})
+	test.Cleanup(func() { http.DefaultTransport = originalDefaultTransport })
+
+	// Seed old shared-database values directly, not through ordinary setting
+	// writes. Both transports above are mocks and never open network sockets.
+	legacySettings := []dbmodel.Setting{
+		{Key: dbmodel.SettingKeySemanticCacheEnabled, Value: "true"},
+		{Key: dbmodel.SettingKeySemanticCacheTTL, Value: "3600"},
+		{Key: dbmodel.SettingKeySemanticCacheThreshold, Value: "98"},
+		{Key: dbmodel.SettingKeySemanticCacheMaxEntries, Value: "1000"},
+		{Key: dbmodel.SettingKeySemanticCacheEmbeddingBaseURL, Value: "http://192.0.2.2/v1"},
+		{Key: dbmodel.SettingKeySemanticCacheEmbeddingAPIKey, Value: "fixture-only-embedding-key"},
+		{Key: dbmodel.SettingKeySemanticCacheEmbeddingModel, Value: "fixture-embedding"},
+		{Key: dbmodel.SettingKeySemanticCacheEmbeddingTimeoutSeconds, Value: "1"},
+	}
+	for _, legacySetting := range legacySettings {
+		if err := db.GetDB().Save(&legacySetting).Error; err != nil {
+			test.Fatalf("seed legacy setting %q: %v", legacySetting.Key, err)
+		}
+	}
+	if err := setting.RefreshCache(context.Background()); err != nil {
+		test.Fatalf("refresh with legacy enabled setting: %v", err)
+	}
+	// Even a compatibility caller restoring the old runtime cache cannot enable
+	// answer reuse: there is no relay lookup, embedding, or store path left.
+	for _, legacySetting := range legacySettings {
+		setting.GetCache().Set(legacySetting.Key, legacySetting.Value)
+	}
+
+	requestBody := `{"model":"creative-fixture","messages":[{"role":"user","content":"What is two plus two?"}],"temperature":0}`
+	for requestNumber := 1; requestNumber <= 3; requestNumber++ {
+		recorder := serveIndependentFixtureRequest(requestBody)
+		if recorder.Code != http.StatusOK {
+			test.Fatalf("request %d status = %d: %s", requestNumber, recorder.Code, recorder.Body.String())
+		}
+		var payload struct {
+			ID string `json:"id"`
+		}
+		if err := jsonAPI.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			test.Fatalf("decode request %d response: %v", requestNumber, err)
+		}
+		if expectedID := fmt.Sprintf("fresh-%d", requestNumber); payload.ID != expectedID {
+			test.Errorf("request %d response ID = %q, want %q", requestNumber, payload.ID, expectedID)
+		}
+	}
+	if upstreamCalls.Load() != 3 || embeddingCalls.Load() != 0 || unexpectedCalls.Load() != 0 {
+		test.Errorf("upstream=%d embedding=%d unexpected=%d, want 3 independent upstream calls only", upstreamCalls.Load(), embeddingCalls.Load(), unexpectedCalls.Load())
+	}
+	var storedSetting dbmodel.Setting
+	if err := db.GetDB().First(&storedSetting, "key = ?", dbmodel.SettingKeySemanticCacheEnabled).Error; err != nil || storedSetting.Value != "true" {
+		test.Errorf("legacy enabled row was not preserved: value=%q error=%v", storedSetting.Value, err)
+	}
+	if recorded := stats.APIKeyGet(890000); recorded.RequestSuccess != 3 || recorded.RequestFailed != 0 {
+		test.Errorf("request metrics = %+v, want exactly three successes", recorded)
 	}
 }
 

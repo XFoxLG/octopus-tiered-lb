@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ func BuildRedisOptions(configuration conf.RedisConfig) (*redis.Options, error) {
 		if err != nil || (parsedURL.Scheme != "redis" && parsedURL.Scheme != "rediss") {
 			return nil, fmt.Errorf("redis address must be host:port or a redis:// or rediss:// URI")
 		}
+		if parsedURL.Hostname() == "" || parsedURL.Fragment != "" {
+			return nil, fmt.Errorf("redis URI requires a host and must not contain a fragment; URL-encode special characters in credentials")
+		}
 		options, err = redis.ParseURL(address)
 		if err != nil {
 			return nil, fmt.Errorf("invalid redis URI options")
@@ -49,9 +53,16 @@ func BuildRedisOptions(configuration conf.RedisConfig) (*redis.Options, error) {
 	if !uriHasPassword {
 		options.Password = configuration.Password
 	}
-	host, _, err := net.SplitHostPort(options.Addr)
-	if err != nil || host == "" {
+	host, port, err := net.SplitHostPort(options.Addr)
+	if err != nil || host == "" || strings.ContainsAny(host, "@/?#\\ \t\r\n") {
 		return nil, fmt.Errorf("redis address must include a valid host and port")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return nil, fmt.Errorf("redis port must be between 1 and 65535")
+	}
+	if (options.Username == "CLICK_TO" || options.Username == "CLICK-TO") && options.Password == "REVEAL_PASSWORD" {
+		return nil, fmt.Errorf("redis URI contains a placeholder; copy the actual service connection URI privately")
 	}
 	if options.DB < 0 {
 		return nil, fmt.Errorf("redis database index cannot be negative")
