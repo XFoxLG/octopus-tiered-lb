@@ -10,6 +10,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
@@ -17,12 +18,25 @@ import (
 	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"gorm.io/gorm/schema"
 )
 
 const dbDumpVersion = 2
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
-const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（避免 SQLite 参数限制）
+const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（外层上限，内层按 SQL 变量预算再收）
+
+// maxSQLVariablesPerStatement 是单条 INSERT 语句的 SQL 占位变量预算（保守值）。
+// SQLite 单语句变量上限按编译配置可低至 999（glebarez/modernc 默认 32766，
+// Postgres 65535），取最小值保证三种后端都不越界。批量插入按
+// maxSQLVariablesPerStatement / 当前列数 自适应每批行数：列数随模型演进增长
+// 时（如阶段2/3 的新列），固定 1000 行的批会静默越过临界点并报
+// "too many SQL variables"。
+const maxSQLVariablesPerStatement = 999
+
+// batchSchemaCache 供 schema.Parse 缓存已解析的模型 schema（类型 → *schema.Schema），
+// 避免每批重复解析。schema.Parse 失败时调用方回退保守批大小。
+var batchSchemaCache sync.Map
 
 func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDump, error) {
 	conn := db.GetDB().WithContext(ctx)
@@ -446,9 +460,23 @@ func (c *importConfig) batchInsert(table string, rows any, count int, conflict c
 		return nil
 	}
 
+	// 每批行数按 SQL 变量预算自适应：batchInsertSize 是外层上限，
+	// 内层 = maxSQLVariablesPerStatement / 列数（列数用 GORM schema 解析，
+	// serializer:json 等嵌套结构已展开为实际数据库列）。解析失败回退保守值
+	// （batchInsertSize 不变时维持旧行为，但可能在大表上报变量超限）。
+	rowsPerBatch := batchInsertSize
+	element := reflect.New(slice.Type().Elem()).Interface()
+	if modelSchema, err := schema.Parse(element, &batchSchemaCache, c.conn.NamingStrategy); err == nil {
+		if columnCount := len(modelSchema.DBNames); columnCount > 0 {
+			if budgeted := maxSQLVariablesPerStatement / columnCount; budgeted > 0 && budgeted < rowsPerBatch {
+				rowsPerBatch = budgeted
+			}
+		}
+	}
+
 	var totalAffected int64
-	for offset := 0; offset < totalRows; offset += batchInsertSize {
-		end := offset + batchInsertSize
+	for offset := 0; offset < totalRows; offset += rowsPerBatch {
+		end := offset + rowsPerBatch
 		if end > totalRows {
 			end = totalRows
 		}

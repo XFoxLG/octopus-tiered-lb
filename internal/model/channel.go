@@ -113,6 +113,30 @@ type Channel struct {
 	KeyHealthAllFailed *bool `json:"key_health_all_failed,omitempty" gorm:"column:key_health_all_failed"`
 	// KeyHealthAt 最近一次定时 Key 巡检完成时间（unix 秒），0 = 从未巡检。
 	KeyHealthAt int64 `json:"key_health_at,omitempty" gorm:"column:key_health_at;default:0"`
+	// MaxConcurrency 渠道级最大并发（同时在途的 upstream 请求数上限）。0 = 不限制。
+	// 保护脆弱上游：超过上限的候选在候选级被 Skip，attempt 级原子占用兜底竞态。
+	MaxConcurrency int `json:"max_concurrency,omitempty" gorm:"column:max_concurrency;not null;default:0"`
+	// RPMLimit 渠道级每分钟请求数上限（按候选选中计，1 次选中消耗 1 个 token）。
+	// 0 = 不限制。与 API key 级 RPM 语义一致：计数请求路由而非 upstream 尝试数。
+	RPMLimit int `json:"rpm_limit,omitempty" gorm:"column:rpm_limit;not null;default:0"`
+	// RelayRetryCountOverride 渠道级 Key 重试次数覆盖（阶段2）。-1 = 跟随分组/全局；
+	// 0 = 该渠道不重试（只尝试 1 次）；>0 = 该渠道最多重试 N 次（共 N+1 次尝试）。
+	// 覆盖优先级：渠道 > 分组 > 全局设置。
+	RelayRetryCountOverride int `json:"relay_retry_count_override,omitempty" gorm:"column:relay_retry_count_override;not null;default:-1"`
+	// CircuitBreakerThreshold 渠道级熔断阈值覆盖（阶段3）：连续失败 N 次触发熔断。
+	// 0 = 跟随全局设置。内存构造的结构体零值即"跟随全局"，无 -1 哨兵的零值陷阱。
+	CircuitBreakerThreshold int `json:"circuit_breaker_threshold,omitempty" gorm:"column:circuit_breaker_threshold;not null;default:0"`
+	// CircuitBreakerCooldown 渠道级熔断基础冷却（秒）覆盖。0 = 跟随全局设置。
+	// 指数退避基于该值：cooldown = base * 2^(tripCount-1)，上限见 MaxCooldown。
+	CircuitBreakerCooldown int `json:"circuit_breaker_cooldown,omitempty" gorm:"column:circuit_breaker_cooldown;not null;default:0"`
+	// CircuitBreakerMaxCooldown 渠道级熔断最大冷却（秒）覆盖。0 = 跟随全局设置。
+	CircuitBreakerMaxCooldown int `json:"circuit_breaker_max_cooldown,omitempty" gorm:"column:circuit_breaker_max_cooldown;not null;default:0"`
+	// KeyCooldownRatelimit 渠道级 429 冷却（秒）覆盖。0 = 跟随全局设置。
+	KeyCooldownRatelimit int `json:"key_cooldown_ratelimit,omitempty" gorm:"column:key_cooldown_ratelimit;not null;default:0"`
+	// KeyCooldownAuthError 渠道级 401/403 冷却（秒）覆盖。0 = 跟随全局设置。
+	KeyCooldownAuthError int `json:"key_cooldown_auth_error,omitempty" gorm:"column:key_cooldown_auth_error;not null;default:0"`
+	// KeyCooldownServerError 渠道级 5xx/408 冷却（秒）覆盖。0 = 跟随全局设置。
+	KeyCooldownServerError int `json:"key_cooldown_server_error,omitempty" gorm:"column:key_cooldown_server_error;not null;default:0"`
 }
 
 type BaseUrl struct {
@@ -202,6 +226,8 @@ type ChannelUpdateRequest struct {
 	RequestRewrite         *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
 	RelayLogRawSSEUntil    *int64                 `json:"relay_log_raw_sse_until,omitempty"`
 	MatchRegex             *string                `json:"match_regex,omitempty"`
+	MaxConcurrency         *int                   `json:"max_concurrency,omitempty"`
+	RPMLimit               *int                   `json:"rpm_limit,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`
 	KeysToUpdate []ChannelKeyUpdateRequest `json:"keys_to_update,omitempty"`

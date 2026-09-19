@@ -119,6 +119,10 @@ func Init() {
 		// （基数不受控），与 balancer 全局 map 同维度，缺少周期回收会在刷量/随机
 		// model 名下无界增长（见 issue #46 同类遗漏）。
 		ratelimitstore.PurgeStaleBuckets(balancerIdleThreshold)
+		// 清理渠道级容量配额的内存回退条目（阶段1）：并发计数条目 + 渠道 RPM 桶。
+		// 渠道 RPM key 含 resolvedModelName（基数不受控），与上面的限流 bucket
+		// 同维度回收；Redis 模式下 key 带 TTL 自动过期，函数内部直接返回 0。
+		ratelimitstore.PurgeStaleChannelState(balancerIdleThreshold)
 		// 清理长时间未活动的 per-model 统计条目。modelCache 的 key = FNV(channelID:
 		// clientModelName)，model 名由客户端请求携带、基数不受控；此前仅测试代码
 		// Clear()，无空闲回收，刷量/随机 model 名会让 map 终生驻留（见 issue #124）。

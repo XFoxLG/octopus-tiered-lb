@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	dbmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
@@ -288,10 +289,10 @@ func TestRelayAttemptForward_ReturnsUpstreamStatusCodeOnError(t *testing.T) {
 }
 
 func TestGetMaxAttemptsPerCandidate_Default(t *testing.T) {
-	got := getMaxAttemptsPerCandidate()
+	got := getMaxAttemptsPerCandidate(nil, nil)
 	want := defaultMaxRetryPerCandidate + 1
 	if got != want {
-		t.Fatalf("getMaxAttemptsPerCandidate() = %d, want %d", got, want)
+		t.Fatalf("getMaxAttemptsPerCandidate(nil, nil) = %d, want %d", got, want)
 	}
 }
 
@@ -494,9 +495,41 @@ func TestWriteClientTerminalErrorFallsBackToBadGatewayWithoutHTTPStatus(t *testi
 func TestGetMaxRetryPerCandidate_AllowsZero(t *testing.T) {
 	// 设为 0 表示该候选渠道内不进行 Key 级重试（issue #95 改动1）。
 	// 这里只验证函数在内存未配置时回退默认值，0 的行为由 setting 校验保证。
-	got := getMaxRetryPerCandidate()
+	got := getMaxRetryPerCandidate(nil, nil)
 	if got != defaultMaxRetryPerCandidate {
-		t.Fatalf("getMaxRetryPerCandidate() = %d, want default %d", got, defaultMaxRetryPerCandidate)
+		t.Fatalf("getMaxRetryPerCandidate(nil, nil) = %d, want default %d", got, defaultMaxRetryPerCandidate)
+	}
+}
+
+func TestGetMaxRetryPerCandidate_OverridePriority(t *testing.T) {
+	// 阶段2 三层回退：渠道覆盖 > 分组覆盖 > 全局默认。
+	// 渠道/分组未配置用 -1 表示（迁移 063 的默认值），逐层往下找。
+	channel := &dbmodel.Channel{RelayRetryCountOverride: 0}
+	group := &dbmodel.Group{RelayRetryCount: 2}
+	if got := getMaxRetryPerCandidate(channel, group); got != 0 {
+		t.Fatalf("channel override should win: got %d, want 0 (0 = 不重试)", got)
+	}
+	channel.RelayRetryCountOverride = -1
+	if got := getMaxRetryPerCandidate(channel, group); got != 2 {
+		t.Fatalf("group override expected after channel -1: got %d, want 2", got)
+	}
+	if got := getMaxRetryPerCandidate(channel, nil); got != defaultMaxRetryPerCandidate {
+		t.Fatalf("global fallback expected when group nil: got %d, want %d", got, defaultMaxRetryPerCandidate)
+	}
+}
+
+func TestGetMaxRouteRetries_GroupOverride(t *testing.T) {
+	// 阶段2 分组路由轮次：>=1 覆盖全局；-1/未配置跟随全局。
+	if got := getMaxRouteRetries(nil); got != defaultMaxRouteRetries {
+		t.Fatalf("getMaxRouteRetries(nil) = %d, want default %d", got, defaultMaxRouteRetries)
+	}
+	group := &dbmodel.Group{RelayRouteRetries: 5}
+	if got := getMaxRouteRetries(group); got != 5 {
+		t.Fatalf("group route override expected: got %d, want 5", got)
+	}
+	follow := &dbmodel.Group{RelayRouteRetries: -1}
+	if got := getMaxRouteRetries(follow); got != defaultMaxRouteRetries {
+		t.Fatalf("route retries -1 should follow global: got %d, want %d", got, defaultMaxRouteRetries)
 	}
 }
 

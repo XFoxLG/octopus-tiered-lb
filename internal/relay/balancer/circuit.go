@@ -69,7 +69,37 @@ func getThreshold() int64 {
 	return int64(v)
 }
 
-// GetCooldown 获取当前冷却时间（带指数退避）
+// cooldownFromConfig 计算带指数退避的熔断冷却时间（纯函数）。
+// 渠道级覆盖与全局设置共用同一套退避数学：cooldown = base * 2^(tripCount-1)，
+// 上限 maxCooldown，位移/溢出双保护。
+func cooldownFromConfig(baseCooldownSec, maxCooldownSec, tripCount int) time.Duration {
+	if maxCooldownSec <= 0 {
+		maxCooldownSec = 600
+	}
+
+	// 指数退避：baseCooldown * 2^(tripCount-1)
+	cooldown := baseCooldownSec
+	if tripCount > 1 {
+		shift := tripCount - 1
+		if shift > 20 { // 防止过大的位移
+			shift = 20
+		}
+		// 防止 base << shift 溢出 int：若 base 的二进制位数加上 shift
+		// 超过 int 的位宽，左移会溢出产生负值，直接使用最大冷却时间。
+		if baseCooldownSec > 0 && shift >= bits.Len(uint(baseCooldownSec)) {
+			cooldown = maxCooldownSec
+		} else {
+			cooldown = baseCooldownSec << shift
+		}
+	}
+	if cooldown > maxCooldownSec {
+		cooldown = maxCooldownSec
+	}
+
+	return time.Duration(cooldown) * time.Second
+}
+
+// GetCooldown 获取全局配置下的冷却时间（带指数退避）。
 func GetCooldown(tripCount int) time.Duration {
 	base, err := setting.GetInt(model.SettingKeyCircuitBreakerCooldown)
 	if err != nil || base <= 0 {
@@ -79,27 +109,42 @@ func GetCooldown(tripCount int) time.Duration {
 	if err != nil || maxCooldown <= 0 {
 		maxCooldown = 600
 	}
+	return cooldownFromConfig(base, maxCooldown, tripCount)
+}
 
-	// 指数退避：baseCooldown * 2^(tripCount-1)
-	cooldown := base
-	if tripCount > 1 {
-		shift := tripCount - 1
-		if shift > 20 { // 防止过大的位移
-			shift = 20
-		}
-		// 防止 base << shift 溢出 int：若 base 的二进制位数加上 shift
-		// 超过 int 的位宽，左移会溢出产生负值，直接使用最大冷却时间。
-		if base > 0 && shift >= bits.Len(uint(base)) {
-			cooldown = maxCooldown
-		} else {
-			cooldown = base << shift
-		}
+// channelCircuitCooldown 渠道级熔断冷却（阶段3）：渠道 CircuitBreakerCooldown /
+// MaxCooldown 覆盖值 >0 时优先，否则逐项跟随全局。通过渠道缓存读取（缓存优先，
+// 未命中才落库），不做每请求直查数据库。
+func channelCircuitCooldown(channelID, tripCount int) time.Duration {
+	base, maxCooldown := 0, 0
+	if channel, err := ch.Get(channelID, context.Background()); err == nil && channel != nil {
+		base = channel.CircuitBreakerCooldown
+		maxCooldown = channel.CircuitBreakerMaxCooldown
 	}
-	if cooldown > maxCooldown {
-		cooldown = maxCooldown
+	if base <= 0 {
+		v, err := setting.GetInt(model.SettingKeyCircuitBreakerCooldown)
+		if err != nil || v <= 0 {
+			v = 60
+		}
+		base = v
 	}
+	if maxCooldown <= 0 {
+		v, err := setting.GetInt(model.SettingKeyCircuitBreakerMaxCooldown)
+		if err != nil || v <= 0 {
+			v = 600
+		}
+		maxCooldown = v
+	}
+	return cooldownFromConfig(base, maxCooldown, tripCount)
+}
 
-	return time.Duration(cooldown) * time.Second
+// channelCircuitThreshold 渠道级熔断阈值（阶段3）：渠道覆盖 >0 时优先，
+// 否则跟随全局。
+func channelCircuitThreshold(channelID int) int64 {
+	if channel, err := ch.Get(channelID, context.Background()); err == nil && channel != nil && channel.CircuitBreakerThreshold > 0 {
+		return int64(channel.CircuitBreakerThreshold)
+	}
+	return getThreshold()
 }
 
 // getHalfOpenProbeTimeout 返回 HalfOpen 探测超时（秒）。
@@ -141,7 +186,7 @@ func IsTripped(channelID, keyID int, modelName string) (tripped bool, remaining 
 		return false, 0
 
 	case StateOpen:
-		cooldown := GetCooldown(entry.TripCount)
+		cooldown := channelCircuitCooldown(channelID, entry.TripCount)
 		elapsed := time.Since(entry.LastFailureTime)
 		if elapsed >= cooldown {
 			entry.State = StateHalfOpen
@@ -188,7 +233,7 @@ func isKeyTrippedReadOnly(channelID, keyID int, modelName string) bool {
 	case StateOpen:
 		// 只读：冷却到期也不转 HalfOpen，仅判定当前是否仍应跳过。
 		// 冷却已到期的 Open 视为"即将可探测"，不计为 tripped，避免误降权。
-		cooldown := GetCooldown(entry.TripCount)
+		cooldown := channelCircuitCooldown(channelID, entry.TripCount)
 		return time.Since(entry.LastFailureTime) < cooldown
 	case StateHalfOpen:
 		// 与 IsTripped 的探测超时语义一致：超过探测超时的 HalfOpen 视为"试探已丢失"，
@@ -263,12 +308,12 @@ func RecordFailure(channelID, keyID int, modelName string) {
 	case StateClosed:
 		entry.LastFailureTime = time.Now()
 		entry.ConsecutiveFailures++
-		threshold := getThreshold()
+		threshold := channelCircuitThreshold(channelID)
 		if entry.ConsecutiveFailures >= threshold {
 			entry.State = StateOpen
 			entry.TripCount++
 			log.Warnf("circuit breaker [%s] Closed -> Open (failures=%d >= threshold=%d, tripCount=%d, cooldown=%v)",
-				key, entry.ConsecutiveFailures, threshold, entry.TripCount, GetCooldown(entry.TripCount))
+				key, entry.ConsecutiveFailures, threshold, entry.TripCount, channelCircuitCooldown(channelID, entry.TripCount))
 		}
 	case StateHalfOpen:
 		// 试探失败，重新进入 Open 状态，TripCount 递增（冷却时间翻倍）
@@ -278,7 +323,7 @@ func RecordFailure(channelID, keyID int, modelName string) {
 		entry.ConsecutiveFailures = 0 // 重新开始计数
 		entry.HalfOpenSince = time.Time{}
 		log.Warnf("circuit breaker [%s] HalfOpen -> Open (probe failed, tripCount=%d, cooldown=%v)",
-			key, entry.TripCount, GetCooldown(entry.TripCount))
+			key, entry.TripCount, channelCircuitCooldown(channelID, entry.TripCount))
 
 	case StateOpen:
 		// Open 状态下不更新 LastFailureTime，避免冷却计时器被反复重置

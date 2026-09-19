@@ -60,7 +60,17 @@ func init() {
 	}
 }
 
-func getMaxRetryPerCandidate() int {
+// getMaxRetryPerCandidate 返回单个候选渠道的 Key 级重试次数（阶段2）。
+// 覆盖优先级：渠道 RelayRetryCountOverride > 分组 RelayRetryCount > 全局设置。
+// 语义：0 = 不重试（只尝试 1 次）；N = 最多重试 N 次（共 N+1 次尝试）。
+// 渠道/分组未配置（-1）或读取失败时回退下一层；全局读取失败回退默认值。
+func getMaxRetryPerCandidate(channel *dbmodel.Channel, group *dbmodel.Group) int {
+	if channel != nil && channel.RelayRetryCountOverride >= 0 {
+		return channel.RelayRetryCountOverride
+	}
+	if group != nil && group.RelayRetryCount >= 0 {
+		return group.RelayRetryCount
+	}
 	v, err := setting.GetInt(dbmodel.SettingKeyRelayRetryCount)
 	// 允许设为 0：此时 maxAttemptsPerCandidate = 1，Key 循环只跑一次，
 	// 失败直接跳到下一个渠道。负数或读取失败才回退默认值（见 issue #95）。
@@ -70,11 +80,16 @@ func getMaxRetryPerCandidate() int {
 	return v
 }
 
-func getMaxAttemptsPerCandidate() int {
-	return getMaxRetryPerCandidate() + 1
+func getMaxAttemptsPerCandidate(channel *dbmodel.Channel, group *dbmodel.Group) int {
+	return getMaxRetryPerCandidate(channel, group) + 1
 }
 
-func getMaxRouteRetries() int {
+// getMaxRouteRetries 返回路由轮次（阶段2）。分组 RelayRouteRetries >= 1 时
+// 优先于全局设置；-1 或未配置时跟随全局；全局读取失败回退默认值。
+func getMaxRouteRetries(group *dbmodel.Group) int {
+	if group != nil && group.RelayRouteRetries >= 1 {
+		return group.RelayRouteRetries
+	}
 	v, err := setting.GetInt(dbmodel.SettingKeyRelayRouteRetries)
 	if err != nil || v < 1 {
 		return defaultMaxRouteRetries
@@ -421,6 +436,7 @@ const (
 	ScopeSameChannel                   // 同候选换 Key 重试
 	ScopeNextChannel                   // 换下一个候选重试
 	ScopeAbortAll                      // 停止所有重试（已写入流式响应）
+	ScopeChannelCapacity               // 渠道并发满（竞态兜底），换下一个候选重试；非渠道故障
 )
 
 func (s RetryScope) String() string {
@@ -433,6 +449,8 @@ func (s RetryScope) String() string {
 		return "next_channel"
 	case ScopeAbortAll:
 		return "abort_all"
+	case ScopeChannelCapacity:
+		return "channel_capacity"
 	default:
 		return "unknown"
 	}

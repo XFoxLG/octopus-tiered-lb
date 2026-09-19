@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +80,56 @@ func (m *memoryKV) DelByPrefix(_ context.Context, prefix string) error {
 		}
 	}
 	return nil
+}
+
+// Incr 原子递增计数器（锁内读-改-写）。ttl > 0 时同步刷新过期时间，
+// 与 Redis 实现语义一致：占用停止后 ttl 内自愈。计数器值以十进制字符串存储，
+// 与 Redis 原生计数器的 GET 表现一致。
+func (m *memoryKV) Incr(_ context.Context, key string, ttl time.Duration) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.entries == nil {
+		m.entries = make(map[string]memoryKVEntry)
+	}
+	var count int64
+	if e, ok := m.entries[key]; ok && !expiredLocked(e) {
+		parsed, err := strconv.ParseInt(string(e.val), 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		count = parsed
+	}
+	count++
+	e := memoryKVEntry{val: []byte(strconv.FormatInt(count, 10))}
+	if ttl > 0 {
+		e.expiresAt = time.Now().Add(ttl)
+	}
+	m.entries[key] = e
+	return count, nil
+}
+
+// Decr 原子递减计数器。key 不存在或已过期时从 0 起算（结果为负值，与 Redis 一致）。
+func (m *memoryKV) Decr(_ context.Context, key string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.entries == nil {
+		m.entries = make(map[string]memoryKVEntry)
+	}
+	var count int64
+	if e, ok := m.entries[key]; ok && !expiredLocked(e) {
+		parsed, err := strconv.ParseInt(string(e.val), 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		count = parsed
+	}
+	count--
+	m.entries[key] = memoryKVEntry{val: []byte(strconv.FormatInt(count, 10))}
+	return count, nil
+}
+
+func expiredLocked(e memoryKVEntry) bool {
+	return !e.expiresAt.IsZero() && time.Now().After(e.expiresAt)
 }
 
 // DelBySubstring 删除所有 key 中包含 sub 子串的条目，仅扫描以 namespace 开头的 key

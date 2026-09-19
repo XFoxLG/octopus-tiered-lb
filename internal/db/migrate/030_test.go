@@ -107,6 +107,11 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := addGroupReasoningPolicyColumns(db); err != nil {
 		t.Fatalf("addGroupReasoningPolicyColumns: %v", err)
 	}
+	// Run migration 063 to add relay retry override columns
+	// (test uses latest model.Group which includes these fields)
+	if err := addRelayRetryOverrides(db); err != nil {
+		t.Fatalf("addRelayRetryOverrides: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

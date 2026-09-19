@@ -80,12 +80,15 @@ func prepareIndependentRequestFixture(t *testing.T, respond independentRequestTr
 
 	fixtureID := 890000 + int(independentRequestFixtureID.Add(1))
 	fixtureChannel := dbmodel.Channel{
-		ID:                     fixtureID,
+		ID: fixtureID,
 		Name:                   "independent-request-fixture",
 		Type:                   outbound.OutboundTypeOpenAIChat,
 		OutboundFormatOverride: "chat_only",
 		Enabled:                true,
-		BaseUrls:               []dbmodel.BaseUrl{{URL: "http://192.0.2.1"}},
+		// 内存构造的渠道不会经过 gorm 的 default:-1 落库回填，必须显式声明
+		// -1（跟随分组/全局），否则零值 0 会被当作「该渠道不重试」的覆盖。
+		RelayRetryCountOverride: -1,
+		BaseUrls:                []dbmodel.BaseUrl{{URL: "http://192.0.2.1"}},
 		Keys: []dbmodel.ChannelKey{{
 			ID: fixtureID, ChannelID: fixtureID, Enabled: true, ChannelKey: "fixture-only-key",
 		}},
@@ -95,6 +98,8 @@ func prepareIndependentRequestFixture(t *testing.T, respond independentRequestTr
 	group.GetCache().Set(fixtureID, dbmodel.Group{
 		ID: fixtureID, Name: "creative-fixture", EndpointType: dbmodel.EndpointTypeChat,
 		Mode: dbmodel.GroupModeFailover, OutboundFormat: "chat_only",
+		// 同上：内存构造的分组显式声明 -1，避免零值 0 覆盖全局重试配置。
+		RelayRetryCount: -1, RelayRouteRetries: -1,
 		Items: []dbmodel.GroupItem{{ChannelID: fixtureID, ModelName: "creative-fixture", Priority: 1, Weight: 1}},
 	})
 	group.RebuildIndexes()

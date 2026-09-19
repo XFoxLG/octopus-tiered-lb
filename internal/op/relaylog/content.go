@@ -194,7 +194,10 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 		}
 		attemptRows := relayLogContentAttempts(relayLogs)
 		if len(attemptRows) > 0 {
-			if err := transaction.Create(&attemptRows).Error; err != nil {
+			// 同一 (relay_log_id, attempt_num) 撞 uidx_rla_log_attempt 时只跳过那一行。
+			// 裸 Create 会让整个事务回滚，代价是整批日志（含其它请求的记录）全部写不进去，
+			// 用一条重复的尝试记录换掉一批完好的日志不划算。
+			if err := transaction.Clauses(clause.OnConflict{DoNothing: true}).Create(&attemptRows).Error; err != nil {
 				return err
 			}
 		}
@@ -224,7 +227,9 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 					}
 				}
 
-				if err := transaction.Create(&contentRef).Error; err != nil {
+				// 同一 (relay_log_id, attempt_num, boundary, slot, kind) 撞 uidx_rlcr_slot
+				// 时只跳过那一行；裸 Create 会让整个事务回滚，代价是整批日志全部丢失。
+				if err := transaction.Clauses(clause.OnConflict{DoNothing: true}).Create(&contentRef).Error; err != nil {
 					return err
 				}
 			}
