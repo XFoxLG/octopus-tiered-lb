@@ -22,6 +22,7 @@ import (
 	ch "github.com/lingyuins/octopus/internal/op/channel"
 	grp "github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
+	rl "github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	st "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
@@ -140,8 +141,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 	operationCtx, cancel := newRelayOperationContext()
 	defer cancel()
 
-	maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate()
-	maxRouteRetries := getMaxRouteRetries()
+	maxRouteRetries := getMaxRouteRetries(&group)
 	ratelimitCooldown := getRatelimitCooldown()
 	maxTotalAttempts := getMaxTotalAttempts()
 	rateLimitHoldCfg := getRateLimitHoldConfig()
@@ -216,8 +216,31 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				lastErr = fmt.Errorf("channel %s is temporarily rate limited", channel.Name)
 				continue
 			}
+			// 渠道级 RPM（阶段1）：按候选选中消耗 1 个 token，超限跳过换下一个候选。
+			if channel.RPMLimit > 0 {
+				if allowed, retryAfter := rl.CheckChannelRPM(channel.ID, resolvedModel, channel.RPMLimit); !allowed {
+					message := "channel rpm limit reached"
+					if wait := retryAfter - int(time.Now().Unix()); wait > 0 {
+						message = fmt.Sprintf("channel rpm limit reached, retry after: %ds", wait)
+					}
+					routeIter.Skip(channel.ID, 0, channel.Name, message)
+					lastErr = fmt.Errorf("channel %s rpm limit reached", channel.Name)
+					continue
+				}
+			}
+			// 渠道并发上限（阶段1）候选级快速检查（非阻塞），与 relay.go 同语义。
+			if channel.MaxConcurrency > 0 {
+				if inFlight := rl.InFlightChannel(channel.ID); inFlight >= channel.MaxConcurrency {
+					routeIter.Skip(channel.ID, 0, channel.Name,
+						fmt.Sprintf("channel concurrency limit reached (%d/%d)", inFlight, channel.MaxConcurrency))
+					lastErr = fmt.Errorf("channel %s concurrency limit reached", channel.Name)
+					continue
+				}
+			}
 
-			// 渠道内 Key 级重试
+			// 渠道内 Key 级重试（阶段2）：预算按候选渠道/分组覆盖逐候选计算，
+			// 优先级：渠道 RelayRetryCountOverride > 分组 RelayRetryCount > 全局设置。
+			maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate(channel, &group)
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
 		keyRetryLoop:
@@ -270,8 +293,21 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					endpointType, requestModel, channel.Name, resolvedModel, usedKey.ID,
 					routeRound, keyRound, maxKeyRetriesPerRoute)
 
+				// 渠道并发上限（阶段1）attempt 级原子占用：forwardMediaRequest 前占名额，
+				// 转发结束（无论成败）后立刻释放——获取/释放之间没有任何提前退出路径。
+				// 占用失败 = 竞态兜底：不算渠道故障（不记熔断/冷却），按 Skip 跳到下一候选。
+				if channel.MaxConcurrency > 0 && !rl.AcquireChannelSlot(channel.ID, channel.MaxConcurrency) {
+					log.Warnf("media relay: channel %s concurrency limit reached (%d), skip",
+						channel.Name, channel.MaxConcurrency)
+					routeIter.Skip(channel.ID, usedKey.ID, channel.Name,
+						fmt.Sprintf("channel concurrency limit reached (%d/%d)", channel.MaxConcurrency, channel.MaxConcurrency))
+					break
+				}
 				span := routeIter.StartAttempt(channel.ID, usedKey.ID, channel.Name, resolvedModel)
 				statusCode, fwdErr := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, span.AttemptNumber())
+				if channel.MaxConcurrency > 0 {
+					rl.ReleaseChannelSlot(channel.ID)
+				}
 
 				// 记录最后一次实际转发的通道信息
 				lastChannelID = channel.ID

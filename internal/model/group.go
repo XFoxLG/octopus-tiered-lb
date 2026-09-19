@@ -61,6 +61,13 @@ type Group struct {
 	// true 时连客户端显式 none / thinking disabled 的请求也补上默认档位；
 	// 对客户端已发具体档位的请求永不生效（改写档位不在本功能范围内）。
 	ReasoningForceOverride bool `json:"reasoning_force_override,omitempty" gorm:"column:reasoning_force_override;not null;default:false"`
+	// RelayRetryCount 分组级 Key 重试次数（阶段2）。-1 = 跟随全局设置；
+	// 0 = 分组内候选不重试（只尝试 1 次）；>0 = 最多重试 N 次（共 N+1 次尝试）。
+	// 覆盖优先级：渠道 RelayRetryCountOverride > 分组 RelayRetryCount > 全局设置。
+	RelayRetryCount int `json:"relay_retry_count,omitempty" gorm:"column:relay_retry_count;not null;default:-1"`
+	// RelayRouteRetries 分组级路由轮次（阶段2）。-1 = 跟随全局设置；
+	// >=1 = 覆盖全局（全部渠道遍历一轮算一次）。
+	RelayRouteRetries int `json:"relay_route_retries,omitempty" gorm:"column:relay_route_retries;not null;default:-1"`
 	// CustomHeader 分组级自定义请求头（XyzenSun 移植）。
 	// 先于渠道级 CustomHeader 应用，同名时渠道覆盖分组。
 	CustomHeader []CustomHeader `json:"custom_header,omitempty" gorm:"serializer:json"`

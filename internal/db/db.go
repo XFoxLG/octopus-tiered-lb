@@ -289,6 +289,15 @@ func OpenStandaloneWithOptions(dbType, dsn string, debug bool, opts SQLiteOption
 // foreign_keys，完成后恢复。SQLite 连接池 MaxOpenConns=1，PRAGMA 为会话级，切换安全。
 // MySQL/Postgres 使用 ALTER TABLE 语法，不触发此问题，无需处理。
 func Migrate(conn *gorm.DB) error {
+	// 共库部署（两个实例连同一个 Postgres）同时启动时会并发执行 DDL，报
+	// "column already exists" 之类的错误或在 ALTER TABLE 上互相等锁。
+	// 顾问锁把整段迁移串行化；非 Postgres 是空操作。
+	releaseMigrationLock, err := acquirePostgresMigrationLock(conn)
+	if err != nil {
+		return err
+	}
+	defer releaseMigrationLock()
+
 	if err := migrate.BeforeAutoMigrate(conn); err != nil {
 		return err
 	}

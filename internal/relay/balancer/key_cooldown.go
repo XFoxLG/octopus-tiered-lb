@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
+	ch "github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/store"
 )
@@ -67,19 +68,46 @@ func getServerErrorCooldown() time.Duration {
 	return time.Duration(v) * time.Second
 }
 
+// channelKeyCooldownOverrides 渠道级 Key 冷却覆盖（阶段3，0 = 跟随全局）。
+// 通过渠道缓存读取（缓存优先，未命中才落库），不做每请求直查数据库。
+// 渠道不存在/读取失败时返回全 0（= 全部跟随全局），行为不变。
+func channelKeyCooldownOverrides(channelID int) (ratelimitSec, authErrorSec, serverErrorSec int) {
+	channel, err := ch.Get(channelID, context.Background())
+	if err != nil || channel == nil {
+		return 0, 0, 0
+	}
+	return channel.KeyCooldownRatelimit, channel.KeyCooldownAuthError, channel.KeyCooldownServerError
+}
+
+// overrideOrGlobalSeconds 渠道覆盖值（秒）>0 时优先，否则回退全局获取器。
+func overrideOrGlobalSeconds(overrideSec int, globalFallback func() time.Duration) time.Duration {
+	if overrideSec > 0 {
+		return time.Duration(overrideSec) * time.Second
+	}
+	return globalFallback()
+}
+
 // keyCooldownDuration keeps credential errors, rate limits and upstream
 // failures independent. The legacy ratelimit_cooldown setting now applies to
 // 429 only; otherwise reducing it to improve rate-limit recovery would also
 // release invalid credentials and make their errors repeat.
 func keyCooldownDuration(statusCode int, retryAfter time.Duration) time.Duration {
+	return keyCooldownDurationForChannel(0, statusCode, retryAfter)
+}
+
+// keyCooldownDurationForChannel 是 keyCooldownDuration 的渠道感知变体（阶段3）。
+// channelID 为 0（或渠道不存在）时与全局版本行为一致。Retry-After 仍取较大值：
+// 渠道覆盖只能收紧/放宽本渠道的上游约定时长，不能越过上游显式要求。
+func keyCooldownDurationForChannel(channelID, statusCode int, retryAfter time.Duration) time.Duration {
+	ratelimitOverride, authOverride, serverOverride := channelKeyCooldownOverrides(channelID)
 	var cooldown time.Duration
 	switch {
 	case statusCode == 429:
-		cooldown = getRatelimitCooldown()
+		cooldown = overrideOrGlobalSeconds(ratelimitOverride, getRatelimitCooldown)
 	case statusCode == 401 || statusCode == 403:
-		cooldown = getAuthErrorCooldown()
+		cooldown = overrideOrGlobalSeconds(authOverride, getAuthErrorCooldown)
 	case statusCode == 408 || statusCode >= 500:
-		cooldown = getServerErrorCooldown()
+		cooldown = overrideOrGlobalSeconds(serverOverride, getServerErrorCooldown)
 	default:
 		return 0
 	}
@@ -136,7 +164,7 @@ func RecordKeyCooldownWithRetryAfter(channelID, keyID int, modelName string, sta
 	if strings.TrimSpace(modelName) == "" || keyID == 0 {
 		return
 	}
-	cooldown := keyCooldownDuration(statusCode, retryAfter)
+	cooldown := keyCooldownDurationForChannel(channelID, statusCode, retryAfter)
 	if cooldown <= 0 {
 		return
 	}

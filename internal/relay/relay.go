@@ -374,13 +374,11 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		streamSession:     streamSession,
 	}
 
-	maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate()
-	maxRouteRetries := getMaxRouteRetries()
+	maxRouteRetries := getMaxRouteRetries(&group)
 	ratelimitCooldown := getRatelimitCooldown()
 	maxTotalAttempts := getMaxTotalAttempts()
 	if directChannel {
 		// 指定渠道路由只尝试所指定渠道一次：无 Key 级重试、无路由轮次。
-		maxKeyRetriesPerRoute = 1
 		maxRouteRetries = 1
 		maxTotalAttempts = 1
 	}
@@ -388,7 +386,7 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	// Each request owns its generation, even for identical concurrent prompts.
 	// executeRelay writes the response and metrics and owns the retry budget;
 	// neither its result nor its errors may be replayed by a second execution.
-	if err := executeRelay(req, group, requestModel, maxKeyRetriesPerRoute, maxRouteRetries, ratelimitCooldown, maxTotalAttempts); err != nil {
+	if err := executeRelay(req, group, requestModel, maxRouteRetries, ratelimitCooldown, maxTotalAttempts); err != nil {
 		// Preserve the terminal failure for the stream-session owner. In
 		// particular, a no-output retry sequence must finish the session with
 		// its actual last error rather than the generic defer fallback.
@@ -1683,7 +1681,7 @@ func handleClientDisconnect(req *relayRequest, allAttempts []dbmodel.ChannelAtte
 	return errClientDisconnected
 }
 
-func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxKeyRetriesPerRoute int, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) error {
+func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) error {
 	var allAttempts []dbmodel.ChannelAttempt
 	var lastErr error
 	attemptNumberBase := 0
@@ -1782,8 +1780,37 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				lastErr = fmt.Errorf("channel %s is temporarily rate limited", channel.Name)
 				continue
 			}
+			// 渠道级 RPM（阶段1）：按候选选中消耗 1 个 token（与 API key 级 RPM 语义一致，
+			// 计数路由而非 upstream 尝试数），超限时跳过换下一个候选渠道。
+			if channel.RPMLimit > 0 {
+				if allowed, retryAfter := rl.CheckChannelRPM(channel.ID, resolvedModelName, channel.RPMLimit); !allowed {
+					message := "channel rpm limit reached"
+					if wait := retryAfter - int(time.Now().Unix()); wait > 0 {
+						message = fmt.Sprintf("channel rpm limit reached, retry after: %ds", wait)
+					}
+					routeIter.Skip(channel.ID, 0, channel.Name, message)
+					lastErr = fmt.Errorf("channel %s rpm limit reached", channel.Name)
+					continue
+				}
+			}
+			// 渠道并发上限（阶段1）候选级快速检查（非阻塞）：满员时跳过该渠道换下一个，
+			// 留下干净跳过记录。真正的占用在 attempt 级原子执行（adapter 循环内），
+			// 候选检查与占用之间的竞态由 attempt 级兜底。
+			if channel.MaxConcurrency > 0 {
+				if inFlight := rl.InFlightChannel(channel.ID); inFlight >= channel.MaxConcurrency {
+					routeIter.Skip(channel.ID, 0, channel.Name,
+						fmt.Sprintf("channel concurrency limit reached (%d/%d)", inFlight, channel.MaxConcurrency))
+					lastErr = fmt.Errorf("channel %s concurrency limit reached", channel.Name)
+					continue
+				}
+			}
 
 			req.internalRequest.Model = resolvedModelName
+			// Key 级重试预算按候选渠道计算（阶段2）：渠道覆盖 > 分组 > 全局。
+			// 每个候选渠道的预算独立——渠道 A 配了 0（不重试）不影响渠道 B 的
+			// 重试次数。directChannel 场景在 Handler 已把 maxRouteRetries 钳为 1，
+			// 这里仍按候选计算（虚拟单候选分组的渠道覆盖同样生效）。
+			maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate(channel, &group)
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
 		keyRetryLoop:
@@ -1871,7 +1898,27 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						tryTotal:             maxKeyRetriesPerRoute,
 					}
 
+					// 渠道并发上限（阶段1）attempt 级原子占用：真实转发前占名额，
+					// attempt 结束（无论成败）后立刻释放——获取/释放之间没有任何提前
+					// 退出路径，配对绝对成立（候选循环内 goto/return 退出点众多，
+					// 候选级获取+逐点释放必漏，泄漏的名额会让渠道假性满员）。
+					// 占用失败 = 候选检查后名额刚被并发请求抢走的竞态：不算渠道故障，
+					// 走容量专用决策换下一个候选。
+					if channel.MaxConcurrency > 0 && !rl.AcquireChannelSlot(channel.ID, channel.MaxConcurrency) {
+						log.Warnf("channel %s concurrency limit reached (%d), skip to next candidate",
+							channel.Name, channel.MaxConcurrency)
+						result = attemptResult{
+							Success:  false,
+							Written:  false,
+							Err:      fmt.Errorf("channel %s concurrency limit reached", channel.Name),
+							Decision: RetryDecision{Scope: ScopeChannelCapacity, Reason: "channel concurrency limit"},
+						}
+						break
+					}
 					result = ra.attempt()
+					if channel.MaxConcurrency > 0 {
+						rl.ReleaseChannelSlot(channel.ID)
+					}
 					if result.Success {
 						if adapterIndex > 0 {
 							log.Infof("[%s] adapter fallback succeeded on channel %s: %s → %s",
@@ -1892,6 +1939,12 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
 					req.metrics.Save(true, nil, currentAttempts)
 					return nil
+				}
+				// 渠道并发满（竞态兜底）：非渠道故障，不记失败统计/熔断/失败提示，
+				// 不进下方 switch（default 会把它当终止错误回 502）。换下一个候选渠道。
+				if result.Decision.Scope == ScopeChannelCapacity {
+					lastErr = result.Err
+					break keyRetryLoop
 				}
 
 				// Cancellation is a request outcome, not a channel-health failure.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/store"
 	"github.com/lingyuins/octopus/internal/utils/cache"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
@@ -88,6 +89,9 @@ func Create(ch *model.Channel, ctx context.Context) error {
 	if ch != nil {
 		if ch.RelayLogRawSSEUntil < 0 {
 			return fmt.Errorf("relay log raw SSE expiry must be greater than or equal to 0")
+		}
+		if ch.MaxConcurrency < 0 || ch.RPMLimit < 0 {
+			return fmt.Errorf("max concurrency and rpm limit must be greater than or equal to 0")
 		}
 		if err := ch.RequestRewrite.Validate(ch.Type); err != nil {
 			return err
@@ -491,6 +495,22 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		selectFields = append(selectFields, "match_regex")
 		updates.MatchRegex = req.MatchRegex
 	}
+	if req.MaxConcurrency != nil {
+		if *req.MaxConcurrency < 0 {
+			tx.Rollback()
+			return nil, fmt.Errorf("max concurrency must be greater than or equal to 0")
+		}
+		selectFields = append(selectFields, "max_concurrency")
+		updates.MaxConcurrency = *req.MaxConcurrency
+	}
+	if req.RPMLimit != nil {
+		if *req.RPMLimit < 0 {
+			tx.Rollback()
+			return nil, fmt.Errorf("rpm limit must be greater than or equal to 0")
+		}
+		selectFields = append(selectFields, "rpm_limit")
+		updates.RPMLimit = *req.RPMLimit
+	}
 	if len(selectFields) > 0 {
 		if err := tx.Model(&model.Channel{}).Where("id = ?", req.ID).Select(selectFields).Updates(&updates).Error; err != nil {
 			tx.Rollback()
@@ -768,6 +788,10 @@ func Delete(id int, ctx context.Context) error {
 		}
 	}
 	runtimeUpdateLock.Unlock()
+
+	// 渠道级容量配额清理（阶段1）：删除并发计数器与 RPM 桶。Redis 侧 key
+	// 带 TTL 会自过期，这里主动清理；内存侧靠清理任务兜底，这里直接删干净。
+	ratelimitstore.RemoveChannelBuckets(id)
 
 	return nil
 }

@@ -497,6 +497,8 @@ type channelRequestPayload struct {
 	RequestRewrite       *model.RequestRewriteConfig `json:"request_rewrite"`
 	MatchRegex           *string                     `json:"match_regex"`
 	Stats                *model.StatsChannel         `json:"stats"`
+	MaxConcurrency       int                         `json:"max_concurrency"`
+	RPMLimit             int                         `json:"rpm_limit"`
 }
 
 type channelKeyRequestPayload struct {
@@ -560,6 +562,8 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		ChannelProxy:         channelProxy,
 		RequestRewrite:       p.RequestRewrite,
 		MatchRegex:           p.MatchRegex,
+		MaxConcurrency:       p.MaxConcurrency,
+		RPMLimit:             p.RPMLimit,
 	}
 }
 

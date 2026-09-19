@@ -37,6 +37,14 @@ type KVStore interface {
 	// 用于 key 冷却的 ":keyID:" 子串匹配（无法用前缀表达）。namespace 不含统一前缀
 	// （如 "cooldown:"），实现负责加前缀并 SCAN 全命名空间。
 	DelBySubstring(ctx context.Context, namespace, substr string) error
+	// Incr 原子递增计数器并返回新值。ttl > 0 时同步刷新 TTL（同一原子操作内），
+	// 使计数器在占用停止后自动过期——进程崩溃/部署重启/请求挂死留下的"满员"
+	// 假象会在 ttl 内自愈，不会永久阻塞。返回的计数器值以字符串形式存储（Redis
+	// 原生计数器即如此），Get 时需自行解析。
+	Incr(ctx context.Context, key string, ttl time.Duration) (int64, error)
+	// Decr 原子递减计数器并返回新值。key 不存在时从 0 起算（结果为负值），
+	// 调用方据此清理漂移。
+	Decr(ctx context.Context, key string) (int64, error)
 }
 
 // RateLimitStore 承载 RPM/TPM 限流的 token bucket 语义。
