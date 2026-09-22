@@ -59,6 +59,7 @@ export interface RelayLog {
     reasoning_effort?: string;   // 出站最终思考强度
     reasoning_tokens?: number;   // 上游返回的思考 Token（确定性）
     reasoning_chars?: number;    // 思考文本字符数（无官方 token 时的估算回退）
+    usage_state?: string;        // 用量可信度标注（reported/成因），空=历史行无标注
     ftut: number;                // 首字时间(毫秒)
     use_time: number;            // 总用时(毫秒)
     cost: number;                // 消耗费用

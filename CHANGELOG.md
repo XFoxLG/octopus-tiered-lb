@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.6.6] - 2026-09-22
+
+### 🐛 Bug Fixes
+- **Media Relay**: 客户端中途断开连接不再污染熔断计数——此前生图/生文等媒体请求在客户端断连（Re-roll 中断）时，写回失败被归类为渠道故障并累计熔断/Auto 失败，连续 5 次即可误熔断健康渠道。现在三个写回处理器（SSE/JSON/Binary）检测到客户端上下文取消时返回与 LLM 链路一致的 `errClientDisconnected` 哨兵，MediaHandler 循环豁免熔断/Auto 失败/离群报告/key 冷却记账，直接终态返回；错误文本保持 `client disconnected` 精确匹配，前端仍渲染为中性提示。
+- **Log**: 日志列表排序修复——列表曾按入队序（雪花 ID 降序）排列而展示请求开始时间，晚入队但时间旧的日志（挂起请求经兜底路径补写、队列丢弃补写元数据等）ID 最大、时间最旧，会卡在列表顶部造成乱序。现在缓存路径与 DB 路径统一按 `(time DESC, id DESC)` 排序，同秒日志按 ID 稳定定序，返回前整体重排防止缓存/DB 边界交错；筛选视图与默认视图顺序一致。
+- **Log**: 日志用量"未知"按成因诚实标注——新增 `relay_logs.usage_state` 列（迁移 066），写入端按真实成因填写：上游回报了有效 usage→`reported`；客户端断连→`client_disconnected`；流未发终止事件即结束→`missing_terminal`；空输出→`empty_output`；请求失败无响应→`failed_no_response`；成功但上游未回报→`not_reported`；媒体端点无 Token 概念→`not_applicable`。日志卡片在用量不可信时按成因显示具体文案（如"客户端中断""上游未回报用量"），不再笼统显示"未知"；成因优先于 usage 数据（断连/流中断时即使带了部分 usage 块也按成因标注）。
+
+### 🚀 Features
+- **Group**: 分组条目级 Key 重试覆盖（迁移 065）——分组内每个模型条目可单独配置 Key 级重试次数，优先级链：条目 > 渠道 > 分组 > 全局（NULL=跟随下层，与渠道级 -1 哨兵语义不同）。同渠道多别名场景下可为不同模型条目配置不同重试预算（如 A 模型不重试、B 模型重试 3 次）。前端在分组编辑器的成员列表新增可选数字输入（占位"跟随渠道"），清空即恢复跟随；LLM 与媒体链路的候选重试预算均按条目取值。
+
+### 🔧 Improvements
+- **Web**: 日志队列丢弃策略设置从维护中心"重试"页归位到"日志"页（同 setting key，行为不变）；清理分组成员排序策略残留死文案（对应后端 059 迁移已删除的字段）。
+- **Web**: 智能选择策略说明文案补充两阶段机制（探索/利用）、健康硬门、与加权模式的区别，并说明样本为滚动窗口、服务重启/休眠唤醒后按窗口自然重置属正常行为，提示可到"分析中心 → 路由健康"查看每条渠道×模型的实时成功率/样本/延迟。
+
+
 ## [v2.6.0] - 2026-08-28
 
 ### 🚀 Features
@@ -566,4 +581,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Note:** Earlier releases (v1.8.6 and below) are not recorded in this changelog.
 > See the [GitHub Releases](https://github.com/lingyuins/octopus/releases) for the full history.
-

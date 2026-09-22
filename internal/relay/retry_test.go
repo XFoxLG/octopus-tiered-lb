@@ -289,10 +289,82 @@ func TestRelayAttemptForward_ReturnsUpstreamStatusCodeOnError(t *testing.T) {
 }
 
 func TestGetMaxAttemptsPerCandidate_Default(t *testing.T) {
-	got := getMaxAttemptsPerCandidate(nil, nil)
+	got := getMaxAttemptsPerCandidate(nil, nil, nil)
 	want := defaultMaxRetryPerCandidate + 1
 	if got != want {
-		t.Fatalf("getMaxAttemptsPerCandidate(nil, nil) = %d, want %d", got, want)
+		t.Fatalf("getMaxAttemptsPerCandidate(nil, nil, nil) = %d, want %d", got, want)
+	}
+}
+
+func TestGetMaxAttemptsPerCandidate_ItemOverridePriority(t *testing.T) {
+	zero := 0
+	two := 2
+	five := 5
+	minusOne := -1
+
+	testCases := []struct {
+		name     string
+		channel  *dbmodel.Channel
+		group    *dbmodel.Group
+		item     *dbmodel.GroupItem
+		expected int
+	}{
+		{
+			// 条目 0 = 该条目候选不重试，压过渠道/分组配置（条目 > 渠道 > 分组 > 全局）。
+			name:     "item zero overrides channel and group",
+			channel:  &dbmodel.Channel{RelayRetryCountOverride: 5},
+			group:    &dbmodel.Group{RelayRetryCount: 3},
+			item:     &dbmodel.GroupItem{RelayRetryCountOverride: &zero},
+			expected: 1,
+		},
+		{
+			name:     "item positive overrides channel and group",
+			channel:  &dbmodel.Channel{RelayRetryCountOverride: 5},
+			group:    &dbmodel.Group{RelayRetryCount: 3},
+			item:     &dbmodel.GroupItem{RelayRetryCountOverride: &two},
+			expected: 3,
+		},
+		{
+			// 条目 NULL（nil）= 跟随下层：渠道覆盖生效。
+			name:     "item nil falls back to channel override",
+			channel:  &dbmodel.Channel{RelayRetryCountOverride: 5},
+			group:    &dbmodel.Group{RelayRetryCount: 3},
+			item:     &dbmodel.GroupItem{},
+			expected: 6,
+		},
+		{
+			// 条目负值同样视为未配置（防御性：前端不应发负数，但拒绝生效）。
+			name:     "item negative falls back to channel override",
+			channel:  &dbmodel.Channel{RelayRetryCountOverride: 5},
+			group:    &dbmodel.Group{RelayRetryCount: 3},
+			item:     &dbmodel.GroupItem{RelayRetryCountOverride: &minusOne},
+			expected: 6,
+		},
+		{
+			// 条目 NULL 且渠道未覆盖（-1）：分组 RelayRetryCount 生效。
+			name:     "item nil channel unset uses group",
+			channel:  &dbmodel.Channel{RelayRetryCountOverride: -1},
+			group:    &dbmodel.Group{RelayRetryCount: 3},
+			item:     &dbmodel.GroupItem{},
+			expected: 4,
+		},
+		{
+			// 全链路未配置：回退全局默认。
+			name:     "all unset uses global default",
+			channel:  &dbmodel.Channel{RelayRetryCountOverride: -1},
+			group:    &dbmodel.Group{RelayRetryCount: -1},
+			item:     &dbmodel.GroupItem{RelayRetryCountOverride: &five},
+			expected: 6,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := getMaxAttemptsPerCandidate(testCase.channel, testCase.group, testCase.item)
+			if got != testCase.expected {
+				t.Fatalf("getMaxAttemptsPerCandidate() = %d, want %d", got, testCase.expected)
+			}
+		})
 	}
 }
 

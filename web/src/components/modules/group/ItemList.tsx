@@ -14,6 +14,8 @@ export interface SelectedMember extends LLMChannel {
     id: string;
     item_id?: number;
     weight?: number;
+    // 条目级 Key 重试次数覆盖（阶段2）。undefined/null = 跟随渠道/分组/全局。
+    relayRetryCountOverride?: number | null;
 }
 
 export type MemberAvailabilityStatus = 'idle' | 'testing' | 'available' | 'unavailable';
@@ -40,9 +42,11 @@ function MemberItem({
     member,
     onRemove,
     onWeightChange,
+    onRetryOverrideChange,
     isRemoving,
     index,
     showWeight = false,
+    showRetryOverride = false,
     showConfirmDelete = true,
     layoutScope,
     dnd,
@@ -52,9 +56,11 @@ function MemberItem({
     member: SelectedMember;
     onRemove: (id: string) => void;
     onWeightChange?: (id: string, weight: number) => void;
+    onRetryOverrideChange?: (id: string, value: number | null) => void;
     isRemoving?: boolean;
     index: number;
     showWeight?: boolean;
+    showRetryOverride?: boolean;
     showConfirmDelete?: boolean;
     layoutScope?: string;
     dnd: MemberItemDnd;
@@ -159,6 +165,33 @@ function MemberItem({
                     />
                 )}
 
+                {showRetryOverride && (
+                    <Tooltip side="top" sideOffset={10} align="center">
+                        <TooltipTrigger asChild>
+                            <input
+                                type="number"
+                                min={0}
+                                placeholder={t('detail.form.retryOverridePlaceholder')}
+                                value={member.relayRetryCountOverride ?? ''}
+                                onChange={(e) => {
+                                    const raw = e.target.value;
+                                    if (raw === '') {
+                                        onRetryOverrideChange?.(member.id, null);
+                                        return;
+                                    }
+                                    const parsed = parseInt(raw);
+                                    onRetryOverrideChange?.(member.id, Number.isNaN(parsed) ? null : Math.max(0, parsed));
+                                }}
+                                className={cn(
+                                    'h-7 w-14 rounded-md border border-border/35 bg-card text-center text-xs shadow-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary md:w-16',
+                                    isDisabled && 'text-muted-foreground'
+                                )}
+                            />
+                        </TooltipTrigger>
+                        <TooltipContent>{t('detail.form.retryOverrideHint')}</TooltipContent>
+                    </Tooltip>
+                )}
+
                 {(!showConfirmDelete || !confirmDelete) && (
                     <motion.button
                         layoutId={`delete-btn-member-${layoutScope ?? 'default'}-${member.id}`}
@@ -208,6 +241,7 @@ export interface MemberListProps {
     onReorder: (members: SelectedMember[]) => void;
     onRemove: (id: string) => void;
     onWeightChange?: (id: string, weight: number) => void;
+    onRetryOverrideChange?: (id: string, value: number | null) => void;
     /**
      * When true, auto-scroll the list to bottom when a *new visible* member appears
      * (i.e. a new member id is added). Useful in "editor" flows. Defaults to true.
@@ -226,6 +260,7 @@ export interface MemberListProps {
     onDragFinish?: () => void;
     removingIds?: Set<string>;
     showWeight?: boolean;
+    showRetryOverride?: boolean;
     /**
      * When true, show a confirmation overlay before removing an item.
      * When false, clicking the delete button removes the item immediately.
@@ -241,12 +276,14 @@ export function MemberList({
     onReorder,
     onRemove,
     onWeightChange,
+    onRetryOverrideChange,
     autoScrollOnAdd = true,
     onDragStart,
     onDrop,
     onDragFinish,
     removingIds = new Set(),
     showWeight = false,
+    showRetryOverride = false,
     showConfirmDelete = true,
     layoutScope: externalLayoutScope,
     availabilityById = {},
@@ -352,9 +389,11 @@ export function MemberList({
                                                 member={member}
                                                 onRemove={onRemove}
                                                 onWeightChange={onWeightChange}
+                                                onRetryOverrideChange={onRetryOverrideChange}
                                                 isRemoving={removingIds.has(member.id)}
                                                 index={index}
                                                 showWeight={showWeight}
+                                                showRetryOverride={showRetryOverride}
                                                 showConfirmDelete={showConfirmDelete}
                                                 layoutScope={layoutScope}
                                                 dnd={{

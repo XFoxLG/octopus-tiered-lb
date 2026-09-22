@@ -420,6 +420,7 @@ export function GroupListItem({ group }: { group: Group }) {
                         }),
                     item_id: item.id,
                     weight: item.weight,
+                    relayRetryCountOverride: item.relay_retry_count_override ?? null,
                 };
             }),
         [group.items, channelByKey, channelNameByKey, enabledByKey, t],
@@ -429,6 +430,7 @@ export function GroupListItem({ group }: { group: Group }) {
     const [isDragging, setIsDragging] = useState(false);
     const [currentTestId, setCurrentTestId] = useState<string | null>(null);
     const weightTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const retryOverrideTimerRef = useRef<NodeJS.Timeout | null>(null);
     const membersRef = useRef<SelectedMember[]>([]);
     const lastDisplayMembersRef = useRef(displayMembers);
     const handledTestCompletionRef = useRef<string | null>(null);
@@ -636,6 +638,39 @@ export function GroupListItem({ group }: { group: Group }) {
         [group.id, priorityByItemId, updateGroup, onSuccess, onError],
     );
 
+    const handleRetryOverrideChange = useCallback(
+        (id: string, value: number | null) => {
+            setMembers((prev) =>
+                prev.map((m) =>
+                    m.id === id ? { ...m, relayRetryCountOverride: value } : m,
+                ),
+            );
+            if (retryOverrideTimerRef.current)
+                clearTimeout(retryOverrideTimerRef.current);
+            retryOverrideTimerRef.current = setTimeout(() => {
+                const member = membersRef.current.find((m) => m.id === id);
+                if (!member?.item_id) return;
+                const priority = priorityByItemId.get(member.item_id);
+                if (!priority) return;
+                updateGroup.mutate(
+                    {
+                        id: group.id!,
+                        items_to_update: [
+                            {
+                                id: member.item_id,
+                                priority,
+                                weight: member.weight ?? 1,
+                                relay_retry_count_override: value,
+                            },
+                        ],
+                    },
+                    { onSuccess, onError },
+                );
+            }, 500);
+        },
+        [group.id, priorityByItemId, updateGroup, onSuccess, onError],
+    );
+
     // ---- Edit submit ----
     const handleSubmitEdit = useCallback(
         (values: GroupEditorValues, onDone?: () => void) => {
@@ -646,7 +681,7 @@ export function GroupListItem({ group }: { group: Group }) {
             );
             const originalById = new Map<
                 number,
-                { priority: number; weight: number }
+                { priority: number; weight: number; retryOverride: number | null | undefined }
             >();
             const originalIds = new Set<number>();
             originalItems.forEach((it) => {
@@ -655,6 +690,7 @@ export function GroupListItem({ group }: { group: Group }) {
                     originalById.set(it.id, {
                         priority: it.priority,
                         weight: it.weight,
+                        retryOverride: it.relay_retry_count_override,
                     });
                 }
             });
@@ -676,6 +712,7 @@ export function GroupListItem({ group }: { group: Group }) {
                     model_name: m.name,
                     priority,
                     weight: m.weight ?? 1,
+                    relay_retry_count_override: m.relayRetryCountOverride ?? null,
                 }));
 
             const items_to_update = values.members
@@ -686,12 +723,17 @@ export function GroupListItem({ group }: { group: Group }) {
                     const orig = originalById.get(id);
                     const weight = m.weight ?? 1;
                     if (!orig) return null;
-                    if (orig.priority === priority && orig.weight === weight)
+                    const retryOverride = m.relayRetryCountOverride ?? null;
+                    if (
+                        orig.priority === priority &&
+                        orig.weight === weight &&
+                        (orig.retryOverride ?? null) === retryOverride
+                    )
                         return null;
-                    return { id, priority, weight };
+                    return { id, priority, weight, relay_retry_count_override: retryOverride };
                 })
                 .filter(
-                    (x): x is { id: number; priority: number; weight: number } =>
+                    (x): x is { id: number; priority: number; weight: number; relay_retry_count_override: number | null } =>
                         x !== null,
                 );
 

@@ -80,6 +80,13 @@ type GroupItem struct {
 	ModelName string `json:"model_name" gorm:"not null;index:idx_group_channel_model,unique;size:191"`
 	Priority  int    `json:"priority"`
 	Weight    int    `json:"weight"`
+	// RelayRetryCountOverride 条目级 Key 重试次数覆盖（阶段2）。
+	// nil = 跟随渠道/分组/全局（与渠道级 -1 哨兵不同，条目级用 NULL 表"跟随"，
+	// 因为该列可空且无默认值）；0 = 该条目候选不重试（只尝试 1 次）；
+	// >0 = 最多重试 N 次（共 N+1 次尝试）。覆盖优先级：
+	// 条目 RelayRetryCountOverride > 渠道 RelayRetryCountOverride >
+	// 分组 RelayRetryCount > 全局设置。
+	RelayRetryCountOverride *int `json:"relay_retry_count_override,omitempty" gorm:"column:relay_retry_count_override"`
 	// SupportsTools 渠道×模型 tools 支持结论（Seller 移植）。nil=未探测。
 	SupportsTools *bool `json:"supports_tools,omitempty"`
 	// SupportsToolsProbeKeyID 探测使用的 key ID（多 key 渠道审计用）。
@@ -117,17 +124,19 @@ type GroupUpdateRequest struct {
 
 // GroupItemAddRequest 新增 item 请求
 type GroupItemAddRequest struct {
-	ChannelID int    `json:"channel_id" binding:"required"`
-	ModelName string `json:"model_name" binding:"required"`
-	Priority  int    `json:"priority,omitempty"`
-	Weight    int    `json:"weight,omitempty"`
+	ChannelID               int    `json:"channel_id" binding:"required"`
+	ModelName               string `json:"model_name" binding:"required"`
+	Priority                int    `json:"priority,omitempty"`
+	Weight                  int    `json:"weight,omitempty"`
+	RelayRetryCountOverride *int   `json:"relay_retry_count_override,omitempty"`
 }
 
 // GroupItemUpdateRequest 更新 item 请求
 type GroupItemUpdateRequest struct {
-	ID       int `json:"id" binding:"required"`
-	Priority int `json:"priority,omitempty"`
-	Weight   int `json:"weight,omitempty"`
+	ID                      int  `json:"id" binding:"required"`
+	Priority                int  `json:"priority,omitempty"`
+	Weight                  int  `json:"weight,omitempty"`
+	RelayRetryCountOverride *int `json:"relay_retry_count_override,omitempty"`
 }
 
 // GroupIDAndLLMName is a DTO for batch operations.

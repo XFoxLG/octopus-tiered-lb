@@ -1806,11 +1806,11 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 			}
 
 			req.internalRequest.Model = resolvedModelName
-			// Key 级重试预算按候选渠道计算（阶段2）：渠道覆盖 > 分组 > 全局。
-			// 每个候选渠道的预算独立——渠道 A 配了 0（不重试）不影响渠道 B 的
-			// 重试次数。directChannel 场景在 Handler 已把 maxRouteRetries 钳为 1，
-			// 这里仍按候选计算（虚拟单候选分组的渠道覆盖同样生效）。
-			maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate(channel, &group)
+			// Key 级重试预算按候选条目计算（阶段2）：条目覆盖 > 渠道覆盖 >
+			// 分组 > 全局。每个候选的预算独立——条目 A 配了 0（不重试）不影响
+			// 条目 B 的重试次数。directChannel 场景在 Handler 已把 maxRouteRetries
+			// 钳为 1，这里仍按候选计算（虚拟单候选分组的渠道覆盖同样生效）。
+			maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate(channel, &group, &item)
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
 		keyRetryLoop:

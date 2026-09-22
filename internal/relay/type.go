@@ -80,7 +80,14 @@ func getMaxRetryPerCandidate(channel *dbmodel.Channel, group *dbmodel.Group) int
 	return v
 }
 
-func getMaxAttemptsPerCandidate(channel *dbmodel.Channel, group *dbmodel.Group) int {
+// getMaxAttemptsPerCandidate 返回单个候选条目的总尝试次数（Key 循环轮数）。
+// 覆盖优先级：条目 RelayRetryCountOverride > 渠道 RelayRetryCountOverride >
+// 分组 RelayRetryCount > 全局设置。条目级用 nil/NULL 表"跟随"（与渠道级
+// -1 哨兵不同）；条目值 >= 0 时生效，0 = 只尝试 1 次不重试。
+func getMaxAttemptsPerCandidate(channel *dbmodel.Channel, group *dbmodel.Group, item *dbmodel.GroupItem) int {
+	if item != nil && item.RelayRetryCountOverride != nil && *item.RelayRetryCountOverride >= 0 {
+		return *item.RelayRetryCountOverride + 1
+	}
 	return getMaxRetryPerCandidate(channel, group) + 1
 }
 
@@ -432,11 +439,11 @@ type attemptResult struct {
 type RetryScope int
 
 const (
-	ScopeNone        RetryScope = iota // 不重试，请求结束（成功或直接失败）
-	ScopeSameChannel                   // 同候选换 Key 重试
-	ScopeNextChannel                   // 换下一个候选重试
-	ScopeAbortAll                      // 停止所有重试（已写入流式响应）
-	ScopeChannelCapacity               // 渠道并发满（竞态兜底），换下一个候选重试；非渠道故障
+	ScopeNone            RetryScope = iota // 不重试，请求结束（成功或直接失败）
+	ScopeSameChannel                       // 同候选换 Key 重试
+	ScopeNextChannel                       // 换下一个候选重试
+	ScopeAbortAll                          // 停止所有重试（已写入流式响应）
+	ScopeChannelCapacity                   // 渠道并发满（竞态兜底），换下一个候选重试；非渠道故障
 )
 
 func (s RetryScope) String() string {

@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Hint } from '@/components/ui/hint';
 import { useSettingList, useSetSetting, SettingKey } from '@/api/endpoints/setting';
 import { useGroupList } from '@/api/endpoints/group';
 import { useClearLogs, useClearLogContents, useLogHealth } from '@/api/endpoints/log';
@@ -43,6 +45,7 @@ export function SettingLog() {
     const [keepDays, setKeepDays] = useState('7');
     const [contentKeepDays, setContentKeepDays] = useState('7');
     const [contentKeepSizeMB, setContentKeepSizeMB] = useState('256');
+    const [queueDropPolicy, setQueueDropPolicy] = useState('oldest');
     const [isClearing, setIsClearing] = useState(false);
     const [isClearingContents, setIsClearingContents] = useState(false);
     const [excludedGroups, setExcludedGroups] = useState<string[]>([]);
@@ -67,6 +70,7 @@ export function SettingLog() {
     const initialKeepDays = useRef('7');
     const initialContentKeepDays = useRef('7');
     const initialContentKeepSizeMB = useRef('256');
+    const initialQueueDropPolicy = useRef('oldest');
 
     useEffect(() => {
         if (settings) {
@@ -75,6 +79,7 @@ export function SettingLog() {
             const periodSetting = settings.find(s => s.key === SettingKey.RelayLogKeepPeriod);
             const contentPeriodSetting = settings.find(s => s.key === SettingKey.RelayLogContentKeepPeriod);
             const contentSizeSetting = settings.find(s => s.key === SettingKey.RelayLogContentKeepSizeMB);
+            const dropPolicySetting = settings.find(s => s.key === SettingKey.RelayLogQueueDropPolicy);
 
             if (enabledSetting) {
                 const isEnabled = enabledSetting.value === 'true';
@@ -91,6 +96,10 @@ export function SettingLog() {
             if (logLevelSetting && LOG_LEVELS.includes(logLevelSetting.value as LogLevel)) {
                 queueMicrotask(() => setLogLevel(logLevelSetting.value as LogLevel));
             }
+
+            const dropPolicyVal = dropPolicySetting?.value || 'oldest';
+            queueMicrotask(() => setQueueDropPolicy(dropPolicyVal));
+            initialQueueDropPolicy.current = dropPolicyVal;
 
             // Determine mode: if keepCount > 0 → count mode, else days mode
             const countVal = countSetting?.value || '0';
@@ -190,6 +199,19 @@ export function SettingLog() {
             {
                 onSuccess: () => {
                     toast.success(t('saved'));
+                }
+            }
+        );
+    };
+
+    const handleQueueDropPolicyChange = (value: string) => {
+        setQueueDropPolicy(value);
+        setSetting.mutate(
+            { key: SettingKey.RelayLogQueueDropPolicy, value },
+            {
+                onSuccess: () => {
+                    toast.success(t('saved'));
+                    initialQueueDropPolicy.current = value;
                 }
             }
         );
@@ -338,6 +360,29 @@ export function SettingLog() {
                     disabled={!enabled}
                     aria-label={t('log.contentEnabled.label')}
                 />
+            </div>
+
+            {/* 日志队列丢弃策略（高 QPS 内存保护，从维护中心重试页归位于此） */}
+            <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex flex-col gap-1">
+                    <span className="text-sm font-medium">
+                        {t('log.queueDropPolicy.label')}
+                        <Hint text={t('log.queueDropPolicy.hint')} />
+                    </span>
+                </div>
+                <Select
+                    value={queueDropPolicy}
+                    onValueChange={handleQueueDropPolicyChange}
+                >
+                    <SelectTrigger className="w-full rounded-xl md:w-48">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl">
+                        <SelectItem className="rounded-lg" value="disabled">{t('log.queueDropPolicy.disabled')}</SelectItem>
+                        <SelectItem className="rounded-lg" value="oldest">{t('log.queueDropPolicy.oldest')}</SelectItem>
+                        <SelectItem className="rounded-lg" value="newest">{t('log.queueDropPolicy.newest')}</SelectItem>
+                    </SelectContent>
+                </Select>
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

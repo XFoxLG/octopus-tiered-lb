@@ -261,7 +261,13 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const displayRequestModelName = displayFields.requestModelName || log.request_model_name;
 
     const responseContent = detail?.response_content;
+    // usageKnown 判定该条日志的用量是否可信。后端 usage_state 有值时按成因直接判定
+    //（reported=可信，其余成因=不可信）；历史行无标注（空值）退回旧启发式：
+    // 有 token/费用/错误即视为"已知"，否则再探测响应里的 usage 块。
     const usageKnown = useMemo(() => {
+        if (log.usage_state) {
+            return log.usage_state === 'reported';
+        }
         if (log.input_tokens > 0 || log.output_tokens > 0 || Number(log.cost) > 0) {
             return true;
         }
@@ -277,24 +283,30 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
         } catch {
             return false;
         }
-    }, [log.cost, log.error, log.input_tokens, log.output_tokens, responseContent]);
+    }, [log.usage_state, log.cost, log.error, log.input_tokens, log.output_tokens, responseContent]);
+
+    // 不可信时的成因文案：按 usage_state 显示真实原因，而不是笼统的"未知"。
+    const usageStateHint = useMemo(() => {
+        if (!log.usage_state || log.usage_state === 'reported') return '';
+        return t(`usageState.${log.usage_state}`);
+    }, [log.usage_state, t]);
 
     const inputTokenDisplay = usageKnown
         ? fmt(formatCount(effectiveInputTokens).formatted)
-        : tCommon('unknown');
+        : (usageStateHint || tCommon('unknown'));
     const outputTokenDisplay = usageKnown
         ? fmt(formatCount(log.output_tokens).formatted)
-        : tCommon('unknown');
+        : (usageStateHint || tCommon('unknown'));
     // 总消耗 = 真实输入 + 缓存输入 + 输出 = input_tokens(含缓存) + output_tokens（issue #107）
     const totalTokens = log.input_tokens + log.output_tokens;
     const totalTokenDisplay = usageKnown
         ? fmt(formatCount(totalTokens).formatted)
-        : tCommon('unknown');
+        : (usageStateHint || tCommon('unknown'));
     const costDisplay = usageKnown
         ? (chinaMode
             ? costFmt(formatMoney(Number(log.cost)).raw)
             : formatMoney(Number(log.cost)).raw.toFixed(2))
-        : tCommon('unknown');
+        : (usageStateHint || tCommon('unknown'));
 
     return (
         // Root layout already provides the single global TooltipProvider (shared

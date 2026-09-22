@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"cmp"
 	"errors"
 	"github.com/lingyuins/octopus/internal/utils/json"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1025,21 +1027,23 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 		cachedLogs = snapshot
 	}
 
+	// 排序键统一为 (time DESC, id DESC)：Time 是请求开始时间，ID 是入队时才
+	// 生成的雪花 ID——晚入队的兜底/挂起日志（Time 很旧但 ID 最大）曾因此卡在
+	// 列表顶部。缓存此前依赖入队序，同样受影响，这里统一按时间排序。
+	slices.SortFunc(cachedLogs, func(a, b model.RelayLog) int {
+		return cmp.Or(cmp.Compare(b.Time, a.Time), cmp.Compare(b.ID, a.ID))
+	})
+
 	cacheCount := len(cachedLogs)
 	offset := (page - 1) * pageSize
 
 	var result []model.RelayLogListItem
 
-	// 先从缓存中按"新 -> 旧"顺序分页提取，不再整段 reverse。
+	// 缓存已按 (time, id) 降序，直接按偏移切片分页。
 	if offset < cacheCount {
 		cacheTake := min(pageSize, cacheCount-offset)
-		start := cacheCount - offset - 1
-		for i := 0; i < cacheTake; i++ {
-			idx := start - i
-			if idx < 0 {
-				break
-			}
-			result = append(result, cachedLogs[idx].ToListItem())
+		for index := offset; index < offset+cacheTake; index++ {
+			result = append(result, cachedLogs[index].ToListItem())
 		}
 	}
 
@@ -1145,7 +1149,9 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 			}
 
 			var dbLogs []model.RelayLogListItem
-			if err := query.Order("id DESC").Offset(dbOffset).Limit(remaining).Find(&dbLogs).Error; err != nil {
+			// 与缓存路径统一按 (time, id) 降序：同秒日志再按 ID 定序，保证
+			// 展示顺序 = 时间顺序，不再受入队/落库时机差异影响。
+			if err := query.Order("time DESC").Order("id DESC").Offset(dbOffset).Limit(remaining).Find(&dbLogs).Error; err != nil {
 				return nil, err
 			}
 			// semantic_cache_hit / cache_read_tokens 已在写入时落库，直接返回，
@@ -1153,6 +1159,12 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 			result = append(result, dbLogs...)
 		}
 	}
+
+	// 合并防御：缓存/DB 两路边界交错时（晚入队日志半新半旧），整体再稳定
+	// 排序一次，保证任一消费方拿到的页内顺序都严格按 (time, id) 降序。
+	slices.SortStableFunc(result, func(a, b model.RelayLogListItem) int {
+		return cmp.Or(cmp.Compare(b.Time, a.Time), cmp.Compare(b.ID, a.ID))
+	})
 
 	return result, nil
 }

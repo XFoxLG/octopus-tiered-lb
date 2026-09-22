@@ -21,8 +21,8 @@ import (
 	ak "github.com/lingyuins/octopus/internal/op/apikey"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
 	grp "github.com/lingyuins/octopus/internal/op/group"
-	"github.com/lingyuins/octopus/internal/op/relaylog"
 	rl "github.com/lingyuins/octopus/internal/op/ratelimitstore"
+	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	st "github.com/lingyuins/octopus/internal/op/stats"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
@@ -238,9 +238,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				}
 			}
 
-			// 渠道内 Key 级重试（阶段2）：预算按候选渠道/分组覆盖逐候选计算，
-			// 优先级：渠道 RelayRetryCountOverride > 分组 RelayRetryCount > 全局设置。
-			maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate(channel, &group)
+			// 渠道内 Key 级重试（阶段2）：预算按候选条目逐个计算，
+			// 优先级：条目 RelayRetryCountOverride > 渠道 RelayRetryCountOverride >
+			// 分组 RelayRetryCount > 全局设置。
+			maxKeyRetriesPerRoute := getMaxAttemptsPerCandidate(channel, &group, &item)
 			var failedKeyIDs []int
 			rateLimitHoldWaited := time.Duration(0)
 		keyRetryLoop:
@@ -313,6 +314,16 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				lastChannelID = channel.ID
 				lastChannelName = channel.Name
 				lastResolvedModel = resolvedModel
+
+				// 客户端主动断开不是渠道故障：与 LLM 链路 errClientDisconnected
+				// 豁免同语义。不记熔断/Auto 失败/离群/可用度衰减/key 冷却，
+				// 不做 KeyUpdate 与失败统计，直接终态返回（客户端已走，无需回错）。
+				if errors.Is(fwdErr, errClientDisconnected) {
+					span.End(dbmodel.AttemptFailed, statusCode, "client disconnected")
+					allAttempts = append(allAttempts, routeIter.Attempts()...)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, errClientDisconnected, clientIP, mediaReportedIP, userAgent, requestTrace)
+					return
+				}
 
 				written := c.Writer.Written()
 				decision := ClassifyRelayError(statusCode, fwdErr, written)
@@ -469,20 +480,23 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 	attempts, totalAttempts := capAttemptsForLog(attempts)
 
 	relayLog := dbmodel.RelayLog{
-		Time:             time.Now().Add(-duration).Unix(),
-		RequestModelName: requestModel,
-		RequestAPIKeyID:  apiKeyID,
-		ClientIP:         clientIP,
-		ReportedClientIP: reportedIP.IP,
+		Time:                   time.Now().Add(-duration).Unix(),
+		RequestModelName:       requestModel,
+		RequestAPIKeyID:        apiKeyID,
+		ClientIP:               clientIP,
+		ReportedClientIP:       reportedIP.IP,
 		ReportedClientIPSource: string(reportedIP.Source),
-		UserAgent:        userAgent,
-		EndpointType:     endpointType,
-		ChannelId:        channelID,
-		ChannelName:      channelName,
-		ActualModelName:  resolvedModel,
-		UseTime:          int(duration.Milliseconds()),
-		Attempts:         attempts,
-		TotalAttempts:    totalAttempts,
+		UserAgent:              userAgent,
+		EndpointType:           endpointType,
+		ChannelId:              channelID,
+		ChannelName:            channelName,
+		ActualModelName:        resolvedModel,
+		UseTime:                int(duration.Milliseconds()),
+		Attempts:               attempts,
+		TotalAttempts:          totalAttempts,
+		// 媒体端点（生图/生文/转写等）没有 Token 用量概念，诚实标注不适用，
+		// 前端不再显示成"未知"。
+		UsageState: dbmodel.RelayLogUsageNotApplicable,
 	}
 
 	if apiKey, getErr := ak.Get(apiKeyID, ctx); getErr == nil {
@@ -603,6 +617,17 @@ func extractModelFromMultipart(c *gin.Context) (string, []byte, bool, error) {
 	streamRequested := strings.EqualFold(strings.TrimSpace(c.Request.FormValue("stream")), "true")
 	// We'll re-read the full multipart body in forwardMediaRequestMultipart
 	return model, nil, streamRequested, nil
+}
+
+// writeErrorOutcome 把向客户端写回响应的失败归因为「客户端断开」或普通写错误。
+// 客户端已断开（请求上下文被取消）时返回裸哨兵 errClientDisconnected，与 LLM 链路
+// 文案一致：前端按精确文本降级为中性提示，且 MediaHandler 循环据此豁免熔断/Auto
+// 失败记账（客户端主动断开不是渠道故障）。
+func writeErrorOutcome(c *gin.Context, writeErr error) error {
+	if c.Request.Context().Err() != nil {
+		return errClientDisconnected
+	}
+	return writeErr
 }
 
 // forwardMediaRequest builds and sends the upstream request, then streams the response back.
@@ -966,7 +991,7 @@ func handleBinaryResponse(c *gin.Context, response *http.Response) (int, error) 
 
 	_, err := io.Copy(c.Writer, response.Body)
 	if err != nil {
-		return 0, fmt.Errorf("failed to stream binary response: %w", err)
+		return 0, writeErrorOutcome(c, fmt.Errorf("failed to stream binary response: %w", err))
 	}
 
 	return response.StatusCode, nil
@@ -996,7 +1021,7 @@ func handleSSEResponse(c *gin.Context, response *http.Response) (int, error) {
 		}
 		if len(line) > 0 {
 			if _, writeErr := c.Writer.Write(line); writeErr != nil {
-				return 0, fmt.Errorf("failed to stream sse response: %w", writeErr)
+				return 0, writeErrorOutcome(c, fmt.Errorf("failed to stream sse response: %w", writeErr))
 			}
 			c.Writer.Flush()
 		}
@@ -1018,7 +1043,7 @@ func handleJSONResponse(c *gin.Context, response *http.Response) (int, error) {
 
 	_, err := io.Copy(c.Writer, response.Body)
 	if err != nil {
-		return 0, fmt.Errorf("failed to stream response: %w", err)
+		return 0, writeErrorOutcome(c, fmt.Errorf("failed to stream response: %w", err))
 	}
 
 	return response.StatusCode, nil

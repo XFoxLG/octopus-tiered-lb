@@ -37,6 +37,19 @@ const (
 	RelayLogClientDeliveryUnknown    = "unknown"
 )
 
+// RelayLog usage_state 取值：说明该条日志的 Token 用量是否可信、不可信时成因是什么。
+// 上游不回报 usage / 流提前中断 / 客户端断连 / 空输出等情况都会造成"未知"，
+// 但成因完全不同——诚实标注成因而不是笼统显示未知。
+const (
+	RelayLogUsageReported         = "reported"           // 上游回报了有效 usage（token>0）
+	RelayLogUsageClientDisconnect = "client_disconnected" // 客户端中断，输出不完整，用量不可信
+	RelayLogUsageMissingTerminal  = "missing_terminal"    // 上游流未发终止事件即结束，用量不可信
+	RelayLogUsageEmptyOutput      = "empty_output"        // 上游返回空输出，无用量可言
+	RelayLogUsageNotReported      = "not_reported"        // 请求成功但上游未回报 usage
+	RelayLogUsageFailedNoResponse = "failed_no_response"  // 请求失败（无成功响应），无用量
+	RelayLogUsageNotApplicable    = "not_applicable"      // 端点无 Token 概念（媒体生成等）
+)
+
 const (
 	RelayLogBoundaryClientIngress    = "client_ingress"
 	RelayLogBoundaryUpstreamRequest  = "upstream_request"

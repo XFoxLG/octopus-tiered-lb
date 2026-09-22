@@ -212,16 +212,20 @@ function SortSection({
     onReorder,
     onRemove,
     onWeightChange,
+    onRetryOverrideChange,
     removingIds,
     showWeight,
+    showRetryOverride,
     onClear,
 }: {
     members: SelectedMember[];
     onReorder: (members: SelectedMember[]) => void;
     onRemove: (id: string) => void;
     onWeightChange: (id: string, weight: number) => void;
+    onRetryOverrideChange: (id: string, value: number | null) => void;
     removingIds: Set<string>;
     showWeight: boolean;
+    showRetryOverride: boolean;
     onClear: () => void;
 }) {
     const t = useTranslations('group');
@@ -261,8 +265,10 @@ function SortSection({
                     onReorder={onReorder}
                     onRemove={onRemove}
                     onWeightChange={onWeightChange}
+                    onRetryOverrideChange={onRetryOverrideChange}
                     removingIds={removingIds}
                     showWeight={showWeight}
+                    showRetryOverride={showRetryOverride}
                     showConfirmDelete={false}
                 />
             </div>
@@ -371,6 +377,10 @@ export function GroupEditor({
 
     const handleWeightChange = useCallback((id: string, weight: number) => {
         setSelectedMembers((prev) => prev.map((m) => m.id === id ? { ...m, weight } : m));
+    }, []);
+
+    const handleRetryOverrideChange = useCallback((id: string, value: number | null) => {
+        setSelectedMembers((prev) => prev.map((m) => m.id === id ? { ...m, relayRetryCountOverride: value } : m));
     }, []);
 
     const handleRemoveMember = useCallback((id: string) => {
@@ -905,8 +915,10 @@ export function GroupEditor({
                                     onReorder={setSelectedMembers}
                                     onRemove={handleRemoveMember}
                                     onWeightChange={handleWeightChange}
+                                    onRetryOverrideChange={handleRetryOverrideChange}
                                     removingIds={removingIds}
                                     showWeight={mode === 4 || mode === 5}
+                                    showRetryOverride
                                     onClear={handleClearMembers}
                                 />
                             </div>

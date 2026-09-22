@@ -15,6 +15,7 @@ export interface GroupItem {
     model_name: string;
     priority: number;
     weight: number;
+    relay_retry_count_override?: number | null; // 条目级重试覆盖，null/undefined=跟随渠道/分组/全局
 }
 
 // ---- 分组健康检查快照（Seller 移植，backend /api/v1/group/health/*）----
@@ -471,6 +472,7 @@ export interface GroupItemAddRequest {
     model_name: string;
     priority: number;
     weight: number;
+    relay_retry_count_override?: number | null;
 }
 
 /**
@@ -480,6 +482,7 @@ export interface GroupItemUpdateRequest {
     id: number;
     priority: number;
     weight: number;
+    relay_retry_count_override?: number | null;
 }
 
 /**
