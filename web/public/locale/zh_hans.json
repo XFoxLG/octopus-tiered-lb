@@ -1136,7 +1136,7 @@
       "title": "重试配置",
       "count": {
         "label": "单个渠道最大重试次数",
-        "hint": "单个候选渠道内 Key 级重试次数。设为 0 表示不重试（只试一次，失败即换下一个渠道）。",
+        "hint": "单个候选渠道内 Key 级重试次数。设为 0 表示不重试（只试一次，失败即换下一个渠道）。覆盖优先级：条目 > 渠道 > 分组 > 全局。",
         "placeholder": "请输入重试次数"
       },
       "routeRetries": {
@@ -1221,13 +1221,6 @@
         "notifyEnabled": "失败通知",
         "recoveryNotify": "恢复通知"
       },
-      "logQueueDropPolicy": {
-        "label": "日志队列丢弃策略",
-        "hint": "高 QPS 时内存日志队列满的处理策略。「丢弃最旧」（推荐）保留最新诊断数据；「丢弃最新」保留历史序列完整性；「禁用」阻塞触发刷盘（高负载下可能拖慢转发）。",
-        "disabled": "禁用（满时刷盘）",
-        "oldest": "丢弃最旧（推荐）",
-        "newest": "丢弃最新"
-      },
       "streamReplay": {
         "label": "流重连重放",
         "hint": "启用流式请求的断线重连缓冲功能。关闭后立即释放流事件缓冲区以降低内存占用（见 OOM 诊断报告），但客户端无法重连恢复流。"
@@ -1254,15 +1247,6 @@
         "hint": "开启后，连客户端明确要求「关闭思考」（reasoning_effort=none 或 thinking disabled）的请求也会补上默认思考档位；客户端已发送具体档位的请求不受影响。",
         "enable": "覆盖客户端的显式关闭"
       },
-      "sortStrategy": {
-        "label": "成员排序策略",
-        "hint": "分组内成员的排序方式，只改写候选顺序，不影响路由模式。留空跟随全局默认（non_relay_balance）。",
-        "useGlobal": "跟随全局默认",
-        "nonRelayBalance": "非中转优先 + 均衡",
-        "nonRelayMultiplier": "非中转优先 + 低倍率优先",
-        "multiplierBalance": "低倍率优先 + 均衡",
-        "balanceOnly": "仅均衡"
-      },
       "paramOverride": {
         "label": "参数覆盖（JSON）",
         "hint": "分组级请求参数覆盖，JSON object。仅覆盖 max_tokens / max_completion_tokens / temperature / top_p，且客户端已设置的值优先。优先级：客户端 > 渠道 > 分组。",
@@ -1288,7 +1272,7 @@
     },
     "autoStrategy": {
       "title": "智能选择策略",
-      "hint": "配置自动渠道选择策略。样本数不足的渠道优先探索，之后根据成功率选择。",
+      "hint": "自动策略分两阶段：样本数不足的渠道优先探索（保证每个渠道都有被尝试的机会），样本足够后按「成功率与延迟加权」评分选择；熔断或 429 隔离的渠道会被硬门拦下沉底，不参与评分。与加权模式完全不同：加权按固定权重分配流量，自动按实时表现动态选择。样本为滚动窗口（默认 5 分钟），服务重启或休眠唤醒后样本会按窗口自然重置并快速重新探索，属正常行为。每个渠道×模型的实时成功率/样本/延迟可在「分析中心 → 路由健康」查看。",
       "minSamples": {
         "label": "最小样本数",
         "hint": "使用成功率选择前的最小请求数",
@@ -1913,7 +1897,14 @@
       "updateFailed": "更新失败"
     },
     "log": {
-      "title": "日志设置",
+"queueDropPolicy": {
+        "label": "日志队列丢弃策略",
+        "hint": "高 QPS 时内存日志队列满的处理策略。「丢弃最旧」（推荐）保留最新诊断数据；「丢弃最新」保留历史序列完整性；「禁用」阻塞触发刷盘（高负载下可能拖慢转发）。",
+        "disabled": "禁用（满时刷盘）",
+        "oldest": "丢弃最旧（推荐）",
+        "newest": "丢弃最新"
+      },
+            "title": "日志设置",
       "enabled": {
         "label": "启用历史日志",
         "description": "关闭后将不再保存日志，并自动清理已有的历史日志"
@@ -2332,6 +2323,8 @@
       "addItem": "添加模型",
       "autoAdd": "自动添加",
       "clear": "清空",
+      "retryOverridePlaceholder": "跟随渠道",
+      "retryOverrideHint": "条目级重试覆盖（可选）：该模型条目的 Key 级重试次数。留空=跟随渠道/分组/全局；0=不重试；N=最多重试 N 次。",
       "selectChannel": "渠道",
       "selectModel": "模型",
       "endpointType": {
@@ -2734,6 +2727,14 @@
       "billingWindowPeak": "高峰",
       "billingWindowOffPeak": "空闲",
       "billingWindowHint": "DeepSeek 峰谷计费：工作日高峰 9–12 / 14–18，空闲减半；周末全天按空闲价",
+      "usageState": {
+        "client_disconnected": "客户端中断",
+        "missing_terminal": "流提前结束",
+        "empty_output": "上游空输出",
+        "not_reported": "上游未回报用量",
+        "failed_no_response": "请求失败",
+        "not_applicable": "不适用"
+      },
       "reportedIPHint": "来自 {source} 转发头，仅作为来源线索展示；不保证是原始客户端，也不用于 IP 白名单或登录限流。",
       "forensics": {
         "detailUnavailable": "无法读取日志详情",

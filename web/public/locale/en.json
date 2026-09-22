@@ -1180,7 +1180,7 @@
       "title": "Retry Settings",
       "count": {
         "label": "Max retries per channel",
-        "hint": "Max key-level retries within a single candidate channel. 0 = no retry (try once, then switch channel on failure).",
+        "hint": "Max key-level retries within a single candidate channel. 0 = no retry (try once, then switch channel on failure). Override priority: item > channel > group > global.",
         "placeholder": "Enter retry count"
       },
       "routeRetries": {
@@ -1265,13 +1265,6 @@
         "notifyEnabled": "Failure notification",
         "recoveryNotify": "Recovery notification"
       },
-      "logQueueDropPolicy": {
-        "label": "Log queue drop policy",
-        "hint": "When the in-memory log queue is full during high QPS, drop old/new logs or trigger immediate flush. 'oldest' (recommended) keeps recent diagnostics; 'newest' preserves historical sequence; 'disabled' blocks to flush (may stall high-load relay).",
-        "disabled": "Disabled (flush on full)",
-        "oldest": "Drop oldest (recommended)",
-        "newest": "Drop newest"
-      },
       "streamReplay": {
         "label": "Stream reconnect replay",
         "hint": "Enable buffering for streaming reconnect & replay. Disabling immediately frees stream event buffers to reduce memory (see OOM diagnostics report), but clients cannot reconnect to resume streams."
@@ -1298,15 +1291,6 @@
         "hint": "When enabled, even requests that explicitly disable thinking (reasoning_effort=none or thinking disabled) get the default effort level injected. Requests that sent a concrete level are never rewritten.",
         "enable": "Override client's explicit off"
       },
-      "sortStrategy": {
-        "label": "Member sort strategy",
-        "hint": "How members inside this group are ordered. Only rewrites candidate order, never the routing mode. Leave empty to follow the global default (non_relay_balance).",
-        "useGlobal": "Follow global default",
-        "nonRelayBalance": "Non-relay first + balanced",
-        "nonRelayMultiplier": "Non-relay first + low multiplier",
-        "multiplierBalance": "Low multiplier + balanced",
-        "balanceOnly": "Balanced only"
-      },
       "paramOverride": {
         "label": "Param override (JSON)",
         "hint": "Group-level request parameter overrides as a JSON object. Only max_tokens / max_completion_tokens / temperature / top_p are honored, and values already set by the client win. Precedence: client > channel > group.",
@@ -1332,7 +1316,7 @@
     },
     "autoStrategy": {
       "title": "Auto Strategy",
-      "hint": "Configure the automatic channel selection strategy. Channels with insufficient samples are explored first, then selection is based on success rate.",
+      "hint": "Auto strategy runs in two phases: channels with insufficient samples are explored first (so every channel gets tried), then scoring picks by weighted success rate and latency. Tripped circuit breakers and 429-isolated channels are hard-gated to the bottom and never scored. This is fundamentally different from weighted mode: weighted distributes traffic by fixed weights, while auto adapts to live performance. Samples live in a rolling window (default 5 minutes); after a restart or wake-up from sleep, samples reset naturally by the window and exploration resumes quickly — this is expected behavior. Live success rate / samples / latency per channel×model are available under Analytics → Route Health.",
       "minSamples": {
         "label": "Min Samples",
         "hint": "Minimum requests before using success rate for selection",
@@ -1957,7 +1941,14 @@
       "updateFailed": "Update failed"
     },
     "log": {
-      "title": "Log Settings",
+"queueDropPolicy": {
+        "label": "Log queue drop policy",
+        "hint": "When the in-memory log queue is full during high QPS, drop old/new logs or trigger immediate flush. 'oldest' (recommended) keeps recent diagnostics; 'newest' preserves historical sequence; 'disabled' blocks to flush (may stall high-load relay).",
+        "disabled": "Disabled (flush on full)",
+        "oldest": "Drop oldest (recommended)",
+        "newest": "Drop newest"
+      },
+            "title": "Log Settings",
       "enabled": {
         "label": "Enable History Logs",
         "description": "When disabled, logs will not be saved and existing logs will be cleaned up"
@@ -2376,6 +2367,8 @@
       "addItem": "Add Model",
       "autoAdd": "Auto Add",
       "clear": "Clear",
+      "retryOverridePlaceholder": "Follow channel",
+      "retryOverrideHint": "Per-item retry override (optional): key-level retries for this model item. Empty = follow channel/group/global; 0 = no retry; N = retry up to N times.",
       "selectChannel": "Channel",
       "selectModel": "Model",
       "endpointType": {
@@ -2778,6 +2771,14 @@
       "billingWindowPeak": "Peak",
       "billingWindowOffPeak": "Off-peak",
       "billingWindowHint": "DeepSeek peak/off-peak billing",
+      "usageState": {
+        "client_disconnected": "Client disconnected",
+        "missing_terminal": "Stream ended early",
+        "empty_output": "Upstream returned empty output",
+        "not_reported": "Upstream did not report usage",
+        "failed_no_response": "Request failed",
+        "not_applicable": "Not applicable"
+      },
       "reportedIPHint": "Reported by the {source} header for display only. It may identify a proxy rather than the original client and is not used for IP allowlists or login rate limits.",
       "forensics": {
         "detailUnavailable": "Log detail is unavailable",

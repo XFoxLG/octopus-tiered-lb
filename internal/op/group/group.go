@@ -826,19 +826,29 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		ids := make([]int, len(normalizedItemsToUpdate))
 		priorityCase := "CASE id"
 		weightCase := "CASE id"
+		retryOverrideCase := "CASE id"
 		for i, item := range normalizedItemsToUpdate {
 			ids[i] = item.ID
 			priorityCase += fmt.Sprintf(" WHEN %d THEN %d", item.ID, item.Priority)
 			weightCase += fmt.Sprintf(" WHEN %d THEN %d", item.ID, item.Weight)
+			// 条目级重试覆盖 *int：nil=跟随（写 NULL）。前端 items diff 全量下发，
+			// 清空输入框即回 NULL，恢复跟随渠道/分组/全局。
+			if item.RelayRetryCountOverride != nil {
+				retryOverrideCase += fmt.Sprintf(" WHEN %d THEN %d", item.ID, *item.RelayRetryCountOverride)
+			} else {
+				retryOverrideCase += fmt.Sprintf(" WHEN %d THEN NULL", item.ID)
+			}
 		}
 		priorityCase += " END"
 		weightCase += " END"
+		retryOverrideCase += " END"
 
 		if err := tx.Model(&model.GroupItem{}).
 			Where("id IN ? AND group_id = ?", ids, req.ID).
 			Updates(map[string]interface{}{
-				"priority": gorm.Expr(priorityCase),
-				"weight":   gorm.Expr(weightCase),
+				"priority":                    gorm.Expr(priorityCase),
+				"weight":                      gorm.Expr(weightCase),
+				"relay_retry_count_override":  gorm.Expr(retryOverrideCase),
 			}).Error; err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to update items: %w", err)
@@ -850,11 +860,12 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		newItems := make([]model.GroupItem, len(normalizedItemsToAdd))
 		for i, item := range normalizedItemsToAdd {
 			newItems[i] = model.GroupItem{
-				GroupID:   req.ID,
-				ChannelID: item.ChannelID,
-				ModelName: item.ModelName,
-				Priority:  item.Priority,
-				Weight:    item.Weight,
+				GroupID:                 req.ID,
+				ChannelID:               item.ChannelID,
+				ModelName:               item.ModelName,
+				Priority:                item.Priority,
+				Weight:                  item.Weight,
+				RelayRetryCountOverride: item.RelayRetryCountOverride,
 			}
 		}
 		if err := tx.Create(&newItems).Error; err != nil {

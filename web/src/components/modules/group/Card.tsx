@@ -288,6 +288,7 @@ export function GroupCard({ group }: { group: Group }) {
                     channel_name: channelNameByKey.get(key) ?? t('aiRoute.progress.channelFallbackName', { id: item.channel_id }),
                     item_id: item.id,
                     weight: item.weight,
+                    relayRetryCountOverride: item.relay_retry_count_override ?? null,
                 };
             }),
         [group.items, channelByKey, channelNameByKey, enabledByKey, t]
@@ -298,6 +299,7 @@ export function GroupCard({ group }: { group: Group }) {
     const [isDragging, setIsDragging] = useState(false);
     const [currentTestId, setCurrentTestId] = useState<string | null>(null);
     const weightTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const retryOverrideTimerRef = useRef<NodeJS.Timeout | null>(null);
     const membersRef = useRef<SelectedMember[]>([]);
     const lastDisplayMembersRef = useRef(displayMembers);
     const handledTestCompletionRef = useRef<string | null>(null);
@@ -445,16 +447,31 @@ export function GroupCard({ group }: { group: Group }) {
         }, 500);
     }, [group.id, priorityByItemId, updateGroup, onSuccess, onError]);
 
+    const handleRetryOverrideChange = useCallback((id: string, value: number | null) => {
+        setMembers((prev) => prev.map((m) => m.id === id ? { ...m, relayRetryCountOverride: value } : m));
+        if (retryOverrideTimerRef.current) clearTimeout(retryOverrideTimerRef.current);
+        retryOverrideTimerRef.current = setTimeout(() => {
+            const member = membersRef.current.find((m) => m.id === id);
+            if (!member?.item_id) return;
+            const priority = priorityByItemId.get(member.item_id);
+            if (!priority) return;
+            updateGroup.mutate(
+                { id: group.id!, items_to_update: [{ id: member.item_id, priority, weight: member.weight ?? 1, relay_retry_count_override: value }] },
+                { onSuccess, onError }
+            );
+        }, 500);
+    }, [group.id, priorityByItemId, updateGroup, onSuccess, onError]);
+
     const handleSubmitEdit = useCallback((values: GroupEditorValues, onDone?: () => void) => {
         if (!group.id) return;
 
         const originalItems = [...(group.items || [])].sort((a, b) => a.priority - b.priority);
-        const originalById = new Map<number, { priority: number; weight: number }>();
+        const originalById = new Map<number, { priority: number; weight: number; retryOverride: number | null | undefined }>();
         const originalIds = new Set<number>();
         originalItems.forEach((it) => {
             if (typeof it.id === 'number') {
                 originalIds.add(it.id);
-                originalById.set(it.id, { priority: it.priority, weight: it.weight });
+                originalById.set(it.id, { priority: it.priority, weight: it.weight, retryOverride: it.relay_retry_count_override });
             }
         });
 
@@ -471,6 +488,7 @@ export function GroupCard({ group }: { group: Group }) {
                 model_name: m.name,
                 priority,
                 weight: m.weight ?? 1,
+                relay_retry_count_override: m.relayRetryCountOverride ?? null,
             }));
 
         const items_to_update = values.members
@@ -480,11 +498,12 @@ export function GroupCard({ group }: { group: Group }) {
                 const id = m.item_id!;
                 const orig = originalById.get(id);
                 const weight = m.weight ?? 1;
-                if (!orig) return null;
-                if (orig.priority === priority && orig.weight === weight) return null;
-                return { id, priority, weight };
+                const retryOverride = m.relayRetryCountOverride ?? null;
+                if (!orig) return { id, priority, weight, relay_retry_count_override: retryOverride };
+                if (orig.priority === priority && orig.weight === weight && (orig.retryOverride ?? null) === retryOverride) return null;
+                return { id, priority, weight, relay_retry_count_override: retryOverride };
             })
-            .filter((x): x is { id: number; priority: number; weight: number } => x !== null);
+            .filter((x): x is { id: number; priority: number; weight: number; relay_retry_count_override: number | null } => x !== null);
 
         const payload: GroupUpdateRequest = { id: group.id };
         const nextName = values.name.trim();

@@ -30,7 +30,6 @@ export function SettingRetry() {
         nextValues[SettingKey.RetryEmptyOutput] = settings.find((item) => item.key === SettingKey.RetryEmptyOutput)?.value ?? 'true';
         nextValues[SettingKey.RetryTruncationEnabled] = settings.find((item) => item.key === SettingKey.RetryTruncationEnabled)?.value ?? 'false';
         nextValues[SettingKey.ReasoningBufferStrategy] = settings.find((item) => item.key === SettingKey.ReasoningBufferStrategy)?.value ?? 'buffer';
-        nextValues[SettingKey.RelayLogQueueDropPolicy] = settings.find((item) => item.key === SettingKey.RelayLogQueueDropPolicy)?.value ?? 'oldest';
         nextValues[SettingKey.StreamSessionReplayEnabled] = settings.find((item) => item.key === SettingKey.StreamSessionReplayEnabled)?.value ?? 'true';
         nextValues[SettingKey.KeyHealthCheckEnabled] = settings.find((item) => item.key === SettingKey.KeyHealthCheckEnabled)?.value ?? 'false';
         nextValues[SettingKey.KeyHealthCheckInterval] = settings.find((item) => item.key === SettingKey.KeyHealthCheckInterval)?.value ?? '30';
@@ -250,42 +249,7 @@ export function SettingRetry() {
                     </SelectContent>
                 </Select>
             </div>
-            {/* 高 QPS 内存优化（日志队列丢弃策略 + 流重连功能开关） */}
-            <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0 flex flex-col gap-1">
-                    <span className="text-sm font-medium">
-                        {t('retry.logQueueDropPolicy.label')}
-                        <Hint text={t('retry.logQueueDropPolicy.hint')} />
-                    </span>
-                </div>
-                <Select
-                    value={values[SettingKey.RelayLogQueueDropPolicy] || 'oldest'}
-                    onValueChange={(value) => {
-                        setValues((prev) => ({ ...prev, [SettingKey.RelayLogQueueDropPolicy]: value }));
-                        setSetting.mutate(
-                            { key: SettingKey.RelayLogQueueDropPolicy, value },
-                            {
-                                onSuccess: () => {
-                                    toast.success(t('saved'));
-                                    initialValues.current = {
-                                        ...initialValues.current,
-                                        [SettingKey.RelayLogQueueDropPolicy]: value,
-                                    };
-                                },
-                            },
-                        );
-                    }}
-                >
-                    <SelectTrigger className="w-full rounded-xl md:w-48">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-xl">
-                        <SelectItem className="rounded-lg" value="disabled">{t('retry.logQueueDropPolicy.disabled')}</SelectItem>
-                        <SelectItem className="rounded-lg" value="oldest">{t('retry.logQueueDropPolicy.oldest')}</SelectItem>
-                        <SelectItem className="rounded-lg" value="newest">{t('retry.logQueueDropPolicy.newest')}</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
+            {/* 流重连重放（属流内存语义，非日志设置） */}
             <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
                 <div className="min-w-0 flex flex-col gap-1">
                     <span className="text-sm font-medium">

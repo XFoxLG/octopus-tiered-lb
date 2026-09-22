@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -39,8 +40,8 @@ type RelayMetrics struct {
 	// 展示轨来源 IP（转发头解析，仅展示）。见 reported_client_ip.go。
 	ReportedClientIP       string
 	ReportedClientIPSource string
-	UserAgent    string
-	StartTime    time.Time
+	UserAgent              string
+	StartTime              time.Time
 
 	// 首 Token 时间
 	FirstTokenTime time.Time
@@ -298,22 +299,23 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 	attempts, totalAttempts := capAttemptsForLog(attempts)
 
 	relayLog := model.RelayLog{
-		Time:             m.StartTime.Unix(),
-		RequestModelName: m.RequestModel,
-		RequestAPIKeyID:  m.APIKeyID,
-		ClientIP:         m.ClientIP,
-		ReportedClientIP: m.ReportedClientIP,
+		Time:                   m.StartTime.Unix(),
+		RequestModelName:       m.RequestModel,
+		RequestAPIKeyID:        m.APIKeyID,
+		ClientIP:               m.ClientIP,
+		ReportedClientIP:       m.ReportedClientIP,
 		ReportedClientIPSource: m.ReportedClientIPSource,
-		UserAgent:        m.UserAgent,
-		EndpointType:     m.EndpointType,
-		ChannelName:      channelName,
-		ChannelId:        channelID,
-		ActualModelName:  actualModel,
-		UseTime:          int(duration.Milliseconds()),
-		BillingWindow:    price.BillingWindow(actualModel, m.StartTime),
-		Attempts:         attempts,
-		TotalAttempts:    totalAttempts,
+		UserAgent:              m.UserAgent,
+		EndpointType:           m.EndpointType,
+		ChannelName:            channelName,
+		ChannelId:              channelID,
+		ActualModelName:        actualModel,
+		UseTime:                int(duration.Milliseconds()),
+		BillingWindow:          price.BillingWindow(actualModel, m.StartTime),
+		Attempts:               attempts,
+		TotalAttempts:          totalAttempts,
 	}
+	relayLog.UsageState = resolveUsageState(m.InternalResponse, err)
 
 	if apiKey, getErr := apikey.Get(m.APIKeyID, ctx); getErr == nil {
 		relayLog.RequestAPIKeyName = apiKey.Name
@@ -431,6 +433,28 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 	if _, logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
 		log.Warnf("failed to save relay log: %v", logErr)
 	}
+}
+
+// resolveUsageState 判定 LLM 链路日志的用量可信度（relay_logs.usage_state）。
+// 成因优先于 usage 数据：客户端断连/流未终止时即使上游带了部分 usage 块，
+// 输出也不完整，token 数字不可信，必须按成因标注而不是照常显示。
+// 历史行该列为空，前端按现状兜底。
+func resolveUsageState(resp *transformerModel.InternalLLMResponse, relayErr error) string {
+	switch {
+	case errors.Is(relayErr, errClientDisconnected):
+		return model.RelayLogUsageClientDisconnect
+	case errors.Is(relayErr, errMissingStreamTerminal):
+		return model.RelayLogUsageMissingTerminal
+	case errors.Is(relayErr, errEmptyOutput):
+		return model.RelayLogUsageEmptyOutput
+	}
+	if resp != nil && resp.Usage != nil && resp.Usage.PromptTokens > 0 {
+		return model.RelayLogUsageReported
+	}
+	if relayErr != nil {
+		return model.RelayLogUsageFailedNoResponse
+	}
+	return model.RelayLogUsageNotReported
 }
 
 func lastForwardedAttemptNumber(attempts []model.ChannelAttempt) int {
