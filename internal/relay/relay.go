@@ -171,6 +171,25 @@ func resolveAPIRateLimit(modelName string, c *gin.Context) (rpm int, tpm int) {
 	return
 }
 
+// consumeAPIRateLimitTokens 在请求成功后按真实 input+output token 数回扣 API Key
+// 级 TPM。门口 CheckRateLimit 只做「预占 1」的门槛检查(此时 usage 未知),
+// 真实用量在这里补扣;否则无论多长的请求都只扣 1 个 token,TPM 形同虚设。
+// 配额来自 context(effective_rate_limit_tpm);tpm<=0 或 token 数不可用时安全跳过。
+func consumeAPIRateLimitTokens(c *gin.Context, apiKeyID int, requestModel string, inputTokens, outputTokens int) {
+	if c == nil || apiKeyID <= 0 {
+		return
+	}
+	total := inputTokens + outputTokens
+	if total <= 0 {
+		return
+	}
+	tpm := c.GetInt("effective_rate_limit_tpm")
+	if tpm <= 0 {
+		return
+	}
+	rl.ConsumeTokens(apiKeyID, requestModel, tpm, total)
+}
+
 func resolveCandidateModelName(requestModel string, item dbmodel.GroupItem) string {
 	if upstreamModel, ok := resolveRequestedUpstreamModel(requestModel); ok {
 		if strings.TrimSpace(item.ModelName) == "" || strings.EqualFold(strings.TrimSpace(item.ModelName), "zen") {
@@ -224,10 +243,15 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 
 	requestModel := internalRequest.Model
 	apiKeyID := c.GetInt("api_key_id")
+	// API Key 级 TPM 的事后校准需要在成功路径拿到真实 token 数与配额,
+	// 先把它们存到 context(CheckRateLimit 只做「预占 1」的门槛检查)。
+	apiRateRPM, apiRateTPM := resolveAPIRateLimit(requestModel, c)
+	c.Set("effective_rate_limit_rpm", apiRateRPM)
+	c.Set("effective_rate_limit_tpm", apiRateTPM)
 
 	// Rate limiting: check RPM/TPM before forwarding
 	if rpm := c.GetInt("rate_limit_rpm"); rpm > 0 || c.GetInt("rate_limit_tpm") > 0 {
-		effectiveRPM, effectiveTPM := resolveAPIRateLimit(requestModel, c)
+		effectiveRPM, effectiveTPM := apiRateRPM, apiRateTPM
 		if effectiveRPM > 0 || effectiveTPM > 0 {
 			allowed, remaining, retryAfter := rl.CheckRateLimit(apiKeyID, requestModel, effectiveRPM, effectiveTPM, 0)
 			if !allowed {
@@ -1951,6 +1975,9 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
 					// 离群窗口：记录成功样本（与熔断器同级证据）。
 					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
+					// API Key 级 TPM:用真实 input+output token 回扣,替代门口
+					// 那次「预占 1」的假限额。ConsumeTokens 内部对 tpm<=0 直接返回。
+					consumeAPIRateLimitTokens(req.c, req.apiKeyID, requestModel, int(req.metrics.Stats.InputToken), int(req.metrics.Stats.OutputToken))
 					req.metrics.Save(true, nil, currentAttempts)
 					return nil
 				}

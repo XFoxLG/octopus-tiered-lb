@@ -53,6 +53,8 @@ const (
 	SettingKeyRateLimitHoldEnabled               SettingKey = "rate_limit_hold_enabled"                  // 429 限流时是否在当前渠道内延时重试（默认关闭，保持立即换 Key/渠道）
 	SettingKeyRateLimitHoldInterval              SettingKey = "rate_limit_hold_interval"                 // 429 渠道内延时重试间隔（秒）
 	SettingKeyRateLimitHoldMaxWait               SettingKey = "rate_limit_hold_max_wait"                 // 429 渠道内延时重试总等待上限（秒），超时后才换下一渠道
+	SettingKeyGlobalRateLimitRPM                 SettingKey = "global_rate_limit_rpm"                    // 全站转发请求频率上限(每分钟),0=关闭;仅作用于 4 条转发路由
+	SettingKeyGlobalMaxConcurrency               SettingKey = "global_max_concurrency"                   // 全站同时转发请求数上限,0=关闭;仅作用于 4 条转发路由
 
 	SettingKeyAutoStrategyMinSamples               SettingKey = "auto_strategy_min_samples"                // Auto策略最小样本数阈值
 	SettingKeyAutoStrategyTimeWindow               SettingKey = "auto_strategy_time_window"                // Auto策略时间窗口（秒）
@@ -184,6 +186,8 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},            // 默认关闭：429 仍立即换 Key/渠道
 		{Key: SettingKeyRateLimitHoldInterval, Value: "10"},              // 默认每 10 秒重试一次
 		{Key: SettingKeyRateLimitHoldMaxWait, Value: "60"},               // 默认最多坚持 60 秒
+		{Key: SettingKeyGlobalRateLimitRPM, Value: "0"},                  // 默认关闭:不限制全站转发频率
+		{Key: SettingKeyGlobalMaxConcurrency, Value: "0"},                // 默认关闭:不限制全站并发
 
 		{Key: SettingKeyPublicAPIBaseURL, Value: ""},
 		{Key: SettingKeyAutoStrategyMinSamples, Value: "10"},       // 默认最小样本数10次
@@ -260,6 +264,7 @@ func (s *Setting) Validate() error {
 		SettingKeyAuthErrorCooldown, SettingKeyServerErrorCooldown, SettingKeyRateLimitChannelThreshold,
 		SettingKeyRateLimitChannelWindow, SettingKeyRateLimitChannelCooldown, SettingKeyRelayMaxTotalAttempts,
 		SettingKeyRateLimitHoldInterval, SettingKeyRateLimitHoldMaxWait,
+		SettingKeyGlobalRateLimitRPM, SettingKeyGlobalMaxConcurrency,
 		SettingKeyAutoStrategyMinSamples, SettingKeyAutoStrategyTimeWindow, SettingKeyAutoStrategySampleThreshold,
 		SettingKeyAutoStrategyLatencyWeight,
 		SettingKeyAIRouteGroupID, SettingKeyAIRouteTimeoutSeconds, SettingKeyAIRouteParallelism,
@@ -297,6 +302,10 @@ func (s *Setting) Validate() error {
 		// 允许设为 0：0 表示不限制流会话总数（不推荐，最坏情况会吃光内存）。
 		if s.Key == SettingKeyStreamSessionMaxSessions && v < 0 {
 			return fmt.Errorf("stream session max sessions must be greater than or equal to 0")
+		}
+		// 0 = 关闭全局限速;负数非法。
+		if (s.Key == SettingKeyGlobalRateLimitRPM || s.Key == SettingKeyGlobalMaxConcurrency) && v < 0 {
+			return fmt.Errorf("global rate limit setting must be greater than or equal to 0")
 		}
 		if (s.Key == SettingKeyRateLimitHoldInterval || s.Key == SettingKeyRateLimitHoldMaxWait) && v < 1 {
 			return fmt.Errorf("rate limit hold setting must be greater than 0")
