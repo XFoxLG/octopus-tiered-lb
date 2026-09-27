@@ -1407,6 +1407,20 @@
         "invalid": "请至少填写错误码或关键词"
       }
     },
+    "downstreamRateLimit": {
+      "title": "下游限速(全站)",
+      "description": "作用于 4 条转发路由:请求频率与同时在途并发。管理 API、登录、日志不受影响,默认 0 = 关闭。",
+      "rpm": {
+        "label": "全站每分钟请求上限",
+        "hint": "所有转发请求合计每分钟上限。0 = 不限制。",
+        "placeholder": "例如 600(0 = 不限制)"
+      },
+      "concurrency": {
+        "label": "全站最大并发",
+        "hint": "同时在途的转发请求上限,超出的请求立即返回 429。0 = 不限制。",
+        "placeholder": "例如 32(0 = 不限制)"
+      }
+    },
     "saved": "已保存",
     "saveFailed": "保存失败",
     "backup": {
