@@ -3,6 +3,7 @@ package relay
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,8 +46,284 @@ func validCustomErrorStatus(status int) bool {
 	return status >= 100 && status <= 599
 }
 
+// builtinRetryableErrorKeywords 是内置智能默认规则。公益站与私有网关常把
+// 「模型别名不存在 / 该 Key 无此模型权限 / Key 无效 / 端点不支持」这类本可换
+// 渠道解决的失败包成 HTTP 400,导致默认分类直接终态透传给客户端造成中断。
+// 命中这些语义时强制进入换 Key/换渠道重试,让网关自愈。
+//
+// 只在「换渠道可能改变结果」的语义上放宽;context_length_exceeded、内容过滤、
+// 拒答等确定性失败在 attempt() 中已优先豁免,永远不会走到这里。
+// 刻意不含泛化的 "not supported" —— 那会误伤「Requests ending with a model
+// turn are not supported」这类真正的请求方错误。
+// builtinCredentialRetryKeywords 指向「换一把 Key 就可能成功」的语义。
+// 命中后按 ScopeSameChannel 处理:先在同一渠道内轮换 Key,用完再自然换渠道。
+var builtinCredentialRetryKeywords = []string{
+	"api key not valid",
+	"invalid api key",
+	"incorrect api key",
+	"invalid_api_key",
+	"api key is invalid",
+	"invalid token",
+	"token is invalid",
+	"authentication failed",
+	"密钥无效",
+	"密钥错误",
+	"令牌无效",
+	"认证失败",
+}
+
+// builtinChannelRetryKeywords 指向「换一个渠道才可能成功」的语义:模型别名、
+// 模型权限、端点支持、渠道可用性。命中后按 ScopeNextChannel 处理。
+// 刻意不含泛化的 "not supported" —— 那会误伤「Requests ending with a model
+// turn are not supported」这类真正的请求方错误。
+var builtinChannelRetryKeywords = []string{
+	"model not found",
+	"model_not_found",
+	"no such model",
+	"unknown model",
+	"unsupported model",
+	"model is not supported",
+	"model not supported",
+	"not have access to model",
+	"model does not exist",
+	"the model does not exist",
+	"endpoint not supported",
+	"unsupported endpoint",
+	"channel not available",
+	"no available channel",
+	"upstream unavailable",
+	"all available accounts exhausted",
+	"no capacity available",
+	"模型不存在",
+	"该模型不存在",
+	"模型未开通",
+	"不支持的模型",
+	"无该模型权限",
+	"模型无权限",
+	"没有权限使用",
+	"渠道不可用",
+	"渠道不存在",
+	"服务暂不可用",
+}
+
+// matchBuiltinRetryScope 报告上游错误文本命中的内置可重试语义及其作用域。
+// 凭据类优先(keyScope 更具体);命中返回 (scope, keyword, true)。
+func matchBuiltinRetryScope(upstreamText string) (RetryScope, string, bool) {
+	lowered := strings.ToLower(strings.TrimSpace(upstreamText))
+	if lowered == "" {
+		return ScopeNone, "", false
+	}
+	for _, keyword := range builtinCredentialRetryKeywords {
+		if strings.Contains(lowered, strings.ToLower(keyword)) {
+			return ScopeSameChannel, keyword, true
+		}
+	}
+	for _, keyword := range builtinChannelRetryKeywords {
+		if strings.Contains(lowered, strings.ToLower(keyword)) {
+			return ScopeNextChannel, keyword, true
+		}
+	}
+	return ScopeNone, "", false
+}
+
+// applyErrorPolicy 在默认分类之上叠加渠道级错误策略与内置智能默认规则。
+//
+// 设计约束:
+//   - written(已向下游写出内容)绝不放宽为可重试,这是不可破的红线(防两段回答拼接)。
+//   - 渠道显式配置的不可重试码优先级最高。
+//   - 放宽方向永远是「不再重试 → 可重试」;默认已可重试的决策保持不动。
+//   - 确定性失败(如 context_length_exceeded)在调用方已提前终态,不会到这里。
+func applyErrorPolicy(decision RetryDecision, ch *dbmodel.Channel, statusCode int, upstreamText string) RetryDecision {
+	if decision.Scope == ScopeAbortAll || !decision.IsError {
+		return decision
+	}
+
+	policy := parseChannelErrorPolicy(ch)
+	if policy.matchesNonRetryable(statusCode) {
+		return RetryDecision{
+			Scope:   ScopeNone,
+			Reason:  fmt.Sprintf("channel non-retryable status code %d", statusCode),
+			Code:    statusCode,
+			IsError: true,
+		}
+	}
+
+	// 渠道级配置:用户说得很明确,命中即换渠道。
+	if policy.matchesRetryable(statusCode, upstreamText) {
+		return RetryDecision{
+			Scope:   ScopeNextChannel,
+			Reason:  fmt.Sprintf("channel retryable rule matched (status %d)", statusCode),
+			Code:    statusCode,
+			IsError: true,
+		}
+	}
+
+	// 内置规则只在默认分类已判定「不再重试」时介入,避免覆盖更精细的既有决策。
+	if decision.Scope != ScopeNone {
+		return decision
+	}
+	if scope, keyword, ok := matchBuiltinRetryScope(upstreamText); ok {
+		return RetryDecision{
+			Scope:   scope,
+			Reason:  fmt.Sprintf("builtin retryable keyword matched: %s", keyword),
+			Code:    statusCode,
+			IsError: true,
+		}
+	}
+	return decision
+}
+
+// channelErrorPolicy 是渠道级错误策略的解析结果。所有字段为空时表示该渠道
+// 未配置任何覆盖,行为与配置前完全一致。
+type channelErrorPolicy struct {
+	retryableCodes    map[int]bool
+	retryableKeywords []string
+	nonRetryableCodes map[int]bool
+	messageTemplate   string
+}
+
+// parseChannelErrorPolicy 解析渠道级错误策略字段。任一解析失败都保守降级为
+// 「该项未配置」,绝不让脏数据放大成「意外重试」或「意外不重试」。
+func parseChannelErrorPolicy(ch *dbmodel.Channel) channelErrorPolicy {
+	policy := channelErrorPolicy{}
+	if ch == nil {
+		return policy
+	}
+	if codes := parseCustomRetryableCodes(ch.RetryableStatusCodes); len(codes) > 0 {
+		policy.retryableCodes = codes
+	}
+	if codes := parseCustomRetryableCodes(ch.NonRetryableStatusCodes); len(codes) > 0 {
+		policy.nonRetryableCodes = codes
+	}
+	for _, part := range strings.Split(ch.RetryableKeywords, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			policy.retryableKeywords = append(policy.retryableKeywords, part)
+		}
+	}
+	policy.messageTemplate = strings.TrimSpace(ch.ErrorMessageTemplate)
+	return policy
+}
+
+// matchesRetryable 报告该策略是否要求强制重试。
+func (p channelErrorPolicy) matchesRetryable(statusCode int, upstreamText string) bool {
+	if p.retryableCodes != nil && p.retryableCodes[statusCode] {
+		return true
+	}
+	if len(p.retryableKeywords) == 0 {
+		return false
+	}
+	lowered := strings.ToLower(upstreamText)
+	for _, keyword := range p.retryableKeywords {
+		if strings.Contains(lowered, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesNonRetryable 报告该策略是否要求强制不重试。优先级高于可重试规则。
+func (p channelErrorPolicy) matchesNonRetryable(statusCode int) bool {
+	return p.nonRetryableCodes != nil && p.nonRetryableCodes[statusCode]
+}
+
 // parseCustomRetryableCodes 解析逗号分隔的自定义可重试状态码。空串返回空集；
 // 非法片段直接丢弃（Validate 已在写入时拦截，运行时读到脏数据也不炸）。
+// ErrorClass 是面向下游的粗粒度错误分级。它只影响最终呈现文案,不改重试决策、
+// 不伪造成功、不替换上游可识别信号(context_length_exceeded 等关键字段必须原样保留)。
+type ErrorClass string
+
+const (
+	// ErrorClassRequest 表示请求方问题:重试无用,需要用户改请求或找管理员。
+	ErrorClassRequest ErrorClass = "request"
+	// ErrorClassUpstream 表示上游渠道问题:网关已尽力切换,用户可选重试。
+	ErrorClassUpstream ErrorClass = "upstream"
+	// ErrorClassUnavailable 表示全部渠道都不可用(自愈失败)。
+	ErrorClassUnavailable ErrorClass = "unavailable"
+)
+
+// classifyErrorForClient 按状态码与错误文本给出面向下游的分级。
+// 语义确定性优先于状态码:即使上游把溢出错误包成 500,也判为请求方问题。
+func classifyErrorForClient(statusCode int, upstreamText string) ErrorClass {
+	lowered := strings.ToLower(upstreamText)
+	// 可识别的请求方语义:重试必然同样失败,必须让客户端看到关键信号。
+	for _, marker := range []string{
+		"context_length_exceeded",
+		"context length exceeded",
+		"maximum context length",
+		"prompt is too long",
+		"too many tokens",
+		"context window",
+		"content_filter",
+		"content filter",
+		"content_policy",
+		"input exceeds",
+		"invalid_request_error",
+		"requests ending with a model turn",
+	} {
+		if strings.Contains(lowered, marker) {
+			return ErrorClassRequest
+		}
+	}
+	switch statusCode {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusRequestEntityTooLarge,
+		http.StatusUnauthorized, http.StatusForbidden, http.StatusPaymentRequired:
+		return ErrorClassRequest
+	}
+	return ErrorClassUpstream
+}
+
+// clientErrorMessageForClass 给出分级对应的兜底文案。调用方仍需优先透传上游
+// 可识别信号;只有在上游没有可用正文时才用这里的文案。
+func clientErrorMessageForClass(class ErrorClass, statusCode int) string {
+	switch class {
+	case ErrorClassRequest:
+		if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+			return "请求未通过上游鉴权,请检查该模型/渠道权限,或联系管理员。"
+		}
+		if statusCode == http.StatusTooManyRequests {
+			return "请求过于频繁或额度已用尽,请稍后重试或联系管理员。"
+		}
+		return "请求无法被上游接受,请调整请求内容;若持续失败请联系管理员。"
+	case ErrorClassUnavailable:
+		return "所有可用渠道当前均不可用,请稍后重试;若持续失败请联系管理员。"
+	default:
+		return "上游渠道暂时不可用,网关已尝试自动切换;请稍后重试。"
+	}
+}
+
+// channelErrorMessageTemplate returns the channel-level error message template,
+// or "" when the channel is nil.
+func channelErrorMessageTemplate(ch *dbmodel.Channel) string {
+	if ch == nil {
+		return ""
+	}
+	return strings.TrimSpace(ch.ErrorMessageTemplate)
+}
+
+// applyChannelErrorMessageTemplate rewrites the final error message using the
+// channel-level error_message_template. {upstream} is replaced with the upstream
+// body. Returns ok=false when unset or when it must not override the upstream
+// body.
+//
+// Red line: identifiable caller-side deterministic signals
+// (context_length_exceeded / prompt is too long / content_filter ...) keep the
+// raw upstream body so downstream clients can still trigger auto-compaction.
+func applyChannelErrorMessageTemplate(template string, statusCode int, upstreamText string) (string, bool) {
+	template = strings.TrimSpace(template)
+	if template == "" {
+		return "", false
+	}
+	if classifyErrorForClient(statusCode, upstreamText) == ErrorClassRequest {
+		return "", false
+	}
+	message := strings.TrimSpace(strings.ReplaceAll(template, "{upstream}", strings.TrimSpace(upstreamText)))
+	if message == "" {
+		return "", false
+	}
+	return message, true
+}
+
 func parseCustomRetryableCodes(raw string) map[int]bool {
 	result := make(map[int]bool)
 	for _, part := range strings.Split(raw, ",") {

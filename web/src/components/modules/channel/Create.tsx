@@ -55,6 +55,12 @@ export function CreateDialogContent() {
         proxy_mode: 'direct',
         proxy_config_id: null,
         match_regex: '',
+        max_concurrency: 0,
+        rpm_limit: 0,
+        retryable_status_codes: '',
+        retryable_keywords: '',
+        non_retryable_status_codes: '',
+        error_message_template: '',
     });
     const t = useTranslations('channel.create');
     const tForm = useTranslations('channel.form');
@@ -85,6 +91,12 @@ export function CreateDialogContent() {
             proxy_mode: 'direct',
             proxy_config_id: null,
             match_regex: '',
+            max_concurrency: 0,
+            rpm_limit: 0,
+            retryable_status_codes: '',
+            retryable_keywords: '',
+            non_retryable_status_codes: '',
+            error_message_template: '',
         });
         setShowPresetPicker(true);
     };
@@ -151,6 +163,12 @@ export function CreateDialogContent() {
                 request_rewrite: requestRewrite.enabled ? requestRewrite : undefined,
                 relay_log_raw_sse_until: formData.relay_log_raw_sse_until,
                 match_regex: formData.match_regex.trim(),
+                max_concurrency: formData.max_concurrency,
+                rpm_limit: formData.rpm_limit,
+                retryable_status_codes: formData.retryable_status_codes.trim(),
+                retryable_keywords: formData.retryable_keywords.trim(),
+                non_retryable_status_codes: formData.non_retryable_status_codes.trim(),
+                error_message_template: formData.error_message_template.trim(),
             },
             {
                 onSuccess: () => {

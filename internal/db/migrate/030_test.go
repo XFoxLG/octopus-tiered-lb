@@ -117,6 +117,11 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := addGroupItemRetryOverride(db); err != nil {
 		t.Fatalf("addGroupItemRetryOverride: %v", err)
 	}
+	// Run migration 067 to add the channel error policy columns
+	// (test uses latest model.Channel which includes these fields)
+	if err := addChannelErrorPolicy(db); err != nil {
+		t.Fatalf("addChannelErrorPolicy: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

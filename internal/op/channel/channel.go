@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -58,6 +59,29 @@ func GetByName(name string) (*model.Channel, error) {
 
 // encryptChannelKeysForDB 将渠道 Key 加密（enc: 前缀）以便落库。
 // 调用方负责保证加密后不把密文写回运行时缓存；落库完成后应恢复明文。
+// validateStatusCodesCSV 校验逗号分隔的 HTTP 状态码列表(100-599)。
+// 空串合法(= 该项未配置);任一非法片段即报错,避免脏值落库后在运行时被静默丢弃,
+// 造成「设置了但不生效」的困惑。
+func validateStatusCodesCSV(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		code, err := strconv.Atoi(part)
+		if err != nil {
+			return fmt.Errorf("invalid status code %q", part)
+		}
+		if code < 100 || code > 599 {
+			return fmt.Errorf("status code %d out of range (100-599)", code)
+		}
+	}
+	return nil
+}
+
 func encryptChannelKeysForDB(keys []model.ChannelKey) error {
 	for i := range keys {
 		if keys[i].ChannelKey == "" {
@@ -510,6 +534,42 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		}
 		selectFields = append(selectFields, "rpm_limit")
 		updates.RPMLimit = *req.RPMLimit
+	}
+	if req.RetryableStatusCodes != nil {
+		normalized := strings.TrimSpace(*req.RetryableStatusCodes)
+		if err := validateStatusCodesCSV(normalized); err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("retryable status codes: %w", err)
+		}
+		selectFields = append(selectFields, "retryable_status_codes")
+		updates.RetryableStatusCodes = normalized
+	}
+	if req.NonRetryableStatusCodes != nil {
+		normalized := strings.TrimSpace(*req.NonRetryableStatusCodes)
+		if err := validateStatusCodesCSV(normalized); err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("non-retryable status codes: %w", err)
+		}
+		selectFields = append(selectFields, "non_retryable_status_codes")
+		updates.NonRetryableStatusCodes = normalized
+	}
+	if req.RetryableKeywords != nil {
+		normalized := strings.TrimSpace(*req.RetryableKeywords)
+		if len(normalized) > 512 {
+			tx.Rollback()
+			return nil, fmt.Errorf("retryable keywords must be at most 512 characters")
+		}
+		selectFields = append(selectFields, "retryable_keywords")
+		updates.RetryableKeywords = normalized
+	}
+	if req.ErrorMessageTemplate != nil {
+		normalized := strings.TrimSpace(*req.ErrorMessageTemplate)
+		if len(normalized) > 512 {
+			tx.Rollback()
+			return nil, fmt.Errorf("error message template must be at most 512 characters")
+		}
+		selectFields = append(selectFields, "error_message_template")
+		updates.ErrorMessageTemplate = normalized
 	}
 	if len(selectFields) > 0 {
 		if err := tx.Model(&model.Channel{}).Where("id = ?", req.ID).Select(selectFields).Updates(&updates).Error; err != nil {

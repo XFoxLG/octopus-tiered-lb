@@ -377,6 +377,7 @@ func testChannelModel(c *gin.Context) {
 // helper.ChannelModelSyncProbeResult。渠道来源二选一：
 //   - channel_id：测已保存到 DB 的渠道（key 不经前端回传）；
 //   - channel：测新建弹窗里未保存的临时渠道。
+//
 // 模型必须在渠道已选模型集合（model + custom_model）内；endpoint_type 为空默认 chat。
 func testChannelModelSync(c *gin.Context) {
 	var req struct {
@@ -472,33 +473,37 @@ func testChannelToolsProbe(c *gin.Context) {
 }
 
 type channelRequestPayload struct {
-	ID                   int                         `json:"id"`
-	Name                 string                      `json:"name"`
-	GroupID              int                         `json:"group_id"`
-	Type                 outbound.OutboundType       `json:"type"`
-	Enabled              bool                        `json:"enabled"`
-	BaseUrls             []model.BaseUrl             `json:"base_urls"`
-	Keys                 []channelKeyRequestPayload  `json:"keys"`
-	Model                string                      `json:"model"`
-	CustomModel          string                      `json:"custom_model"`
-	ProxyMode            model.ProxyUsageMode        `json:"proxy_mode"`
-	ProxyConfigID        *int                        `json:"proxy_config_id"`
-	Proxy                bool                        `json:"proxy"`
-	AutoSync             bool                        `json:"auto_sync"`
-	AutoGroup            model.AutoGroupType         `json:"auto_group"`
-	SkipModelTest        bool                        `json:"skip_model_test"`
-	Disposable           bool                        `json:"disposable"`
-	ExpireAt             *time.Time                  `json:"expire_at,omitempty"`
-	KeySelectionStrategy string                      `json:"key_selection_strategy"`
-	CustomHeader         []model.CustomHeader        `json:"custom_header"`
-	ParamOverride        *string                     `json:"param_override"`
-	OutboundFormatOverride *string                   `json:"outbound_format_override"`
-	ChannelProxy         *string                     `json:"channel_proxy"`
-	RequestRewrite       *model.RequestRewriteConfig `json:"request_rewrite"`
-	MatchRegex           *string                     `json:"match_regex"`
-	Stats                *model.StatsChannel         `json:"stats"`
-	MaxConcurrency       int                         `json:"max_concurrency"`
-	RPMLimit             int                         `json:"rpm_limit"`
+	ID                      int                         `json:"id"`
+	Name                    string                      `json:"name"`
+	GroupID                 int                         `json:"group_id"`
+	Type                    outbound.OutboundType       `json:"type"`
+	Enabled                 bool                        `json:"enabled"`
+	BaseUrls                []model.BaseUrl             `json:"base_urls"`
+	Keys                    []channelKeyRequestPayload  `json:"keys"`
+	Model                   string                      `json:"model"`
+	CustomModel             string                      `json:"custom_model"`
+	ProxyMode               model.ProxyUsageMode        `json:"proxy_mode"`
+	ProxyConfigID           *int                        `json:"proxy_config_id"`
+	Proxy                   bool                        `json:"proxy"`
+	AutoSync                bool                        `json:"auto_sync"`
+	AutoGroup               model.AutoGroupType         `json:"auto_group"`
+	SkipModelTest           bool                        `json:"skip_model_test"`
+	Disposable              bool                        `json:"disposable"`
+	ExpireAt                *time.Time                  `json:"expire_at,omitempty"`
+	KeySelectionStrategy    string                      `json:"key_selection_strategy"`
+	CustomHeader            []model.CustomHeader        `json:"custom_header"`
+	ParamOverride           *string                     `json:"param_override"`
+	OutboundFormatOverride  *string                     `json:"outbound_format_override"`
+	ChannelProxy            *string                     `json:"channel_proxy"`
+	RequestRewrite          *model.RequestRewriteConfig `json:"request_rewrite"`
+	MatchRegex              *string                     `json:"match_regex"`
+	Stats                   *model.StatsChannel         `json:"stats"`
+	MaxConcurrency          int                         `json:"max_concurrency"`
+	RPMLimit                int                         `json:"rpm_limit"`
+	RetryableStatusCodes    string                      `json:"retryable_status_codes"`
+	RetryableKeywords       string                      `json:"retryable_keywords"`
+	NonRetryableStatusCodes string                      `json:"non_retryable_status_codes"`
+	ErrorMessageTemplate    string                      `json:"error_message_template"`
 }
 
 type channelKeyRequestPayload struct {
@@ -539,31 +544,35 @@ func (p channelRequestPayload) toChannel() model.Channel {
 	}
 
 	return model.Channel{
-		Name:                 p.Name,
-		GroupID:              p.GroupID,
-		Type:                 p.Type,
-		Enabled:              p.Enabled,
-		BaseUrls:             p.BaseUrls,
-		Keys:                 keys,
-		Model:                p.Model,
-		CustomModel:          p.CustomModel,
-		ProxyMode:            p.ProxyMode,
-		ProxyConfigID:        p.ProxyConfigID,
-		Proxy:                p.Proxy,
-		AutoSync:             p.AutoSync,
-		SkipModelTest:        p.SkipModelTest,
-		Disposable:           p.Disposable,
-		ExpireAt:             p.ExpireAt,
-		KeySelectionStrategy: p.KeySelectionStrategy,
-		AutoGroup:            p.AutoGroup,
-		CustomHeader:         p.CustomHeader,
-		ParamOverride:        p.ParamOverride,
-		OutboundFormatOverride: derefString(p.OutboundFormatOverride),
-		ChannelProxy:         channelProxy,
-		RequestRewrite:       p.RequestRewrite,
-		MatchRegex:           p.MatchRegex,
-		MaxConcurrency:       p.MaxConcurrency,
-		RPMLimit:             p.RPMLimit,
+		Name:                    p.Name,
+		GroupID:                 p.GroupID,
+		Type:                    p.Type,
+		Enabled:                 p.Enabled,
+		BaseUrls:                p.BaseUrls,
+		Keys:                    keys,
+		Model:                   p.Model,
+		CustomModel:             p.CustomModel,
+		ProxyMode:               p.ProxyMode,
+		ProxyConfigID:           p.ProxyConfigID,
+		Proxy:                   p.Proxy,
+		AutoSync:                p.AutoSync,
+		SkipModelTest:           p.SkipModelTest,
+		Disposable:              p.Disposable,
+		ExpireAt:                p.ExpireAt,
+		KeySelectionStrategy:    p.KeySelectionStrategy,
+		AutoGroup:               p.AutoGroup,
+		CustomHeader:            p.CustomHeader,
+		ParamOverride:           p.ParamOverride,
+		OutboundFormatOverride:  derefString(p.OutboundFormatOverride),
+		ChannelProxy:            channelProxy,
+		RequestRewrite:          p.RequestRewrite,
+		MatchRegex:              p.MatchRegex,
+		MaxConcurrency:          p.MaxConcurrency,
+		RPMLimit:                p.RPMLimit,
+		RetryableStatusCodes:    p.RetryableStatusCodes,
+		RetryableKeywords:       p.RetryableKeywords,
+		NonRetryableStatusCodes: p.NonRetryableStatusCodes,
+		ErrorMessageTemplate:    p.ErrorMessageTemplate,
 	}
 }
 

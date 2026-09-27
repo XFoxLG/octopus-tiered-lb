@@ -164,6 +164,12 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         expire_at: channel.expire_at ? channel.expire_at.slice(0, 16) : '',
         key_selection_strategy: channel.key_selection_strategy,
         match_regex: channel.match_regex ?? '',
+        max_concurrency: channel.max_concurrency ?? 0,
+        rpm_limit: channel.rpm_limit ?? 0,
+        retryable_status_codes: channel.retryable_status_codes ?? '',
+        retryable_keywords: channel.retryable_keywords ?? '',
+        non_retryable_status_codes: channel.non_retryable_status_codes ?? '',
+        error_message_template: channel.error_message_template ?? '',
     });
     const t = useTranslations('channel.detail');
     const tProxy = useTranslations('proxyPool');
@@ -262,6 +268,29 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         if (nextMatchRegex !== curMatchRegex) {
             // Empty string means "clear" for patch semantics; backend maps it to NULL.
             req.match_regex = nextMatchRegex;
+        }
+
+        if (formData.max_concurrency !== (channel.max_concurrency ?? 0)) {
+            req.max_concurrency = formData.max_concurrency;
+        }
+        if (formData.rpm_limit !== (channel.rpm_limit ?? 0)) {
+            req.rpm_limit = formData.rpm_limit;
+        }
+        const nextRetryableCodes = formData.retryable_status_codes.trim();
+        if (nextRetryableCodes !== (channel.retryable_status_codes ?? '')) {
+            req.retryable_status_codes = nextRetryableCodes;
+        }
+        const nextRetryableKeywords = formData.retryable_keywords.trim();
+        if (nextRetryableKeywords !== (channel.retryable_keywords ?? '')) {
+            req.retryable_keywords = nextRetryableKeywords;
+        }
+        const nextNonRetryableCodes = formData.non_retryable_status_codes.trim();
+        if (nextNonRetryableCodes !== (channel.non_retryable_status_codes ?? '')) {
+            req.non_retryable_status_codes = nextNonRetryableCodes;
+        }
+        const nextErrorMessageTemplate = formData.error_message_template.trim();
+        if (nextErrorMessageTemplate !== (channel.error_message_template ?? '')) {
+            req.error_message_template = nextErrorMessageTemplate;
         }
 
         const originalKeys = channel.keys;

@@ -327,6 +327,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 
 				written := c.Writer.Written()
 				decision := ClassifyRelayError(statusCode, fwdErr, written)
+				// 与 LLM 链路同语义:叠加渠道级错误策略与内置智能默认规则,未写出时放宽为可重试。
+				if !written {
+					decision = applyErrorPolicy(decision, channel, statusCode, extractUpstreamErrorDetail(fwdErr))
+				}
 
 				// key 冷却按 (channelID, keyID, model) 维度记录（见 issue #94），不再写整 key 共享的
 				// StatusCode/LastUseTimeStamp —— 那样会让某模型 429 拖累该 key 上其他模型。
@@ -400,7 +404,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
 					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace)
 					// 与 LLM relay 一致：客户端错误原样回给下游，不吞成 502。
-					writeClientTerminalError(c, channel.Type, decision.Code, fwdErr)
+					writeClientTerminalError(c, channel, channel.Type, decision.Code, fwdErr)
 					return
 				case ScopeAbortAll:
 					lastErr = fwdErr

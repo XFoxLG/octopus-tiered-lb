@@ -86,6 +86,12 @@ export interface ChannelFormData {
     expire_at: string;
     key_selection_strategy: string;
     match_regex: string;
+    max_concurrency: number;
+    rpm_limit: number;
+    retryable_status_codes: string;
+    retryable_keywords: string;
+    non_retryable_status_codes: string;
+    error_message_template: string;
 }
 
 /**
@@ -1499,6 +1505,98 @@ export function ChannelForm({
                                 value={formData.match_regex}
                                 onChange={(e) => onFormDataChange({ ...formData, match_regex: e.target.value })}
                                 placeholder={t('matchRegexPlaceholder')}
+                                className="rounded-lg"
+                            />
+                        </div>
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-max-concurrency`} className={labelClassName}>
+                                {t('channelCapacityConcurrency')}
+                                <Hint text={t('channelCapacityConcurrencyHint')} />
+                            </label>
+                            <Input
+                                id={`${idPrefix}-max-concurrency`}
+                                type="number"
+                                min={0}
+                                value={formData.max_concurrency}
+                                onChange={(e) => onFormDataChange({ ...formData, max_concurrency: Number(e.target.value || 0) })}
+                                placeholder={t('channelCapacityConcurrencyPlaceholder')}
+                                className="rounded-lg"
+                            />
+                        </div>
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-rpm-limit`} className={labelClassName}>
+                                {t('channelCapacityRpm')}
+                                <Hint text={t('channelCapacityRpmHint')} />
+                            </label>
+                            <Input
+                                id={`${idPrefix}-rpm-limit`}
+                                type="number"
+                                min={0}
+                                value={formData.rpm_limit}
+                                onChange={(e) => onFormDataChange({ ...formData, rpm_limit: Number(e.target.value || 0) })}
+                                placeholder={t('channelCapacityRpmPlaceholder')}
+                                className="rounded-lg"
+                            />
+                        </div>
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-retryable-status-codes`} className={labelClassName}>
+                                {t('retryableStatusCodes')}
+                                <Hint text={t('retryableStatusCodesHint')} />
+                            </label>
+                            <Input
+                                id={`${idPrefix}-retryable-status-codes`}
+                                type="text"
+                                value={formData.retryable_status_codes}
+                                onChange={(e) => onFormDataChange({ ...formData, retryable_status_codes: e.target.value })}
+                                placeholder={t('retryableStatusCodesPlaceholder')}
+                                className="rounded-lg"
+                            />
+                        </div>
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-retryable-keywords`} className={labelClassName}>
+                                {t('retryableKeywords')}
+                                <Hint text={t('retryableKeywordsHint')} />
+                            </label>
+                            <Input
+                                id={`${idPrefix}-retryable-keywords`}
+                                type="text"
+                                value={formData.retryable_keywords}
+                                onChange={(e) => onFormDataChange({ ...formData, retryable_keywords: e.target.value })}
+                                placeholder={t('retryableKeywordsPlaceholder')}
+                                className="rounded-lg"
+                            />
+                        </div>
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-non-retryable-status-codes`} className={labelClassName}>
+                                {t('nonRetryableStatusCodes')}
+                                <Hint text={t('nonRetryableStatusCodesHint')} />
+                            </label>
+                            <Input
+                                id={`${idPrefix}-non-retryable-status-codes`}
+                                type="text"
+                                value={formData.non_retryable_status_codes}
+                                onChange={(e) => onFormDataChange({ ...formData, non_retryable_status_codes: e.target.value })}
+                                placeholder={t('nonRetryableStatusCodesPlaceholder')}
+                                className="rounded-lg"
+                            />
+                        </div>
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-error-message-template`} className={labelClassName}>
+                                {t('errorMessageTemplate')}
+                                <Hint text={t('errorMessageTemplateHint')} />
+                            </label>
+                            <Input
+                                id={`${idPrefix}-error-message-template`}
+                                type="text"
+                                value={formData.error_message_template}
+                                onChange={(e) => onFormDataChange({ ...formData, error_message_template: e.target.value })}
+                                placeholder={t('errorMessageTemplatePlaceholder')}
                                 className="rounded-lg"
                             />
                         </div>

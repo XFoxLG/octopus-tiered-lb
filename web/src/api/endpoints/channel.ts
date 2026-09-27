@@ -132,6 +132,12 @@ export type Channel = {
     key_health_passed?: boolean | null;
     key_health_all_failed?: boolean | null;
     key_health_at?: number;
+    max_concurrency?: number;
+    rpm_limit?: number;
+    retryable_status_codes?: string;
+    retryable_keywords?: string;
+    non_retryable_status_codes?: string;
+    error_message_template?: string;
     stats?: StatsChannel;
 };
 
@@ -170,6 +176,12 @@ export type CreateChannelRequest = {
     request_rewrite?: RequestRewriteConfig;
     relay_log_raw_sse_until?: number;
     match_regex?: string | null;
+    max_concurrency?: number;
+    rpm_limit?: number;
+    retryable_status_codes?: string;
+    retryable_keywords?: string;
+    non_retryable_status_codes?: string;
+    error_message_template?: string;
 };
 
 /**
@@ -200,6 +212,12 @@ export type UpdateChannelRequest = {
     request_rewrite?: RequestRewriteConfig;
     relay_log_raw_sse_until?: number;
     match_regex?: string | null;
+    max_concurrency?: number;
+    rpm_limit?: number;
+    retryable_status_codes?: string;
+    retryable_keywords?: string;
+    non_retryable_status_codes?: string;
+    error_message_template?: string;
     // keys diff
     keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'priority' | 'remark' | 'supported_models'>>;
     keys_to_update?: Array<{ id: number; enabled?: boolean; channel_key?: string; priority?: number; remark?: string; supported_models?: string }>;
