@@ -506,7 +506,7 @@ func TestWriteClientTerminalErrorPassesUpstreamJSONBody(t *testing.T) {
 	upstreamBody := `{"error":{"message":"输入内容过长，已超过当前模型的上下文限制，请减少历史消息、文件内容或提示词后重试。","type":"invalid_request_error","param":"","code":"context_length_exceeded"}}`
 	err := fmt.Errorf("channel demo adapter=openai-chat attempt 1/4: upstream error: 400: %s", upstreamBody)
 
-	writeClientTerminalError(c, outbound.OutboundTypeOpenAIChat, http.StatusBadRequest, err)
+	writeClientTerminalError(c, nil, outbound.OutboundTypeOpenAIChat, http.StatusBadRequest, err)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
@@ -529,7 +529,7 @@ func TestWriteClientTerminalErrorWrapsPlainTextBody(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
 	err := errors.New("upstream error: 400: prompt is too long")
-	writeClientTerminalError(c, outbound.OutboundTypeOpenAIChat, http.StatusBadRequest, err)
+	writeClientTerminalError(c, nil, outbound.OutboundTypeOpenAIChat, http.StatusBadRequest, err)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
@@ -557,7 +557,7 @@ func TestWriteClientTerminalErrorFallsBackToBadGatewayWithoutHTTPStatus(t *testi
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	writeClientTerminalError(c, outbound.OutboundTypeOpenAIChat, 0, errors.New("connection refused"))
+	writeClientTerminalError(c, nil, outbound.OutboundTypeOpenAIChat, 0, errors.New("connection refused"))
 
 	if w.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadGateway, w.Body.String())

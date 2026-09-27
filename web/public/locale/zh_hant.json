@@ -674,7 +674,9 @@
       }
     },
     "maintenance": {
-      "description": "調整熔斷器、重試與輸入攔截策略。輸入命中後在本地拒絕，不發給上游。修改即時生效。"
+      "description": "調整熔斷器、重試與輸入攔截策略。輸入命中後在本地拒絕，不發給上游。修改即時生效。",
+      "common": "常用",
+      "advanced": "進階"
     }
   },
   "user": {
@@ -1374,6 +1376,36 @@
       "description": "拖曳調整頂級頁面順序，放開後會立即儲存為全域設定。",
       "reset": "恢復預設順序",
       "hint": "這裡僅保存頁面順序設定，不改目前 navbar 的實際接入邏輯。"
+    },
+    "errorPolicy": {
+      "title": "錯誤攔截與透傳",
+      "description": "當上游回傳錯誤且所有候選渠道都已嘗試後,由這裡決定最終呈現。渠道級設定優先於此處;此處優先於內建智慧預設規則。",
+      "saveFailed": "儲存失敗,已還原上一次生效的值。",
+      "retryableCodes": {
+        "label": "全域可重試狀態碼",
+        "hint": "逗號分隔的 HTTP 狀態碼(如 429,500)。命中即強制換 Key / 換渠道重試。渠道級設定優先。",
+        "placeholder": "例如 429,500"
+      },
+      "rules": {
+        "label": "自訂錯誤透傳規則",
+        "hint": "依渠道類型 + 錯誤碼/關鍵詞改寫最終錯誤。可用於把特定公益站的特殊錯誤碼映射成標準語意,或補上更友善的提示。",
+        "channelType": "渠道類型",
+        "anyChannel": "全部渠道",
+        "code": "錯誤碼",
+        "keyword": "關鍵詞",
+        "customStatus": "回傳狀態碼",
+        "passthrough": "透傳原值",
+        "passthroughStatus": "透傳上游狀態碼",
+        "passthroughMessage": "透傳上游原文",
+        "message": "自訂文案",
+        "messagePlaceholder": "可用 {upstream} 嵌入上游原文",
+        "defaultMessage": "預設文案",
+        "add": "新增規則",
+        "addHint": "錯誤碼與關鍵詞至少填一項,兩者是「或」的關係。修改即時生效。",
+        "empty": "尚無自訂規則,目前使用內建智慧預設規則。",
+        "removeHint": "刪除規則",
+        "invalid": "請至少填寫錯誤碼或關鍵詞"
+      }
     },
     "saved": "已儲存",
     "saveFailed": "儲存失敗",

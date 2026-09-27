@@ -465,6 +465,12 @@ func (ra *relayAttempt) attempt() attemptResult {
 
 	// 使用错误分类驱动决策
 	decision := ClassifyRelayError(statusCode, fwdErr, written)
+	// 叠加渠道级错误策略与内置智能默认规则:公益站常把「模型别名不存在 / Key
+	// 无该模型权限 / Key 无效」这类本可换渠道解决的失败包成 400,默认分类会直接
+	// 终态透传给客户端造成中断。这里只在未写出响应时放宽为可重试,自愈优先。
+	if !written {
+		decision = applyErrorPolicy(decision, ra.channel, statusCode, extractUpstreamErrorDetail(fwdErr))
+	}
 
 	// 记录按模型粒度的 key 冷却：某模型触发错误时，仅冷却该 (keyID, model) 组合，
 	// 不影响该 key 上其它模型的可用性（见 issue #94）。仅错误响应（≥400）才冷却。
@@ -730,7 +736,7 @@ func clientErrorType(statusCode int) string {
 //  2. 有上游纯文本 body → 包成 OpenAI 兼容 {"error":{...}}，状态码仍用上游；
 //  3. 没有可用 body → 合成最小 OpenAI 兼容错误；
 //  4. 非 HTTP 错误 / 无效状态 → 回退 BadGateway。
-func writeClientTerminalError(c *gin.Context, channelType outbound.OutboundType, statusCode int, err error) {
+func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelType outbound.OutboundType, statusCode int, err error) {
 	if c == nil || c.Writer.Written() {
 		return
 	}
@@ -748,6 +754,14 @@ func writeClientTerminalError(c *gin.Context, channelType outbound.OutboundType,
 	// 自定义错误透传规则（Sub2API 风格）：在原样透传之前查表。
 	// 命中则按规则改写最终状态码与 message；未命中走下方默认透传逻辑。
 	// 规则只改呈现，不改重试决策（决策已在 attempt() 中确定），也不伪造成功。
+	// Channel-level message template wins over the global rules; it only rewrites
+	// the message (status stays upstream) and skips caller-side deterministic
+	// signals internally so downstream auto-compaction keeps working.
+	if message, ok := applyChannelErrorMessageTemplate(channelErrorMessageTemplate(channel), statusCode, detail); ok {
+		writeCustomErrorPresentation(c, statusCode, message)
+		return
+	}
+
 	if rule := matchCustomErrorRule(getCustomErrorRules(), channelType, statusCode, detail); rule != nil {
 		if outStatus, outMessage, ok := resolveCustomErrorPresentation(rule, statusCode, detail); ok {
 			writeCustomErrorPresentation(c, outStatus, outMessage)
@@ -776,10 +790,10 @@ func writeClientTerminalError(c *gin.Context, channelType outbound.OutboundType,
 		}
 	}
 
-	message := http.StatusText(statusCode)
-	if message == "" {
-		message = "request failed"
-	}
+	// 上游没有可用正文时的兜底文案:按面向下游的三级分级给出更友好的提示。
+	// 有正文的上游错误在上方已原样透传,可识别信号(context_length_exceeded 等)
+	// 不会被这一步覆盖。
+	message := clientErrorMessageForClass(classifyErrorForClient(statusCode, detail), statusCode)
 	if payload, mErr := jsonAPI.Marshal(map[string]any{
 		"error": map[string]any{
 			"message": message,
@@ -1992,7 +2006,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					req.metrics.Save(false, lastErr, currentAttempts)
 					// 400 类客户端错误不再重试，把上游错误体原样回给下游，
 					// 避免吞成 502 导致客户端无法识别 context_length_exceeded。
-					writeClientTerminalError(req.c, channel.Type, result.Decision.Code, result.Err)
+					writeClientTerminalError(req.c, channel, channel.Type, result.Decision.Code, result.Err)
 					return result.Err
 				case ScopeAbortAll:
 					lastErr = result.Err
@@ -2084,7 +2098,10 @@ exhausted:
 		if errors.Is(req.operationCtx.Err(), context.DeadlineExceeded) {
 			resp.Error(req.c, http.StatusGatewayTimeout, "relay operation timed out")
 		} else {
-			resp.Error(req.c, http.StatusBadGateway, "all channels failed")
+			// 走到这里说明所有候选渠道都已尝试且失败(自愈未成功)。按三级分级
+			// 的「全部渠道不可用」给出面向下游的友好文案;具体上游错误已入日志。
+			resp.Error(req.c, http.StatusBadGateway,
+				clientErrorMessageForClass(ErrorClassUnavailable, http.StatusBadGateway))
 		}
 	}
 	if lastErr != nil {

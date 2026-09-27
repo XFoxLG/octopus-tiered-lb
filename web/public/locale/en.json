@@ -674,7 +674,9 @@
       }
     },
     "maintenance": {
-      "description": "Configure circuit breakers, retries, and input filtering. Matching input is rejected locally without contacting upstream. Changes apply immediately."
+      "description": "Configure circuit breakers, retries, and input filtering. Matching input is rejected locally without contacting upstream. Changes apply immediately.",
+      "common": "Common",
+      "advanced": "Advanced"
     }
   },
   "user": {
@@ -1343,6 +1345,36 @@
       "description": "Drag the top-level pages into the order you want. Changes are saved globally as soon as the drop completes.",
       "reset": "Restore Default Order",
       "hint": "This setting controls only the stored page order. The actual navbar integration is handled separately."
+    },
+    "errorPolicy": {
+      "title": "Error interception & passthrough",
+      "description": "Decides the final response after every candidate channel has failed. Channel-level settings win over this page; this page wins over the built-in smart defaults.",
+      "saveFailed": "Save failed; the last effective value was restored.",
+      "retryableCodes": {
+        "label": "Global retryable status codes",
+        "hint": "Comma-separated HTTP status codes (e.g. 429,500). A match forces a key/channel failover retry. Channel-level settings win.",
+        "placeholder": "e.g. 429,500"
+      },
+      "rules": {
+        "label": "Custom error passthrough rules",
+        "hint": "Rewrite the final error by channel type plus status code/keyword. Useful for mapping an unusual gateway error to a standard meaning, or adding a friendlier message.",
+        "channelType": "Channel type",
+        "anyChannel": "All channels",
+        "code": "Status code",
+        "keyword": "Keyword",
+        "customStatus": "Return status",
+        "passthrough": "passthrough",
+        "passthroughStatus": "Pass through upstream status",
+        "passthroughMessage": "Pass through upstream body",
+        "message": "Custom message",
+        "messagePlaceholder": "Use {upstream} to embed the upstream body",
+        "defaultMessage": "default message",
+        "add": "Add rule",
+        "addHint": "Provide at least a status code or a keyword; the two are OR-matched. Changes apply immediately.",
+        "empty": "No custom rules yet; the built-in smart defaults are active.",
+        "removeHint": "Remove rule",
+        "invalid": "Provide at least a status code or a keyword"
+      }
     },
     "saved": "Saved",
     "saveFailed": "Save failed",

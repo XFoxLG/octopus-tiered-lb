@@ -137,6 +137,19 @@ type Channel struct {
 	KeyCooldownAuthError int `json:"key_cooldown_auth_error,omitempty" gorm:"column:key_cooldown_auth_error;not null;default:0"`
 	// KeyCooldownServerError 渠道级 5xx/408 冷却（秒）覆盖。0 = 跟随全局设置。
 	KeyCooldownServerError int `json:"key_cooldown_server_error,omitempty" gorm:"column:key_cooldown_server_error;not null;default:0"`
+	// RetryableStatusCodes 渠道级可重试状态码(逗号分隔,100-599)。命中则强制进入
+	// 换 Key/换渠道重试。空 = 不启用渠道级白名单(仍受内置默认规则与全局设置影响)。
+	// 上游是公益站/私有网关时,同一语义的错误码各不相同,渠道级配置比全局规则更准。
+	RetryableStatusCodes string `json:"retryable_status_codes,omitempty" gorm:"column:retryable_status_codes;type:varchar(255);not null;default:''"`
+	// RetryableKeywords 渠道级可重试关键词(逗号分隔)。与 RetryableStatusCodes 是 OR
+	// 关系:任一命中即重试。匹配上游错误文本,大小写不敏感子串。空 = 不启用。
+	RetryableKeywords string `json:"retryable_keywords,omitempty" gorm:"column:retryable_keywords;type:varchar(512);not null;default:''"`
+	// NonRetryableStatusCodes 渠道级不可重试状态码(逗号分隔)。命中则强制不重试,
+	// 优先级高于 RetryableStatusCodes/RetryableKeywords。空 = 不启用。
+	NonRetryableStatusCodes string `json:"non_retryable_status_codes,omitempty" gorm:"column:non_retryable_status_codes;type:varchar(255);not null;default:''"`
+	// ErrorMessageTemplate 渠道级错误文案模板,支持 {upstream} 占位符嵌入上游原文。
+	// 仅改写最终呈现文案,不改重试决策、不伪造成功。空 = 不启用。
+	ErrorMessageTemplate string `json:"error_message_template,omitempty" gorm:"column:error_message_template;type:varchar(512);not null;default:''"`
 }
 
 type BaseUrl struct {
@@ -202,32 +215,36 @@ var KeyCooldownFunc func(channelID, keyID int, modelName string) bool
 
 // ChannelUpdateRequest 渠道更新请求 - 仅包含变更的数据
 type ChannelUpdateRequest struct {
-	ID                     int                    `json:"id" binding:"required"`
-	Name                   *string                `json:"name,omitempty"`
-	GroupID                *int                   `json:"group_id,omitempty"`
-	Type                   *outbound.OutboundType `json:"type,omitempty"`
-	Enabled                *bool                  `json:"enabled,omitempty"`
-	BaseUrls               *[]BaseUrl             `json:"base_urls,omitempty"`
-	Model                  *string                `json:"model,omitempty"`
-	CustomModel            *string                `json:"custom_model,omitempty"`
-	ProxyMode              *ProxyUsageMode        `json:"proxy_mode,omitempty"`
-	ProxyConfigID          *int                   `json:"proxy_config_id,omitempty"`
-	Proxy                  *bool                  `json:"proxy,omitempty"`
-	AutoSync               *bool                  `json:"auto_sync,omitempty"`
-	SkipModelTest          *bool                  `json:"skip_model_test,omitempty"`
-	Disposable             *bool                  `json:"disposable,omitempty"`
-	ExpireAt               *time.Time             `json:"expire_at,omitempty"`
-	KeySelectionStrategy   *string                `json:"key_selection_strategy,omitempty"`
-	AutoGroup              *AutoGroupType         `json:"auto_group,omitempty"`
-	CustomHeader           *[]CustomHeader        `json:"custom_header,omitempty"`
-	ChannelProxy           *string                `json:"channel_proxy,omitempty"`
-	ParamOverride          *string                `json:"param_override,omitempty"`
-	OutboundFormatOverride *string                `json:"outbound_format_override,omitempty"`
-	RequestRewrite         *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
-	RelayLogRawSSEUntil    *int64                 `json:"relay_log_raw_sse_until,omitempty"`
-	MatchRegex             *string                `json:"match_regex,omitempty"`
-	MaxConcurrency         *int                   `json:"max_concurrency,omitempty"`
-	RPMLimit               *int                   `json:"rpm_limit,omitempty"`
+	ID                      int                    `json:"id" binding:"required"`
+	Name                    *string                `json:"name,omitempty"`
+	GroupID                 *int                   `json:"group_id,omitempty"`
+	Type                    *outbound.OutboundType `json:"type,omitempty"`
+	Enabled                 *bool                  `json:"enabled,omitempty"`
+	BaseUrls                *[]BaseUrl             `json:"base_urls,omitempty"`
+	Model                   *string                `json:"model,omitempty"`
+	CustomModel             *string                `json:"custom_model,omitempty"`
+	ProxyMode               *ProxyUsageMode        `json:"proxy_mode,omitempty"`
+	ProxyConfigID           *int                   `json:"proxy_config_id,omitempty"`
+	Proxy                   *bool                  `json:"proxy,omitempty"`
+	AutoSync                *bool                  `json:"auto_sync,omitempty"`
+	SkipModelTest           *bool                  `json:"skip_model_test,omitempty"`
+	Disposable              *bool                  `json:"disposable,omitempty"`
+	ExpireAt                *time.Time             `json:"expire_at,omitempty"`
+	KeySelectionStrategy    *string                `json:"key_selection_strategy,omitempty"`
+	AutoGroup               *AutoGroupType         `json:"auto_group,omitempty"`
+	CustomHeader            *[]CustomHeader        `json:"custom_header,omitempty"`
+	ChannelProxy            *string                `json:"channel_proxy,omitempty"`
+	ParamOverride           *string                `json:"param_override,omitempty"`
+	OutboundFormatOverride  *string                `json:"outbound_format_override,omitempty"`
+	RequestRewrite          *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
+	RelayLogRawSSEUntil     *int64                 `json:"relay_log_raw_sse_until,omitempty"`
+	MatchRegex              *string                `json:"match_regex,omitempty"`
+	MaxConcurrency          *int                   `json:"max_concurrency,omitempty"`
+	RPMLimit                *int                   `json:"rpm_limit,omitempty"`
+	RetryableStatusCodes    *string                `json:"retryable_status_codes,omitempty"`
+	RetryableKeywords       *string                `json:"retryable_keywords,omitempty"`
+	NonRetryableStatusCodes *string                `json:"non_retryable_status_codes,omitempty"`
+	ErrorMessageTemplate    *string                `json:"error_message_template,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`
 	KeysToUpdate []ChannelKeyUpdateRequest `json:"keys_to_update,omitempty"`

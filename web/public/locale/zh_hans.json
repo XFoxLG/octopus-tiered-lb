@@ -674,7 +674,9 @@
       }
     },
     "maintenance": {
-      "description": "调整熔断器、重试与输入拦截策略。输入命中后在本地拒绝，不发给上游。修改即时生效。"
+      "description": "调整熔断器、重试与输入拦截策略。输入命中后在本地拒绝，不发给上游。修改即时生效。",
+      "common": "常用",
+      "advanced": "高级"
     }
   },
   "user": {
@@ -1374,6 +1376,36 @@
       "description": "拖拽调整顶级页面顺序，松手后立即保存为全局配置。",
       "reset": "恢复默认顺序",
       "hint": "这里仅保存页面顺序设置，不改当前 navbar 的实际接入逻辑。"
+    },
+    "errorPolicy": {
+      "title": "错误拦截与透传",
+      "description": "当上游返回错误且已尝试所有候选渠道后,由这里决定最终呈现。渠道级配置优先于此处;此处优先于内置智能默认规则。",
+      "saveFailed": "保存失败,已恢复上一次生效的值。",
+      "retryableCodes": {
+        "label": "全局可重试状态码",
+        "hint": "逗号分隔的 HTTP 状态码(如 429,500)。命中即强制换 Key / 换渠道重试。渠道级配置优先。",
+        "placeholder": "例如 429,500"
+      },
+      "rules": {
+        "label": "自定义错误透传规则",
+        "hint": "按渠道类型 + 错误码/关键词改写最终错误。可用于把某个公益站特有的报错码映射成标准语义,或补上友好提示。",
+        "channelType": "渠道类型",
+        "anyChannel": "全部渠道",
+        "code": "错误码",
+        "keyword": "关键词",
+        "customStatus": "返回状态码",
+        "passthrough": "透传原值",
+        "passthroughStatus": "透传上游状态码",
+        "passthroughMessage": "透传上游原文",
+        "message": "自定义文案",
+        "messagePlaceholder": "可用 {upstream} 嵌入上游原文",
+        "defaultMessage": "默认文案",
+        "add": "添加规则",
+        "addHint": "错误码与关键词至少填一项,两者是「或」的关系。修改即时生效。",
+        "empty": "暂无自定义规则,当前使用内置智能默认规则。",
+        "removeHint": "删除规则",
+        "invalid": "请至少填写错误码或关键词"
+      }
     },
     "saved": "已保存",
     "saveFailed": "保存失败",
