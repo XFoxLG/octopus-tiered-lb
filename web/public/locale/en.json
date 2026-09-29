@@ -1401,7 +1401,8 @@
         "includeStats": "Include Stats",
         "button": "Download JSON",
         "exporting": "Exporting...",
-        "success": "Export started"
+        "success": "Export started",
+        "failed": "Export failed"
       },
       "import": {
         "title": "Import",
@@ -1856,6 +1857,7 @@
         "promptHint": "Copy this prompt and paste it into your offline AI chat along with the exported channel model names JSON. The AI will produce normalization rules in the expected format.",
         "promptCopy": "Copy Prompt",
         "promptCopied": "Copied",
+        "promptCopyFailed": "Copy failed, please copy manually",
         "prompt": "You are a model name normalization assistant. I will give you a JSON whose `channels` array contains objects with a `name` field (channel-declared model names, possibly with variants). Analyze these names, find naming variants of the same base model, and produce normalization rules.\n\nRules come in three categories, produced in the following priority and format:\n\n1. router_prefixes: channel/router prefixes at the start of a model name that are unrelated to the underlying model, e.g. \"dmxapi-\", \"agent-\", \"gateway-\". Each entry must end with a hyphen. For channel marker prefixes like [官B], [特价C] that appear without a following hyphen in channel names (e.g. [官B]claude-opus-4-6), still write them as \"[官B]-\"; the system handles the missing hyphen.\n   Do NOT include provider path prefixes (e.g. moonshotai/, @cf/org/, deepseek-ai/) — paths are stripped automatically, listing them is useless.\n\n2. functional_suffixes: functional suffixes at the end of a model name unrelated to the model itself, e.g. \"-cc\", \"-fast\", \"-thinking\", \"-vip\", \"-ssvip\". Each entry must start with a hyphen.\n   Free-tier markers appear in several forms; emit the matching rule:\n   - hyphen form (e.g. xxx-free) → \"-free\"\n   - colon form (e.g. xxx:free) → \"-:free\"\n   - parenthesized form (e.g. xxx(free)) → \"-(free)\"\n   Date suffixes (e.g. -20250514) should use the regex \"-\\d{8}\" (8 digits), \"-\\d{6}\" (6 digits), \"-\\d{4}\" (4 digits) — do not enumerate one mapping per date. Note: backslashes must be escaped as double backslashes in JSON.\n   @-version form (e.g. claude-3-haiku@20240307) → \"-\\@\\w+\".\n\n3. explicit_mappings: one-to-one variant→canonical mappings, used only when prefix/suffix rules cannot express the relationship (e.g. abbreviations, letter-spelled variants, date+version mixtures). Requirements:\n   - Write `variant` as the bare model name WITHOUT channel prefixes (e.g. \"claude-opus-4-6\", not \"[官B]claude-opus-4-6\"); the system matches any prefix/path automatically.\n   - Use the official dotted version for `canonical` (e.g. \"claude-opus-4.6\", \"gpt-5.2\", \"gemini-3.1-pro\") and keep it consistent across the whole ruleset: all variants of the same model must map to the SAME canonical. Bidirectional/contradictory mappings (e.g. \"claude-opus-4-6 → claude-opus-4.6\" together with \"claude-opus-4.6 → claude-opus-4-6\") break dedup.\n   - Do not put things expressible with prefixes/suffixes (e.g. -thinking, -vip, dates) into explicit mappings; keep the mapping list small.\n\nAnalysis principles:\n- Only merge variants that are truly the same base model; avoid false merges (gpt-4o and gpt-4o-mini are different models; gemini-2.5-pro and gemini-25-pro are different models).\n- Normalize version-number spelling to dots (4-6 → 4.6, v3-1 → v3.1).\n- Prefer prefix/suffix rules; keep explicit mappings minimal.\n\nOutput ONLY a JSON object, no explanation, in this format:\n{\n  \"router_prefixes\": [\"dmxapi-\", \"[官B]-\"],\n  \"functional_suffixes\": [\"-cc\", \"-:free\", \"-(free)\", \"-\\d{8}\", \"-\\@\\w+\"],\n  \"explicit_mappings\": [{\"variant\": \"claude-opus-4-6\", \"canonical\": \"claude-opus-4.6\"}]\n}"
       },
       "export": {
@@ -3084,15 +3086,34 @@
       "channelProxyPlaceholder": "Optional: proxy for this channel (overrides global proxy)",
       "paramOverride": "Param Override",
       "paramOverridePlaceholder": "Optional: JSON string to override request params",
+      "channelCapacityConcurrency": "Channel Max Concurrency",
+      "channelCapacityConcurrencyHint": "Optional: how many upstream requests this channel may run at the same time. 0 = unlimited. Protects fragile or rate-limited upstreams.",
+      "channelCapacityConcurrencyPlaceholder": "e.g. 4 (0 = unlimited)",
+      "channelCapacityRpm": "Channel RPM Limit",
+      "channelCapacityRpmHint": "Optional: how many requests per minute this channel may receive. 0 = unlimited. Counted per model route, matching the API Key RPM semantics.",
+      "channelCapacityRpmPlaceholder": "e.g. 60 (0 = unlimited)",
+      "retryableStatusCodes": "Retryable Status Codes",
+      "retryableStatusCodesHint": "Optional: comma-separated HTTP status codes (e.g. 400,500). Any match forces a switch to another Key or channel instead of passing the error to the client. Leave empty to keep the built-in smart rules.",
+      "retryableStatusCodesPlaceholder": "e.g. 400,500,502",
+      "retryableKeywords": "Retryable Error Keywords",
+      "retryableKeywordsHint": "Optional: comma-separated keywords matched against the upstream error text (case-insensitive substring). Useful for modified or non-standard gateways whose wording differs. OR-ed with the status codes above.",
+      "retryableKeywordsPlaceholder": "e.g. model not found, no permission, invalid api key",
+      "nonRetryableStatusCodes": "Non-retryable Status Codes",
+      "nonRetryableStatusCodesHint": "Optional: comma-separated HTTP status codes that must never be retried, even when a retryable rule matches. Highest priority. Deterministic failures such as context overflow or content filtering are always returned verbatim.",
+      "nonRetryableStatusCodesPlaceholder": "e.g. 400,422",
+      "errorMessageTemplate": "Channel Error Message Template",
+      "errorMessageTemplateHint": "Optional: replaces the final error text shown to the client when this channel ultimately fails. Use {upstream} to embed the original upstream message.",
+      "errorMessageTemplatePlaceholder": "e.g. This channel is temporarily unavailable, please retry later. (upstream: {upstream})",
       "outboundFormatOverride": "Outbound Format Override",
-      "outboundFormatOverrideHint": "Optional: force this channel to use a single outbound format, ignoring the group's outbound format fallback. For upstreams that only support a single format.",
+      "outboundFormatOverrideHint": "Optional: forces this channel to use a single outbound protocol, ignoring the group's fallback. Selects which endpoint is called (Chat Completions vs Responses API); it does not rewrite the request body. For body compatibility, use Request Rewrite below.",
       "outboundFormatOverrideFollowGroup": "Follow group",
       "outboundFormatOverrideChatOnly": "Chat Completions only",
       "outboundFormatOverrideResponsesOnly": "Responses only",
       "requestRewrite": "Request Rewrite",
-      "requestRewriteHint": "Optional compatibility rewrite for stricter upstream request formats",
+      "requestRewriteHint": "Optional: rewrites the request body so stricter upstreams accept it — for example flattening a text-only content array into a plain string. This only changes the body, not which endpoint is used (that is the Outbound Format Override above).",
       "requestRewriteEnabled": "Enable rewrite",
       "requestRewriteProfile": "Rewrite Profile",
+      "requestRewriteProfileHint": "OpenAI Chat Compatibility rewrites the message body for OpenAI Chat style backends (flatten text-only block arrays, turn null content into an empty string, and give assistant messages with tool calls an empty content field). It does NOT mean \"Chat Completions endpoint only\" — use Outbound Format Override for that.",
       "requestRewriteProfileOpenAIChatCompat": "OpenAI Chat Compatibility",
       "requestRewriteToolRoleStrategy": "Tool Role Strategy",
       "requestRewriteSystemMessageStrategy": "System Message Strategy",
@@ -3324,7 +3345,11 @@
       "jumpToReference": "Go to reference",
       "derivedReferences": "+{count} managed channels"
     },
-    "selectRequired": "Please select a proxy configuration."
+    "selectRequired": "Please select a proxy configuration.",
+    "createFailed": "Failed to create proxy",
+    "updateFailed": "Failed to update proxy",
+    "deleteFailed": "Failed to delete proxy",
+    "testFailed": "Proxy test failed"
   },
   "modelFilter": {
     "capability": {

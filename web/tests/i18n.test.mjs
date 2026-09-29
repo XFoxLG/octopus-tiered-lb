@@ -115,6 +115,103 @@ function collectLiteralTranslationPaths(relativePath, namespace) {
     return paths;
 }
 
+// Guard against the class of bug where a component references a key that no locale
+// defines: next-intl then renders the raw key (e.g. "channel.form.errorMessageTemplate")
+// straight into the UI. The narrow per-component checks above cannot catch a newly
+// added key, so walk every source file and resolve each literal `t(...)` call against
+// the namespaces that file actually binds.
+function collectSourceFiles(dir, acc = []) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            if (entry.name === 'node_modules' || entry.name === '.next') continue;
+            collectSourceFiles(full, acc);
+        } else if (/\.tsx?$/.test(entry.name)) {
+            acc.push(full);
+        }
+    }
+    return acc;
+}
+
+function assertEveryReferencedKeyExists() {
+    const enMessages = readJson(path.join(localeDir, 'en.json'));
+    const enKeys = collectKeys(enMessages);
+    const srcRoot = path.join(webRoot, 'src');
+    const unresolved = [];
+
+    const unwrapAwait = (node) => (node && ts.isAwaitExpression(node) ? node.expression : node);
+    const literalText = (node) => {
+        if (!node) return null;
+        if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+        if (ts.isParenthesizedExpression(node)) return literalText(node.expression);
+        if (ts.isConditionalExpression(node)) return literalText(node.whenTrue) ?? literalText(node.whenFalse);
+        return null;
+    };
+
+    for (const file of collectSourceFiles(srcRoot)) {
+        const sourceFile = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+        const namespaces = new Set();
+        const boundVars = new Set();
+
+        const collectBindings = (node) => {
+            if (ts.isVariableDeclaration(node) && node.initializer) {
+                const init = unwrapAwait(node.initializer);
+                const isFactory = ts.isCallExpression(init)
+                    && ts.isIdentifier(init.expression)
+                    && ['useTranslations', 'getTranslations'].includes(init.expression.text);
+                if (isFactory) {
+                    namespaces.add(literalText(init.arguments[0]) ?? '');
+                    if (ts.isIdentifier(node.name)) boundVars.add(node.name.text);
+                    else if (ts.isObjectBindingPattern(node.name)) {
+                        for (const element of node.name.elements) {
+                            if (element.name && ts.isIdentifier(element.name)) boundVars.add(element.name.text);
+                        }
+                    }
+                }
+            }
+            ts.forEachChild(node, collectBindings);
+        };
+        collectBindings(sourceFile);
+        if (namespaces.size === 0 || boundVars.size === 0) continue;
+
+        const checkCalls = (node) => {
+            let keyNode = null;
+            if (ts.isCallExpression(node)) {
+                if (ts.isIdentifier(node.expression) && boundVars.has(node.expression.text)) {
+                    keyNode = node.arguments[0];
+                } else if (
+                    ts.isPropertyAccessExpression(node.expression)
+                    && node.expression.name.text === 'raw'
+                    && ts.isIdentifier(node.expression.expression)
+                    && boundVars.has(node.expression.expression.text)
+                ) {
+                    keyNode = node.arguments[0];
+                }
+            }
+            if (keyNode) {
+                const key = literalText(keyNode);
+                // Dynamic keys cannot be resolved statically; skip them rather than guess.
+                if (key !== null) {
+                    const candidates = [...namespaces].map((ns) => (ns ? `${ns}.${key}` : key));
+                    if (!candidates.includes(key)) candidates.push(key);
+                    if (!candidates.some((candidate) => enKeys.has(candidate))) {
+                        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+                        unresolved.push(`${path.relative(webRoot, file)}:${line} -> ${key} (tried: ${candidates.join(', ')})`);
+                    }
+                }
+            }
+            ts.forEachChild(node, checkCalls);
+        };
+        checkCalls(sourceFile);
+    }
+
+    assert.deepEqual(
+        unresolved,
+        [],
+        `Components reference translation keys with no matching locale entry (the UI would show the raw key):\n${unresolved.join('\n')}`,
+    );
+}
+
 function assertGroupUiTranslations() {
     const paths = new Set([
         ...collectLiteralTranslationPaths('src/components/modules/group/Editor.tsx', 'group'),
@@ -149,6 +246,7 @@ function run() {
     assertLocaleParity();
     assertGroupUiTranslations();
     assertSettingsUiTranslations();
+    assertEveryReferencedKeyExists();
     const en = readJson(path.join(localeDir, 'en.json'));
     assert.equal(en.login?.welcome, 'Welcome back', 'en.json should define login.welcome');
     assertNoHardcodedCopy('src/components/modules/group/Editor.tsx', [

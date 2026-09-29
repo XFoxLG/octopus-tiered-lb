@@ -171,7 +171,7 @@ function MemberItem({
                             <input
                                 type="number"
                                 min={0}
-                                placeholder={t('detail.form.retryOverridePlaceholder')}
+                                placeholder={t('form.retryOverridePlaceholder')}
                                 value={member.relayRetryCountOverride ?? ''}
                                 onChange={(e) => {
                                     const raw = e.target.value;
@@ -188,7 +188,7 @@ function MemberItem({
                                 )}
                             />
                         </TooltipTrigger>
-                        <TooltipContent>{t('detail.form.retryOverrideHint')}</TooltipContent>
+                        <TooltipContent>{t('form.retryOverrideHint')}</TooltipContent>
                     </Tooltip>
                 )}
 

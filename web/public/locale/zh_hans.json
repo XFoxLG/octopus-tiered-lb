@@ -1432,7 +1432,8 @@
         "includeStats": "包含统计",
         "button": "下载 JSON",
         "exporting": "导出中...",
-        "success": "开始导出"
+        "success": "开始导出",
+        "failed": "导出失败"
       },
       "import": {
         "title": "导入",
@@ -1812,6 +1813,7 @@
         "promptHint": "复制后粘贴到离线 AI 对话，配合上方导出的渠道模型名 JSON 一起使用，让 AI 按指定格式产出归一化规则。",
         "promptCopy": "复制提示词",
         "promptCopied": "已复制",
+        "promptCopyFailed": "复制失败，请手动复制",
         "prompt": "你是一个模型名归一化分析助手。我会给你一份 JSON，其中 channels 数组的每个元素含 name 字段（渠道声明的模型名，可能含变体）。请分析这些模型名，找出同一基础模型在不同渠道下的命名变体，并产出归一化规则。\n\n归一化规则分三类，按以下优先级与格式产出：\n\n1. router_prefixes：渠道商/路由前缀（出现在模型名开头、与底层模型无关），如 \"dmxapi-\"、\"agent-\"、\"gateway-\"。元素需带末尾连字符。像 [官B]、[特价C] 这类渠道标记前缀，即使渠道名中其后没有连字符（如 [官B]claude-opus-4-6），也请写成 \"[官B]-\"，系统会自动兼容。\n   不要列入 provider 路径前缀（如 moonshotai/、@cf/org/、deepseek-ai/）——路径会被自动剥离，列入无效。\n\n2. functional_suffixes：功能性后缀（出现在模型名末尾、与模型本体无关），如 \"-cc\"、\"-fast\"、\"-thinking\"、\"-vip\"、\"-ssvip\"。元素需带前导连字符。\n   渠道的免费标记有多种写法，请对应产出：\n   - 连字符形式（如 xxx-free）→ \"-free\"\n   - 冒号形式（如 xxx:free）→ \"-:free\"\n   - 括号形式（如 xxx(free)）→ \"-(free)\"\n   日期后缀（如 -20250514）请用正则 \"-\\d{8}\"（8 位）、\"-\\d{6}\"（6 位）、\"-\\d{4}\"（4 位），不要为每个日期枚举映射。注意 JSON 中反斜杠需转义为双反斜杠。\n   @版本形式（如 claude-3-haiku@20240307）→ \"-\\@\\w+\"。\n\n3. explicit_mappings：点对点变体→基准名映射，仅在无法用前缀/后缀表达时使用（如缩写、字母拼写变体、日期+版本混合）。要点：\n   - variant 写不带渠道前缀的裸名（如 \"claude-opus-4-6\" 而非 \"[官B]claude-opus-4-6\"），系统会自动匹配任意前缀/路径的渠道名。\n   - canonical 用带点号的官方版本号（如 \"claude-opus-4.6\"、\"gpt-5.2\"、\"gemini-3.1-pro\"），并保持全库统一：同一模型的所有变体必须映射到同一个 canonical，严禁双向/矛盾映射（\"claude-opus-4-6 → claude-opus-4.6\" 与 \"claude-opus-4.6 → claude-opus-4-6\" 同时存在会使去重失效）。\n   - 能用前缀/后缀表达的（如 -thinking、-vip、日期）不要写进显式映射，保持映射数量精简。\n\n分析原则：\n- 只归并确实属于同一基础模型的变体，避免误并（gpt-4o 与 gpt-4o-mini 是不同模型；gemini-2.5-pro 与 gemini-25-pro 是不同模型）。\n- 版本号写法统一为点号（4-6 → 4.6、v3-1 → v3.1）。\n- 优先用前缀/后缀规则，显式映射越少越好。\n\n请仅输出一个 JSON 对象，不要解释，格式如下：\n{\n  \"router_prefixes\": [\"dmxapi-\", \"[官B]-\"],\n  \"functional_suffixes\": [\"-cc\", \"-:free\", \"-(free)\", \"-\\d{8}\", \"-\\@\\w+\"],\n  \"explicit_mappings\": [{\"variant\": \"claude-opus-4-6\", \"canonical\": \"claude-opus-4.6\"}]\n}"
       },
       "export": {
@@ -3040,15 +3042,34 @@
       "channelProxyPlaceholder": "可选：仅对该渠道生效（覆盖全局代理）",
       "paramOverride": "参数覆盖",
       "paramOverridePlaceholder": "可选：JSON 字符串，用于覆盖请求参数",
+      "channelCapacityConcurrency": "渠道最大并发",
+      "channelCapacityConcurrencyHint": "可选：该渠道同时最多允许多少个上游请求在途。0 = 不限制。用于保护容易崩溃或被限速的上游。",
+      "channelCapacityConcurrencyPlaceholder": "例如 4（0 = 不限制）",
+      "channelCapacityRpm": "渠道每分钟请求上限",
+      "channelCapacityRpmHint": "可选：该渠道每分钟最多接收多少个请求。0 = 不限制。按模型路由计数，与 API Key 级 RPM 语义一致。",
+      "channelCapacityRpmPlaceholder": "例如 60（0 = 不限制）",
+      "retryableStatusCodes": "可重试状态码",
+      "retryableStatusCodesHint": "可选：逗号分隔的 HTTP 状态码（如 400,500）。命中后强制换 Key / 换渠道重试，不把错误直接抛给客户端。留空则沿用内置智能规则。",
+      "retryableStatusCodesPlaceholder": "例如 400,500,502",
+      "retryableKeywords": "可重试错误关键词",
+      "retryableKeywordsHint": "可选：逗号分隔的关键词，与上游错误文本做大小写不敏感的子串匹配。适用于各种二改或非标准网关——它们的报错文案各不相同。与上面的状态码是「或」的关系。",
+      "retryableKeywordsPlaceholder": "例如 model not found,无该模型权限,invalid api key",
+      "nonRetryableStatusCodes": "不可重试状态码",
+      "nonRetryableStatusCodesHint": "可选：逗号分隔的 HTTP 状态码，命中后强制不重试，即使同时命中了上面的可重试规则。优先级最高。注意：上下文超长、内容过滤等确定性失败始终按原文返回。",
+      "nonRetryableStatusCodesPlaceholder": "例如 400,422",
+      "errorMessageTemplate": "渠道错误文案模板",
+      "errorMessageTemplateHint": "可选：该渠道最终失败时，替换呈现给客户端的错误文案。可用 {upstream} 嵌入上游原始报错。",
+      "errorMessageTemplatePlaceholder": "例如 该渠道暂时不可用，请稍后重试。（上游：{upstream}）",
       "outboundFormatOverride": "出站请求格式覆盖",
-      "outboundFormatOverrideHint": "可选：强制该渠道只走一种出站请求格式，忽略分组的出站格式回退。适用于只支持单一格式（如公益站）的上游。",
+      "outboundFormatOverrideHint": "可选：强制该渠道只走一种出站协议，忽略分组的格式回退。它决定调用哪个端点（Chat Completions 还是 Responses API），不改写请求体；请求体兼容性请用下面的「请求重写」。",
       "outboundFormatOverrideFollowGroup": "跟随分组",
       "outboundFormatOverrideChatOnly": "仅 Chat Completions",
       "outboundFormatOverrideResponsesOnly": "仅 Responses API",
       "requestRewrite": "请求重写",
-      "requestRewriteHint": "可选：为格式更严格的上游开启兼容性请求重写",
+      "requestRewriteHint": "可选：只改写请求体，让格式更严格的上游也能收下——例如把只含文本的 content 数组拍平成普通字符串。它不改变用哪个端点（端点由上面的「出站请求格式覆盖」决定）。",
       "requestRewriteEnabled": "启用重写",
       "requestRewriteProfile": "重写配置",
+      "requestRewriteProfileHint": "「OpenAI Chat 兼容」会针对 OpenAI Chat 风格的上游改写消息体（拍平纯文本块数组、把 null content 变成空字符串、给带 tool_calls 的 assistant 补空 content）。它不等于「只走 Chat Completions 端点」——那是上面「出站请求格式覆盖」的作用。",
       "requestRewriteProfileOpenAIChatCompat": "OpenAI Chat 兼容",
       "requestRewriteToolRoleStrategy": "Tool 角色策略",
       "requestRewriteSystemMessageStrategy": "System 消息策略",
@@ -3280,7 +3301,11 @@
       "jumpToReference": "跳转到引用",
       "derivedReferences": "+{count} 个托管渠道"
     },
-    "selectRequired": "请选择代理配置。"
+    "selectRequired": "请选择代理配置。",
+    "createFailed": "创建代理失败",
+    "updateFailed": "更新代理失败",
+    "deleteFailed": "删除代理失败",
+    "testFailed": "代理测试失败"
   },
   "modelFilter": {
     "capability": {
