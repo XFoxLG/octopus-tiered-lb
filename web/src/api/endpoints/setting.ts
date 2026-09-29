@@ -102,6 +102,8 @@ export const SettingKey = {
     WebAuthnOrigins: 'webauthn_origins',
     TrustedProxies: 'trusted_proxies',
     GroupUpstreamMetaDisplayEnabled: 'group_upstream_meta_display_enabled',
+    GlobalRateLimitRPM: 'global_rate_limit_rpm',
+    GlobalMaxConcurrency: 'global_max_concurrency',
 } as const;
 
 /**

@@ -16,6 +16,7 @@ func init() {
 		Use(middleware.APIKeyAuth()).
 		Use(middleware.DevMockPublicSuccess()).
 		Use(middleware.RequireJSON()).
+		Use(middleware.GlobalRelayRateLimit()).
 		AddRoute(
 			router.NewRoute("/chat/completions", http.MethodPost).
 				Handle(chat),

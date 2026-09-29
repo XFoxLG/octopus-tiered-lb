@@ -1376,6 +1376,20 @@
         "invalid": "Provide at least a status code or a keyword"
       }
     },
+    "downstreamRateLimit": {
+      "title": "Downstream rate limit (global)",
+      "description": "Applies to the four forwarding routes: request rate and in-flight concurrency. Admin API, login and logs are unaffected. 0 = disabled.",
+      "rpm": {
+        "label": "Global requests per minute",
+        "hint": "Combined per-minute cap across all forwarding requests. 0 = unlimited.",
+        "placeholder": "e.g. 600 (0 = unlimited)"
+      },
+      "concurrency": {
+        "label": "Global max concurrency",
+        "hint": "Maximum in-flight forwarding requests; excess requests get 429 immediately. 0 = unlimited.",
+        "placeholder": "e.g. 32 (0 = unlimited)"
+      }
+    },
     "saved": "Saved",
     "saveFailed": "Save failed",
     "backup": {
