@@ -149,7 +149,7 @@ export function SettingErrorPolicy() {
 
     const handleAddRule = () => {
         if (!canAddRule) {
-            toast.error(translate('errorPolicy.rule.invalid'));
+            toast.error(translate('errorPolicy.rules.invalid'));
             return;
         }
         const nextRule: ErrorRule = {

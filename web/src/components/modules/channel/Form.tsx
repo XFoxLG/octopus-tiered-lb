@@ -1693,6 +1693,7 @@ export function ChannelForm({
                                 <div className={fieldGroupClassName}>
                                     <label htmlFor={`${idPrefix}-request-rewrite-profile`} className={labelClassName}>
                                         {t('requestRewriteProfile')}
+                                        <Hint text={t('requestRewriteProfileHint')} />
                                     </label>
                                     <Select
                                         value={formData.request_rewrite.profile ?? RequestRewriteProfile.OpenAIChatCompat}
