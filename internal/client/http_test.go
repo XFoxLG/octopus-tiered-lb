@@ -50,9 +50,9 @@ func TestHTTPProxyTransportIgnoresPinnedIP(t *testing.T) {
 		t.Fatalf("AssertSafeRequestWithPin: %v", err)
 	}
 
-	client, err := newHTTPClientCustomProxyWithTimeout("http://"+proxyAddr, time.Second)
+	client, err := newHTTPClientCustomProxyWithTimeoutConfig("http://"+proxyAddr, clientTimeoutConfig{overallTimeout: time.Second, headerTimeout: time.Second})
 	if err != nil {
-		t.Fatalf("newHTTPClientCustomProxyWithTimeout: %v", err)
+		t.Fatalf("newHTTPClientCustomProxyWithTimeoutConfig: %v", err)
 	}
 	tr, ok := client.Transport.(*http.Transport)
 	if !ok {
@@ -109,9 +109,9 @@ func TestDirectTransportStillPinsIP(t *testing.T) {
 		t.Fatalf("AssertSafeRequestWithPin: %v", err)
 	}
 
-	client, err := newHTTPClientNoProxyWithTimeout(time.Second)
+	client, err := newHTTPClientNoProxyWithTimeoutConfig(clientTimeoutConfig{overallTimeout: time.Second, headerTimeout: time.Second})
 	if err != nil {
-		t.Fatalf("newHTTPClientNoProxyWithTimeout: %v", err)
+		t.Fatalf("newHTTPClientNoProxyWithTimeoutConfig: %v", err)
 	}
 	tr, ok := client.Transport.(*http.Transport)
 	if !ok {
