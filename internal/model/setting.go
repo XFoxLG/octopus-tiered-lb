@@ -166,6 +166,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyRelayRetryCount, Value: "3"},                     // 默认单个渠道内 Key 级重试3次
 		{Key: SettingKeyRelayRouteRetries, Value: "2"},                   // 默认路由级重试2次（全部渠道遍历两轮）
 		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},             // 默认连续失败5次触发熔断
+		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},             // 默认基础冷却60秒；与 circuit.GetCooldown 的运行期回退保持一致
 		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},         // 默认最大冷却600秒（10分钟）
 		{Key: SettingKeyCircuitBreakerHalfOpenProbeTimeout, Value: "60"}, // 默认 HalfOpen 探测超时60秒；试探被中途放弃后避免永久跳过（issue #162）
 		{Key: SettingKeyRatelimitCooldown, Value: "300"},                 // 默认 Key 错误冷却300秒（5分钟），0=关闭
