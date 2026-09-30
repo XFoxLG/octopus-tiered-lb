@@ -113,8 +113,9 @@ function MemberItem({
                     )}
                     // eslint-disable-next-line react-hooks/refs
                     {...dnd.dragHandleProps}
+                    aria-label={t('form.dragHandleLabel')}
                 >
-                    <GripVertical className="size-4 text-muted-foreground md:size-3.5" />
+                    <GripVertical aria-hidden="true" className="size-4 text-muted-foreground md:size-3.5" />
                 </div>
 
                 <span className={cn('relative', isDisabled && 'opacity-70')}>
@@ -158,6 +159,7 @@ function MemberItem({
                         min={1}
                         value={member.weight ?? 1}
                         onChange={(e) => onWeightChange?.(member.id, Math.max(1, parseInt(e.target.value) || 1))}
+                        aria-label={t('form.weightLabel')}
                         className={cn(
                             'h-7 w-12 rounded-md border border-border/35 bg-card text-center text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-primary md:w-14',
                             isDisabled && 'text-muted-foreground'
@@ -182,6 +184,7 @@ function MemberItem({
                                     const parsed = parseInt(raw);
                                     onRetryOverrideChange?.(member.id, Number.isNaN(parsed) ? null : Math.max(0, parsed));
                                 }}
+                                aria-label={t('form.retryOverrideLabel')}
                                 className={cn(
                                     'h-7 w-14 rounded-md border border-border/35 bg-card text-center text-xs shadow-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary md:w-16',
                                     isDisabled && 'text-muted-foreground'
@@ -202,8 +205,9 @@ function MemberItem({
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ duration: 0.15 }}
                         style={{ pointerEvents: 'auto' }}
+                        aria-label={t('detail.actions.delete')}
                     >
-                        <X className="size-3.5 md:size-3" />
+                        <X aria-hidden="true" className="size-3.5 md:size-3" />
                     </motion.button>
                 )}
 
@@ -217,16 +221,18 @@ function MemberItem({
                             <button
                                 type="button"
                                 onClick={() => setConfirmDelete(false)}
+                                aria-label={t('detail.actions.cancel')}
                                 className="flex h-6 w-6 items-center justify-center rounded-md bg-destructive-foreground/20 text-destructive-foreground transition-all hover:bg-destructive-foreground/30 active:scale-95"
                             >
-                                <X className="h-3 w-3" />
+                                <X aria-hidden="true" className="h-3 w-3" />
                             </button>
                             <button
                                 type="button"
                                 onClick={() => onRemove(member.id)}
+                                aria-label={t('detail.actions.confirmDelete')}
                                 className="flex-1 h-6 flex items-center justify-center gap-1.5 rounded-md bg-destructive-foreground text-destructive text-xs font-semibold transition-all hover:bg-destructive-foreground/90 active:scale-[0.98]"
                             >
-                                <Trash2 className="h-3 w-3" />
+                                <Trash2 aria-hidden="true" className="h-3 w-3" />
                             </button>
                         </motion.div>
                     )}

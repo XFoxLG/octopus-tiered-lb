@@ -752,9 +752,11 @@ export function GroupCard({ group }: { group: Group }) {
                                 type="button"
                                 onClick={handleTestGroup}
                                 disabled={isTesting || !group.id}
+                                aria-label={t('detail.actions.testAvailability')}
+                                aria-busy={isTesting}
                                 className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                {isTesting ? <Loader2 className="size-4 animate-spin" /> : <Activity className="size-4" />}
+                                {isTesting ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Activity aria-hidden="true" className="size-4" />}
                             </button>
                         </TooltipTrigger>
                         <TooltipContent>{t('detail.actions.testAvailability')}</TooltipContent>
@@ -775,8 +777,8 @@ export function GroupCard({ group }: { group: Group }) {
                     {!confirmDelete && (
                         <Tooltip side="top" sideOffset={10} align="center">
                             <TooltipTrigger>
-                                <motion.button layoutId={`delete-btn-group-${group.id}`} type="button" onClick={() => setConfirmDelete(true)} className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
-                                    <Trash2 className="size-4" />
+                                <motion.button layoutId={`delete-btn-group-${group.id}`} type="button" onClick={() => setConfirmDelete(true)} aria-label={t('detail.actions.delete')} className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
+                                    <Trash2 aria-hidden="true" className="size-4" />
                                 </motion.button>
                             </TooltipTrigger>
                             <TooltipContent>{t('detail.actions.delete')}</TooltipContent>
