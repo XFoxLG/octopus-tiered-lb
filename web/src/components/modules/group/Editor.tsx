@@ -765,11 +765,14 @@ export function GroupEditor({
                                     </select>
                                 </Field>
                                 <Field className="col-span-full">
-                                    <FieldLabel htmlFor="group-reasoning-force-override">
+                                    <span className="inline-flex items-center gap-2 text-sm font-medium leading-none">
                                         {t('form.reasoningForceOverride.label')}
                                         <Hint text={t('form.reasoningForceOverride.hint')} />
-                                    </FieldLabel>
-                                    <label className="flex min-w-0 items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground">
+                                    </span>
+                                    <label
+                                        htmlFor="group-reasoning-force-override"
+                                        className="flex min-w-0 items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground"
+                                    >
                                         <Switch
                                             id="group-reasoning-force-override"
                                             checked={reasoningForceOverride}

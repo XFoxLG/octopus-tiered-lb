@@ -1222,9 +1222,10 @@ export function GroupListItem({ group }: { group: Group }) {
                                         type="button"
                                         onClick={handleTestGroup}
                                         disabled={!group.id}
+                                        aria-label={t('detail.actions.testAvailability')}
                                         className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                                     >
-                                        <Activity className="size-4" />
+                                        <Activity aria-hidden="true" className="size-4" />
                                     </button>
                                 </TooltipTrigger>
                                 <TooltipContent>
@@ -1530,9 +1531,10 @@ export function GroupListItem({ group }: { group: Group }) {
                                                     onClick={() =>
                                                         setConfirmDelete(false)
                                                     }
+                                                    aria-label={t('detail.actions.cancel')}
                                                     className="flex h-7 w-7 items-center justify-center rounded-lg bg-destructive-foreground/20 text-destructive-foreground transition-all hover:bg-destructive-foreground/30 active:scale-95"
                                                 >
-                                                    <X className="size-4" />
+                                                    <X aria-hidden="true" className="size-4" />
                                                 </button>
                                                 <button
                                                     type="button"

@@ -24,6 +24,10 @@ type HintProps = {
  * 表单提示收纳组件：小 i 图标 + 悬浮动画 tooltip。
  * 传 children 时图标直接作为 children 的悬浮触发器（不产生额外 DOM）；
  * 不传 children 时渲染独立图标，放在 label 文字后。
+ *
+ * 无障碍：hover tooltip 对键盘与读屏用户不可靠，因此触发器必须自带可访问名称。
+ * - 纯图标模式使用原生 button + aria-label/title；
+ * - children 模式通常包裹输入框，用 title 提供描述，避免覆盖控件原有名称。
  */
 function Hint({ text, side = 'top', className, children }: HintProps) {
   if (!text) return null;
@@ -44,12 +48,14 @@ function Hint({ text, side = 'top', className, children }: HintProps) {
   return (
     <Tooltip side={side}>
       {children ? (
-        <TooltipTrigger asChild tabIndex={0} className={triggerClass}>
+        <TooltipTrigger asChild tabIndex={0} className={triggerClass} title={text}>
           {children}
         </TooltipTrigger>
       ) : (
-        <TooltipTrigger tabIndex={0} className={triggerClass}>
-          {icon}
+        <TooltipTrigger asChild className={triggerClass}>
+          <button type="button" aria-label={text} title={text} className={triggerClass}>
+            {icon}
+          </button>
         </TooltipTrigger>
       )}
       <TooltipContent className="max-w-64 text-left leading-relaxed">
