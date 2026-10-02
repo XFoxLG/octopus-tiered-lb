@@ -2789,6 +2789,10 @@
       "reportedIPHint": "来自 {source} 转发头，仅作为来源线索展示；不保证是原始客户端，也不用于 IP 白名单或登录限流。",
       "forensics": {
         "detailUnavailable": "无法读取日志详情",
+        "detailNotFound": "这条日志已不存在",
+        "detailNotFoundHint": "日志行已被清理或删除。可读取的内容受日志保留策略与磁盘上限控制。",
+        "detailRequestFailed": "日志详情加载失败",
+        "detailRequestFailedHint": "这次是读取请求本身失败（网络、鉴权或服务端错误），不代表日志内容被清理。",
         "traceId": "追踪 ID",
         "userAgent": "客户端 UA",
         "protocolA": "客户端协议 A",

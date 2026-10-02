@@ -7,6 +7,7 @@ import { AlertTriangle, Download, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
+    type LogDetailError,
     type RelayLogContentRef,
     type RelayLogContentState,
     type RelayLogDetail,
@@ -16,6 +17,7 @@ import { cn } from '@/lib/utils';
 
 interface BoundaryDetailsProps {
     detail: RelayLogDetail | null;
+    error?: LogDetailError | null;
     isLoading: boolean;
 }
 
@@ -134,7 +136,7 @@ function StatusAxis({ label, value }: { label: string; value?: string }) {
     );
 }
 
-export function BoundaryDetails({ detail, isLoading }: BoundaryDetailsProps) {
+export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsProps) {
     const t = useTranslations('log.card.forensics');
     if (isLoading) {
         return (
@@ -144,7 +146,28 @@ export function BoundaryDetails({ detail, isLoading }: BoundaryDetailsProps) {
         );
     }
     if (!detail) {
-        return <p className="p-4 text-sm text-muted-foreground">{t('detailUnavailable')}</p>;
+        // 以前这里只显示一句「无法读取日志详情」，看不出到底是什么问题。
+        // 现在区分「日志行已被清理/删除」(404) 和「请求本身失败」(网络/5xx)，
+        // 并把后端返回的原始 message 一并展示，方便自证排查。
+        const isNotFound = error?.reason === 'not_found';
+        const headline = isNotFound ? t('detailNotFound') : t('detailRequestFailed');
+        const hint = isNotFound ? t('detailNotFoundHint') : t('detailRequestFailedHint');
+        return (
+            <div className="flex flex-col items-start gap-1.5 rounded-xl border border-dashed border-border/60 p-4 text-sm">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                    <AlertTriangle className="size-4 shrink-0 text-amber-500" />
+                    <span>{headline}</span>
+                </div>
+                <p className="text-xs text-muted-foreground/80">{hint}</p>
+                {error?.status || error?.message ? (
+                    <p className="font-mono text-[11px] text-muted-foreground/60">
+                        {error?.status ? `HTTP ${error.status}` : null}
+                        {error?.status && error?.message ? ' · ' : null}
+                        {error?.message}
+                    </p>
+                ) : null}
+            </div>
+        );
     }
 
     const contents = [...(detail.contents ?? [])].sort((left, right) => {

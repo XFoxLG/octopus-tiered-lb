@@ -104,6 +104,63 @@ func TestAutoCandidatesUseWeightPriorityAsTieBreaker(t *testing.T) {
 	}
 }
 
+// TestWeightedCandidatesFollowWeightRatio 锁住 2026-10-01 修复的回归：加权分配曾经在
+// 大重构后退化成「按权重降序排序」，导致权重最高的渠道独占全部流量。候选列表的首位
+// 必须是加权随机抽取，而不是固定的权重最大项。
+func TestWeightedCandidatesFollowWeightRatio(t *testing.T) {
+	items := []model.GroupItem{
+		{ChannelID: 1, ModelName: "weighted-ratio", Weight: 9},
+		{ChannelID: 2, ModelName: "weighted-ratio", Weight: 1},
+	}
+
+	const draws = 20000
+	firstCounts := map[int]int{}
+	for i := 0; i < draws; i++ {
+		got := (&Weighted{}).Candidates(items)
+		if len(got) != 2 {
+			t.Fatalf("Candidates() len = %d, want 2", len(got))
+		}
+		firstCounts[got[0].ChannelID]++
+	}
+
+	// 期望 90% / 10%；给足容差以免偶发波动把测试变成 flaky。
+	ratio := float64(firstCounts[1]) / float64(draws)
+	if ratio < 0.85 || ratio > 0.94 {
+		t.Fatalf("channel 1 first-pick ratio = %.4f, want ~0.90 (counts=%v)", ratio, firstCounts)
+	}
+	if firstCounts[2] == 0 {
+		t.Fatalf("channel 2 never picked first; weighted randomness is not applied (counts=%v)", firstCounts)
+	}
+}
+
+// TestWeightedCandidatesRemainAFullPermutation 保证加权随机只是换顺序，不会丢候选或
+// 重复候选——调用方仍依赖完整列表做故障转移重试。
+func TestWeightedCandidatesRemainAFullPermutation(t *testing.T) {
+	items := []model.GroupItem{
+		{ChannelID: 1, ModelName: "perm", Weight: 5},
+		{ChannelID: 2, ModelName: "perm", Weight: 3},
+		{ChannelID: 3, ModelName: "perm", Weight: 0},
+	}
+
+	for i := 0; i < 500; i++ {
+		got := (&Weighted{}).Candidates(items)
+		if len(got) != 3 {
+			t.Fatalf("Candidates() len = %d, want 3", len(got))
+		}
+		seen := map[int]bool{}
+		for _, item := range got {
+			if seen[item.ChannelID] {
+				t.Fatalf("duplicate candidate channel %d in %v", item.ChannelID, got)
+			}
+			seen[item.ChannelID] = true
+		}
+		// 零权重按 1 处理，因此仍然必须出现。
+		if !seen[3] {
+			t.Fatalf("zero-weight channel dropped from candidates: %v", got)
+		}
+	}
+}
+
 func TestIteratorForwardedAttemptsExcludesSkippedAndCircuitBreak(t *testing.T) {
 	it := &Iterator{
 		attempts: []model.ChannelAttempt{

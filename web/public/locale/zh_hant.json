@@ -2789,6 +2789,10 @@
       "reportedIPHint": "來自 {source} 轉發標頭，僅作為來源線索展示；不保證是原始用戶端，也不用於 IP 白名單或登入限流。",
       "forensics": {
         "detailUnavailable": "無法讀取日誌詳情",
+        "detailNotFound": "這條日誌已不存在",
+        "detailNotFoundHint": "日誌行已被清理或刪除。可讀取的內容受日誌保留策略與磁碟上限控制。",
+        "detailRequestFailed": "日誌詳情載入失敗",
+        "detailRequestFailedHint": "這次是讀取請求本身失敗（網路、鑑權或伺服器錯誤），不代表日誌內容被清理。",
         "traceId": "追蹤 ID",
         "userAgent": "用戶端 UA",
         "protocolA": "用戶端協定 A",
