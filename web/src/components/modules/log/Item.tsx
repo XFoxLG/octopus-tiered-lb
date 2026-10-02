@@ -203,7 +203,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const t = useTranslations('log.card');
     const tCommon = useTranslations('common');
     const tGroup = useTranslations('group');
-    const { detail, isLoading: isDetailLoading, fetchDetail, reset: resetDetail } = useLogDetail();
+    const { detail, error: detailError, isLoading: isDetailLoading, fetchDetail, reset: resetDetail } = useLogDetail();
     const hasError = !!log.error;
     const clientDisconnected = isClientDisconnectText(log.error);
     const hasMultipleAttempts = log.attempts && log.attempts.length > 1;
@@ -718,7 +718,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         </AnimatePresence>
                                     </div>
                                 )}
-                                <BoundaryDetails detail={detail} isLoading={isDetailLoading} />
+                                <BoundaryDetails detail={detail} error={detailError} isLoading={isDetailLoading} />
                             </div>
                         </MorphingDialogDescription>
 

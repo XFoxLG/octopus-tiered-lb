@@ -2833,6 +2833,10 @@
       "reportedIPHint": "Reported by the {source} header for display only. It may identify a proxy rather than the original client and is not used for IP allowlists or login rate limits.",
       "forensics": {
         "detailUnavailable": "Log detail is unavailable",
+        "detailNotFound": "This log no longer exists",
+        "detailNotFoundHint": "The log row was pruned or deleted. Retained content is bounded by the log retention policy and disk budget.",
+        "detailRequestFailed": "Failed to load log detail",
+        "detailRequestFailedHint": "The read request itself failed (network, auth, or server error). This does not mean the log content was pruned.",
         "traceId": "Trace ID",
         "userAgent": "Client UA",
         "protocolA": "Client protocol A",

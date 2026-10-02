@@ -1,6 +1,7 @@
 import type { InfiniteData } from '@tanstack/react-query';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../client';
+import { HttpStatus, type ApiError } from '../types';
 import { logger } from '@/lib/logger';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuthStore } from './user';
@@ -106,6 +107,17 @@ export interface RelayLogContentRef {
     error?: string;
     created_at: number;
     text?: string;
+}
+
+/**
+ * 日志详情加载失败的原因。
+ * - not_found: 后端返回 404，日志行已不存在（例如被清理或已被删除）。
+ * - request_failed: 其它失败（网络、鉴权、5xx 等）。
+ */
+export interface LogDetailError {
+    status?: number;
+    reason: 'not_found' | 'request_failed';
+    message?: string;
 }
 
 export interface RelayLogDetail extends RelayLog {
@@ -583,14 +595,24 @@ export function useLogRefresh(pageSize = DEFAULT_LOG_PAGE_SIZE, filter: LogFilte
 export function useLogDetail() {
     const [detail, setDetail] = useState<RelayLogDetail | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    // 保存失败原因。以前这里 catch 后只 setDetail(null)，界面永远只显示一句
+    // 「无法读取日志详情」，分不清「日志已被清理」和「请求真的失败」。
+    const [error, setError] = useState<LogDetailError | null>(null);
 
     const fetchDetail = useCallback(async (id: number) => {
         setIsLoading(true);
+        setError(null);
         try {
             const result = await apiClient.get<RelayLogDetail | null>(`/api/v1/log/detail?id=${id}`);
             setDetail(result);
         } catch (e) {
             logger.error('获取日志详情失败:', e);
+            const status = typeof (e as ApiError | undefined)?.code === 'number' ? (e as ApiError).code : undefined;
+            setError({
+                status,
+                reason: status === HttpStatus.NOT_FOUND ? 'not_found' : 'request_failed',
+                message: e instanceof Error ? e.message : undefined,
+            });
             setDetail(null);
         } finally {
             setIsLoading(false);
@@ -599,7 +621,8 @@ export function useLogDetail() {
 
     const reset = useCallback(() => {
         setDetail(null);
+        setError(null);
     }, []);
 
-    return { detail, isLoading, fetchDetail, reset };
+    return { detail, error, isLoading, fetchDetail, reset };
 }

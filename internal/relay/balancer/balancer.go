@@ -79,14 +79,65 @@ func (b *Failover) Candidates(items []model.GroupItem) []model.GroupItem {
 	return sortByPriority(items)
 }
 
-// Weighted 加权分配：按权重从高到低排序
+// Weighted 加权分配：按权重做无放回加权随机排序
+//
+// index 0 的期望被选中概率严格等于 weight/totalWeight，后续位置是重试顺序。
+// 早先的实现（520ba524）是 rand.Intn(totalWeight) 的真加权随机；大重构把接口从
+// Select 换成 Candidates 后退化成 sortByWeight 降序排序，权重从「流量比例」变成
+// 「优先顺序」——权重最高的渠道永远独占全部流量。这里恢复加权语义，同时保留故障
+// 转移能力：某个候选失败后，调用方继续按列表顺序取下一个。
 type Weighted struct{}
 
 func (b *Weighted) Candidates(items []model.GroupItem) []model.GroupItem {
 	if len(items) == 0 {
 		return nil
 	}
-	return sortByWeight(items)
+
+	// Treat non-positive weights as 1 so a misconfigured zero-weight row still
+	// participates instead of being silently dropped from the pool.
+	weights := make([]int, len(items))
+	totalWeight := 0
+	for i, item := range items {
+		weight := item.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		weights[i] = weight
+		totalWeight += weight
+	}
+
+	result := make([]model.GroupItem, 0, len(items))
+	for remaining, total := weights, totalWeight; total > 0; {
+		index := drawWeightedIndex(remaining, total)
+		result = append(result, items[index])
+		total -= remaining[index]
+		remaining[index] = 0
+	}
+	return result
+}
+
+// drawWeightedIndex picks an index proportional to the remaining weights.
+// remaining is mutated by the caller (zeroing taken slots); total is the sum of
+// the remaining positive weights.
+func drawWeightedIndex(remaining []int, total int) int {
+	roll := rand.Intn(total)
+	for i, weight := range remaining {
+		if weight <= 0 {
+			continue
+		}
+		roll -= weight
+		if roll < 0 {
+			return i
+		}
+	}
+	// Unreachable unless the caller passed an inconsistent total; fall back to
+	// the first still-available slot rather than panicking.
+	for i, weight := range remaining {
+		if weight > 0 {
+			return i
+		}
+	}
+	return 0
 }
 
 // Auto 自动策略：探索优先，基于成功率和延迟动态选择
