@@ -440,15 +440,19 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// 转发请求
 	statusCode, fwdErr := ra.forward()
 
-	// Client disconnected — do not record failure stats, circuit-breaker
-	// counts, or retry hints. The client chose to stop, not the channel.
+	// Client disconnected —— 不记失败统计、不记熔断、不写 failure hint。
+	// 客户端是自己选择停止的，不是渠道出了问题。
+	// 契约的执行机制：Decision 上的 SkipFailureAccounting 标记。
+	// attempt() 本身不调 RecordFailure（熔断与 Auto 策略由调用方统一控制，
+	// 避免 adapter 降级场景误熔断），因此这里必须把「不该计数」随 Decision
+	// 一起传出去，由 executeRelay 的 shouldRecordChannelFailure 守卫落实。
 	if errors.Is(fwdErr, errClientDisconnected) {
 		span.End(dbmodel.AttemptFailed, statusCode, "client disconnected")
 		return attemptResult{
 			Success:  false,
 			Written:  ra.streamOutputWasCommitted(),
 			Err:      fwdErr,
-			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "client disconnected", Code: statusCode},
+			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "client disconnected", Code: statusCode, SkipFailureAccounting: true},
 		}
 	}
 
@@ -954,6 +958,12 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 	firstVisibleOutputPending := true
 	hasVisibleContent := false // 是否已产生可见内容（issue #155 流式空输出检测）
+	// sawDoneMarker 记录是否已收到上游的 SSE 终止标记 `data: [DONE]`。
+	// 不在收到标记的当场 return：[DONE] 本身仍需要走完正常的 chunk 处理，
+	// 因为入站适配器会把它渲染成客户端协议对应的终止帧（openai: `data: [DONE]\n\n`），
+	// 直接 return 会吞掉客户端期待的流终止帧。收尾由下一轮循环顶部的
+	// sawDoneMarker 分支完成。
+	sawDoneMarker := false
 	strategy := getReasoningBufferStrategy(ra.channel, ra.group)
 	shouldBuffer := (strategy == "buffer") // buffer=暂存; immediate=立即发送
 	var reasoningBuffer [][]byte           // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
@@ -1203,6 +1213,18 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 
 	for {
+		// 上游已发出 [DONE] 且该标记已经过本轮正常 chunk 处理写入客户端：主动收尾，
+		// 不再阻塞等 EOF。
+		// 动机（对齐上游 23fbd527，补上实测等价性缺口）：部分上游（及中间代理）
+		// 发完 [DONE] 后并不关闭连接，继续等 EOF 会一直阻塞到客户端/中间层先超时
+		// 断开，被记成 client disconnected —— 把一个本来成功的响应变成失败日志，
+		// 并让请求 goroutine 与上游连接悬空。
+		// 与 EOF 收尾共用 finishAcceptedTerminal（见其定义处注释），两条路径语义一致：
+		// 空输出重试（issue #106/#155）、reasoningBuffer 释放、stream session Finish
+		// 都不因终止方式不同而产生分叉。
+		if sawDoneMarker {
+			return finishAcceptedTerminal()
+		}
 		var (
 			r                                 sseReadResult
 			ok                                bool
@@ -1360,6 +1382,14 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			transformErr := fmt.Errorf("failed to transform stream event: %w", err)
 			emitStreamInterruption(transformErr, false)
 			return transformErr
+		}
+		// 上游流终止标记：记下但不在这里 return。[DONE] 仍要走完下方正常的
+		// chunk 写入（buffer flush / stream session AddPayload / Write+Flush），
+		// 收尾由下一轮循环顶部的 sawDoneMarker 分支完成。
+		// 故意放在 transformStreamData 的错误处理之后：[DONE] chunk 上的真实
+		// 转换错误仍应优先返回，不该被终止标记掩盖。
+		if isSSEDoneMarker(r.data) {
+			sawDoneMarker = true
 		}
 		if firstVisibleOutputDeadlineReached && (!chunkHasVisible || len(data) == 0) {
 			// A declared terminal response (for example, a prompt block) is a
@@ -2028,7 +2058,11 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 				// 熔断器和 Auto 策略：在所有 adapter 类型（如 Responses→Chat）均失败后才记录，
 				// 避免 Response adapter 降级到 Chat 的过程中误触发熔断。
-				if result.Decision.Scope == ScopeNextChannel || result.Decision.Scope == ScopeAbortAll {
+				// 守卫统一交给 shouldRecordChannelFailure（type.go），它负责排除
+				// SkipFailureAccounting（客户端断连、内容拦截）——这些不是渠道故障。
+				// 历史上这里只看 Scope，而断连分支恰好产出 ScopeAbortAll，导致每次
+				// 转发中途的客户端断连都给熔断器 +1，阈值默认 5 次后健康渠道被误熔断。
+				if shouldRecordChannelFailure(result.Decision) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModelName)
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
 					// 离群窗口：记录失败样本（与熔断器同级，避免 adapter 降级误触发）。

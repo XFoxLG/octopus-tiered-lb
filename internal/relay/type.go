@@ -493,6 +493,13 @@ type RetryDecision struct {
 	IsError        bool           // 是否是错误（非成功）
 	RateLimitScope RateLimitScope // 429 的影响范围；其它状态码为 Unknown
 	RetryAfter     time.Duration  // 上游 Retry-After 建议等待时间
+
+	// SkipFailureAccounting 标记本次失败不是渠道故障（客户端主动停止、内容拦截等），
+	// 因此不计入熔断器连续失败与 Auto 策略失败率窗口。
+	// 契约由 attempt() 声明（见 relay.go 的 client disconnected 分支），
+	// 由 executeRelay / media 循环的熔断守卫（shouldRecordChannelFailure）执行。
+	// 零值 false 保持全部现存构造点语义不变。
+	SkipFailureAccounting bool
 }
 
 // RateLimitScope distinguishes a credential-local 429 from an exhausted
@@ -513,6 +520,41 @@ func (d RetryDecision) String() string {
 		return d.Scope.String()
 	}
 	return fmt.Sprintf("%s (%s)", d.Scope.String(), d.Reason)
+}
+
+// shouldRecordChannelFailure 报告本次失败是否应计入渠道级熔断器与 Auto 策略统计。
+// SkipFailureAccounting 标记的失败（客户端断连、内容拦截）不是渠道故障。
+//
+// 这是 attempt() 与 executeRelay 之间「谁负责记熔断」契约的唯一执行点：
+// attempt() 通过 RetryDecision.SkipFailureAccounting 声明语义，本函数负责执行，
+// 避免契约跨函数边界漂移（见 issue：客户端断连误熔断健康渠道）。
+func shouldRecordChannelFailure(decision RetryDecision) bool {
+	return !decision.SkipFailureAccounting &&
+		(decision.Scope == ScopeNextChannel || decision.Scope == ScopeAbortAll)
+}
+
+// markClientCancelIfGone 在客户端已断开时把 decision 标记为「不计入渠道故障」。
+//
+// clientCtx 必须是真正承载客户端连接生命周期的 context（gin 的 c.Request.Context()），
+// 不能是 newRelayOperationContext() 派生的 operationCtx——后者基于 context.Background()，
+// 与客户端断连完全解耦（见 context.go）。
+// err 为 nil 时不做任何处理：成功路径不该被打上失败豁免标记。
+func markClientCancelIfGone(decision *RetryDecision, clientCtx context.Context, err error) {
+	if decision == nil || err == nil || clientCtx == nil {
+		return
+	}
+	if clientCtx.Err() == nil {
+		return
+	}
+	// 客户端已停止：熔断器与 Auto 策略统计都不该把它当渠道故障。
+	// Scope 保持不变——ScopeAbortAll 仍然正确地终止重试（继续写客户端已无意义）。
+	decision.SkipFailureAccounting = true
+}
+
+// isSSEDoneMarker 报告一条 SSE data 字段是否为流终止标记 [DONE]。
+// 上游与适配器的写法不完全统一（有的带首尾空白），这里统一 TrimSpace 后比较。
+func isSSEDoneMarker(data string) bool {
+	return strings.TrimSpace(data) == "[DONE]"
 }
 
 // ClassifyRelayError 根据状态码和错误类型返回重试决策
