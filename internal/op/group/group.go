@@ -1146,6 +1146,30 @@ func GroupItemList(groupID int, ctx context.Context) ([]model.GroupItem, error) 
 	return items, nil
 }
 
+// RemoveChannelItemsFromCache removes a channel from every cached group and
+// rebuilds the routing indexes when anything changed. It is called after a
+// channel deletion commits so stale group items cannot keep routing traffic
+// to the deleted channel.
+func RemoveChannelItemsFromCache(channelID int) {
+	changed := false
+	for id, group := range groupCache.GetAll() {
+		items := make([]model.GroupItem, 0, len(group.Items))
+		for _, item := range group.Items {
+			if item.ChannelID != channelID {
+				items = append(items, item)
+			}
+		}
+		if len(items) != len(group.Items) {
+			group.Items = NormalizeItems(items)
+			groupCache.Set(id, group)
+			changed = true
+		}
+	}
+	if changed {
+		RebuildIndexes()
+	}
+}
+
 func RefreshAllCache(ctx context.Context) error {
 	groups := []model.Group{}
 	if err := db.GetDB().WithContext(ctx).

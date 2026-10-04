@@ -6,8 +6,8 @@ import (
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/channel"
+	"github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/stats"
-	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
 var channelCache = channel.GetCache()
@@ -27,6 +27,16 @@ func init() {
 	}
 	// 注入代理池 URL 解析器，避免 helper 反向 import op 造成循环依赖。
 	helper.ProxyURLByConfigFunc = ProxyURLForConfig
+	// 渠道删除统一清理：group items 缓存 + 统计 + balancer/key 运行态钩子。
+	// 挂在 channel.OnDeleted 上，任何走 channel.Delete 的删除路径都自动生效
+	// （含一次性渠道过期任务），不再依赖各调用方手动补清理。
+	channel.OnDeleted = func(id int) {
+		group.RemoveChannelItemsFromCache(id)
+		stats.OnChannelDeleted(id)
+		for _, hook := range OnChannelDeletedHooks {
+			hook(id)
+		}
+	}
 }
 
 // Deprecated: Use channel.List from internal/op/channel instead.
@@ -58,42 +68,7 @@ func ChannelEnabled(id int, enabled bool, ctx context.Context) error {
 
 // ChannelDel handles deletion with cross-package stats/group cache cleanup.
 func ChannelDel(id int, ctx context.Context) error {
-	ch, err := channel.Get(id, ctx)
-	if err != nil {
-		return err
-	}
-
-	if err := channel.Delete(id, ctx); err != nil {
-		return err
-	}
-
-	stats.OnChannelDeleted(id)
-
-	// Invoke registered cleanup hooks (e.g. balancer circuit breaker / auto stats)
-	for _, hook := range OnChannelDeletedHooks {
-		hook(id)
-	}
-
-	// Refresh affected group caches (in op package, from group.go)
-	for _, groupID := range getAffectedGroupIDs(id, ctx) {
-		if err := groupRefreshCacheByID(groupID, ctx); err != nil {
-			log.Warnf("failed to refresh group cache for group %d: %v", groupID, err)
-		}
-	}
-
-	// Clean up channel key cache
-	for _, k := range ch.Keys {
-		if k.ID != 0 {
-			channelKeyCache.Del(k.ID)
-		}
-	}
-
-	return nil
-}
-
-func getAffectedGroupIDs(id int, ctx context.Context) []int {
-	// This is a minimal implementation; the original logic was in ChannelDel's transaction
-	return nil
+	return channel.Delete(id, ctx)
 }
 
 // Deprecated: Use channel.LLMList from internal/op/channel instead.

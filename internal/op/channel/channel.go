@@ -23,6 +23,10 @@ var keyCacheNeedUpdate = make(map[int]struct{})
 var keyCacheNeedUpdateLock sync.Mutex
 var runtimeUpdateLock sync.Mutex
 
+// OnDeleted is injected by op to clean up dependent caches and runtime state
+// (group items cache, stats, balancer hooks) after a channel deletion commits.
+var OnDeleted func(channelID int)
+
 // GetCache returns the internal channel cache (for backward compatibility).
 func GetCache() cache.Cache[int, model.Channel] { return chCache }
 
@@ -950,6 +954,9 @@ func Delete(id int, ctx context.Context) error {
 	// 带 TTL 会自过期，这里主动清理；内存侧靠清理任务兜底，这里直接删干净。
 	ratelimitstore.RemoveChannelBuckets(id)
 
+	if OnDeleted != nil {
+		OnDeleted(id)
+	}
 	return nil
 }
 

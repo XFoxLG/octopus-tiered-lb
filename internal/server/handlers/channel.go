@@ -283,7 +283,6 @@ func deleteChannel(c *gin.Context) {
 		resp.InternalError(c)
 		return
 	}
-	st.OnChannelDeleted(idNum)
 	resp.Success(c, nil)
 }
 func fetchModel(c *gin.Context) {

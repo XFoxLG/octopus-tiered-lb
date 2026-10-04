@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -74,12 +75,13 @@ func InitCache() error {
 func SaveCache() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	var errs []error
 	for _, fn := range cacheSaveFuncs {
 		if err := fn(ctx); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // init registers cache init and save functions in explicit dependency order.
