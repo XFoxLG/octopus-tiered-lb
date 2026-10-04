@@ -57,8 +57,8 @@ func TestCreateStoresEncryptedNotHash(t *testing.T) {
 	if !crypto.IsEncrypted(dbRow.APIKey) {
 		t.Fatalf("db api_key = %q, want enc: prefix", dbRow.APIKey)
 	}
-	if dbRow.APIKeyHash != hashAPIKey(original) {
-		t.Fatalf("db api_key_hash = %q, want %q", dbRow.APIKeyHash, hashAPIKey(original))
+	if dbRow.APIKeyHash != HashAPIKey(original) {
+		t.Fatalf("db api_key_hash = %q, want %q", dbRow.APIKeyHash, HashAPIKey(original))
 	}
 
 	// hash 列不应等于裸密文，应是明文的确定性哈希
@@ -188,7 +188,7 @@ func TestRefreshCacheLegacyHashedKey(t *testing.T) {
 	ctx := setupTestDB(t)
 
 	original := "sk-octopus-legacy-plaintext"
-	hashed := hashAPIKey(original)
+	hashed := HashAPIKey(original)
 	// 直接写一条哈希化时期的存量记录（api_key=哈希，无 hash 列）
 	row := &model.APIKey{Name: "legacy", APIKey: hashed, Enabled: true}
 	if err := db.GetDB().Create(row).Error; err != nil {
@@ -253,8 +253,8 @@ func TestRefreshCacheLegacyPlaintextKey(t *testing.T) {
 	if !crypto.IsEncrypted(dbRow.APIKey) {
 		t.Fatalf("db api_key = %q, want encrypted after migration", dbRow.APIKey)
 	}
-	if dbRow.APIKeyHash != hashAPIKey(original) {
-		t.Fatalf("db api_key_hash = %q, want %q", dbRow.APIKeyHash, hashAPIKey(original))
+	if dbRow.APIKeyHash != HashAPIKey(original) {
+		t.Fatalf("db api_key_hash = %q, want %q", dbRow.APIKeyHash, HashAPIKey(original))
 	}
 	// 认证可用
 	if _, err := GetByKey(original, ctx); err != nil {
@@ -272,7 +272,7 @@ func TestIsLegacyHashedAPIKey(t *testing.T) {
 		{"empty", "", false},
 		{"plaintext", "sk-octopus-foo", false},
 		{"encrypted", "enc:abc123", false},
-		{"hash-64", hashAPIKey("sk-octopus-test"), true},
+		{"hash-64", HashAPIKey("sk-octopus-test"), true},
 		{"short-hex", "abc123", false},
 		{"hash-63", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd", false},
 	}

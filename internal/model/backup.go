@@ -8,6 +8,21 @@ const (
 )
 
 // DBDump is a full-database JSON export format for Octopus.
+//
+// Version history:
+//   - v1: original format.
+//   - v2 (2026-09-11): relay log family split — relay_log_attempts /
+//     relay_log_content_refs / relay_log_content_blobs travel alongside
+//     relay_logs.
+//   - v3 (current): sensitive fields (api_keys.api_key,
+//     channel_keys.channel_key, api_credential_profiles.api_key) are exported
+//     as plaintext and idempotently re-encrypted with the importing
+//     instance's crypto key (empty values and already-enc: values pass
+//     through unchanged). Plaintext api_keys additionally get api_key_hash
+//     recomputed (SHA-256 hex) on import. v1/v2 dumps carry the source
+//     instance's enc: ciphertext and stay restorable on the same instance
+//     (issue #247). **Backup files now contain plaintext secrets — store
+//     them accordingly.**
 type DBDump struct {
 	Version      int       `json:"version"`
 	ExportedAt   time.Time `json:"exported_at"`

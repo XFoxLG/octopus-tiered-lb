@@ -97,3 +97,11 @@ func Decrypt(ciphertext string) (string, error) {
 func IsEncrypted(s string) bool {
 	return strings.HasPrefix(s, encryptedPrefix)
 }
+
+// ResetForTest clears the initialized key and the sync.Once guard so a test
+// can call Init with a different secret. Production code must never call
+// this: rotating the process key would orphan previously encrypted data.
+func ResetForTest() {
+	globalKey = nil
+	globalKeyOnce = sync.Once{}
+}

@@ -1,12 +1,11 @@
 package migrate
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/apikeyhash"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
 	"gorm.io/gorm"
 )
@@ -93,17 +92,12 @@ func computeAPIKeyHash(stored string) string {
 			// 保留空 hash，RefreshCache 会在运行时兜底处理。
 			return ""
 		}
-		return sha256Hex(plaintext)
+		return apikeyhash.Sum(plaintext)
 	}
 	if isLegacyHashedAPIKey(stored) {
 		return stored // 旧哈希本身就是 SHA-256(明文)
 	}
-	return sha256Hex(stored) // sk- 明文或其他明文
-}
-
-func sha256Hex(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
+	return apikeyhash.Sum(stored) // sk- 明文或其他明文
 }
 
 // isLegacyHashedAPIKey 判断是否为哈希化时期写入的存量哈希。

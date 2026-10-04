@@ -16,12 +16,24 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
+	"github.com/lingyuins/octopus/internal/utils/apikeyhash"
+	"github.com/lingyuins/octopus/internal/utils/crypto"
+	"github.com/lingyuins/octopus/internal/utils/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"
 )
 
-const dbDumpVersion = 2
+// dbDumpVersion 是 DBDump 的格式版本（本 fork 编号）。
+//   - v1：原始格式。
+//   - v2：relay 日志家族拆分（relay_log_attempts / content_refs / blobs）。
+//   - v3（当前，上游 0fa706fb / issue #247）：敏感字段（api_keys.api_key、
+//     channel_keys.channel_key、api_credential_profiles.api_key）导出为
+//     **明文**，导入侧按目标实例的 crypto key 幂等重加密。
+//
+// v1/v2 的 dump 中这些字段是源实例的 enc: 密文，跨实例导入不可用；
+// 导入侧对 enc: 值原样保留，同实例旧备份仍可恢复。
+const dbDumpVersion = 3
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
 const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（外层上限，内层按 SQL 变量预算再收）
@@ -137,6 +149,10 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	if err := conn.Find(&d.APICredentialProfiles).Error; err != nil {
 		return nil, fmt.Errorf("export api_credential_profiles: %w", err)
 	}
+
+	// 敏感字段在库中以 enc: 密文存储；导出前解密为明文，使备份文件
+	// 跨实例可移植（导入侧会用目标实例的 key 重加密，见 encryptDumpSecrets）。
+	decryptDumpSecrets(d)
 
 	return d, nil
 }
@@ -604,6 +620,10 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	if target == nil {
 		return nil, fmt.Errorf("target database is nil")
 	}
+	// 敏感字段幂等加密：明文（v3 dump）→ 用本实例 key 加密；已带 enc: 前缀的
+	// （v1/v2 dump 同实例恢复）或空值原样保留，避免双重加密。
+	// api_keys 明文的 api_key_hash 一并补算（sha256 hex，见 encryptDumpSecrets）。
+	encryptDumpSecrets(dump)
 	isFull := mode == model.ImportModeFull
 	res := &model.DBImportResult{RowsAffected: map[string]int64{}}
 	cfg := &importConfig{conn: target.WithContext(ctx), res: res, isFull: isFull, version: dump.Version}
@@ -827,4 +847,109 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 // ImportIncremental is the backward-compatible wrapper.
 func ImportIncremental(ctx context.Context, dump *model.DBDump) (*model.DBImportResult, error) {
 	return ImportWithMode(ctx, dump, model.ImportModeIncremental)
+}
+
+// decryptDumpSecrets 在导出路径上把库内 enc: 密文的敏感字段解密为明文（issue #247）。
+// 解密失败（密钥不匹配、payload 损坏等）时保留原值并告警，不阻断导出；
+// 非密文（存量明文、旧哈希、空值）原样保留。
+//
+// 覆盖字段与本 fork 现存模型一致：api_keys.api_key、channel_keys.channel_key、
+// api_credential_profiles.api_key。上游 diff 中的 remote_sites.* / site_accounts.* /
+// site_tokens.token / remote_site_tokens.key 已随 site 模块移除（commit 57cbddae），
+// 本 fork 不处理。
+func decryptDumpSecrets(d *model.DBDump) {
+	if d == nil {
+		return
+	}
+	decryptValue := func(name string, v string) string {
+		if !crypto.IsEncrypted(v) {
+			return v
+		}
+		plaintext, err := crypto.Decrypt(v)
+		if err != nil {
+			log.Warnf("backup export: decrypt %s failed (%v), keeping original value", name, err)
+			return v
+		}
+		return plaintext
+	}
+
+	for i := range d.APIKeys {
+		d.APIKeys[i].APIKey = decryptValue("api_keys.api_key", d.APIKeys[i].APIKey)
+	}
+	for i := range d.ChannelKeys {
+		d.ChannelKeys[i].ChannelKey = decryptValue("channel_keys.channel_key", d.ChannelKeys[i].ChannelKey)
+	}
+	for i := range d.APICredentialProfiles {
+		d.APICredentialProfiles[i].APIKey = decryptValue("api_credential_profiles.api_key", d.APICredentialProfiles[i].APIKey)
+	}
+}
+
+// encryptDumpSecrets 在导入路径上对 dump 中的敏感字段做幂等加密（issue #247）。
+// 幂等规则：空值或已带 enc: 前缀的值原样保留；其余视为明文并用本实例 key 加密。
+// 加密失败（如 ErrNoKey，进程未配置 encryption key）时保留明文并告警——
+// 正常运行路径下启动硬守卫会拒绝无 key 启动，此处仅兜底。
+//
+// api_keys 特例：
+//   - 明文 key：补算 api_key_hash（SHA-256 hex 小写，与 op/apikey.HashAPIKey
+//     共用 utils/apikeyhash 实现）后加密。
+//   - enc: 密文（v1/v2 旧 dump）：值原样保留；但 api_key_hash 是 json:"-"，
+//     旧 dump 文件没有该列，导入时为空——唯一索引下多行空 hash 会被
+//     OnConflict DoNothing 静默跳过。因此本 fork 额外在本地可解密时补算 hash
+//     （值仍不动，同实例旧备份可完整恢复；跨实例解不开则维持原样）。
+//   - 64 hex 旧哈希（哈希化时期存量）：明文不可逆，库内语义是「该值本身就是
+//     hash」（见 op/apikey.RefreshCache / migrate 052），原样保留并补齐 hash，
+//     避免被当作明文重加密后认证失效。
+func encryptDumpSecrets(d *model.DBDump) {
+	if d == nil {
+		return
+	}
+	encryptValue := func(name string, v string) string {
+		if v == "" || crypto.IsEncrypted(v) {
+			return v
+		}
+		encrypted, err := crypto.Encrypt(v)
+		if err != nil {
+			log.Warnf("backup import: encrypt %s failed (%v), storing plaintext", name, err)
+			return v
+		}
+		return encrypted
+	}
+
+	for i := range d.APIKeys {
+		row := &d.APIKeys[i]
+		switch {
+		case row.APIKey == "":
+			// 空值保持空，无 hash 可补。
+		case crypto.IsEncrypted(row.APIKey):
+			if row.APIKeyHash == "" {
+				if plaintext, err := crypto.Decrypt(row.APIKey); err == nil {
+					row.APIKeyHash = apikeyhash.Sum(plaintext)
+				} else {
+					log.Warnf("backup import: decrypt api_keys.api_key for hash backfill failed (%v), keeping value and empty hash", err)
+				}
+			}
+		case isLegacyHashedAPIKeyValue(row.APIKey):
+			if row.APIKeyHash == "" {
+				row.APIKeyHash = row.APIKey
+			}
+		default:
+			row.APIKeyHash = apikeyhash.Sum(row.APIKey)
+			row.APIKey = encryptValue("api_keys.api_key", row.APIKey)
+		}
+	}
+	for i := range d.ChannelKeys {
+		row := &d.ChannelKeys[i]
+		row.ChannelKey = encryptValue("channel_keys.channel_key", row.ChannelKey)
+	}
+	for i := range d.APICredentialProfiles {
+		row := &d.APICredentialProfiles[i]
+		row.APIKey = encryptValue("api_credential_profiles.api_key", row.APIKey)
+	}
+}
+
+// isLegacyHashedAPIKeyValue 与 op/apikey.isLegacyHashedAPIKey、migrate 052 的
+// 判定保持一致：64 位 hex、不带 sk- 前缀、不带 enc: 前缀 = 哈希化时期写入的
+// 存量哈希（api_key 列存的就是 SHA-256(明文)，明文不可逆）。
+func isLegacyHashedAPIKeyValue(v string) bool {
+	return v != "" && !strings.HasPrefix(v, "sk-") && !crypto.IsEncrypted(v) && len(v) == 64
 }
