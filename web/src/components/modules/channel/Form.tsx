@@ -14,6 +14,9 @@ import {
     useTestChannel,
     type TestChannelSummary,
     type ChannelProxyMode,
+    type UpstreamProtocol,
+    type ChannelReasoningBufferStrategy,
+    UPSTREAM_PROTOCOL_OPTIONS,
 } from '@/api/endpoints/channel';
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
@@ -71,6 +74,14 @@ export interface ChannelFormData {
     channel_proxy: string;
     param_override: string;
     outbound_format_override: string;
+    /** 渠道声明的上游协议（有序）。空数组 = 沿用分组 outbound_format。 */
+    upstream_protocols: UpstreamProtocol[];
+    /** 渠道级超时覆盖（秒）：0 = 跟随分组，-1 = 关闭，>0 = 秒数。 */
+    first_token_time_out: number;
+    attempt_time_out: number;
+    stream_idle_timeout: number;
+    /** 渠道级推理缓冲策略；空串 = 跟随分组。 */
+    reasoning_buffer_strategy: ChannelReasoningBufferStrategy;
     request_rewrite: RequestRewriteConfig;
     relay_log_raw_sse_until: number;
     keys: ChannelKeyFormItem[];
@@ -145,6 +156,64 @@ export function getEffectiveRequestRewriteFormData(channelType: ChannelType, con
 function hasManualVersionSuffix(rawUrl: string): boolean {
     const normalized = rawUrl.trim().split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase();
     return /\/(v\d+(?:beta)?|api\/v\d+)$/.test(normalized);
+}
+
+/**
+ * 切换一个协议的勾选状态，保持「勾选顺序 = 优先级顺序」。
+ *
+ * 新勾选的协议追加到末尾（不插队），取消勾选直接移除。后端 NormalizeUpstreamProtocols
+ * 同样保留顺序，所以前端不需要额外排序。
+ */
+export function toggleUpstreamProtocol(
+    protocols: UpstreamProtocol[],
+    protocol: UpstreamProtocol,
+    checked: boolean,
+): UpstreamProtocol[] {
+    if (checked) {
+        if (protocols.includes(protocol)) return protocols;
+        return [...protocols, protocol];
+    }
+    return protocols.filter((item) => item !== protocol);
+}
+
+/**
+ * 判断某个协议与已选集合是否冲突（用于把冲突项标成不可选并给出原因）。
+ *
+ * 与后端 NormalizeUpstreamProtocols 的互斥规则保持一致：
+ * - passthrough / raw 是整体透传，不能与任何其它协议共存；
+ * - chat_only / responses_only / messages_only 与同协议的宽松模式互相矛盾。
+ */
+function upgradeProtocolSelectionIssue(
+    protocols: UpstreamProtocol[],
+    candidate: UpstreamProtocol,
+): boolean {
+    if (protocols.includes(candidate)) return false;
+    const merged = [...protocols, candidate];
+    return upstreamProtocolConflict(merged);
+}
+
+/** 上报当前选择里是否存在会被后端拒绝的互斥组合。 */
+export function upstreamProtocolConflict(protocols: UpstreamProtocol[]): boolean {
+    if (protocols.length <= 1) return false;
+    if (protocols.includes('passthrough') || protocols.includes('raw')) return true;
+    const exclusivePairs: Array<[UpstreamProtocol, UpstreamProtocol]> = [
+        ['chat_only', 'chat'],
+        ['responses_only', 'responses'],
+        ['messages_only', 'messages'],
+    ];
+    return exclusivePairs.some(([strict, loose]) => protocols.includes(strict) && protocols.includes(loose));
+}
+
+/**
+ * 把超时输入框的字符串转成数字。空串与非法输入都当作 0（= 跟随分组），
+ * 保持后端 -1 / 0 / >0 三态语义中的「未覆盖」值。
+ */
+export function normalizeTimeoutInputValue(raw: string): number {
+    const trimmed = raw.trim();
+    if (trimmed === '') return 0;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.trunc(parsed);
 }
 
 export interface ChannelFormProps {
@@ -643,9 +712,12 @@ export function ChannelForm({
     const { data: channelGroups = [] } = useChannelGroupList();
     const [formOpenedAt] = useState(() => Math.floor(Date.now() / 1000));
     const requestRewriteSupported = isRequestRewriteSupportedChannelType(formData.type);
-    // 出站格式覆盖仅对 OpenAI Chat / Response 类型生效（后端只在这两种渠道类型上分支），
-    // 其他类型不渲染该控件，避免"设置了但不生效"的误导。
-    const outboundFormatOverrideSupported = formData.type === ChannelType.OpenAIChat || formData.type === ChannelType.OpenAIResponse;
+    // 协议声明仅对 OpenAI 兼容渠道生效（原生协议渠道只会说自己的原生协议，
+    // 后端也只在这两种渠道类型上展开协议回退），其他类型不渲染该控件，
+    // 避免"设置了但不生效"的误导。
+    const upstreamProtocolsSupported = formData.type === ChannelType.OpenAIChat
+        || formData.type === ChannelType.OpenAIResponse
+        || formData.type === ChannelType.MiMoChat;
     const sectionClassName = 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
     const labelClassName = 'text-sm font-medium text-card-foreground';
     const fieldGroupClassName = 'space-y-2';
@@ -1102,6 +1174,33 @@ export function ChannelForm({
                                         <SelectContent className="rounded-lg">
                                             <SelectItem className="rounded-xl" value="openai_compat">{t('baseUrlSuffixOpenAI')}</SelectItem>
                                             <SelectItem className="rounded-xl" value="custom">{t('baseUrlSuffixCustom')}</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    {/*
+                                      多协议渠道可以给每条地址绑定协议（如火山方舟：OpenAI 兼容在
+                                      /api/v3、Anthropic 兼容在 /api/compatible）。留空即通用地址，
+                                      单地址渠道不需要动这一项。
+                                    */}
+                                    <Select
+                                        value={u.protocol || 'any'}
+                                        onValueChange={(value) => handleUpdateBaseUrl(idx, {
+                                            protocol: value === 'any' ? '' : (value as UpstreamProtocol),
+                                        })}
+                                    >
+                                        <SelectTrigger
+                                            id={`${idPrefix}-base-protocol-${idx}`}
+                                            aria-label={t('baseUrlProtocolLabel')}
+                                            className="h-10 min-w-0 flex-1 rounded-lg sm:w-32 lg:w-40 sm:flex-none"
+                                        >
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent className="rounded-lg">
+                                            <SelectItem className="rounded-xl" value="any">{t('baseUrlProtocolAny')}</SelectItem>
+                                            {UPSTREAM_PROTOCOL_OPTIONS.map((protocol) => (
+                                                <SelectItem key={protocol} className="rounded-xl" value={protocol}>
+                                                    {t(`upstreamProtocol.${protocol}`)}
+                                                </SelectItem>
+                                            ))}
                                         </SelectContent>
                                     </Select>
                                     <Button
@@ -1614,30 +1713,165 @@ export function ChannelForm({
                             />
                         </div>
 
-                        {outboundFormatOverrideSupported ? (
+                        {upstreamProtocolsSupported ? (
                             <div className={fieldGroupClassName}>
-                                <label htmlFor={`${idPrefix}-outbound-format-override`} className={labelClassName}>
-                                    {t('outboundFormatOverride')}
-                                    <Hint text={t('outboundFormatOverrideHint')} />
+                                <label id={`${idPrefix}-upstream-protocols-label`} className={labelClassName}>
+                                    {t('upstreamProtocols')}
+                                    <Hint text={t('upstreamProtocolsHint')} />
                                 </label>
-                                <Select
-                                    value={formData.outbound_format_override || 'inherit'}
-                                    onValueChange={(value) => onFormDataChange({
-                                        ...formData,
-                                        outbound_format_override: value === 'inherit' ? '' : value,
-                                    })}
+                                {/*
+                                  多选 + 按勾选顺序即优先级。不用拖拽组件：勾选顺序本身
+                                  就是顺序，少一个可拖的交互面，键盘与读屏也更好操作。
+                                */}
+                                <div
+                                    role="group"
+                                    aria-labelledby={`${idPrefix}-upstream-protocols-label`}
+                                    className="space-y-1.5 rounded-lg border border-border/35 bg-card p-2"
                                 >
-                                    <SelectTrigger id={`${idPrefix}-outbound-format-override`} className="min-w-0 w-full max-w-full rounded-lg">
-                                        <SelectValue placeholder={t('outboundFormatOverrideFollowGroup')} />
-                                    </SelectTrigger>
-                                    <SelectContent className="min-w-0" style={{ width: 'var(--radix-select-trigger-width)' }}>
-                                        <SelectItem value="inherit">{t('outboundFormatOverrideFollowGroup')}</SelectItem>
-                                        <SelectItem value="chat_only">{t('outboundFormatOverrideChatOnly')}</SelectItem>
-                                        <SelectItem value="responses_only">{t('outboundFormatOverrideResponsesOnly')}</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                    {UPSTREAM_PROTOCOL_OPTIONS.map((protocol) => {
+                                        const checked = formData.upstream_protocols.includes(protocol);
+                                        // 与已选协议互斥的项直接禁用：让用户点一个必然被后端
+                                        // 拒绝的组合再报错，比当场挡住更差。
+                                        const blocked = upgradeProtocolSelectionIssue(formData.upstream_protocols, protocol);
+                                        return (
+                                            <label
+                                                key={protocol}
+                                                className={cn(
+                                                    'flex items-start gap-2 rounded-md px-2 py-1.5',
+                                                    blocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-muted/40',
+                                                )}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-border"
+                                                    checked={checked}
+                                                    disabled={blocked}
+                                                    aria-describedby={blocked ? `${idPrefix}-upstream-protocols-conflict` : undefined}
+                                                    onChange={(e) => onFormDataChange({
+                                                        ...formData,
+                                                        upstream_protocols: toggleUpstreamProtocol(
+                                                            formData.upstream_protocols,
+                                                            protocol,
+                                                            e.target.checked,
+                                                        ),
+                                                    })}
+                                                />
+                                                <span className="min-w-0">
+                                                    <span className="block text-sm text-card-foreground">{t(`upstreamProtocol.${protocol}`)}</span>
+                                                    <span className="block text-xs text-muted-foreground">{t(`upstreamProtocolHint.${protocol}`)}</span>
+                                                </span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                                {formData.upstream_protocols.length > 0 ? (
+                                    <p className="px-1 text-xs leading-5 text-muted-foreground">
+                                        {t('upstreamProtocolsOrder', {
+                                            order: formData.upstream_protocols
+                                                .map((protocol) => t(`upstreamProtocol.${protocol}`))
+                                                .join(' → '),
+                                        })}
+                                    </p>
+                                ) : (
+                                    <p className="px-1 text-xs leading-5 text-muted-foreground">{t('upstreamProtocolsFollowGroup')}</p>
+                                )}
+                                {upstreamProtocolConflict(formData.upstream_protocols) ? (
+                                    <p
+                                        id={`${idPrefix}-upstream-protocols-conflict`}
+                                        role="alert"
+                                        className="px-1 text-xs leading-5 text-destructive"
+                                    >
+                                        {t('upstreamProtocolsConflict')}
+                                    </p>
+                                ) : null}
                             </div>
                         ) : null}
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-first-token-timeout`} className={labelClassName}>
+                                {t('channelTimeouts')}
+                                <Hint text={t('channelTimeoutsHint')} />
+                            </label>
+                            <div className="grid gap-2 sm:grid-cols-3">
+                                <div className="space-y-1">
+                                    <label htmlFor={`${idPrefix}-first-token-timeout`} className="text-xs text-muted-foreground">
+                                        {t('channelFirstTokenTimeout')}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-first-token-timeout`}
+                                        type="number"
+                                        min={-1}
+                                        value={formData.first_token_time_out}
+                                        onChange={(e) => onFormDataChange({
+                                            ...formData,
+                                            first_token_time_out: normalizeTimeoutInputValue(e.target.value),
+                                        })}
+                                        className="rounded-lg"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label htmlFor={`${idPrefix}-attempt-timeout`} className="text-xs text-muted-foreground">
+                                        {t('channelAttemptTimeout')}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-attempt-timeout`}
+                                        type="number"
+                                        min={-1}
+                                        value={formData.attempt_time_out}
+                                        onChange={(e) => onFormDataChange({
+                                            ...formData,
+                                            attempt_time_out: normalizeTimeoutInputValue(e.target.value),
+                                        })}
+                                        className="rounded-lg"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label htmlFor={`${idPrefix}-stream-idle-timeout`} className="text-xs text-muted-foreground">
+                                        {t('channelStreamIdleTimeout')}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-stream-idle-timeout`}
+                                        type="number"
+                                        min={-1}
+                                        value={formData.stream_idle_timeout}
+                                        onChange={(e) => onFormDataChange({
+                                            ...formData,
+                                            stream_idle_timeout: normalizeTimeoutInputValue(e.target.value),
+                                        })}
+                                        className="rounded-lg"
+                                    />
+                                </div>
+                            </div>
+                            <p className="px-1 text-xs leading-5 text-muted-foreground">{t('channelTimeoutsValueHint')}</p>
+                        </div>
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-reasoning-buffer-strategy`} className={labelClassName}>
+                                {t('channelReasoningBufferStrategy')}
+                                <Hint text={t('channelReasoningBufferStrategyHint')} />
+                            </label>
+                            <Select
+                                value={formData.reasoning_buffer_strategy || 'inherit'}
+                                onValueChange={(value) => onFormDataChange({
+                                    ...formData,
+                                    reasoning_buffer_strategy: value === 'inherit'
+                                        ? ''
+                                        : (value as ChannelReasoningBufferStrategy),
+                                })}
+                            >
+                                <SelectTrigger
+                                    id={`${idPrefix}-reasoning-buffer-strategy`}
+                                    className="min-w-0 w-full max-w-full rounded-lg"
+                                >
+                                    <SelectValue placeholder={t('channelReasoningBufferStrategyInherit')} />
+                                </SelectTrigger>
+                                <SelectContent className="min-w-0" style={{ width: 'var(--radix-select-trigger-width)' }}>
+                                    <SelectItem value="inherit">{t('channelReasoningBufferStrategyInherit')}</SelectItem>
+                                    <SelectItem value="buffer">{t('channelReasoningBufferStrategyBuffer')}</SelectItem>
+                                    <SelectItem value="immediate">{t('channelReasoningBufferStrategyImmediate')}</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
 
                         <div className={`${fieldGroupClassName} rounded-lg border border-amber-500/20 bg-amber-500/5 p-3`}>
                             <div className="flex flex-wrap items-start justify-between gap-3">

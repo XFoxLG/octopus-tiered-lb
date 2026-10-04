@@ -138,6 +138,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         channel_proxy: channel.channel_proxy ?? '',
         param_override: channel.param_override ?? '',
         outbound_format_override: channel.outbound_format_override ?? '',
+        upstream_protocols: channel.upstream_protocols ?? [],
+        first_token_time_out: channel.first_token_time_out ?? 0,
+        attempt_time_out: channel.attempt_time_out ?? 0,
+        stream_idle_timeout: channel.stream_idle_timeout ?? 0,
+        reasoning_buffer_strategy: channel.reasoning_buffer_strategy ?? '',
         request_rewrite: normalizeRequestRewriteFormData(channel.request_rewrite),
         relay_log_raw_sse_until: channel.relay_log_raw_sse_until ?? 0,
         keys: channel.keys.length > 0
@@ -205,6 +210,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                 url: u.url.trim(),
                 delay: Number(u.delay || 0),
                 suffix_mode: u.suffix_mode && u.suffix_mode !== 'auto' ? u.suffix_mode : undefined,
+                // 协议绑定必须原样带过去，否则多协议渠道会退回按延迟挑地址。
+                protocol: u.protocol || undefined,
             }));
         }
         if (formData.model !== channel.model) req.model = formData.model;
@@ -253,6 +260,31 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         if (nextOutboundFormatOverride !== curOutboundFormatOverride) {
             // Empty string means "follow group outbound_format" (patch semantics).
             req.outbound_format_override = nextOutboundFormatOverride;
+        }
+
+        // 协议声明按顺序比较：顺序本身就是优先级，重排必须触发保存。
+        const nextUpstreamProtocols = formData.upstream_protocols ?? [];
+        const curUpstreamProtocols = channel.upstream_protocols ?? [];
+        if (nextUpstreamProtocols.join(',') !== curUpstreamProtocols.join(',')) {
+            req.upstream_protocols = nextUpstreamProtocols;
+        }
+
+        // 超时三项只在真正改动时才写，避免每次保存都覆盖渠道级设置。
+        const nextFirstTokenTimeout = formData.first_token_time_out ?? 0;
+        if (nextFirstTokenTimeout !== (channel.first_token_time_out ?? 0)) {
+            req.first_token_time_out = nextFirstTokenTimeout;
+        }
+        const nextAttemptTimeout = formData.attempt_time_out ?? 0;
+        if (nextAttemptTimeout !== (channel.attempt_time_out ?? 0)) {
+            req.attempt_time_out = nextAttemptTimeout;
+        }
+        const nextStreamIdleTimeout = formData.stream_idle_timeout ?? 0;
+        if (nextStreamIdleTimeout !== (channel.stream_idle_timeout ?? 0)) {
+            req.stream_idle_timeout = nextStreamIdleTimeout;
+        }
+        const nextReasoningBufferStrategy = formData.reasoning_buffer_strategy ?? '';
+        if (nextReasoningBufferStrategy !== (channel.reasoning_buffer_strategy ?? '')) {
+            req.reasoning_buffer_strategy = nextReasoningBufferStrategy;
         }
 
         if (!requestRewriteEqual(effectiveRequestRewrite, channel.request_rewrite)) {

@@ -545,6 +545,9 @@ export function GroupEditor({
                                                 </option>
                                             ))}
                                         </select>
+                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                            {t('form.outboundFormat.channelOverrideNotice')}
+                                        </p>
                                     </Field>
                                 ) : null}
                                 {endpointType === 'video_generation' ? (
@@ -703,6 +706,9 @@ export function GroupEditor({
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />
                                 </Field>
+                                <p className="col-span-full text-xs leading-5 text-muted-foreground">
+                                    {t('form.channelOverrideNotice')}
+                                </p>
                                 <Field>
                                     <FieldLabel htmlFor="group-session-keep-time">
                                         {t('form.sessionKeepTime')}

@@ -169,28 +169,51 @@ test('health polling follows accepted and running snapshots even when collapsed,
     assert.equal(hooks.useGroupHealthLatest(undefined, true).enabled(state(undefined)), false);
 });
 
-test('outbound inherit selection is visible and maps back to the persisted empty value', () => {
-    const source = parseSource('../src/components/modules/channel/Form.tsx');
-    const select = collectNodes(source, (node) => ts.isJsxElement(node)
-        && node.openingElement.tagName.getText(source) === 'Select'
-        && node.openingElement.getText(source).includes('formData.outbound_format_override'))[0];
-    const changes = [];
-    const { render } = evaluateSource(`export function render(formData) { return ${select.getText(source)}; }`, {
-        Select: 'select', SelectTrigger: 'button', SelectValue: 'span', SelectContent: 'div', SelectItem: 'option',
-        idPrefix: 'channel', t: (key) => key, onFormDataChange: (value) => changes.push(value),
-    });
-    for (const persistedValue of ['', 'chat_only', 'responses_only']) {
-        const rendered = render({ outbound_format_override: persistedValue, name: 'Unchanged' });
-        assert.equal(rendered.props.value, persistedValue || 'inherit');
-        const items = rendered.props.children[1].props.children;
-        assert.deepEqual(Array.from(items, (item) => item.props.value), ['inherit', 'chat_only', 'responses_only']);
-        assert.equal(rendered.props.children[0].props.children.props.placeholder, 'outboundFormatOverrideFollowGroup');
-        for (const selectedValue of ['inherit', 'chat_only', 'responses_only']) {
-            rendered.props.onValueChange(selectedValue);
-            assert.equal(changes.at(-1).outbound_format_override, selectedValue === 'inherit' ? '' : selectedValue);
-            assert.equal(changes.at(-1).name, 'Unchanged');
-        }
-    }
+test('channel protocol selection is multi-select, order-preserving, and gates conflicting combinations', () => {
+    const source = readSource('../src/components/modules/channel/Form.tsx');
+    // 提取真正的实现（而不是在这里重写一份逻辑），保证测试跟着产品代码走。
+    const helpers = source.slice(
+        source.indexOf('export function toggleUpstreamProtocol('),
+        source.indexOf('export interface ChannelFormProps {'),
+    );
+    const { toggleUpstreamProtocol, upstreamProtocolConflict, normalizeTimeoutInputValue } = evaluateSource(
+        `${helpers}
+        export { toggleUpstreamProtocol, upstreamProtocolConflict, normalizeTimeoutInputValue };`,
+    );
+    // 返回值来自 vm 沙箱，数组原型与宿主不同，用 JSON 比较结构。
+    const asJson = (value) => JSON.stringify(value);
+
+    // 勾选顺序 = 尝试优先级：新勾选追加到末尾，不插队。
+    let protocols = [];
+    protocols = toggleUpstreamProtocol(protocols, 'chat', true);
+    protocols = toggleUpstreamProtocol(protocols, 'responses', true);
+    assert.equal(asJson(protocols), asJson(['chat', 'responses']));
+    // 重排（先取消再勾选）必须反映到顺序上。
+    protocols = toggleUpstreamProtocol(protocols, 'chat', false);
+    protocols = toggleUpstreamProtocol(protocols, 'chat', true);
+    assert.equal(asJson(protocols), asJson(['responses', 'chat']));
+    // 重复勾选不产生重复项。
+    assert.equal(asJson(toggleUpstreamProtocol(protocols, 'responses', true)), asJson(['responses', 'chat']));
+
+    // 互斥组合必须被识别（前端禁用 + 后端拒绝，两处规则一致）。
+    assert.equal(upstreamProtocolConflict(['passthrough', 'chat']), true);
+    assert.equal(upstreamProtocolConflict(['raw', 'responses']), true);
+    assert.equal(upstreamProtocolConflict(['chat_only', 'chat']), true);
+    assert.equal(upstreamProtocolConflict(['responses_only', 'responses']), true);
+    assert.equal(upstreamProtocolConflict(['messages_only', 'messages']), true);
+    assert.equal(upstreamProtocolConflict(['chat', 'responses']), false);
+    assert.equal(upstreamProtocolConflict(['responses_only', 'chat_only']), false);
+    assert.equal(upstreamProtocolConflict(['chat']), false);
+    assert.equal(upstreamProtocolConflict([]), false);
+
+    // 超时输入：空串与非法输入都映射成 0（跟随分组），负一保留为"关闭"。
+    assert.equal(normalizeTimeoutInputValue(''), 0);
+    assert.equal(normalizeTimeoutInputValue('   '), 0);
+    assert.equal(normalizeTimeoutInputValue('abc'), 0);
+    assert.equal(normalizeTimeoutInputValue('-1'), -1);
+    assert.equal(normalizeTimeoutInputValue('0'), 0);
+    assert.equal(normalizeTimeoutInputValue('30'), 30);
+    assert.equal(normalizeTimeoutInputValue(' 12.9 '), 12);
 });
 
 test('member-only group edits preserve advanced values while explicit clearing remains possible', () => {

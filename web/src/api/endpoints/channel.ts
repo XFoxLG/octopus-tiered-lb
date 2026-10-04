@@ -67,7 +67,42 @@ export type BaseUrl = {
     url: string;
     delay: number;
     suffix_mode?: 'auto' | 'openai_compat' | 'anthropic' | 'gemini' | 'volcengine' | 'custom' | '';
+    /**
+     * 这条地址服务于哪种上游协议。多协议渠道可把不同协议绑到不同地址
+     * （如火山方舟：OpenAI 兼容在 /api/v3、Anthropic 兼容在 /api/compatible）。
+     * 留空 = 通用地址，兼容单地址渠道。
+     */
+    protocol?: UpstreamProtocol | '';
 };
+
+/**
+ * 渠道级上游协议。与后端 model.UpstreamProtocol 保持同一套词汇。
+ * 顺序即优先级，由用户在渠道表单里拖拽决定。
+ */
+export type UpstreamProtocol =
+    | 'chat'
+    | 'responses'
+    | 'messages'
+    | 'chat_only'
+    | 'responses_only'
+    | 'messages_only'
+    | 'passthrough'
+    | 'raw';
+
+/** 协议下拉/拖拽的展示顺序，与后端 upstreamProtocolOrder 对齐。 */
+export const UPSTREAM_PROTOCOL_OPTIONS: readonly UpstreamProtocol[] = [
+    'chat',
+    'responses',
+    'messages',
+    'chat_only',
+    'responses_only',
+    'messages_only',
+    'passthrough',
+    'raw',
+] as const;
+
+/** 渠道级推理缓冲策略；空串 = 跟随分组。 */
+export type ChannelReasoningBufferStrategy = '' | 'buffer' | 'immediate';
 
 export type CustomHeader = {
     header_key: string;
@@ -125,6 +160,17 @@ export type Channel = {
     custom_header: CustomHeader[];
     param_override?: string | null;
     outbound_format_override?: string;
+    /** 渠道声明的上游协议（有序）。空数组 = 沿用分组 outbound_format。 */
+    upstream_protocols?: UpstreamProtocol[];
+    /**
+     * 渠道级超时覆盖（秒）。0 = 跟随分组（默认，也是 Go 零值）；
+     * -1 = 显式关闭该看门狗；>0 = 秒数。
+     */
+    first_token_time_out?: number;
+    attempt_time_out?: number;
+    stream_idle_timeout?: number;
+    /** 渠道级推理缓冲策略；空串 = 跟随分组。 */
+    reasoning_buffer_strategy?: ChannelReasoningBufferStrategy;
     channel_proxy?: string | null;
     request_rewrite?: RequestRewriteConfig | null;
     relay_log_raw_sse_until?: number;
@@ -173,6 +219,11 @@ export type CreateChannelRequest = {
     channel_proxy?: string | null;
     param_override?: string | null;
     outbound_format_override?: string;
+    upstream_protocols?: UpstreamProtocol[];
+    first_token_time_out?: number;
+    attempt_time_out?: number;
+    stream_idle_timeout?: number;
+    reasoning_buffer_strategy?: ChannelReasoningBufferStrategy;
     request_rewrite?: RequestRewriteConfig;
     relay_log_raw_sse_until?: number;
     match_regex?: string | null;
@@ -209,6 +260,11 @@ export type UpdateChannelRequest = {
     channel_proxy?: string | null;
     param_override?: string | null;
     outbound_format_override?: string;
+    upstream_protocols?: UpstreamProtocol[];
+    first_token_time_out?: number;
+    attempt_time_out?: number;
+    stream_idle_timeout?: number;
+    reasoning_buffer_strategy?: ChannelReasoningBufferStrategy;
     request_rewrite?: RequestRewriteConfig;
     relay_log_raw_sse_until?: number;
     match_regex?: string | null;

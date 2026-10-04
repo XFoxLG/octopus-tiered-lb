@@ -1945,14 +1945,14 @@
       "updateFailed": "更新失敗"
     },
     "log": {
-"queueDropPolicy": {
+      "queueDropPolicy": {
         "label": "日誌佇列丟棄策略",
         "hint": "高 QPS 時記憶體日誌佇列滿的處理策略。「丟棄最舊」（推薦）保留最新診斷資料；「丟棄最新」保留歷史序列完整性；「停用」阻塞觸發刷盤（高負載下可能拖慢轉發）。",
         "disabled": "停用（滿時刷盤）",
         "oldest": "丟棄最舊（推薦）",
         "newest": "丟棄最新"
       },
-            "title": "日誌設定",
+      "title": "日誌設定",
       "enabled": {
         "label": "啟用歷史日誌",
         "description": "關閉後將不再保存日誌，並自動清理已有的歷史日誌"
@@ -2415,8 +2415,10 @@
           "chatOnly": "僅 Chat Completions",
           "responsesOnly": "僅 Responses",
           "messagesOnly": "僅 Anthropic Messages"
-        }
-      }
+        },
+        "channelOverrideNotice": "單一渠道可以宣告自己的上游協定並覆蓋這裡的選擇；渠道未宣告時沿用此處設定。"
+      },
+      "channelOverrideNotice": "以上超時（首字 / 單次嘗試 / 串流閒置）與推理緩衝策略都可被單一渠道覆蓋：渠道裡留空或填 0 就沿用這裡的設定。"
     },
     "mode": {
       "roundRobin": "輪詢",
@@ -3211,7 +3213,45 @@
       "keySelectionStrategyAvailability": "可用度",
       "keySelectionStrategySpeed": "速度",
       "keySelectionStrategyPriority": "優先級",
-      "keyHealthFailed": "巡檢失敗"
+      "keyHealthFailed": "巡檢失敗",
+      "upstreamProtocols": "上游協定",
+      "upstreamProtocolsHint": "宣告該渠道實際支援哪些上游協定，勾選順序就是嘗試優先順序。留空 = 完全沿用分組的出站格式（升級後行為不變）。",
+      "upstreamProtocolsFollowGroup": "留空：沿用分組設定",
+      "upstreamProtocolsOrder": "嘗試順序：{order}",
+      "upstreamProtocolsConflict": "目前勾選互相矛盾（整體透傳不能與其它協定共存；「僅 X」不能與寬鬆的 X 同時勾選）。",
+      "upstreamProtocol": {
+        "chat": "Chat Completions",
+        "responses": "Responses API",
+        "messages": "Anthropic Messages",
+        "chat_only": "僅 Chat Completions",
+        "responses_only": "僅 Responses API",
+        "messages_only": "僅 Anthropic Messages",
+        "passthrough": "原始透傳",
+        "raw": "原始透傳（保留路徑）"
+      },
+      "upstreamProtocolHint": {
+        "chat": "優先 /v1/chat/completions，失敗可回退 Responses",
+        "responses": "優先 /v1/responses，失敗可回退 Chat Completions",
+        "messages": "優先 Anthropic Messages，失敗可回退 Chat → Responses",
+        "chat_only": "只用 /v1/chat/completions，不做跨格式回退",
+        "responses_only": "只用 /v1/responses，不做跨格式回退",
+        "messages_only": "只用 Anthropic Messages，不做跨格式回退",
+        "passthrough": "請求體原樣轉發，只改寫 model 欄位",
+        "raw": "透傳請求體，並保留客戶端原始請求路徑"
+      },
+      "channelTimeouts": "超時覆蓋",
+      "channelTimeoutsHint": "留空或 0 = 沿用分組；-1 = 關閉該看門狗；正數 = 秒數。",
+      "channelTimeoutsValueHint": "0 跟隨分組（預設）・-1 關閉・正數秒數",
+      "channelFirstTokenTimeout": "首字超時（秒）",
+      "channelAttemptTimeout": "單次嘗試超時（秒）",
+      "channelStreamIdleTimeout": "串流閒置超時（秒）",
+      "channelReasoningBufferStrategy": "推理緩衝策略",
+      "channelReasoningBufferStrategyHint": "控制思考內容是否先緩衝到可見正文再下發。留空 = 沿用分組設定。",
+      "channelReasoningBufferStrategyInherit": "跟隨分組",
+      "channelReasoningBufferStrategyBuffer": "緩衝（安全重試）",
+      "channelReasoningBufferStrategyImmediate": "立即下發（即時體驗）",
+      "baseUrlProtocolAny": "通用位址",
+      "baseUrlProtocolLabel": "該位址服務的上游協定"
     }
   },
   "errors": {

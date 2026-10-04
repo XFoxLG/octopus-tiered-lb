@@ -1989,14 +1989,14 @@
       "updateFailed": "Update failed"
     },
     "log": {
-"queueDropPolicy": {
+      "queueDropPolicy": {
         "label": "Log queue drop policy",
         "hint": "When the in-memory log queue is full during high QPS, drop old/new logs or trigger immediate flush. 'oldest' (recommended) keeps recent diagnostics; 'newest' preserves historical sequence; 'disabled' blocks to flush (may stall high-load relay).",
         "disabled": "Disabled (flush on full)",
         "oldest": "Drop oldest (recommended)",
         "newest": "Drop newest"
       },
-            "title": "Log Settings",
+      "title": "Log Settings",
       "enabled": {
         "label": "Enable History Logs",
         "description": "When disabled, logs will not be saved and existing logs will be cleaned up"
@@ -2466,8 +2466,10 @@
           "chatOnly": "Chat Completions only",
           "responsesOnly": "Responses only",
           "messagesOnly": "Anthropic Messages only"
-        }
-      }
+        },
+        "channelOverrideNotice": "An individual channel can declare its own upstream protocols and override this choice; channels without a declaration inherit this setting."
+      },
+      "channelOverrideNotice": "All timeouts above (first token / attempt / stream idle) and the reasoning buffer strategy can be overridden per channel: leave the channel field empty or 0 to inherit this setting."
     },
     "mode": {
       "roundRobin": "Round Robin",
@@ -3255,7 +3257,45 @@
       "keySelectionStrategyAvailability": "Availability",
       "keySelectionStrategySpeed": "Speed",
       "keySelectionStrategyPriority": "Priority",
-      "keyHealthFailed": "Check failed"
+      "keyHealthFailed": "Check failed",
+      "upstreamProtocols": "Upstream Protocols",
+      "upstreamProtocolsHint": "Declare which upstream protocols this channel actually supports. The order you tick them is the attempt priority. Leave empty to keep using the group outbound format (unchanged after upgrade).",
+      "upstreamProtocolsFollowGroup": "Empty: follow the group setting",
+      "upstreamProtocolsOrder": "Attempt order: {order}",
+      "upstreamProtocolsConflict": "The current selection contradicts itself (whole-request passthrough cannot combine with other protocols; \"only X\" cannot be combined with the permissive X).",
+      "upstreamProtocol": {
+        "chat": "Chat Completions",
+        "responses": "Responses API",
+        "messages": "Anthropic Messages",
+        "chat_only": "Chat Completions only",
+        "responses_only": "Responses API only",
+        "messages_only": "Anthropic Messages only",
+        "passthrough": "Passthrough",
+        "raw": "Passthrough (keep path)"
+      },
+      "upstreamProtocolHint": {
+        "chat": "Prefer /v1/chat/completions, may fall back to Responses",
+        "responses": "Prefer /v1/responses, may fall back to Chat Completions",
+        "messages": "Prefer Anthropic Messages, may fall back to Chat then Responses",
+        "chat_only": "Use only /v1/chat/completions, no cross-format fallback",
+        "responses_only": "Use only /v1/responses, no cross-format fallback",
+        "messages_only": "Use only Anthropic Messages, no cross-format fallback",
+        "passthrough": "Forward the original body, rewriting only the model field",
+        "raw": "Forward the original body and keep the client request path"
+      },
+      "channelTimeouts": "Timeout Overrides",
+      "channelTimeoutsHint": "Empty or 0 follows the group; -1 disables the watchdog; a positive number is seconds.",
+      "channelTimeoutsValueHint": "0 follows the group (default) · -1 disabled · positive = seconds",
+      "channelFirstTokenTimeout": "First token timeout (s)",
+      "channelAttemptTimeout": "Attempt timeout (s)",
+      "channelStreamIdleTimeout": "Stream idle timeout (s)",
+      "channelReasoningBufferStrategy": "Reasoning Buffer Strategy",
+      "channelReasoningBufferStrategyHint": "Controls whether reasoning content is buffered until visible output arrives. Empty follows the group setting.",
+      "channelReasoningBufferStrategyInherit": "Follow group",
+      "channelReasoningBufferStrategyBuffer": "Buffer (safe retry)",
+      "channelReasoningBufferStrategyImmediate": "Immediate (lower latency)",
+      "baseUrlProtocolAny": "Any protocol",
+      "baseUrlProtocolLabel": "Upstream protocol served by this URL"
     }
   },
   "errors": {

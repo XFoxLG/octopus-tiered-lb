@@ -82,6 +82,7 @@ function assertTranslatedPaths(localeName, messages, paths) {
             const translated = translate(messagePath, {
                 count: 2, completed: 1, total: 2, ms: 25, value: 'Chat', id: 1,
                 backend: 'Redis / Valkey', health: 'Healthy', tls: 'TLS', error: 'Connection refused',
+                order: 'Chat Completions → Responses API',
             });
             assert.notEqual(translated, messagePath, `${localeName} renders a raw key at ${messagePath}`);
         }
@@ -218,8 +219,28 @@ function assertGroupUiTranslations() {
         ...collectLiteralTranslationPaths('src/components/modules/group/GroupListItem.tsx', 'group'),
         ...['running', 'success', 'partial', 'failed'].map((status) => `group.card.healthProbeStatus.${status}`),
         ...['label', 'hint', 'buffer', 'immediate'].map((key) => `setting.retry.reasoningBufferStrategy.${key}`),
-        ...['outboundFormatOverride', 'outboundFormatOverrideHint', 'outboundFormatOverrideFollowGroup', 'outboundFormatOverrideChatOnly', 'outboundFormatOverrideResponsesOnly']
-            .map((key) => `channel.form.${key}`),
+        ...[
+            'upstreamProtocols',
+            'upstreamProtocolsHint',
+            'upstreamProtocolsFollowGroup',
+            'upstreamProtocolsOrder',
+            'upstreamProtocolsConflict',
+            'channelTimeouts',
+            'channelTimeoutsHint',
+            'channelTimeoutsValueHint',
+            'channelFirstTokenTimeout',
+            'channelAttemptTimeout',
+            'channelStreamIdleTimeout',
+            'channelReasoningBufferStrategy',
+            'channelReasoningBufferStrategyHint',
+            'channelReasoningBufferStrategyInherit',
+            'channelReasoningBufferStrategyBuffer',
+            'channelReasoningBufferStrategyImmediate',
+        ].map((key) => `channel.form.${key}`),
+        // 协议名与协议说明通过模板键（t(`upstreamProtocol.${protocol}`)）动态取，
+        // 字面量扫描看不到，必须显式枚举，否则漏键会静默显示原始 key。
+        ...['chat', 'responses', 'messages', 'chat_only', 'responses_only', 'messages_only', 'passthrough', 'raw']
+            .flatMap((protocol) => [`channel.form.upstreamProtocol.${protocol}`, `channel.form.upstreamProtocolHint.${protocol}`]),
     ]);
     for (const localeName of localeFiles) {
         assertTranslatedPaths(localeName, readJson(path.join(localeDir, localeName)), paths);
