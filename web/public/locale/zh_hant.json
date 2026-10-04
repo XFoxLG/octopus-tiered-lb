@@ -3167,6 +3167,8 @@
         "applySuccess": "已新增 {count} 個模型",
         "allModels": "全部模型",
         "perKey": "按 Key 檢視",
+        "selectKeyModels": "選擇該 key 全部模型",
+        "unselectKeyModels": "取消該 key 全部模型",
         "noModels": "未返回模型",
         "perKeyHint": "把每個 key 抓取到的模型回填至該 key 的「支援模型」限制中；僅變更表單狀態，儲存前仍可編輯。",
         "fillAll": "全部填充",

@@ -23,6 +23,7 @@ import { useSettingList, SettingKey } from '@/api/endpoints/setting';
 import { channelTemplates } from './templates';
 import { CHANNEL_TYPE_OPTIONS } from './type-options';
 import { isOpenAICompatBaseUrlSuffixMode } from './base-url-suffix';
+import { normalizeFetchedModels, toggleModelSelection } from './model-picker';
 import {
     applyPerKeyModelFill,
     planPerKeyModelFill,
@@ -351,14 +352,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
     };
 
     const toggleGroupSelection = (groupModels: string[]) => {
-        const currentSet = new Set(draftSelected);
-        const allSelected = groupModels.every((m) => currentSet.has(m));
-        if (allSelected) {
-            const removeSet = new Set(groupModels);
-            onDraftChange(draftSelected.filter((m) => !removeSet.has(m)));
-        } else {
-            onDraftChange(Array.from(new Set([...draftSelected, ...groupModels])));
-        }
+        onDraftChange(toggleModelSelection(draftSelected, groupModels));
     };
 
     const toggleGroupCollapsed = (label: string) => {
@@ -366,13 +360,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
     };
 
     const handleSelectFiltered = () => {
-        if (filteredModels.length === 0) return;
-        const currentSet = new Set(draftSelected);
-        if (filteredModels.every((model) => currentSet.has(model))) {
-            onDraftChange(draftSelected.filter((model) => !filteredModels.includes(model)));
-        } else {
-            onDraftChange(Array.from(new Set([...draftSelected, ...filteredModels])));
-        }
+        onDraftChange(toggleModelSelection(draftSelected, filteredModels));
     };
 
     const handleApply = () => {
@@ -582,7 +570,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                                         key={`${result.key_id ?? 0}-${result.key_masked ?? ''}-${idx}`}
                                         className={`rounded-lg border p-3 ${result.passed ? 'border-border/25 bg-background/40' : 'border-red-500/20 bg-red-500/5'}`}
                                     >
-                                        <div className="mb-2 flex items-center gap-2">
+                                        <div className="mb-2 flex flex-wrap items-center gap-2">
                                             {result.passed ? (
                                                 <CheckCircle2 className="size-4 shrink-0 text-green-500" />
                                             ) : (
@@ -596,6 +584,20 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                                                     {result.key_remark}
                                                 </Badge>
                                             )}
+                                            {result.passed && result.models.length > 0 && (
+                                                <Button
+                                                    type="button"
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    onClick={() => toggleGroupSelection(result.models)}
+                                                    className="ml-auto h-7 shrink-0 rounded-md px-2 text-xs"
+                                                >
+                                                    <ListFilter className="size-3" />
+                                                    {result.models.every((model) => selectedSet.has(model))
+                                                        ? t('unselectKeyModels')
+                                                        : t('selectKeyModels')}
+                                                </Button>
+                                            )}
                                             {onFillPerKeyResult && (
                                                 <Button
                                                     type="button"
@@ -604,7 +606,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                                                     onClick={() => onFillPerKeyResult(result, idx)}
                                                     disabled={!result.passed || (result.models?.length ?? 0) === 0}
                                                     aria-label={t('fillOne')}
-                                                    className="ml-auto h-6 shrink-0 rounded-md px-2 text-[0.625rem] text-muted-foreground/70 hover:bg-transparent hover:text-foreground disabled:opacity-40"
+                                                    className="h-7 shrink-0 rounded-md px-2 text-xs text-muted-foreground/70 hover:bg-transparent hover:text-foreground disabled:opacity-40"
                                                 >
                                                     <Check className="size-3" />
                                                     {t('fillOne')}
@@ -826,6 +828,7 @@ export function ChannelForm({
 
     const fetchModel = useFetchModel();
     const fetchModelsPerKey = useFetchModelsPerKey();
+    const isFetchingModels = fetchModel.isPending || fetchModelsPerKey.isPending;
     const testChannel = useTestChannel();
     const [testSummary, setTestSummary] = useState<TestChannelSummary | null>(null);
     const [modelPickerDraft, setModelPickerDraft] = useState<string[]>([]);
@@ -949,28 +952,6 @@ export function ChannelForm({
         }));
     };
 
-    const normalizeFetchedModels = (data: unknown): string[] => {
-        if (!Array.isArray(data)) return [];
-
-        return Array.from(new Set(
-            data
-                .map((item) => {
-                    if (typeof item === 'string') return item.trim();
-                    if (!item || typeof item !== 'object') return '';
-
-                    const candidate =
-                        ('id' in item && typeof item.id === 'string' && item.id) ||
-                        ('name' in item && typeof item.name === 'string' && item.name) ||
-                        ('display_name' in item && typeof item.display_name === 'string' && item.display_name) ||
-                        ('displayName' in item && typeof item.displayName === 'string' && item.displayName) ||
-                        '';
-
-                    return candidate.trim();
-                })
-                .filter(Boolean)
-        ));
-    };
-
     const normalizedHeaders = useMemo(() =>
         (formData.custom_header ?? [])
             .map((h) => ({ header_key: h.header_key.trim(), header_value: h.header_value }))
@@ -1065,35 +1046,28 @@ export function ChannelForm({
             custom_header: normalizedHeaders,
         };
 
-        // 主模型列表（单 key）
-        fetchModel.mutate(
-            payload,
-            {
-                onSuccess: (data) => {
-                    const normalizedModels = normalizeFetchedModels(data);
-                    if (normalizedModels.length > 0) {
-                        setFetchedModels(normalizedModels);
-                        toast.success(t('modelRefreshSuccess', { count: normalizedModels.length }));
-                    } else {
-                        setFetchedModels([]);
-                        toast.warning(t('modelRefreshEmpty'));
-                    }
-                },
-                onError: (error) => {
-                    setFetchedModels([]);
-                    const errorMessage = error instanceof Error ? error.message : String(error);
-                    toast.error(t('modelRefreshFailed'), { description: errorMessage });
-                },
+        const handleModels = (data: unknown) => {
+            const models = normalizeFetchedModels(data);
+            setFetchedModels(models);
+            if (models.length > 0) {
+                toast.success(t('modelRefreshSuccess', { count: models.length }));
+            } else {
+                toast.warning(t('modelRefreshEmpty'));
             }
-        );
+        };
+        const handleError = (error: unknown) => {
+            setFetchedModels([]);
+            setPerKeyResults(null);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            toast.error(t('modelRefreshFailed'), { description: errorMessage });
+        };
 
-        // 如果有多个 key，同时拉取每个 key 的模型列表
         const enabledKeys = formData.keys.filter((k) => k.enabled && k.channel_key.trim());
         if (enabledKeys.length > 1) {
             fetchModelsPerKey.mutate(
                 {
                     ...payload,
-                    // 带上 id / remark，后端会在 key_id / key_remark 里回传，供“回填到该 key”精确定位
+                    // 保留 id / remark，供逐 key 回填精确定位。
                     keys: enabledKeys.map((k) => ({
                         id: k.id,
                         enabled: true,
@@ -1103,14 +1077,27 @@ export function ChannelForm({
                 },
                 {
                     onSuccess: (data) => {
-                        setPerKeyResults(data.results);
+                        setPerKeyResults(data.results.map((result) => ({
+                            ...result,
+                            models: normalizeFetchedModels(result.models),
+                        })));
+                        if (!data.results.some((result) => result.passed)) {
+                            setFetchedModels([]);
+                            toast.error(t('modelRefreshFailed'));
+                            return;
+                        }
+                        handleModels(data.all_models);
                     },
-                    onError: () => {
-                        setPerKeyResults(null);
-                    },
+                    onError: handleError,
                 }
             );
+            return;
         }
+
+        fetchModel.mutate(payload, {
+            onSuccess: handleModels,
+            onError: handleError,
+        });
     };
 
     const handleAddModel = (model: string) => {
@@ -1544,10 +1531,10 @@ export function ChannelForm({
                 <div className="flex items-center justify-end gap-2">
                     <MorphingDialog onOpen={handleRefreshModels}>
                         <MorphingDialogTrigger
-                            disabled={!formData.base_urls?.[0]?.url || !effectiveKey || fetchModel.isPending}
+                            disabled={!formData.base_urls?.[0]?.url || !effectiveKey || isFetchingModels}
                             className="inline-flex h-6 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground/50 transition-colors hover:bg-transparent hover:text-muted-foreground"
                         >
-                            <RefreshCw className={`h-3 w-3 ${fetchModel.isPending ? 'animate-spin' : ''}`} />
+                            <RefreshCw className={`h-3 w-3 ${isFetchingModels ? 'animate-spin' : ''}`} />
                             {t('modelRefresh')}
                         </MorphingDialogTrigger>
                         <MorphingDialogContainer>
@@ -1556,7 +1543,7 @@ export function ChannelForm({
                                     models={fetchedModels}
                                     draftSelected={modelPickerDraft}
                                     onDraftChange={setModelPickerDraft}
-                                    isLoading={fetchModel.isPending}
+                                    isLoading={isFetchingModels}
                                     onApply={applyFetchedModelSelection}
                                     perKeyResults={perKeyResults}
                                     perKeyLoading={fetchModelsPerKey.isPending}
