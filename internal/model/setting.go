@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -245,6 +246,17 @@ func DefaultSettings() []Setting {
 	}
 }
 
+// DefaultSettingValue 返回指定设置键在 DefaultSettings 中登记的默认值；
+// 未登记的键返回 ("", false)。
+func DefaultSettingValue(key SettingKey) (string, bool) {
+	for _, s := range DefaultSettings() {
+		if s.Key == key {
+			return s.Value, true
+		}
+	}
+	return "", false
+}
+
 func (s *Setting) Validate() error {
 	if IsRetiredSemanticCacheSetting(s.Key) {
 		return fmt.Errorf("semantic cache setting %q is retired", s.Key)
@@ -259,7 +271,7 @@ func (s *Setting) Validate() error {
 			return fmt.Errorf("invalid IANA timezone: %s", s.Value)
 		}
 		return nil
-	case SettingKeyModelInfoUpdateInterval, SettingKeySyncLLMInterval, SettingKeyRelayLogKeepPeriod, SettingKeyRelayLogKeepCount, SettingKeyRelayLogContentKeepSizeMB, SettingKeyRelayLogContentKeepPeriod,
+	case SettingKeyModelInfoUpdateInterval, SettingKeySyncLLMInterval, SettingKeyStatsSaveInterval, SettingKeyRelayLogKeepPeriod, SettingKeyRelayLogKeepCount, SettingKeyRelayLogContentKeepSizeMB, SettingKeyRelayLogContentKeepPeriod,
 		SettingKeyRelayRetryCount, SettingKeyRelayRouteRetries, SettingKeyCircuitBreakerThreshold, SettingKeyCircuitBreakerCooldown,
 		SettingKeyCircuitBreakerMaxCooldown, SettingKeyCircuitBreakerHalfOpenProbeTimeout, SettingKeyRatelimitCooldown,
 		SettingKeyAuthErrorCooldown, SettingKeyServerErrorCooldown, SettingKeyRateLimitChannelThreshold,
@@ -274,7 +286,8 @@ func (s *Setting) Validate() error {
 		SettingKeyLoginRateLimitWindow, SettingKeyLoginRateLimitMaxFailed,
 		SettingKeyStreamSessionTTLMinutes, SettingKeyStreamSessionMaxEvents, SettingKeyStreamSessionMaxBytesMB,
 		SettingKeyStreamSessionMaxSessions,
-		SettingKeyFailureHintTTLUnauthorized, SettingKeyFailureHintTTLRateLimit, SettingKeyFailureHintTTLNetwork:
+		SettingKeyFailureHintTTLUnauthorized, SettingKeyFailureHintTTLRateLimit, SettingKeyFailureHintTTLNetwork,
+		SettingKeyKeyHealthCheckInterval, SettingKeyKeyHealthCheckNotifyCooldown, SettingKeyKeyHealthCheckFailThreshold:
 		v, err := strconv.Atoi(s.Value)
 		if err != nil {
 			return fmt.Errorf("setting value must be an integer")
@@ -334,9 +347,26 @@ func (s *Setting) Validate() error {
 			SettingKeyLoginRateLimitWindow, SettingKeyLoginRateLimitMaxFailed,
 			SettingKeyStreamSessionTTLMinutes, SettingKeyStreamSessionMaxEvents, SettingKeyStreamSessionMaxBytesMB,
 			SettingKeyFailureHintTTLUnauthorized, SettingKeyFailureHintTTLRateLimit, SettingKeyFailureHintTTLNetwork,
+			SettingKeyModelInfoUpdateInterval, SettingKeySyncLLMInterval, SettingKeyStatsSaveInterval,
 			SettingKeyKeyHealthCheckInterval, SettingKeyKeyHealthCheckFailThreshold, SettingKeyKeyHealthCheckNotifyCooldown:
 			if v < 1 {
 				return fmt.Errorf("setting value must be greater than 0")
+			}
+		}
+		// 周期类设置换算成 time.Duration 时必须不能溢出（否则回绕成负数/极小值，
+		// 周期任务行为不可预期）。上界 = MaxInt64 纳秒 / 单位纳秒。
+		switch s.Key {
+		case SettingKeyModelInfoUpdateInterval, SettingKeySyncLLMInterval:
+			if int64(v) > math.MaxInt64/int64(time.Hour) {
+				return fmt.Errorf("setting value is too large")
+			}
+		case SettingKeyStatsSaveInterval, SettingKeyKeyHealthCheckInterval:
+			if int64(v) > math.MaxInt64/int64(time.Minute) {
+				return fmt.Errorf("setting value is too large")
+			}
+		case SettingKeyKeyHealthCheckNotifyCooldown:
+			if int64(v) > math.MaxInt64/int64(time.Second) {
+				return fmt.Errorf("setting value is too large")
 			}
 		}
 	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRetryTruncationEnabled, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify:
@@ -469,9 +499,28 @@ func (s *Setting) Validate() error {
 	case SettingKeyAIRouteServices:
 		return ValidateAIRouteServiceConfigs(s.Value)
 	case SettingKeyWebDAVConfig:
-		var cfg map[string]any
+		// 与专用保存端点（POST /api/v1/backup/webdav/config）对齐：interval_hours
+		// 必须是 1..168 的整数，max_backups >= 1（专用端点把 <1 归一化为 10），
+		// 其余字段仅做类型校验。用 typed struct 反序列化，非整数（如 1.5）直接失败。
+		var cfg struct {
+			Enabled       *bool   `json:"enabled"`
+			BaseURL       *string `json:"base_url"`
+			Username      *string `json:"username"`
+			Password      *string `json:"password"`
+			RemotePath    *string `json:"remote_path"`
+			IntervalHours *int    `json:"interval_hours"`
+			IncludeStats  *bool   `json:"include_stats"`
+			IncludeLogs   *bool   `json:"include_logs"`
+			MaxBackups    *int    `json:"max_backups"`
+		}
 		if err := json.Unmarshal([]byte(s.Value), &cfg); err != nil {
-			return fmt.Errorf("webdav config must be a valid JSON object")
+			return fmt.Errorf("webdav config is invalid: %v", err)
+		}
+		if cfg.IntervalHours == nil || *cfg.IntervalHours < 1 || *cfg.IntervalHours > 168 {
+			return fmt.Errorf("webdav config interval_hours must be an integer between 1 and 168")
+		}
+		if cfg.MaxBackups != nil && *cfg.MaxBackups < 1 {
+			return fmt.Errorf("webdav config max_backups must be greater than or equal to 1")
 		}
 		return nil
 	case SettingKeyRequestFilterEnabled, SettingKeyGroupUpstreamMetaDisplayEnabled:
