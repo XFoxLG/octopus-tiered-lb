@@ -2285,7 +2285,14 @@
           "channelFailedWithReason": "Channel failed: {reason}",
           "partialFailure": "AI routing partially failed, but preserved {success_groups} successfully written groups: {cause}",
           "channelFailed": "Current channel processing failed.",
-          "batchFailed": "Current batch failed."
+          "batchFailed": "Current batch failed.",
+          "noService": "No AI route analysis service is available (batch {batch_index}).",
+          "emptyResult": "AI returned an empty result.",
+          "invalidJSON": "AI response is not valid JSON.",
+          "rateLimited": "AI analysis service rate limited, switching to another service{body_suffix}",
+          "upstreamTimeout": "AI analysis service timed out; use a faster model or reduce the model list{body_suffix}",
+          "unavailable": "AI analysis service temporarily unavailable, please retry later{body_suffix}",
+          "upstreamStatus": "AI analysis failed: upstream status {status}{body_suffix}"
         }
       }
     },

@@ -2241,7 +2241,14 @@
           "channelFailedWithReason": "渠道处理失败：{reason}",
           "partialFailure": "AI 路由部分失败，但已保留成功写入的 {success_groups} 个分组：{cause}",
           "channelFailed": "当前渠道处理失败。",
-          "batchFailed": "当前批次失败。"
+          "batchFailed": "当前批次失败。",
+          "noService": "没有可用的 AI 路由分析服务（第 {batch_index} 批）。",
+          "emptyResult": "AI返回结果为空。",
+          "invalidJSON": "AI返回结果不是合法JSON。",
+          "rateLimited": "AI 分析服务触发限流，正在尝试切换其他服务{body_suffix}",
+          "upstreamTimeout": "AI 分析服务响应超时，请更换更快的 AI 模型，或减少待分析模型数量后重试{body_suffix}",
+          "unavailable": "AI 分析服务暂时不可用，请稍后重试{body_suffix}",
+          "upstreamStatus": "AI 分析失败：上游状态 {status}{body_suffix}"
         }
       }
     },

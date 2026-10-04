@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lingyuins/octopus/internal/apperror"
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/channel"
@@ -31,10 +32,25 @@ import (
 
 const (
 	defaultAIRouteHTTPTimeout  = 180 * time.Second
-	aiRouteMaxModelsPerRequest = 120
 	aiRouteResponseMaxSize     = 2 << 20
 	defaultAIRouteRetryBackoff = 10 * time.Second
 )
+
+// defaultAIRouteMaxModelsPerRequest 是 AI 路由单批次最大模型数的兜底值（A4：
+// 设置项 ai_route_max_models_per_request 未配置/非法时使用）。
+const defaultAIRouteMaxModelsPerRequest = 120
+
+// getAIRouteMaxModelsPerRequest 读取单批次最大模型数设置（A4）。
+// 模型过多时大桶会按模型家族切分批次，切分会损失跨家族归一机会——
+// 该设置允许用户在上下文窗口大的分析模型上调高（如 200）换取更完整的归一。
+// 非法值（<1）或读取失败回退默认 120。
+func getAIRouteMaxModelsPerRequest() int {
+	v, err := setting.GetInt(model.SettingKeyAIRouteMaxModelsPerRequest)
+	if err != nil || v < 1 {
+		return defaultAIRouteMaxModelsPerRequest
+	}
+	return v
+}
 
 type aiRoutePromptModelInput struct {
 	ChannelID int    `json:"channel_id"`
@@ -48,9 +64,16 @@ type aiRoutePromptBucket struct {
 }
 
 type aiRouteChatCompletionRequest struct {
-	Model       string                      `json:"model"`
-	Messages    []aiRouteChatCompletionItem `json:"messages"`
-	Temperature float64                     `json:"temperature"`
+	Model          string                      `json:"model"`
+	Messages       []aiRouteChatCompletionItem `json:"messages"`
+	Temperature    float64                     `json:"temperature"`
+	ResponseFormat *aiRouteResponseFormat      `json:"response_format,omitempty"`
+}
+
+// aiRouteResponseFormat 请求 JSON 输出模式。不支持该字段的兼容上游会报 400，
+// 调用方捕获后去除该字段重试一次（见 generateAIRoutesForBucketWithService）。
+type aiRouteResponseFormat struct {
+	Type string `json:"type,omitempty"`
 }
 
 type aiRouteChatCompletionItem struct {
@@ -67,12 +90,26 @@ type aiRouteChatCompletionResponse struct {
 }
 
 type aiRouteCallError struct {
-	StatusCode int
-	Retryable  bool
-	Cooldown   time.Duration
-	Message    string
-	Cause      error
+	StatusCode  int
+	Retryable   bool
+	Cooldown    time.Duration
+	Message     string
+	MessageKey  string
+	MessageArgs map[string]any
+	Cause       error
 }
+
+// AIRouteI18nError 是 airoute 用户可见错误的 i18n 接口。helper 层用 errors.As
+// 断言并提取 MessageKey/MessageArgs 写入 progress.ErrorReasonKey/Args，
+// 前端按 locale 渲染（与 AIRoutePartialFailureError 同一消费通道）。
+type AIRouteI18nError interface {
+	error
+	I18nMessageKey() string
+	I18nMessageArgs() map[string]any
+}
+
+func (e *aiRouteCallError) I18nMessageKey() string          { return e.MessageKey }
+func (e *aiRouteCallError) I18nMessageArgs() map[string]any { return e.MessageArgs }
 
 type aiRouteTableRouteCorrection struct {
 	OriginalName  string
@@ -555,10 +592,10 @@ func generateAIRoutesForBucket(
 	tracker *aiRouteProgressTracker,
 ) ([]model.AIRouteEntry, error) {
 	if servicePool == nil {
-		return nil, fmt.Errorf("没有可用的 AI 路由分析服务")
+		return nil, errAIRouteNoService(batchIndex)
 	}
 	if serviceCount <= 0 {
-		return nil, fmt.Errorf("没有可用的 AI 路由分析服务")
+		return nil, errAIRouteNoService(batchIndex)
 	}
 
 	hint := aiRouteServiceHint{
@@ -588,6 +625,11 @@ func generateAIRoutesForBucket(
 		)
 		if callErr == nil {
 			servicePool.Release(lease, aiRouteServiceOutcome{Success: true})
+
+			// A1 自校验闭环：AI 漏归类的输入模型不静默丢失，对同一个服务追问一轮，
+			// 把补充 routes 合并进结果。追问失败不致命（保留首轮结果）。
+			routes = followUpUncoveredInputs(ctx, lease.Service, bucket, targetGroupName, batchIndex, routes)
+
 			if tracker != nil {
 				tracker.CompleteBatch(batchIndex, bucket, lease.Service.Name, attempt)
 			}
@@ -656,87 +698,20 @@ func generateAIRoutesForBucketWithService(
 		return nil, fmt.Errorf("构造模型列表失败: %w", err)
 	}
 
-	requestBody := aiRouteChatCompletionRequest{
-		Model: strings.TrimSpace(service.Model),
-		Messages: []aiRouteChatCompletionItem{
-			{Role: "system", Content: buildAIRouteSystemPrompt(bucket.PromptEndpointType)},
-			{Role: "user", Content: buildAIRouteUserPrompt(bucket.PromptEndpointType, targetGroupName, payload)},
-		},
-		Temperature: 0.1,
+	systemPrompt := buildAIRouteSystemPrompt(bucket.PromptEndpointType)
+	userPrompt := buildAIRouteUserPrompt(bucket.PromptEndpointType, targetGroupName, payload)
+
+	content, callErr := callAIRouteChatCompletion(ctx, service, systemPrompt, userPrompt)
+	if callErr != nil {
+		return nil, callErr
 	}
 
-	body, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("构造AI请求失败: %w", err)
-	}
-
-	timeout := getAIRouteHTTPTimeout()
-
-	httpClient, err := getAIRouteHTTPClient(timeout)
-	if err != nil {
-		return nil, fmt.Errorf("初始化AI请求客户端失败: %w", err)
-	}
-
-	requestCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	endpoint, err := joinAIRouteChatCompletionsURL(service.BaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("AI路由模型配置不完整")
-	}
-
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("创建AI请求失败: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(service.APIKey))
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		if isAIRouteTimeoutError(err) {
-			return nil, &aiRouteCallError{
-				Retryable: true,
-				Cooldown:  getAIRouteRetryCooldown(http.StatusRequestTimeout),
-				Message:   fmt.Sprintf("AI 分析超时（%s）", formatAIRouteTimeout(timeout)),
-				Cause:     err,
-			}
-		}
-		if requestCtx.Err() != nil && errors.Is(requestCtx.Err(), context.Canceled) && ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("AI 分析失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	rawBody, err := io.ReadAll(io.LimitReader(resp.Body, aiRouteResponseMaxSize))
-	if err != nil {
-		return nil, fmt.Errorf("读取AI响应失败: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, buildAIRouteUpstreamStatusError(resp.StatusCode, rawBody)
-	}
 	if tracker != nil {
 		tracker.MarkBatchAIResponseReceived(batchIndex, aiRoutePromptBucket{
 			PromptEndpointType: bucket.PromptEndpointType,
 			GroupEndpointType:  bucket.GroupEndpointType,
 			ModelInputs:        append([]aiRoutePromptModelInput(nil), bucket.ModelInputs...),
 		}, service.Name, attempt)
-	}
-
-	var completionResp aiRouteChatCompletionResponse
-	if err := json.Unmarshal(rawBody, &completionResp); err != nil {
-		log.Warnf("ai route completion response decode failed: status=%d body=%q", resp.StatusCode, summarizeAIRouteErrorBody(string(rawBody)))
-		return nil, fmt.Errorf("AI返回结果不是合法JSON")
-	}
-	if len(completionResp.Choices) == 0 {
-		return nil, nil
-	}
-
-	content, err := normalizeAIMessageContent(completionResp.Choices[0].Message.Content)
-	if err != nil {
-		return nil, err
 	}
 
 	routeResp, err := parseAIRouteResponseContent(content)
@@ -755,6 +730,131 @@ func generateAIRoutesForBucketWithService(
 	}
 
 	return normalizedRoutes, nil
+}
+
+// callAIRouteChatCompletion 向 AI 路由分析服务发送一次 chat completion 请求并返回
+// 文本内容。带 response_format=json_object（JSON mode）；若上游返回 400 且错误信息
+// 提示不支持 response_format，则去除该字段重试一次（兼容旧上游）。
+func callAIRouteChatCompletion(ctx context.Context, service aiRouteService, systemPrompt string, userPrompt string) (string, error) {
+	timeout := getAIRouteHTTPTimeout()
+
+	httpClient, err := getAIRouteHTTPClient(timeout)
+	if err != nil {
+		return "", fmt.Errorf("初始化AI请求客户端失败: %w", err)
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	endpoint, err := joinAIRouteChatCompletionsURL(service.BaseURL)
+	if err != nil {
+		return "", errAIRouteNotConfigured()
+	}
+
+	body, err := buildAIRouteChatCompletionRequestBody(service, systemPrompt, userPrompt, true)
+	if err != nil {
+		return "", err
+	}
+
+	content, bodyRaw, status, callErr := sendAIRouteChatCompletionRequest(requestCtx, httpClient, endpoint, service, body)
+	if callErr != nil {
+		// JSON mode 不兼容：400 且 body 提示 response_format 时，去掉该字段重试一次
+		if status == http.StatusBadRequest && callErrContainsResponseFormat(bodyRaw) {
+			log.Warnf("ai route service %s rejected response_format, retrying without json mode", service.Name)
+			fallbackBody, buildErr := buildAIRouteChatCompletionRequestBody(service, systemPrompt, userPrompt, false)
+			if buildErr != nil {
+				return "", buildErr
+			}
+			content, _, _, callErr = sendAIRouteChatCompletionRequest(requestCtx, httpClient, endpoint, service, fallbackBody)
+		}
+		if callErr != nil {
+			return "", callErr
+		}
+	}
+
+	return content, nil
+}
+
+// buildAIRouteChatCompletionRequestBody 构造请求体。jsonMode 为 true 时带
+// response_format={"type":"json_object"}；温度恒为 0（分类任务不需要创造性）。
+func buildAIRouteChatCompletionRequestBody(service aiRouteService, systemPrompt string, userPrompt string, jsonMode bool) ([]byte, error) {
+	requestBody := aiRouteChatCompletionRequest{
+		Model: strings.TrimSpace(service.Model),
+		Messages: []aiRouteChatCompletionItem{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		Temperature: 0,
+	}
+	if jsonMode {
+		requestBody.ResponseFormat = &aiRouteResponseFormat{Type: "json_object"}
+	}
+
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("构造AI请求失败: %w", err)
+	}
+	return body, nil
+}
+
+// callErrContainsResponseFormat 判断 400 响应体是否提示不支持 response_format。
+func callErrContainsResponseFormat(rawBody []byte) bool {
+	lower := strings.ToLower(string(rawBody))
+	return strings.Contains(lower, "response_format")
+}
+
+// sendAIRouteChatCompletionRequest 发送一次请求，返回 (content, rawBody, statusCode, err)。
+// 非错误路径解析 choices[0].message.content；无 choices 返回空串（调用方按空结果处理）。
+func sendAIRouteChatCompletionRequest(requestCtx context.Context, httpClient *http.Client, endpoint string, service aiRouteService, body []byte) (string, []byte, int, error) {
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", nil, 0, fmt.Errorf("创建AI请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(service.APIKey))
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		if isAIRouteTimeoutError(err) {
+			return "", nil, http.StatusRequestTimeout, &aiRouteCallError{
+				Retryable:  true,
+				Cooldown:   getAIRouteRetryCooldown(http.StatusRequestTimeout),
+				Message:    fmt.Sprintf("AI 分析超时（%s）", formatAIRouteTimeout(getAIRouteHTTPTimeout())),
+				MessageKey: "group.aiRoute.progress.runtime.upstreamTimeout",
+				Cause:      err,
+			}
+		}
+		if requestCtx.Err() != nil && errors.Is(requestCtx.Err(), context.Canceled) && requestCtx.Err() != nil {
+			return "", nil, 0, requestCtx.Err()
+		}
+		return "", nil, 0, fmt.Errorf("AI 分析失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := io.ReadAll(io.LimitReader(resp.Body, aiRouteResponseMaxSize))
+	if err != nil {
+		return "", nil, resp.StatusCode, fmt.Errorf("读取AI响应失败: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", rawBody, resp.StatusCode, buildAIRouteUpstreamStatusError(resp.StatusCode, rawBody)
+	}
+
+	var completionResp aiRouteChatCompletionResponse
+	if err := json.Unmarshal(rawBody, &completionResp); err != nil {
+		log.Warnf("ai route completion response decode failed: status=%d body=%q", resp.StatusCode, summarizeAIRouteErrorBody(string(rawBody)))
+		return "", rawBody, resp.StatusCode, errAIRouteInvalidJSON()
+	}
+	if len(completionResp.Choices) == 0 {
+		return "", rawBody, resp.StatusCode, nil
+	}
+
+	content, err := normalizeAIMessageContent(completionResp.Choices[0].Message.Content)
+	if err != nil {
+		return "", rawBody, resp.StatusCode, err
+	}
+
+	return content, rawBody, resp.StatusCode, nil
 }
 
 func buildAIRouteSystemPrompt(promptEndpointType string) string {
@@ -787,7 +887,11 @@ func buildAIRouteSystemPrompt(promptEndpointType string) string {
       ]
     }
   ]
-}`, endpointLabel)
+}
+
+示例：
+输入 [{"channel_id":1,"model":"gpt-4o"},{"channel_id":2,"model":"gpt-4o-2024-08-06"}]
+输出 {"routes":[{"requested_model":"gpt-4o","items":[{"channel_id":1,"upstream_model":"gpt-4o","priority":1,"weight":100},{"channel_id":2,"upstream_model":"gpt-4o-2024-08-06","priority":1,"weight":100}]}]}`, endpointLabel)
 }
 
 func buildAIRouteUserPrompt(promptEndpointType string, targetGroupName string, payload []byte) string {
@@ -871,7 +975,8 @@ func buildAIRoutePromptBuckets(modelInputs []model.AIRouteModelInput, targetProm
 }
 
 func splitAIRoutePromptBucket(bucket aiRoutePromptBucket) []aiRoutePromptBucket {
-	if len(bucket.ModelInputs) <= aiRouteMaxModelsPerRequest {
+	maxPerRequest := getAIRouteMaxModelsPerRequest()
+	if len(bucket.ModelInputs) <= maxPerRequest {
 		return []aiRoutePromptBucket{bucket}
 	}
 
@@ -890,7 +995,7 @@ func splitAIRoutePromptBucket(bucket aiRoutePromptBucket) []aiRoutePromptBucket 
 	}
 
 	result := make([]aiRoutePromptBucket, 0)
-	currentInputs := make([]aiRoutePromptModelInput, 0, aiRouteMaxModelsPerRequest)
+	currentInputs := make([]aiRoutePromptModelInput, 0, maxPerRequest)
 
 	flush := func() {
 		if len(currentInputs) == 0 {
@@ -899,15 +1004,15 @@ func splitAIRoutePromptBucket(bucket aiRoutePromptBucket) []aiRoutePromptBucket 
 		next := bucket
 		next.ModelInputs = append([]aiRoutePromptModelInput(nil), currentInputs...)
 		result = append(result, next)
-		currentInputs = make([]aiRoutePromptModelInput, 0, aiRouteMaxModelsPerRequest)
+		currentInputs = make([]aiRoutePromptModelInput, 0, maxPerRequest)
 	}
 
 	for _, key := range familyOrder {
 		inputs := familyInputs[key]
-		if len(inputs) >= aiRouteMaxModelsPerRequest {
+		if len(inputs) >= maxPerRequest {
 			flush()
-			for start := 0; start < len(inputs); start += aiRouteMaxModelsPerRequest {
-				end := start + aiRouteMaxModelsPerRequest
+			for start := 0; start < len(inputs); start += maxPerRequest {
+				end := start + maxPerRequest
 				if end > len(inputs) {
 					end = len(inputs)
 				}
@@ -918,7 +1023,7 @@ func splitAIRoutePromptBucket(bucket aiRoutePromptBucket) []aiRoutePromptBucket 
 			continue
 		}
 
-		if len(currentInputs)+len(inputs) > aiRouteMaxModelsPerRequest {
+		if len(currentInputs)+len(inputs) > maxPerRequest {
 			flush()
 		}
 		currentInputs = append(currentInputs, inputs...)
@@ -1042,43 +1147,67 @@ func buildAIRouteUpstreamStatusError(statusCode int, rawBody []byte) error {
 	body = summarizeAIRouteErrorBody(body)
 
 	message := ""
+	messageKey := ""
+	messageArgs := map[string]any{"body_suffix": ""}
+	if body != "" {
+		messageArgs["body_suffix"] = ": " + body
+	}
+
 	switch statusCode {
 	case http.StatusTooManyRequests:
+		messageKey = I18nKeyAIRouteRateLimited
 		if body == "" {
 			message = "AI 分析服务触发限流，正在尝试切换其他服务"
 		} else {
 			message = fmt.Sprintf("AI 分析服务触发限流，正在尝试切换其他服务: %s", body)
 		}
 	case http.StatusGatewayTimeout:
+		messageKey = I18nKeyAIRouteUpstreamTimeout
 		if body == "" {
 			message = "AI 分析服务响应超时，请更换更快的 AI 模型，或减少待分析模型数量后重试"
 		} else {
 			message = fmt.Sprintf("AI 分析服务响应超时，请更换更快的 AI 模型，或减少待分析模型数量后重试: %s", body)
 		}
 	case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable:
+		messageKey = I18nKeyAIRouteUnavailable
 		if body == "" {
 			message = "AI 分析服务暂时不可用，请稍后重试"
 		} else {
 			message = fmt.Sprintf("AI 分析服务暂时不可用，请稍后重试: %s", body)
 		}
 	default:
+		messageKey = I18nKeyAIRouteUpstreamStatus
+		messageArgs["status"] = statusCode
 		if body == "" {
 			message = fmt.Sprintf("AI 分析失败: upstream status %d", statusCode)
 		} else {
 			message = fmt.Sprintf("AI 分析失败: upstream status %d: %s", statusCode, body)
 		}
 	}
+	// messageArgs 初始化即含 body_suffix 键（空 body 为 ""），恒非空 map，
+	// 无需 nil 化兜底；占位符渲染时空串替换不产生字面量泄漏。
 
 	retryable := isAIRouteRetryableStatusCode(statusCode)
 	if !retryable {
-		return errors.New(message)
+		// 不可重试的用户可见错误走 aiRouteError（结构化 i18n 通道）。
+		appErr := apperror.New(CodeAIRouteUpstreamStatus, message).WithStatus(http.StatusBadGateway)
+		if len(messageArgs) > 0 {
+			appErr = appErr.WithParams(messageArgs)
+		}
+		return &aiRouteError{
+			appErr:   appErr,
+			i18nKey:  messageKey,
+			i18nArgs: messageArgs,
+		}
 	}
 
 	return &aiRouteCallError{
-		StatusCode: statusCode,
-		Retryable:  true,
-		Cooldown:   getAIRouteRetryCooldown(statusCode),
-		Message:    message,
+		StatusCode:  statusCode,
+		Retryable:   true,
+		Cooldown:    getAIRouteRetryCooldown(statusCode),
+		Message:     message,
+		MessageKey:  messageKey,
+		MessageArgs: messageArgs,
 	}
 }
 

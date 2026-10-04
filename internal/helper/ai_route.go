@@ -34,22 +34,22 @@ func StartGenerateAIRoute(req model.GenerateAIRouteRequest) (*model.GenerateAIRo
 	if conf.IsDevMockSuccess() {
 		now := aiRouteProgressNow()
 		progress := &model.GenerateAIRouteProgress{
-			ID:              uuid.NewString(),
-			Scope:           req.Scope,
-			GroupID:         req.GroupID,
-			Status:          model.AIRouteTaskStatusCompleted,
-			CurrentStep:     model.AIRouteTaskStepCompleted,
-			ProgressPercent: 100,
-			TotalBatches:    1,
+			ID:               uuid.NewString(),
+			Scope:            req.Scope,
+			GroupID:          req.GroupID,
+			Status:           model.AIRouteTaskStatusCompleted,
+			CurrentStep:      model.AIRouteTaskStepCompleted,
+			ProgressPercent:  100,
+			TotalBatches:     1,
 			CompletedBatches: 1,
-			Done:            true,
-			ResultReady:     true,
-			Message:         "dev mock success",
-			StartedAt:       cloneTimePtr(&now),
-			UpdatedAt:       cloneTimePtr(&now),
-			HeartbeatAt:     cloneTimePtr(&now),
-			FinishedAt:      cloneTimePtr(&now),
-			EventSequence:   1,
+			Done:             true,
+			ResultReady:      true,
+			Message:          "dev mock success",
+			StartedAt:        cloneTimePtr(&now),
+			UpdatedAt:        cloneTimePtr(&now),
+			HeartbeatAt:      cloneTimePtr(&now),
+			FinishedAt:       cloneTimePtr(&now),
+			EventSequence:    1,
 			Result: &model.GenerateAIRouteResult{
 				Scope:      req.Scope,
 				GroupID:    req.GroupID,
@@ -443,6 +443,13 @@ func finalizeAIRouteProgress(
 			progress.Message = runErr.Error()
 			progress.MessageKey = ""
 			progress.MessageArgs = nil
+			// airoute 结构化 i18n 错误：提取 MessageKey/MessageArgs 供前端按 locale 渲染，
+			// 避免 inferErrorMessageKey 的英文消息匹配陷阱（AGENTS.md 已知坑 #10）。
+			var i18nErr airoute.AIRouteI18nError
+			if errors.As(runErr, &i18nErr) && strings.TrimSpace(i18nErr.I18nMessageKey()) != "" {
+				progress.MessageKey = i18nErr.I18nMessageKey()
+				progress.MessageArgs = cloneAIRouteArgs(i18nErr.I18nMessageArgs())
+			}
 		}
 		progress.ErrorReason = progress.Message
 		progress.ErrorReasonKey = progress.MessageKey
