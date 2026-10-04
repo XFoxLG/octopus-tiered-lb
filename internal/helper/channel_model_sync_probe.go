@@ -77,7 +77,7 @@ func TestChannelModelSync(
 	if err != nil {
 		return nil, err
 	}
-	adapterTypes := outbound.ResolveAttemptTypesForChannel(channel.Type, probeRequest, "", channel.OutboundFormatOverride)
+	adapterTypes := outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, probeRequest, "", channel.OutboundFormatOverride, channel.UpstreamProtocols)
 	if len(adapterTypes) == 0 {
 		return nil, fmt.Errorf("no available adapter for channel type: %d", channel.Type)
 	}
@@ -87,7 +87,7 @@ func TestChannelModelSync(
 
 	start := time.Now()
 	// 单次探测：只用首个 adapter，不重试；失败原因写入 Error 即时返回。
-	statusCode, responseText, _, err := sendGroupProbeRequest(probeCtx, outbound.Get(adapterTypes[0]), channel, key, endpoint, modelName)
+	statusCode, responseText, _, err := sendGroupProbeRequest(probeCtx, outbound.Get(adapterTypes[0]), adapterTypes[0], channel, key, endpoint, modelName)
 	result.DelayMS = time.Since(start).Milliseconds()
 	result.StatusCode = statusCode
 	if err != nil {

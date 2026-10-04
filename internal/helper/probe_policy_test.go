@@ -17,7 +17,7 @@ func TestSkipModelTestBlocksEveryModelProbeEntry(testContext *testing.T) {
 	// credential selection, request construction, or any network operation.
 	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat, SkipModelTest: true}
 	testContext.Run("shared probe transport", func(testContext *testing.T) {
-		statusCode, responseText, response, err := sendGroupProbeRequest(context.Background(), outbound.Get(channel.Type), channel, "", appmodel.EndpointTypeChat, "fixture")
+		statusCode, responseText, response, err := sendGroupProbeRequest(context.Background(), outbound.Get(channel.Type), channel.Type, channel, "", appmodel.EndpointTypeChat, "fixture")
 		if err == nil || !strings.Contains(err.Error(), "skipped model test") {
 			testContext.Fatalf("expected skip before constructing probe, got %v", err)
 		}

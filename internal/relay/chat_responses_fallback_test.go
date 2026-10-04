@@ -297,6 +297,95 @@ func TestOutboundAttemptTypesAnthropicAutoStillPrefersChatFallbackChain(t *testi
 	}
 }
 
+// 分组级 passthrough/raw 会应用到分组内所有渠道。原生协议渠道（Gemini /
+// Anthropic / 火山 / Cloudflare / Embedding）无法被透传适配器承载，必须回落到
+// 自己的原生适配器，否则请求体会以 OpenAI 形状发到原生端点，必然失败。
+func TestOutboundAttemptTypesPassthroughFallsBackOnNativeChannelTypes(t *testing.T) {
+	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
+
+	for _, channelType := range []outbound.OutboundType{
+		outbound.OutboundTypeAnthropic,
+		outbound.OutboundTypeGemini,
+		outbound.OutboundTypeVolcengine,
+		outbound.OutboundTypeCloudflare,
+		outbound.OutboundTypeOpenAIEmbedding,
+		outbound.OutboundTypeCodex,
+	} {
+		got := outboundAttemptTypes(channelType, req, "passthrough", "")
+		want := []outbound.OutboundType{channelType}
+		if len(got) != len(want) || got[0] != want[0] {
+			t.Fatalf("channelType=%d passthrough attempt types = %#v, want %#v", channelType, got, want)
+		}
+	}
+}
+
+func TestOutboundAttemptTypesRawFallsBackOnNativeChannelTypes(t *testing.T) {
+	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIChatCompletion}
+
+	for _, channelType := range []outbound.OutboundType{
+		outbound.OutboundTypeAnthropic,
+		outbound.OutboundTypeGemini,
+		outbound.OutboundTypeVolcengine,
+		outbound.OutboundTypeCloudflare,
+		outbound.OutboundTypeOpenAIEmbedding,
+		outbound.OutboundTypeCodex,
+	} {
+		got := outboundAttemptTypes(channelType, req, "raw", "")
+		want := []outbound.OutboundType{channelType}
+		if len(got) != len(want) || got[0] != want[0] {
+			t.Fatalf("channelType=%d raw attempt types = %#v, want %#v", channelType, got, want)
+		}
+	}
+}
+
+// 每种入站格式 × 每种可透传渠道类型都必须仍然走透传，保证这次闸门没有
+// 把原本正常的 OpenAI 兼容渠道一起收紧掉。
+func TestOutboundAttemptTypesPassthroughStillAppliesToOpenAICompatibleChannels(t *testing.T) {
+	for _, rawFormat := range []model.APIFormat{
+		model.APIFormatOpenAIChatCompletion,
+		model.APIFormatOpenAIResponse,
+		model.APIFormatAnthropicMessage,
+	} {
+		for _, channelType := range []outbound.OutboundType{
+			outbound.OutboundTypeOpenAIChat,
+			outbound.OutboundTypeOpenAIResponse,
+			outbound.OutboundTypeMimo,
+		} {
+			req := &model.InternalLLMRequest{RawAPIFormat: rawFormat}
+
+			got := outboundAttemptTypes(channelType, req, "passthrough", "")
+			if len(got) != 1 || got[0] != outbound.OutboundTypePassthrough {
+				t.Fatalf("format=%s channelType=%d passthrough = %#v, want [passthrough]", rawFormat, channelType, got)
+			}
+
+			gotRaw := outboundAttemptTypes(channelType, req, "raw", "")
+			if len(gotRaw) != 1 || gotRaw[0] != outbound.OutboundTypeRaw {
+				t.Fatalf("format=%s channelType=%d raw = %#v, want [raw]", rawFormat, channelType, gotRaw)
+			}
+		}
+	}
+}
+
+// 非 LLM 入站格式（如 embedding）不能被透传接管，即使渠道类型是 OpenAI Chat。
+func TestOutboundAttemptTypesPassthroughSkipsNonLLMFormats(t *testing.T) {
+	req := &model.InternalLLMRequest{RawAPIFormat: model.APIFormatOpenAIEmbedding}
+
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, req, "passthrough", "")
+	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("passthrough on embedding format = %#v, want %#v", got, want)
+	}
+}
+
+// nil 请求不得 panic，且必须回落到渠道自身适配器。
+func TestOutboundAttemptTypesPassthroughHandlesNilRequest(t *testing.T) {
+	got := outboundAttemptTypes(outbound.OutboundTypeOpenAIChat, nil, "passthrough", "")
+	want := []outbound.OutboundType{outbound.OutboundTypeOpenAIChat}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("passthrough with nil request = %#v, want %#v", got, want)
+	}
+}
+
 // Unknown format values fall back to the default auto behavior so a stale or
 // mistyped setting never disables routing entirely.
 func TestOutboundAttemptTypesUnknownFormatFallsBackToAuto(t *testing.T) {

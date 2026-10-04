@@ -60,7 +60,7 @@ func RunGroupHealthCandidate(ctx context.Context, channel *appmodel.Channel, use
 	probeCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 
-	statusCode, responseText, _, err := sendGroupProbeRequest(probeCtx, outbound.Get(adapterTypes[0]), channel, strings.TrimSpace(usedKey.ChannelKey), endpointType, modelName)
+	statusCode, responseText, _, err := sendGroupProbeRequest(probeCtx, outbound.Get(adapterTypes[0]), adapterTypes[0], channel, strings.TrimSpace(usedKey.ChannelKey), endpointType, modelName)
 	result.HTTPStatus = statusCode
 	result.DurationMS = time.Since(startedAt).Milliseconds()
 	if err != nil {
@@ -87,7 +87,7 @@ func candidateAdapterTypes(channel *appmodel.Channel, modelName, endpointType st
 	if err != nil {
 		return nil
 	}
-	return outbound.ResolveAttemptTypesForChannel(channel.Type, probeRequest, "", channel.OutboundFormatOverride)
+	return outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, probeRequest, "", channel.OutboundFormatOverride, channel.UpstreamProtocols)
 }
 
 // resolveGroupHealthProbeMode 解析拨测模式（仅首个 full 生效，其余回 standard）。

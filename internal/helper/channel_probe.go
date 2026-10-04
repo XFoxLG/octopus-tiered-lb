@@ -247,14 +247,14 @@ func performChannelModelFallback(ctx context.Context, channel *appmodel.Channel,
 	// 与 group probe 一致，对 OpenAI 类型渠道走 adapter 回退（issue #187）：
 	// 先尝试 Chat Completions，失败再回退 Responses API。
 	probeReqForResolve, _ := buildGroupProbeRequest(appmodel.EndpointTypeAll, modelName)
-	adapterTypes := outbound.ResolveAttemptTypesForChannel(channel.Type, probeReqForResolve, "", channel.OutboundFormatOverride)
+	adapterTypes := outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, probeReqForResolve, "", channel.OutboundFormatOverride, channel.UpstreamProtocols)
 	var lastErr error
 	for _, adapterType := range adapterTypes {
 		adapter := outbound.Get(adapterType)
 		if adapter == nil {
 			continue
 		}
-		statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, adapter, &cloned, apiKey, appmodel.EndpointTypeAll, modelName)
+			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, adapter, adapterType, &cloned, apiKey, appmodel.EndpointTypeAll, modelName)
 		if err == nil {
 			return statusCode, responseText, internalResp, nil
 		}

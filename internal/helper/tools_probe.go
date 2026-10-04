@@ -260,7 +260,9 @@ func doToolsProbeRequest(ctx context.Context, channel *appmodel.Channel, usedKey
 		return nil, 0, nil, fmt.Errorf("unsupported outbound type: %d", channel.Type)
 	}
 	internalReq := buildToolsProbeInternalRequest(modelName, toolChoice, channel.Type)
-	req, err := adapter.TransformRequest(probeCtx, internalReq, channel.GetNormalizedBaseUrl(), strings.TrimSpace(usedKey.ChannelKey))
+	// 地址按本次探测实际使用的 adapter 协议挑选（多协议渠道可绑定不同地址）。
+	probeBaseURL := channel.GetNormalizedBaseUrlForProtocol(outbound.EndpointProtocolForAdapter(channel.Type))
+	req, err := adapter.TransformRequest(probeCtx, internalReq, probeBaseURL, strings.TrimSpace(usedKey.ChannelKey))
 	if err != nil {
 		return nil, 0, nil, err
 	}

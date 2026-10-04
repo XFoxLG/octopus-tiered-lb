@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -49,6 +50,120 @@ const (
 	RequestRewriteProfileOpenAIChatCompat RequestRewriteProfile = "openai_chat_compat"
 	RequestRewriteProfileCodexHeaders     RequestRewriteProfile = "codex"
 )
+
+// UpstreamProtocol 是渠道声明的上游协议名。与分组 outbound_format 的历史取值
+// 保持同一套词汇，便于旧值平移；渠道字段为空时完全沿用分组值。
+type UpstreamProtocol string
+
+const (
+	// UpstreamProtocolChat 优先 Chat Completions，可回退 Responses。
+	UpstreamProtocolChat UpstreamProtocol = "chat"
+	// UpstreamProtocolResponses 优先 Responses，可回退 Chat Completions。
+	UpstreamProtocolResponses UpstreamProtocol = "responses"
+	// UpstreamProtocolMessages 优先 Anthropic Messages，可回退 Chat → Responses。
+	UpstreamProtocolMessages UpstreamProtocol = "messages"
+	// UpstreamProtocolChatOnly 只走 Chat Completions，禁用跨格式回退。
+	UpstreamProtocolChatOnly UpstreamProtocol = "chat_only"
+	// UpstreamProtocolResponsesOnly 只走 Responses，禁用跨格式回退。
+	UpstreamProtocolResponsesOnly UpstreamProtocol = "responses_only"
+	// UpstreamProtocolMessagesOnly 只走 Anthropic Messages，禁用跨格式回退。
+	UpstreamProtocolMessagesOnly UpstreamProtocol = "messages_only"
+	// UpstreamProtocolPassthrough 原样转发入站 JSON 体，禁用 adapter 回退。
+	UpstreamProtocolPassthrough UpstreamProtocol = "passthrough"
+	// UpstreamProtocolRaw 与 passthrough 相同，但额外保留客户端原始请求路径。
+	UpstreamProtocolRaw UpstreamProtocol = "raw"
+)
+
+// upstreamProtocolOrder 列出全部合法协议名。仅用于取值校验，不用于排序：
+// 用户在界面上拖出来的顺序就是运行时优先级，排序会把这个信息抹掉。
+var upstreamProtocolOrder = []UpstreamProtocol{
+	UpstreamProtocolChat,
+	UpstreamProtocolResponses,
+	UpstreamProtocolMessages,
+	UpstreamProtocolChatOnly,
+	UpstreamProtocolResponsesOnly,
+	UpstreamProtocolMessagesOnly,
+	UpstreamProtocolPassthrough,
+	UpstreamProtocolRaw,
+}
+
+// IsValidUpstreamProtocol 报告给定协议名是否为受支持的取值（空串合法 = 跟随分组）。
+func IsValidUpstreamProtocol(value string) bool {
+	normalized := UpstreamProtocol(strings.ToLower(strings.TrimSpace(value)))
+	if normalized == "" {
+		return true
+	}
+	for _, candidate := range upstreamProtocolOrder {
+		if normalized == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeUpstreamProtocols 校验并规范化渠道协议声明列表：逐项小写去空白、
+// 拒绝未知取值、去重，并**保留用户声明的先后顺序**（顺序即尝试优先级）。
+// 空输入返回 nil（= 跟随分组）。
+//
+// 同时做互斥校验：passthrough/raw 是「整体透传」，不能与其它协议共存；
+// 带 _only 的严格模式与同协议的非严格模式（如 chat_only + chat）互相矛盾，
+// 一并拒绝，避免运行时无法判断该用哪个。
+func NormalizeUpstreamProtocols(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	seen := make(map[UpstreamProtocol]bool, len(values))
+	ordered := make([]string, 0, len(values))
+	for _, raw := range values {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		normalized := UpstreamProtocol(strings.ToLower(trimmed))
+		if !IsValidUpstreamProtocol(string(normalized)) || normalized == "" {
+			return nil, fmt.Errorf("unsupported upstream protocol: %s", raw)
+		}
+		if seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		ordered = append(ordered, string(normalized))
+	}
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+	if len(seen) > 1 {
+		for _, passthroughOnly := range []UpstreamProtocol{UpstreamProtocolPassthrough, UpstreamProtocolRaw} {
+			if seen[passthroughOnly] {
+				return nil, fmt.Errorf("upstream protocol %s cannot be combined with other protocols", passthroughOnly)
+			}
+		}
+	}
+	for _, strictPair := range [][2]UpstreamProtocol{
+		{UpstreamProtocolChatOnly, UpstreamProtocolChat},
+		{UpstreamProtocolResponsesOnly, UpstreamProtocolResponses},
+		{UpstreamProtocolMessagesOnly, UpstreamProtocolMessages},
+	} {
+		if seen[strictPair[0]] && seen[strictPair[1]] {
+			return nil, fmt.Errorf("upstream protocols %s and %s are mutually exclusive", strictPair[0], strictPair[1])
+		}
+	}
+	return ordered, nil
+}
+
+// MarshalUpstreamProtocols 把已规范化的协议列表编码成入库用的 JSON 文本。
+// 空列表返回空串，与「未声明」的列默认值保持一致（避免写入 "null" / "[]"
+// 两种等价格式让「是否已声明」的判断变复杂）。
+func MarshalUpstreamProtocols(protocols []string) (string, error) {
+	if len(protocols) == 0 {
+		return "", nil
+	}
+	encoded, err := json.Marshal(protocols)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
 
 type ToolRoleStrategy string
 
@@ -150,12 +265,38 @@ type Channel struct {
 	// ErrorMessageTemplate 渠道级错误文案模板,支持 {upstream} 占位符嵌入上游原文。
 	// 仅改写最终呈现文案,不改重试决策、不伪造成功。空 = 不启用。
 	ErrorMessageTemplate string `json:"error_message_template,omitempty" gorm:"column:error_message_template;type:varchar(512);not null;default:''"`
+	// UpstreamProtocols 渠道级上游协议声明（JSON 有序数组），取值见 UpstreamProtocol。
+	// 空数组/nil = 完全沿用分组 outbound_format（升级零行为变化）；非空时按顺序
+	// 决定出站 adapter 的尝试顺序，取代分组的协议选择。
+	//
+	// 这是渠道自己的属性而非分组的属性：同一个分组里可能同时有只支持
+	// Chat Completions 的公益站和原生 Gemini 渠道，协议声明必须在渠道层表达。
+	UpstreamProtocols []string `json:"upstream_protocols,omitempty" gorm:"column:upstream_protocols;serializer:json;type:text"`
+	// FirstTokenTimeOut 渠道级首字超时覆盖（秒）。
+	// 0 = 跟随分组（也是 Go 零值，内存里临时构造的渠道对象不会误关看门狗）；
+	// -1 = 显式关闭该看门狗；>0 = 秒数。
+	FirstTokenTimeOut int `json:"first_token_time_out,omitempty" gorm:"column:first_token_time_out;not null;default:0"`
+	// AttemptTimeOut 渠道级单次转发尝试超时覆盖（秒）。语义同 FirstTokenTimeOut：
+	// 0 = 跟随分组，-1 = 显式关闭，>0 = 秒数。
+	AttemptTimeOut int `json:"attempt_time_out,omitempty" gorm:"column:attempt_time_out;not null;default:0"`
+	// StreamIdleTimeout 渠道级流式空闲超时覆盖（秒）。语义同 FirstTokenTimeOut。
+	StreamIdleTimeout int `json:"stream_idle_timeout,omitempty" gorm:"column:stream_idle_timeout;not null;default:0"`
+	// ReasoningBufferStrategy 渠道级推理缓冲策略覆盖：空 = 跟随分组，
+	// buffer / immediate = 显式指定。
+	ReasoningBufferStrategy string `json:"reasoning_buffer_strategy,omitempty" gorm:"column:reasoning_buffer_strategy;type:varchar(20);not null;default:''"`
 }
 
 type BaseUrl struct {
 	URL        string `json:"url"`
 	Delay      int    `json:"delay"`
 	SuffixMode string `json:"suffix_mode,omitempty"`
+	// Protocol 声明这条 base URL 服务于哪种上游协议（取值同 UpstreamProtocol，
+	// 通常为 chat / responses / messages）。空 = 通用地址。
+	//
+	// 一个渠道同时支持多协议、且各协议地址不同（如火山方舟的 OpenAI 兼容在
+	// /api/v3、Anthropic 兼容在 /api/compatible）时，靠这个字段把地址和协议绑起来；
+	// 只有一条地址时不填即可，行为与从前一致。
+	Protocol string `json:"protocol,omitempty"`
 }
 
 type CustomHeader struct {
@@ -236,6 +377,11 @@ type ChannelUpdateRequest struct {
 	ChannelProxy            *string                `json:"channel_proxy,omitempty"`
 	ParamOverride           *string                `json:"param_override,omitempty"`
 	OutboundFormatOverride  *string                `json:"outbound_format_override,omitempty"`
+	UpstreamProtocols       *[]string              `json:"upstream_protocols,omitempty"`
+	FirstTokenTimeOut       *int                   `json:"first_token_time_out,omitempty"`
+	AttemptTimeOut          *int                   `json:"attempt_time_out,omitempty"`
+	StreamIdleTimeout       *int                   `json:"stream_idle_timeout,omitempty"`
+	ReasoningBufferStrategy *string                `json:"reasoning_buffer_strategy,omitempty"`
 	RequestRewrite          *RequestRewriteConfig  `json:"request_rewrite,omitempty"`
 	RelayLogRawSSEUntil     *int64                 `json:"relay_log_raw_sse_until,omitempty"`
 	MatchRegex              *string                `json:"match_regex,omitempty"`
@@ -361,6 +507,52 @@ func (c *Channel) GetBaseUrl() string {
 	return bestURL
 }
 
+// GetBaseUrlForProtocol 选择服务于指定上游协议的 base URL。
+//
+// 匹配规则（按优先级）：
+//  1. Protocol 与请求协议精确相等的条目里，取 Delay 最小的；
+//  2. Protocol 为空的通用条目里，取 Delay 最小的（兼容未绑定协议的老配置）；
+//  3. 都没有时回落到 GetBaseUrl()（整体延迟最小），保证老行为不变。
+//
+// protocol 为空串时直接走第 3 条，与改动前逐字节一致。
+func (c *Channel) GetBaseUrlForProtocol(protocol string) string {
+	if c == nil || len(c.BaseUrls) == 0 {
+		return ""
+	}
+	normalized := strings.ToLower(strings.TrimSpace(protocol))
+	if normalized == "" {
+		return c.GetBaseUrl()
+	}
+
+	boundURL, boundSet := "", false
+	boundDelay := 0
+	genericURL, genericSet := "", false
+	genericDelay := 0
+	for _, bu := range c.BaseUrls {
+		url := strings.TrimSpace(bu.URL)
+		if url == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(bu.Protocol)) {
+		case normalized:
+			if !boundSet || bu.Delay < boundDelay {
+				boundURL, boundDelay, boundSet = url, bu.Delay, true
+			}
+		case "":
+			if !genericSet || bu.Delay < genericDelay {
+				genericURL, genericDelay, genericSet = url, bu.Delay, true
+			}
+		}
+	}
+	if boundSet {
+		return boundURL
+	}
+	if genericSet {
+		return genericURL
+	}
+	return c.GetBaseUrl()
+}
+
 func (c *Channel) GetNormalizedBaseUrl() string {
 	if c == nil {
 		return ""
@@ -368,6 +560,97 @@ func (c *Channel) GetNormalizedBaseUrl() string {
 
 	rawURL := c.GetBaseUrl()
 	return normalizeChannelBaseURL(rawURL, c.Type, c.getBaseURLSuffixMode(rawURL))
+}
+
+// GetNormalizedBaseUrlForProtocol 是 GetBaseUrlForProtocol 的规范化版本：
+// 在选中地址后套用与 GetNormalizedBaseUrl 相同的路径补全规则（按渠道类型补
+// /v1、/v1beta、/api/v3 等，或按该条地址自己的 suffix_mode 处理）。
+func (c *Channel) GetNormalizedBaseUrlForProtocol(protocol string) string {
+	if c == nil {
+		return ""
+	}
+
+	rawURL := c.GetBaseUrlForProtocol(protocol)
+	return normalizeChannelBaseURL(rawURL, c.Type, c.getBaseURLSuffixMode(rawURL))
+}
+
+// ResolveTimeoutOverride 按「渠道覆盖 > 分组」解析一个超时项。
+//
+// channelValue 语义：0 = 未覆盖（跟随分组）；-1 = 显式关闭；>0 = 秒数。
+//
+// 这里刻意让「未覆盖」= Go 零值，而不是用 -1 之类的哨兵：渠道对象既从数据库
+// 反序列化、也在内存里临时构造（探测、测试、缓存重建），哨兵方案会让任何一处
+// 忘了显式赋值的构造点静默改变转发行为。0 作为「跟随分组」时，未配置的渠道与
+// 改动前的运行结果逐字节一致。
+func ResolveTimeoutOverride(channelValue, groupValue int) int {
+	if channelValue == 0 {
+		return groupValue
+	}
+	if channelValue < 0 {
+		return 0
+	}
+	return channelValue
+}
+
+// EffectiveFirstTokenTimeOut 返回渠道与分组叠加后的首字超时秒数。
+func (c *Channel) EffectiveFirstTokenTimeOut(groupValue int) int {
+	if c == nil {
+		return groupValue
+	}
+	return ResolveTimeoutOverride(c.FirstTokenTimeOut, groupValue)
+}
+
+// EffectiveAttemptTimeOut 返回渠道与分组叠加后的单次尝试超时秒数。
+func (c *Channel) EffectiveAttemptTimeOut(groupValue int) int {
+	if c == nil {
+		return groupValue
+	}
+	return ResolveTimeoutOverride(c.AttemptTimeOut, groupValue)
+}
+
+// EffectiveStreamIdleTimeout 返回渠道与分组叠加后的流式空闲超时秒数。
+func (c *Channel) EffectiveStreamIdleTimeout(groupValue int) int {
+	if c == nil {
+		return groupValue
+	}
+	return ResolveTimeoutOverride(c.StreamIdleTimeout, groupValue)
+}
+
+// EffectiveReasoningBufferStrategy 返回渠道级推理缓冲策略；空串表示未覆盖
+// （由调用方继续回落到分组/全局）。
+func (c *Channel) EffectiveReasoningBufferStrategy() string {
+	if c == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(c.ReasoningBufferStrategy)) {
+	case "buffer", "immediate":
+		return strings.ToLower(strings.TrimSpace(c.ReasoningBufferStrategy))
+	default:
+		return ""
+	}
+}
+
+// EffectiveUpstreamProtocols 返回渠道声明的协议列表。返回 nil 表示渠道未声明
+// （调用方必须回落到分组 outbound_format）。
+func (c *Channel) EffectiveUpstreamProtocols() []string {
+	if c == nil || len(c.UpstreamProtocols) == 0 {
+		return nil
+	}
+	normalized, err := NormalizeUpstreamProtocols(c.UpstreamProtocols)
+	if err != nil || len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+// PrimaryUpstreamProtocol 返回渠道声明的第一个协议，用于选择 base URL 绑定与
+// 探测时的首选协议。未声明时返回空串。
+func (c *Channel) PrimaryUpstreamProtocol() string {
+	protocols := c.EffectiveUpstreamProtocols()
+	if len(protocols) == 0 {
+		return ""
+	}
+	return protocols[0]
 }
 
 func (c *Channel) GetNormalizedBaseUrlFor(rawURL string) string {

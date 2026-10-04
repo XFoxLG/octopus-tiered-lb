@@ -125,6 +125,9 @@ func Create(ch *model.Channel, ctx context.Context) error {
 			return err
 		}
 		ch.OutboundFormatOverride = normalizedOverride
+			if err := normalizeChannelProtocolFields(ch); err != nil {
+				return err
+			}
 		if err := normalizeChannelProxyFields(ch); err != nil {
 			return err
 		}
@@ -162,6 +165,52 @@ func Create(ch *model.Channel, ctx context.Context) error {
 // 统一成可持久化的一致状态：
 // - ProxyMode 为空时从旧字段推导
 // - pool 模式必须带 ProxyConfigID 或 ChannelProxy
+// normalizeChannelProtocolFields 校验并规范化渠道级协议、超时与缓冲策略字段。
+// 非法值直接报错而不是静默丢弃：静默丢弃会让用户在界面看到"设置了"、
+// 实际运行时却不生效（历史上渠道 override 就有过这类困惑）。
+func normalizeChannelProtocolFields(ch *model.Channel) error {
+	if ch == nil {
+		return nil
+	}
+	normalizedProtocols, err := model.NormalizeUpstreamProtocols(ch.UpstreamProtocols)
+	if err != nil {
+		return err
+	}
+	ch.UpstreamProtocols = normalizedProtocols
+
+	for _, item := range []struct {
+		name  string
+		value int
+	}{
+		{"first_token_time_out", ch.FirstTokenTimeOut},
+		{"attempt_time_out", ch.AttemptTimeOut},
+		{"stream_idle_timeout", ch.StreamIdleTimeout},
+	} {
+		if item.value < -1 {
+			return fmt.Errorf("%s must be 0 (follow group), -1 (disabled), or a positive number of seconds", item.name)
+		}
+	}
+
+	normalizedStrategy, err := normalizeReasoningBufferStrategy(ch.ReasoningBufferStrategy)
+	if err != nil {
+		return err
+	}
+	ch.ReasoningBufferStrategy = normalizedStrategy
+	return nil
+}
+
+// normalizeReasoningBufferStrategy 校验渠道级推理缓冲策略：空串 = 跟随分组，
+// buffer / immediate = 显式指定，其它值报错。
+func normalizeReasoningBufferStrategy(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "", "buffer", "immediate":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("unsupported reasoning buffer strategy: %s (allowed: buffer, immediate)", value)
+	}
+}
+
 // - 非 pool 模式清空 ProxyConfigID
 // - Proxy 布尔值与 ProxyMode 同步
 func normalizeChannelProxyFields(ch *model.Channel) error {
@@ -502,6 +551,54 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		}
 		selectFields = append(selectFields, "outbound_format_override")
 		updates.OutboundFormatOverride = normalizedOverride
+	}
+	if req.UpstreamProtocols != nil {
+		normalizedProtocols, err := model.NormalizeUpstreamProtocols(*req.UpstreamProtocols)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		selectFields = append(selectFields, "upstream_protocols")
+		// nil（未声明）与空切片在 GORM 的 serializer:json 下写法不同：
+		// 显式置空必须写入空值，避免"想清除协议声明"时被当成未修改。
+		if len(normalizedProtocols) == 0 {
+			updates.UpstreamProtocols = []string{}
+		} else {
+			updates.UpstreamProtocols = normalizedProtocols
+		}
+	}
+	if req.FirstTokenTimeOut != nil {
+		if *req.FirstTokenTimeOut < -1 {
+			tx.Rollback()
+			return nil, fmt.Errorf("first token timeout must be 0 (follow group), -1 (disabled), or a positive number of seconds")
+		}
+		selectFields = append(selectFields, "first_token_time_out")
+		updates.FirstTokenTimeOut = *req.FirstTokenTimeOut
+	}
+	if req.AttemptTimeOut != nil {
+		if *req.AttemptTimeOut < -1 {
+			tx.Rollback()
+			return nil, fmt.Errorf("attempt timeout must be 0 (follow group), -1 (disabled), or a positive number of seconds")
+		}
+		selectFields = append(selectFields, "attempt_time_out")
+		updates.AttemptTimeOut = *req.AttemptTimeOut
+	}
+	if req.StreamIdleTimeout != nil {
+		if *req.StreamIdleTimeout < -1 {
+			tx.Rollback()
+			return nil, fmt.Errorf("stream idle timeout must be 0 (follow group), -1 (disabled), or a positive number of seconds")
+		}
+		selectFields = append(selectFields, "stream_idle_timeout")
+		updates.StreamIdleTimeout = *req.StreamIdleTimeout
+	}
+	if req.ReasoningBufferStrategy != nil {
+		normalizedStrategy, err := normalizeReasoningBufferStrategy(*req.ReasoningBufferStrategy)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		selectFields = append(selectFields, "reasoning_buffer_strategy")
+		updates.ReasoningBufferStrategy = normalizedStrategy
 	}
 	if req.RequestRewrite != nil {
 		selectFields = append(selectFields, "request_rewrite")

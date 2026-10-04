@@ -116,6 +116,7 @@ func TestSendGroupProbeRequest_EmbeddingsUseEmbeddingPayload(t *testing.T) {
 	statusCode, responseText, internalResp, err := sendGroupProbeRequest(
 		context.Background(),
 		outbound.Get(outbound.OutboundTypeOpenAIEmbedding),
+		outbound.OutboundTypeOpenAIEmbedding,
 		channel,
 		"sk-test",
 		appmodel.EndpointTypeEmbeddings,
@@ -154,6 +155,7 @@ func TestSendGroupProbeRequest_ChatResponseUsageParsed(t *testing.T) {
 	statusCode, _, internalResp, err := sendGroupProbeRequest(
 		context.Background(),
 		outbound.Get(outbound.OutboundTypeOpenAIChat),
+		outbound.OutboundTypeOpenAIChat,
 		channel,
 		"sk-test",
 		appmodel.EndpointTypeChat,

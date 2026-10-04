@@ -146,11 +146,19 @@ func isRetryTruncationEnabled() bool {
 }
 
 // getReasoningBufferStrategy 返回有效的推理缓冲策略：
-// 1. 优先使用分组的 reasoning_buffer_strategy（非空时）
-// 2. 回退到全局设置 reasoning_buffer_strategy
-// 3. 最终默认 "buffer"（兼容旧行为）
+// 1. 渠道级 coverage.ReasoningBufferStrategy（非空时，channel 参数传入）
+// 2. 分组的 reasoning_buffer_strategy（非空时）
+// 3. 全局设置 reasoning_buffer_strategy
+// 4. 最终默认 "buffer"（兼容旧行为）
 // 返回 "buffer" 或 "immediate"。
-func getReasoningBufferStrategy(group *dbmodel.Group) string {
+//
+// channel 可以是 nil（例如没有渠道上下文的老调用点），此时行为与从前一致。
+func getReasoningBufferStrategy(channel *dbmodel.Channel, group *dbmodel.Group) string {
+	if channel != nil {
+		if strategy := channel.EffectiveReasoningBufferStrategy(); strategy != "" {
+			return strategy
+		}
+	}
 	if group != nil && group.ReasoningBufferStrategy != "" {
 		strategy := strings.TrimSpace(group.ReasoningBufferStrategy)
 		if strategy == "buffer" || strategy == "immediate" {
@@ -418,6 +426,20 @@ func (ra *relayAttempt) streamOutputWasCommitted() bool {
 		return false
 	}
 	return ra.streamOutputCommitted || (ra.c != nil && ra.c.Writer.Written())
+}
+
+// adapterEndpointProtocol 把本次尝试实际使用的 adapter 映射成 base URL 协议绑定
+// 用的协议名（与 model.UpstreamProtocol 同词汇）。
+//
+// 多协议渠道可以给不同协议绑定不同地址；这里返回的是「这次真的要打哪个协议」，
+// 而不是渠道声明的优先级，所以回退到第二个 adapter 时地址也会跟着换。
+// 返回空串表示没有协议绑定可用（透传/嵌入/未知 adapter），此时地址选择回落到
+// 默认的最低延迟条目，与改动前一致。
+func (ra *relayAttempt) adapterEndpointProtocol() string {
+	if ra == nil {
+		return ""
+	}
+	return outbound.EndpointProtocolForAdapter(ra.adapterType)
 }
 
 func providerTerminalFailureError(termination model.TerminationMetadata) error {

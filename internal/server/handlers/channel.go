@@ -494,6 +494,14 @@ type channelRequestPayload struct {
 	CustomHeader            []model.CustomHeader        `json:"custom_header"`
 	ParamOverride           *string                     `json:"param_override"`
 	OutboundFormatOverride  *string                     `json:"outbound_format_override"`
+	UpstreamProtocols       []string                    `json:"upstream_protocols"`
+	// 三个超时用指针：nil = 字段缺省（旧客户端/未配置）= 跟随分组（-1），
+	// 显式 0 才表示"关闭该看门狗"。若用值类型，缺省会退化成 0，
+	// 等于把所有存量渠道的看门狗静默关掉。
+	FirstTokenTimeOut       *int                        `json:"first_token_time_out"`
+	AttemptTimeOut          *int                        `json:"attempt_time_out"`
+	StreamIdleTimeout       *int                        `json:"stream_idle_timeout"`
+	ReasoningBufferStrategy string                      `json:"reasoning_buffer_strategy"`
 	ChannelProxy            *string                     `json:"channel_proxy"`
 	RequestRewrite          *model.RequestRewriteConfig `json:"request_rewrite"`
 	MatchRegex              *string                     `json:"match_regex"`
@@ -543,7 +551,7 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		}
 	}
 
-	return model.Channel{
+		channel := model.Channel{
 		Name:                    p.Name,
 		GroupID:                 p.GroupID,
 		Type:                    p.Type,
@@ -564,6 +572,8 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		CustomHeader:            p.CustomHeader,
 		ParamOverride:           p.ParamOverride,
 		OutboundFormatOverride:  derefString(p.OutboundFormatOverride),
+			UpstreamProtocols:       p.UpstreamProtocols,
+			ReasoningBufferStrategy: p.ReasoningBufferStrategy,
 		ChannelProxy:            channelProxy,
 		RequestRewrite:          p.RequestRewrite,
 		MatchRegex:              p.MatchRegex,
@@ -574,6 +584,20 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		NonRetryableStatusCodes: p.NonRetryableStatusCodes,
 		ErrorMessageTemplate:    p.ErrorMessageTemplate,
 	}
+		// 超时三项缺省 = 0（跟随分组）。显式传 -1 表示关闭看门狗，
+		// 不能被缺省值混淆，所以用指针判空后回填。
+		channel.FirstTokenTimeOut = defaultFollowGroup(p.FirstTokenTimeOut)
+		channel.AttemptTimeOut = defaultFollowGroup(p.AttemptTimeOut)
+		channel.StreamIdleTimeout = defaultFollowGroup(p.StreamIdleTimeout)
+		return channel
+}
+
+// defaultFollowGroup 把可空超时字段解引用成渠道语义值：nil = 0（跟随分组）。
+func defaultFollowGroup(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 // derefString 空指针安全解引用，nil 返回空串。

@@ -436,7 +436,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 	// (/v1/responses)。这与 relay 主流程的 outboundAttemptTypes 一致，
 	// 避免 type=1 渠道在只支持 chat completions 的上游上探测失败（issue #187）。
 	// 渠道级协议覆盖与主流程同规则：覆盖非空时禁用回退，探测与转发一致。
-	adapterTypes := outbound.ResolveAttemptTypesForChannel(channel.Type, probeRequest, "", channel.OutboundFormatOverride)
+	adapterTypes := outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, probeRequest, "", channel.OutboundFormatOverride, channel.UpstreamProtocols)
 
 	startTime := time.Now()
 	var logAttempts []appmodel.ChannelAttempt
@@ -457,7 +457,7 @@ probeAdapters:
 				break probeAdapters
 			}
 			attemptStart := time.Now()
-			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, &channel, usedKey.ChannelKey, endpointType, item.ModelName)
+			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, adapterType, &channel, usedKey.ChannelKey, endpointType, item.ModelName)
 			attemptDuration := int(time.Since(attemptStart).Milliseconds())
 
 			result.StatusCode = statusCode
@@ -664,7 +664,10 @@ func cloneGroupModelProgress(progress *GroupModelTestProgress) GroupModelTestPro
 	return cloned
 }
 
-func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, channel *appmodel.Channel, key, endpointType, modelName string) (int, string, *transmodel.InternalLLMResponse, error) {
+// sendGroupProbeRequest 用给定 adapter 发一次探测请求。adapterType 只用于挑选
+// base URL：多协议渠道可以把不同协议绑到不同地址，探测必须与真实转发用同一套
+// 地址选择规则，否则会出现「探测失败但转发正常」的假阴性。
+func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, adapterType outbound.OutboundType, channel *appmodel.Channel, key, endpointType, modelName string) (int, string, *transmodel.InternalLLMResponse, error) {
 	if channel == nil {
 		return 0, "", nil, fmt.Errorf("channel is nil")
 	}
@@ -682,7 +685,10 @@ func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, 
 		return 0, "", nil, err
 	}
 
-	req, err := outAdapter.TransformRequest(ctx, probeRequest, channel.GetNormalizedBaseUrl(), key)
+	// 地址按本次探测实际使用的 adapter 协议挑选：多协议渠道可以把不同协议
+	// 绑到不同 base URL，探测与真实转发保持同一套地址选择规则。
+	probeBaseURL := channel.GetNormalizedBaseUrlForProtocol(outbound.EndpointProtocolForAdapter(adapterType))
+	req, err := outAdapter.TransformRequest(ctx, probeRequest, probeBaseURL, key)
 	if err != nil {
 		return 0, "", nil, err
 	}

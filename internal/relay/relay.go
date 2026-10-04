@@ -122,6 +122,12 @@ func outboundAttemptTypes(channelType outbound.OutboundType, request *model.Inte
 	return outbound.ResolveAttemptTypesForChannel(channelType, request, outboundFormat, channelOverride)
 }
 
+// outboundAttemptTypesForChannel 是主转发路径使用的协议解析入口：在分组
+// outbound_format 与旧渠道 override 之上，再叠加渠道自己声明的协议列表。
+func outboundAttemptTypesForChannel(channelType outbound.OutboundType, request *model.InternalLLMRequest, groupOutboundFormat, channelOverride string, channelProtocols []string) []outbound.OutboundType {
+	return outbound.ResolveAttemptTypesForChannelDeclared(channelType, request, groupOutboundFormat, channelOverride, channelProtocols)
+}
+
 func shouldTryAdapterFallback(result attemptResult, adapterIndex, attemptCount int) bool {
 	if result.Success || result.Written || adapterIndex >= attemptCount-1 {
 		return false
@@ -653,7 +659,10 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 
 	// 构建出站请求
-	baseURL := ra.channel.GetNormalizedBaseUrl()
+	// 地址按本次尝试实际选中的 adapter 所属协议来挑选：多协议渠道可以把不同
+	// 协议绑到不同 base URL（如火山方舟的 OpenAI 兼容在 /api/v3、Anthropic
+	// 兼容在 /api/compatible）。未绑定协议或单地址渠道行为不变。
+	baseURL := ra.channel.GetNormalizedBaseUrlForProtocol(ra.adapterEndpointProtocol())
 	outboundRequest, err := ra.outAdapter.TransformRequest(
 		ctx,
 		requestForOutbound,
@@ -945,7 +954,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 	firstVisibleOutputPending := true
 	hasVisibleContent := false // 是否已产生可见内容（issue #155 流式空输出检测）
-	strategy := getReasoningBufferStrategy(ra.group)
+	strategy := getReasoningBufferStrategy(ra.channel, ra.group)
 	shouldBuffer := (strategy == "buffer") // buffer=暂存; immediate=立即发送
 	var reasoningBuffer [][]byte           // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
 	var reasoningBufferBytes int           // reasoningBuffer 累计字节数，用于软上限判定（见 maxReasoningBufferBytes）
@@ -1096,8 +1105,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 
 	streamIdleTimeoutSeconds := 0
-	if ra.group != nil && ra.group.StreamIdleTimeout > 0 {
-		streamIdleTimeoutSeconds = ra.group.StreamIdleTimeout
+	groupStreamIdleTimeout := 0
+	if ra.group != nil {
+		groupStreamIdleTimeout = ra.group.StreamIdleTimeout
+	}
+	// 渠道级覆盖优先于分组：-1 跟随分组，0 显式关闭，>0 秒数。
+	if resolved := ra.channel.EffectiveStreamIdleTimeout(groupStreamIdleTimeout); resolved > 0 {
+		streamIdleTimeoutSeconds = resolved
 	}
 	var streamIdleTimer *time.Timer
 	var streamIdleC <-chan time.Time
@@ -1792,7 +1806,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				continue
 			}
 
-			attemptTypes := outboundAttemptTypes(channel.Type, req.internalRequest, group.OutboundFormat, channel.OutboundFormatOverride)
+				attemptTypes := outboundAttemptTypesForChannel(channel.Type, req.internalRequest, group.OutboundFormat, channel.OutboundFormatOverride, channel.UpstreamProtocols)
 			if len(attemptTypes) == 0 || outbound.Get(attemptTypes[0]) == nil {
 				routeIter.Skip(channel.ID, 0, channel.Name, fmt.Sprintf("unsupported channel type: %d", channel.Type))
 				continue
@@ -1930,8 +1944,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						adapterType:          attemptType,
 						channel:              channel,
 						usedKey:              usedKey,
-						firstTokenTimeOutSec: group.FirstTokenTimeOut,
-						attemptTimeOutSec:    group.AttemptTimeOut,
+							firstTokenTimeOutSec: channel.EffectiveFirstTokenTimeOut(group.FirstTokenTimeOut),
+							attemptTimeOutSec:    channel.EffectiveAttemptTimeOut(group.AttemptTimeOut),
 						tryIndex:             keyRound,
 						tryTotal:             maxKeyRetriesPerRoute,
 					}
