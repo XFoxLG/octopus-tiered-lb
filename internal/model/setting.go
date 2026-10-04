@@ -61,6 +61,10 @@ const (
 	SettingKeyAutoStrategyTimeWindow               SettingKey = "auto_strategy_time_window"                // Auto策略时间窗口（秒）
 	SettingKeyAutoStrategySampleThreshold          SettingKey = "auto_strategy_sample_threshold"           // Auto策略滑动窗口大小
 	SettingKeyAutoStrategyLatencyWeight            SettingKey = "auto_strategy_latency_weight"             // Auto策略延迟权重（0-100）
+	SettingKeyAutoStrategyTTFTWeight               SettingKey = "auto_strategy_ttft_weight"                // Auto策略TTFT权重（0-100），启用后流式评分用TTFT EMA替代总延迟EMA
+	SettingKeyAutoStrategyPriceWeight              SettingKey = "auto_strategy_price_weight"               // Auto策略成本权重（0-100），启用后按渠道模型单价对评分降权
+	SettingKeyAutoStrategyExploreRate              SettingKey = "auto_strategy_explore_rate"               // Auto策略探索概率（0-100），>0时按评分softmax随机化候选顺序
+	SettingKeyAutoStrategyBucketTolerance          SettingKey = "auto_strategy_bucket_tolerance"           // Auto策略同分桶容差（0-100评分点），桶内随机打散避免轮流垄断
 	SettingKeySemanticCacheEnabled                 SettingKey = "semantic_cache_enabled"                   // 语义缓存开关
 	SettingKeySemanticCacheTTL                     SettingKey = "semantic_cache_ttl"                       // 语义缓存 TTL（秒）
 	SettingKeySemanticCacheThreshold               SettingKey = "semantic_cache_threshold"                 // 语义缓存相似度阈值（0-1）
@@ -82,6 +86,7 @@ const (
 	SettingKeyAIRouteTimeoutSeconds                SettingKey = "ai_route_timeout_seconds"                 // AI路由分析单次请求超时（秒）
 	SettingKeyAIRouteParallelism                   SettingKey = "ai_route_parallelism"                     // AI路由分析批次最大并发数
 	SettingKeyAIRouteServices                      SettingKey = "ai_route_services"                        // AI路由分析服务池(JSON)
+	SettingKeyAIRouteMaxModelsPerRequest           SettingKey = "ai_route_max_models_per_request"          // AI路由分析单批次最大模型数，超过按模型家族切分批次
 	SettingKeyStatsTimezone                        SettingKey = "stats_timezone"                           // 统计时区（IANA 名，如 Asia/Shanghai）；空串回退到 stats_timezone_offset
 	SettingKeyStatsTimezoneOffset                  SettingKey = "stats_timezone_offset"                    // [已弃用] 统计时区偏移（小时），整型；stats_timezone 为空时回退使用
 	SettingKeyJWTDefaultExpiryMinutes              SettingKey = "jwt_default_expiry_minutes"               // 默认JWT过期时间（分钟）
@@ -196,6 +201,10 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyAutoStrategyTimeWindow, Value: "300"},      // 默认时间窗口300秒（5分钟）
 		{Key: SettingKeyAutoStrategySampleThreshold, Value: "100"}, // 默认滑动窗口大小100条
 		{Key: SettingKeyAutoStrategyLatencyWeight, Value: "30"},    // 默认延迟权重30%
+		{Key: SettingKeyAutoStrategyTTFTWeight, Value: "0"},        // 默认0=关闭，TTFT EMA有样本后可设50切换延迟评分输入
+		{Key: SettingKeyAutoStrategyPriceWeight, Value: "0"},       // 默认0=关闭，价格目录有数据后可开启省钱降权
+		{Key: SettingKeyAutoStrategyExploreRate, Value: "0"},       // 默认0=纯贪心（保持旧行为），>0启用softmax探索
+		{Key: SettingKeyAutoStrategyBucketTolerance, Value: "5"},   // 默认5评分点容差，桶内随机打散
 		{Key: SettingKeyNavOrder, Value: `["home","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
 		{Key: SettingKeyNavVisible, Value: `["home","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
 		{Key: SettingKeyAnalyticsTabOrder, Value: `["utilization","route-health","channel-model","evaluation","latency"]`},
@@ -209,6 +218,7 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyAIRouteTimeoutSeconds, Value: "180"},
 		{Key: SettingKeyAIRouteParallelism, Value: "3"},
 		{Key: SettingKeyAIRouteServices, Value: "[]"},
+		{Key: SettingKeyAIRouteMaxModelsPerRequest, Value: "120"},
 		{Key: SettingKeyStatsTimezone, Value: ""}, // 空=未配置，回退到 stats_timezone_offset 再回退 UTC
 		{Key: SettingKeyStatsTimezoneOffset, Value: "0"},
 		{Key: SettingKeyJWTDefaultExpiryMinutes, Value: "15"},    // 默认15分钟
@@ -280,7 +290,10 @@ func (s *Setting) Validate() error {
 		SettingKeyGlobalRateLimitRPM, SettingKeyGlobalMaxConcurrency,
 		SettingKeyAutoStrategyMinSamples, SettingKeyAutoStrategyTimeWindow, SettingKeyAutoStrategySampleThreshold,
 		SettingKeyAutoStrategyLatencyWeight,
+		SettingKeyAutoStrategyTTFTWeight, SettingKeyAutoStrategyPriceWeight,
+		SettingKeyAutoStrategyExploreRate, SettingKeyAutoStrategyBucketTolerance,
 		SettingKeyAIRouteGroupID, SettingKeyAIRouteTimeoutSeconds, SettingKeyAIRouteParallelism,
+		SettingKeyAIRouteMaxModelsPerRequest,
 		SettingKeyStatsTimezoneOffset,
 		SettingKeyJWTDefaultExpiryMinutes, SettingKeyJWTRememberMeExpiryDays,
 		SettingKeyLoginRateLimitWindow, SettingKeyLoginRateLimitMaxFailed,
@@ -330,6 +343,9 @@ func (s *Setting) Validate() error {
 		if s.Key == SettingKeyAutoStrategyLatencyWeight && (v < 0 || v > 100) {
 			return fmt.Errorf("auto strategy latency weight must be between 0 and 100")
 		}
+		if (s.Key == SettingKeyAutoStrategyTTFTWeight || s.Key == SettingKeyAutoStrategyPriceWeight || s.Key == SettingKeyAutoStrategyExploreRate || s.Key == SettingKeyAutoStrategyBucketTolerance) && (v < 0 || v > 100) {
+			return fmt.Errorf("auto strategy weight must be between 0 and 100")
+		}
 		if s.Key == SettingKeyAIRouteGroupID && v < 0 {
 			return fmt.Errorf("ai route group id must be greater than or equal to 0")
 		}
@@ -338,6 +354,9 @@ func (s *Setting) Validate() error {
 		}
 		if s.Key == SettingKeyAIRouteParallelism && v < 1 {
 			return fmt.Errorf("ai route parallelism must be greater than 0")
+		}
+		if s.Key == SettingKeyAIRouteMaxModelsPerRequest && v < 1 {
+			return fmt.Errorf("ai route max models per request must be greater than 0")
 		}
 		if s.Key == SettingKeyStatsTimezoneOffset && (v < -12 || v > 14) {
 			return fmt.Errorf("stats timezone offset must be between -12 and 14")

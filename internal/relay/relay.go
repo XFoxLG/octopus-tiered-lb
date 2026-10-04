@@ -546,6 +546,11 @@ func (ra *relayAttempt) attempt() attemptResult {
 		balancer.RecordAutoSuccess(ra.channel.ID, ra.internalRequest.Model)
 		// Auto策略：记录延迟（毫秒）
 		balancer.RecordAutoLatency(ra.channel.ID, ra.internalRequest.Model, span.Duration().Milliseconds())
+		// Auto策略：记录首 Token 延迟（TTFT，毫秒）。仅流式请求有 FirstTokenTime；
+		// 非流式请求无首 token 概念，IsZero()==true 时自然跳过不记录（issue #183）。
+		if !ra.metrics.FirstTokenTime.IsZero() {
+			balancer.RecordAutoTTFT(ra.channel.ID, ra.internalRequest.Model, ra.metrics.FirstTokenTime.Sub(ra.metrics.StartTime).Milliseconds())
+		}
 		// 可用度：成功加分（上限 100），仅 availability 策略生效。
 		balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, true)
 		// 速度策略：记录 EMA 平滑 TPS（output_tokens / duration_seconds），仅 speed 策略生效。

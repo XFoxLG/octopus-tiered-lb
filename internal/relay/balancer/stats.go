@@ -33,6 +33,17 @@ type ChannelStats struct {
 
 	// EMA-smoothed latency in milliseconds
 	avgLatencyMs float64
+
+	// EMA-smoothed time-to-first-token (TTFT) in milliseconds. TTFT is tracked
+	// separately from total request latency (issue #183): for streaming requests
+	// user-perceived responsiveness is dominated by the first token, and scoring
+	// channels by total latency systematically penalizes channels serving long
+	// outputs. Non-streaming requests never record TTFT, so their EMA stays 0.
+	// Note: TTFT EMA is NOT persisted in the runtime-state snapshot — the Auto
+	// strategy score only needs a handful of samples to re-converge after a
+	// restart (EMA with alpha=0.3 settles within ~8 samples).
+	avgTTFTMs   float64
+	ttftSamples int64
 }
 
 // Global storage for channel statistics.
@@ -165,11 +176,39 @@ func RecordAutoFailure(channelID int, modelName string) {
 	stats.Record(false)
 }
 
-// RecordAutoLatency records the observed latency (in milliseconds) for the Auto strategy.
-// Latency is smoothed via EMA with alpha=0.3 to dampen short-term spikes.
+// RecordAutoLatency records the end-to-end request latency (in milliseconds) for
+// the Auto strategy. latencyMs <= 0 is ignored.
 func RecordAutoLatency(channelID int, modelName string, latencyMs int64) {
+	if latencyMs <= 0 {
+		return
+	}
 	stats := getOrCreateStats(channelID, modelName)
 	stats.recordLatency(float64(latencyMs))
+}
+
+// RecordAutoTTFT records the observed time-to-first-token (in milliseconds) for
+// the Auto strategy. Only called for streaming requests where a first token was
+// actually observed; ttftMs <= 0 is ignored (no sample recorded). TTFT is
+// smoothed via EMA with alpha=0.3, same as total latency.
+func RecordAutoTTFT(channelID int, modelName string, ttftMs int64) {
+	if ttftMs <= 0 {
+		return
+	}
+	stats := getOrCreateStats(channelID, modelName)
+	stats.recordTTFT(float64(ttftMs))
+}
+
+// recordTTFT updates the EMA-smoothed TTFT and bumps the sample counter.
+func (cs *ChannelStats) recordTTFT(ttftMs float64) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	const alpha = 0.3
+	if cs.ttftSamples == 0 {
+		cs.avgTTFTMs = ttftMs
+	} else {
+		cs.avgTTFTMs = alpha*ttftMs + (1-alpha)*cs.avgTTFTMs
+	}
+	cs.ttftSamples++
 }
 
 func (cs *ChannelStats) recordLatency(latencyMs float64) {
@@ -189,6 +228,18 @@ func (cs *ChannelStats) GetLatency() float64 {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()
 	return cs.avgLatencyMs
+}
+
+// GetTTFT returns the EMA-smoothed time-to-first-token in milliseconds.
+// Returns 0 when no TTFT samples exist (non-streaming traffic or fresh process).
+// Semantics for the Auto strategy scorer: when the TTFT weight setting is
+// enabled, use this value INSTEAD of GetLatency() as the latency input for
+// streaming-dominated channels; a 0 return means "no TTFT evidence" and the
+// scorer should fall back to GetLatency().
+func (cs *ChannelStats) GetTTFT() float64 {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.avgTTFTMs
 }
 
 // GetAutoStats returns the success rate and total samples for a channel+model.

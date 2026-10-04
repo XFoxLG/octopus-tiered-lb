@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	"math"
+	"strings"
 
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
@@ -9,6 +11,7 @@ import (
 	ch "github.com/lingyuins/octopus/internal/op/channel"
 	"github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 )
 
@@ -32,6 +35,26 @@ func init() {
 			return false
 		}
 		return channel.Disposable
+	}
+
+	// 注入 Auto 策略成本评分函数（B3）：从价格目录取模型输入单价（$/M tokens），
+	// 到 (0,1]（越便宜越接近 1；无价格数据返回 0 表示不参与混合）。balancer 不能
+	// import price（price → db/op/llm 重量级依赖链，会把 db 拉进 balancer 单测），
+	// 故走函数变量注入，与 DisposableChannelFunc 同模式。
+	balancer.AutoPriceFunc = func(modelName string) float64 {
+		p := price.GetLLMPrice(strings.TrimSpace(modelName))
+		if p == nil || p.Input <= 0 {
+			return 0
+		}
+		// log10 归一化：$0.1/M → ~0.66，$1/M → 0.5，$10/M → ~0.33；极便宜趋近 1。
+		score := 0.5 - math.Log10(p.Input)/6.0
+		if score <= 0 {
+			return 0.01
+		}
+		if score > 1 {
+			return 1
+		}
+		return score
 	}
 
 	dbmodel.GlobalKeySelectionStrategyFunc = func() string {
