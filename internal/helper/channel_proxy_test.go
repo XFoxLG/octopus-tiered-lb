@@ -7,6 +7,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 func TestResolveChannelProxyUsesProxyModePool(t *testing.T) {
@@ -137,7 +138,7 @@ func TestChannelHttpClientPoolUsesCustomProxyURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChannelHttpClient: %v", err)
 	}
-	transport, ok := httpClient.Transport.(*http.Transport)
+	transport, ok := httpx.BaseTransport(httpClient.Transport).(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", httpClient.Transport)
 	}
@@ -179,7 +180,7 @@ func TestChannelHttpClientPoolUsesConfigResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChannelHttpClient: %v", err)
 	}
-	transport, ok := httpClient.Transport.(*http.Transport)
+	transport, ok := httpx.BaseTransport(httpClient.Transport).(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", httpClient.Transport)
 	}
@@ -208,7 +209,7 @@ func TestChannelHttpClientSystemUsesSettingProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChannelHttpClient: %v", err)
 	}
-	transport, ok := httpClient.Transport.(*http.Transport)
+	transport, ok := httpx.BaseTransport(httpClient.Transport).(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", httpClient.Transport)
 	}

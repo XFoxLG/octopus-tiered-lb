@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 func TestJoinAIRouteChatCompletionsURL(t *testing.T) {
@@ -43,7 +45,7 @@ func TestAIRouteHTTPClientKeepsExplicitProxySelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	directTransport := directClient.Transport.(*http.Transport)
+	directTransport := httpx.BaseTransport(directClient.Transport).(*http.Transport)
 	if directTransport.Proxy != nil {
 		t.Fatal("empty system proxy should use a direct connection, not environment proxy settings")
 	}
@@ -53,7 +55,7 @@ func TestAIRouteHTTPClientKeepsExplicitProxySelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxiedTransport := proxiedClient.Transport.(*http.Transport)
+	proxiedTransport := httpx.BaseTransport(proxiedClient.Transport).(*http.Transport)
 	if proxiedTransport.Proxy == nil {
 		t.Fatal("configured system proxy should be retained")
 	}

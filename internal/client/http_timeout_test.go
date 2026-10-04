@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
@@ -252,7 +253,7 @@ func TestLongTaskConfigDisablesOverallTimeout(t *testing.T) {
 	if c.Timeout != 0 {
 		t.Fatalf("Client.Timeout = %v, want 0", c.Timeout)
 	}
-	tr, ok := c.Transport.(*http.Transport)
+	tr, ok := httpx.BaseTransport(c.Transport).(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", c.Transport)
 	}
@@ -283,7 +284,7 @@ func TestShortTaskConfigKeepsOverallTimeout(t *testing.T) {
 	if c.Timeout != shortTaskTimeout {
 		t.Fatalf("short bucket Client.Timeout = %v, want %v", c.Timeout, shortTaskTimeout)
 	}
-	tr, ok := c.Transport.(*http.Transport)
+	tr, ok := httpx.BaseTransport(c.Transport).(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", c.Transport)
 	}
@@ -545,7 +546,7 @@ func TestSocks5DialContextHonorsCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newHTTPClientCustomProxyWithTimeoutConfig: %v", err)
 	}
-	tr, ok := c.Transport.(*http.Transport)
+	tr, ok := httpx.BaseTransport(c.Transport).(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", c.Transport)
 	}
@@ -578,7 +579,7 @@ func TestCustomProxyHTTPSchemeKeepsTransportDialContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newHTTPClientCustomProxyWithTimeoutConfig: %v", err)
 	}
-	tr, ok := c.Transport.(*http.Transport)
+	tr, ok := httpx.BaseTransport(c.Transport).(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", c.Transport)
 	}
@@ -642,7 +643,7 @@ func TestPublicEntryPointsUseResponseHeaderTimeout(t *testing.T) {
 		if c.Timeout != 0 {
 			t.Errorf("%s: Client.Timeout = %v, want 0 (must not cut streaming bodies)", name, c.Timeout)
 		}
-		tr, ok := c.Transport.(*http.Transport)
+		tr, ok := httpx.BaseTransport(c.Transport).(*http.Transport)
 		if !ok {
 			t.Fatalf("%s: transport type = %T, want *http.Transport", name, c.Transport)
 		}
@@ -697,7 +698,7 @@ func TestPublicEntryPointsUseResponseHeaderTimeout(t *testing.T) {
 	if short.Timeout != shortTaskTimeout {
 		t.Errorf("short bucket Client.Timeout = %v, want %v", short.Timeout, shortTaskTimeout)
 	}
-	shortTR, ok := short.Transport.(*http.Transport)
+	shortTR, ok := httpx.BaseTransport(short.Transport).(*http.Transport)
 	if !ok {
 		t.Fatalf("short bucket transport type = %T, want *http.Transport", short.Transport)
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/proxyx"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 	"golang.org/x/net/proxy"
@@ -41,9 +42,7 @@ const (
 // 同属「绕过 Viper、直接 os.Getenv」的一批开关（见 AGENTS.md「配置与环境变量」），
 // 在 init() 里一次性读取。取值 <=0 或非法时保持默认值。
 //
-// 前缀与 conf.APP_NAME 一致，但这里有意不 import internal/conf：conf 目前不在
-// client 的依赖树内，引入它会把 viper 以及 version.go 里 init() 的 git 子进程
-// 带进来（AGENTS.md「版本号漂移」提到该 init 会 fork git），对本包无收益。
+// 前缀与 conf.APP_NAME 一致；该超时开关直接读取环境变量，不经 Viper。
 const httpHeaderTimeoutEnv = "OCTOPUS_HTTP_RESPONSE_HEADER_TIMEOUT_SECONDS"
 
 // responseHeaderTimeout 是 default 档实际生效的响应头超时。
@@ -379,7 +378,7 @@ func applyTimeouts(transport *http.Transport, cfg clientTimeoutConfig) *http.Cli
 	if cfg.headerTimeout > 0 {
 		transport.ResponseHeaderTimeout = cfg.headerTimeout
 	}
-	return &http.Client{Transport: transport, Timeout: cfg.overallTimeout}
+	return &http.Client{Transport: httpx.WithUserAgent(transport), Timeout: cfg.overallTimeout}
 }
 
 // withDialTimeout 给一个 DialContext 包上建连超时（对所有代理模式生效）。

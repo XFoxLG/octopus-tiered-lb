@@ -18,6 +18,7 @@ import (
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/server/router"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
@@ -49,6 +50,7 @@ var availableProbes = []string{"text_gen", "models_list", "tool_calling", "struc
 var verifyHTTPClient = &http.Client{
 	Timeout:       30 * time.Second,
 	CheckRedirect: xurl.CheckRedirectSafe(5),
+	Transport:     httpx.WithUserAgent(nil),
 }
 
 func listProbes(c *gin.Context) {

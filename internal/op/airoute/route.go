@@ -23,6 +23,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/proxyx"
 	"github.com/lingyuins/octopus/internal/utils/xstrings"
@@ -1911,7 +1912,7 @@ func newAIRouteHTTPClient(proxyURLStr string) (*http.Client, error) {
 	cloned := transport.Clone()
 	if proxyURLStr == "" {
 		cloned.Proxy = nil
-		return &http.Client{Transport: cloned}, nil
+		return &http.Client{Transport: httpx.WithUserAgent(cloned)}, nil
 	}
 
 	proxyURL, err := url.Parse(proxyURLStr)
@@ -1942,7 +1943,7 @@ func newAIRouteHTTPClient(proxyURLStr string) (*http.Client, error) {
 		return nil, fmt.Errorf("unsupported proxy scheme: %s", proxyURL.Scheme)
 	}
 
-	return &http.Client{Transport: cloned}, nil
+	return &http.Client{Transport: httpx.WithUserAgent(cloned)}, nil
 }
 
 func joinAIRouteChatCompletionsURL(baseURL string) (string, error) {

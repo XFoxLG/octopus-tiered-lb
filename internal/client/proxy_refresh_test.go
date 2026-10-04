@@ -6,6 +6,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 func TestShortProxyClientTracksItsOwnConfiguration(t *testing.T) {
@@ -45,7 +46,7 @@ func TestShortProxyClientTracksItsOwnConfiguration(t *testing.T) {
 		t.Fatal("normal client refresh must not make a stale short client appear current")
 	}
 	request, _ := http.NewRequest(http.MethodGet, "https://provider.example.test", nil)
-	selectedProxy, err := secondShort.Transport.(*http.Transport).Proxy(request)
+	selectedProxy, err := httpx.BaseTransport(secondShort.Transport).(*http.Transport).Proxy(request)
 	if err != nil || selectedProxy.String() != "http://127.0.0.1:12342" {
 		t.Fatal("short requests retained the previous proxy address")
 	}
