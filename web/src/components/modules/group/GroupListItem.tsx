@@ -40,7 +40,7 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from '@/components/animate-ui/components/animate/tooltip';
-import type { MemberAvailabilityMeta, SelectedMember } from './ItemList';
+import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { AIRouteButton } from './AIRouteButton';
@@ -63,7 +63,7 @@ import {
     MorphingDialogTrigger,
     useMorphingDialog,
 } from '@/components/ui/morphing-dialog';
-import { Progress } from '@/components/ui/progress';
+import { AvailabilityResultsPanel } from './AvailabilityResultsPanel';
 
 // ---------------------------------------------------------------------------
 // EditDialogContent (duplicated from Card.tsx to keep this component self-contained)
@@ -77,12 +77,10 @@ interface EditDialogContentProps {
     onTestAvailability: () => void;
     onRemoveFailedModels: () => void;
     isTestingAvailability: boolean;
-    canRemoveFailedModels: boolean;
     testProgressCompleted: number;
     testProgressTotal: number;
     testProgressValue: number;
     testResults: GroupTestResult[];
-    availabilityByMemberId: Record<string, MemberAvailabilityMeta>;
     availabilitySummary?: {
         unavailableCount: number;
         availableCount: number;
@@ -99,12 +97,10 @@ function EditDialogContent({
     onTestAvailability,
     onRemoveFailedModels,
     isTestingAvailability,
-    canRemoveFailedModels,
     testProgressCompleted,
     testProgressTotal,
     testProgressValue,
     testResults,
-    availabilityByMemberId,
     availabilitySummary,
 }: EditDialogContentProps) {
     const { setIsOpen } = useMorphingDialog();
@@ -149,8 +145,8 @@ function EditDialogContent({
                     </div>
                 </header>
             </MorphingDialogTitle>
-            <MorphingDialogDescription className="flex flex-1 min-h-0 flex-col gap-4 overflow-x-hidden pr-1 2xl:flex-row">
-                <div className="flex-1 min-h-0 min-w-0">
+            <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
+                <div className={cn('min-h-0 min-w-0 flex-1', group.id && (isTestingAvailability || availabilitySummary) ? 'hidden' : 'block')}>
                     <GroupEditor
                         key={`edit-group-${group.id}`}
                         className="flex-1 min-h-0"
@@ -182,164 +178,15 @@ function EditDialogContent({
                     />
                 </div>
                 {group.id && (isTestingAvailability || availabilitySummary) ? (
-                    <section className="w-full max-h-[40vh] overflow-y-auto rounded-lg border border-border/25 bg-card p-4 2xl:max-h-none 2xl:w-80 2xl:shrink-0">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="space-y-1">
-                                <h3 className="text-sm font-semibold text-foreground">
-                                    {t('detail.availability.title')}
-                                </h3>
-                                <p className="text-xs text-muted-foreground">
-                                    {t('detail.availability.description')}
-                                </p>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                                {canRemoveFailedModels ? (
-                                    <button
-                                        type="button"
-                                        onClick={onRemoveFailedModels}
-                                        className="inline-flex h-9 items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/8 px-3 text-sm font-medium text-destructive transition-colors hover:bg-destructive/12"
-                                    >
-                                        <Trash2 className="size-4" />
-                                        {t('detail.actions.removeFailedModels')}
-                                    </button>
-                                ) : null}
-                                <button
-                                    type="button"
-                                    onClick={onTestAvailability}
-                                    disabled={isTestingAvailability || !group.id}
-                                    className={cn(
-                                        'inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors',
-                                        isTestingAvailability
-                                            ? 'cursor-not-allowed border-border/25 bg-muted text-muted-foreground'
-                                            : 'border-primary/20 bg-primary text-primary-foreground hover:opacity-90',
-                                    )}
-                                >
-                                    {isTestingAvailability ? (
-                                        <Loader2 className="size-4 animate-spin" />
-                                    ) : (
-                                        <TestTubeDiagonal className="size-4" />
-                                    )}
-                                    {t('detail.availability.testAll')}
-                                </button>
-                            </div>
-                        </div>
-                        <div className="mt-4 space-y-3 pr-1">
-                            <Progress value={testProgressValue} className="h-2" />
-                            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                                <span>
-                                    {t('card.testProgressCount', {
-                                        completed: testProgressCompleted,
-                                        total: testProgressTotal || editMembers.length,
-                                    })}
-                                </span>
-                                {availabilitySummary?.fullyMatched ? (
-                                    <span
-                                        className={cn(
-                                            'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                                            availabilitySummary.allAvailable
-                                                ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
-                                                : 'border-destructive/20 bg-destructive/10 text-destructive',
-                                        )}
-                                    >
-                                        {availabilitySummary.allAvailable
-                                            ? t('toast.testAllPassed')
-                                            : t('toast.testPartialFailed')}
-                                    </span>
-                                ) : null}
-                                {availabilitySummary?.fullyMatched ? (
-                                    <span className="text-destructive">
-                                        {t('detail.availability.unavailableCount', {
-                                            count: availabilitySummary.unavailableCount,
-                                        })}
-                                    </span>
-                                ) : null}
-                            </div>
-                            <div className="rounded-lg border border-border/20 bg-background/40">
-                                <MemberList
-                                    members={editMembers}
-                                    onReorder={() => undefined}
-                                    onRemove={() => undefined}
-                                    autoScrollOnAdd={false}
-                                    showConfirmDelete={false}
-                                    showWeight={
-                                        (MODE_LABELS[group.mode] ? group.mode : GroupMode.Auto) ===
-                                            GroupMode.Weighted ||
-                                        (MODE_LABELS[group.mode] ? group.mode : GroupMode.Auto) ===
-                                            GroupMode.Auto
-                                    }
-                                    availabilityById={availabilityByMemberId}
-                                />
-                            </div>
-                            {testResults.length > 0 ? (
-                                <div className="rounded-lg border border-border/20 bg-background/50 p-3">
-                                    <div className="mb-2 text-xs font-medium text-foreground">
-                                        {t('detail.availability.resultTitle')}
-                                    </div>
-                                    <div className="space-y-2">
-                                        {testResults.map((result) => (
-                                            <div
-                                                key={
-                                                    result.client_id ||
-                                                    `${result.item_id}-${result.channel_id}-${result.model_name}`
-                                                }
-                                                className={cn(
-                                                    'rounded-md border px-3 py-2 text-xs',
-                                                    result.passed
-                                                        ? 'border-emerald-500/15 bg-emerald-500/5'
-                                                        : 'border-destructive/15 bg-destructive/5',
-                                                )}
-                                            >
-                                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                                    <span className="font-medium text-foreground">
-                                                        {result.model_name}
-                                                    </span>
-                                                    <span className="text-muted-foreground">
-                                                        @ {result.channel_name}
-                                                    </span>
-                                                    <span
-                                                        className={cn(
-                                                            result.passed
-                                                                ? 'text-emerald-600'
-                                                                : 'text-destructive',
-                                                        )}
-                                                    >
-                                                        {result.passed
-                                                            ? t(
-                                                                  'detail.availability.resultPassed',
-                                                              )
-                                                            : t(
-                                                                  'detail.availability.resultFailed',
-                                                              )}
-                                                    </span>
-                                                    {result.status_code > 0 ? (
-                                                        <span className="text-muted-foreground">
-                                                            HTTP {result.status_code}
-                                                        </span>
-                                                    ) : null}
-                                                    <span className="text-muted-foreground">
-                                                        {t(
-                                                            'detail.availability.resultAttempts',
-                                                            { count: result.attempts },
-                                                        )}
-                                                    </span>
-                                                </div>
-                                                {result.message ? (
-                                                    <div className="mt-1 break-all text-muted-foreground">
-                                                        {result.message}
-                                                    </div>
-                                                ) : null}
-                                                {!result.passed && result.response_text ? (
-                                                    <div className="mt-1 break-all text-muted-foreground/90">
-                                                        {result.response_text}
-                                                    </div>
-                                                ) : null}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            ) : null}
-                        </div>
-                    </section>
+                    <AvailabilityResultsPanel
+                        isTesting={isTestingAvailability}
+                        members={editMembers}
+                        completed={testProgressCompleted}
+                        total={testProgressTotal || editMembers.length}
+                        progressValue={testProgressValue}
+                        results={testResults}
+                        summary={availabilitySummary}
+                    />
                 ) : null}
             </MorphingDialogDescription>
         </div>
@@ -995,38 +842,6 @@ export function GroupListItem({ group }: { group: Group }) {
     const progressValue =
         totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
-    const availabilityByMemberId = useMemo(() => {
-        const map: Record<string, MemberAvailabilityMeta> = {};
-        const activeResults = testProgress?.results ?? [];
-        const resultByClientId = new Map<string, GroupTestResult>();
-        const resultByFallbackKey = new Map<string, GroupTestResult>();
-
-        activeResults.forEach((r) => {
-            if (r.client_id) resultByClientId.set(r.client_id, r);
-            resultByFallbackKey.set(
-                modelChannelKey(r.channel_id, r.model_name),
-                r,
-            );
-        });
-
-        members.forEach((member) => {
-            const matched =
-                resultByClientId.get(member.id) ??
-                resultByFallbackKey.get(member.id);
-            if (matched) {
-                map[member.id] = {
-                    status: matched.passed ? 'available' : 'unavailable',
-                    message:
-                        matched.message || matched.response_text || undefined,
-                };
-                return;
-            }
-            map[member.id] = { status: isTesting ? 'testing' : 'idle' };
-        });
-
-        return map;
-    }, [isTesting, members, testProgress?.results]);
-
     const availabilitySummary = useMemo(() => {
         if (!testProgress?.done) return undefined;
         const results = testProgress.results ?? [];
@@ -1446,9 +1261,6 @@ export function GroupListItem({ group }: { group: Group }) {
                                                 isTestingAvailability={
                                                     isTesting
                                                 }
-                                                canRemoveFailedModels={
-                                                    canRemoveFailedModels
-                                                }
                                                 testProgressCompleted={
                                                     completedCount
                                                 }
@@ -1458,9 +1270,6 @@ export function GroupListItem({ group }: { group: Group }) {
                                                 }
                                                 testResults={
                                                     testProgress?.results ?? []
-                                                }
-                                                availabilityByMemberId={
-                                                    availabilityByMemberId
                                                 }
                                                 availabilitySummary={
                                                     availabilitySummary

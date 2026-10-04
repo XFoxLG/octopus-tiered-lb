@@ -2385,6 +2385,14 @@
         "resultPassed": "Passed",
         "resultFailed": "Failed",
         "resultAttempts": "Retried {count} times",
+        "toggleDetails": "Toggle error details",
+        "waitingResults": "Waiting for test results...",
+        "noResults": "No test results yet",
+        "passedCount": "Passed {count}",
+        "failedCount": "Failed {count}",
+        "testing": "Testing",
+        "viewLabel": "Group editor view",
+        "resultsTab": "Check results",
         "removeFailedConfirm": "Removed models will need to be re-tested to restore. Continue?"
       },
       "actions": {

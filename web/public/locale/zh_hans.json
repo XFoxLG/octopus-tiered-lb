@@ -2341,6 +2341,14 @@
         "resultPassed": "通过",
         "resultFailed": "失败",
         "resultAttempts": "重试 {count} 次",
+        "toggleDetails": "展开或收起错误详情",
+        "waitingResults": "等待检测结果…",
+        "noResults": "暂无检测结果",
+        "passedCount": "通过 {count} 个",
+        "failedCount": "失败 {count} 个",
+        "testing": "检测中",
+        "viewLabel": "分组编辑视图",
+        "resultsTab": "检测结果",
         "removeFailedConfirm": "移除后需要重新检测才能恢复，确定继续吗？"
       },
       "actions": {

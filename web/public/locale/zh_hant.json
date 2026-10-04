@@ -2334,6 +2334,14 @@
         "resultPassed": "??",
         "resultFailed": "??",
         "resultAttempts": "?? {count} ?",
+        "toggleDetails": "展開或收起錯誤詳情",
+        "waitingResults": "等待檢測結果…",
+        "noResults": "暫無檢測結果",
+        "passedCount": "通過 {count} 個",
+        "failedCount": "失敗 {count} 個",
+        "testing": "檢測中",
+        "viewLabel": "分組編輯視圖",
+        "resultsTab": "檢測結果",
         "removeFailedConfirm": "移除後需要重新檢測才能恢復，確定繼續嗎？"
       },
       "actions": {
