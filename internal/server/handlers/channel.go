@@ -212,6 +212,8 @@ func updateChannel(c *gin.Context) {
 			resp.Error(c, status, msg)
 			return
 		}
+		// 未分类错误统一 500：必须把原始错误打进日志，否则排查只能靠猜（issue: 填充支持模型 500 无日志可查）
+		log.Errorf("update channel %d failed: %v", req.ID, err)
 		resp.InternalError(c)
 		return
 	}

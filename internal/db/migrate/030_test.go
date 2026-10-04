@@ -132,6 +132,11 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := migrateChannelCapabilityProbe(db); err != nil {
 		t.Fatalf("migrateChannelCapabilityProbe: %v", err)
 	}
+	// Run migration 070 to widen channel_keys.supported_models to text
+	// (test uses latest model.ChannelKey; SQLite 下为 no-op，MySQL/PG 才 ALTER)
+	if err := migrateChannelKeySupportedModelsToText(db); err != nil {
+		t.Fatalf("migrateChannelKeySupportedModelsToText: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

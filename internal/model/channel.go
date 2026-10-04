@@ -335,7 +335,9 @@ type ChannelKey struct {
 	// SupportedModels 逗号分隔的模型列表，限定该 key 只能用于这些模型。
 	// 空表示不限制（兼容存量 key）。key 选择时用 ModelMatches 过滤，
 	// 避免把不支持当前模型的 key 发给上游（如上游中转站某 token 无某模型权限）。
-	SupportedModels string `json:"supported_models,omitempty" gorm:"column:supported_models;type:varchar(512)"`
+	// type:text：模型列表逗号连接后可轻松超过 512 字符（实测聚合站 123 个模型
+	// ≈ 2346 字符），varchar(512) 在 MySQL/PG 严格模式下会拒写导致 update 500（迁移 070）。
+	SupportedModels string `json:"supported_models,omitempty" gorm:"column:supported_models;type:text"`
 }
 
 // KeyCooldownFunc 由 balancer 包在启动时注入，用于查询某 (channelID, keyID, modelName)
