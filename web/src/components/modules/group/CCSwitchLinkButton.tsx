@@ -7,7 +7,8 @@ import { useAPIKeyList } from '@/api/endpoints/apikey';
 import { useGroupList } from '@/api/endpoints/group';
 import { SettingKey, useSettingList } from '@/api/endpoints/setting';
 import { CopyIconButton } from '@/components/common/CopyButton';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { TOOLBAR_TEXT_ACTION_CLASS } from '../toolbar/action-styles';
 import { Input } from '@/components/ui/input';
 import {
     MorphingDialog,
@@ -129,8 +130,10 @@ export function CCSwitchLinkButton({ className }: { className?: string }) {
     return (
         <MorphingDialog>
             <MorphingDialogTrigger
+                ariaLabel={t('ccswitch.title')}
                 className={cn(
-                    'inline-flex h-11 items-center gap-2 rounded-lg border border-border bg-card px-3.5 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/20 hover:text-foreground',
+                    buttonVariants({ variant: 'ghost' }),
+                    TOOLBAR_TEXT_ACTION_CLASS,
                     className,
                 )}
             >

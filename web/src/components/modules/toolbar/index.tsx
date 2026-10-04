@@ -26,6 +26,7 @@ import { useModelViewStore } from '@/components/modules/model/view-store';
 import { useTranslations } from 'next-intl';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useSearchStore } from './search-store';
+import { TOOLBAR_ACTION_CLASS, TOOLBAR_ICON_ACTION_CLASS, TOOLBAR_TEXT_ACTION_CLASS, TOOLBAR_PRIMARY_ACTION_CLASS } from './action-styles';
 import {
     useToolbarViewOptionsStore,
     TOOLBAR_PAGES,
@@ -59,9 +60,6 @@ const COMBINED_SORT_OPTIONS: readonly CombinedSortOption[] = [
     { value: 'created-desc', field: 'created', order: 'desc', labelKey: 'popover.createdDesc' },
 ] as const;
 
-const COMMAND_CELL_CLASS = 'rounded-lg border border-border bg-card transition-[color,background-color,border-color] duration-150 hover:border-border/80 hover:bg-muted/50 active:scale-[0.98]';
-const COMMAND_ICON_BUTTON_CLASS = `${COMMAND_CELL_CLASS} h-11 w-11 text-muted-foreground hover:text-foreground`;
-const COMMAND_TEXT_BUTTON_CLASS = `${COMMAND_CELL_CLASS} min-h-11 px-3.5 text-sm font-medium text-muted-foreground hover:text-foreground`;
 const OPTION_BUTTON_CLASS = 'min-h-9 sm:h-9 rounded-md border px-3 text-xs font-medium transition-[color,background-color,border-color] duration-150 active:scale-[0.98] py-2 sm:py-0';
 const ACTIVE_OPTION_CLASS = 'border-primary/30 bg-primary text-primary-foreground';
 const INACTIVE_OPTION_CLASS = 'border-border bg-card text-foreground hover:border-primary/20 hover:bg-muted/50';
@@ -87,7 +85,7 @@ function getCreateDialogContentClassName(activeItem: ToolbarPage) {
     }
 
     if (activeItem === 'channel') {
-        return 'h-[calc(100dvh-1rem)] w-[min(100vw-1rem,64rem)] max-w-full rounded-xl border border-border bg-card px-2 py-2 text-card-foreground shadow-lg flex flex-col overflow-hidden md:h-[calc(100dvh-3rem)] md:w-[min(100vw-3rem,64rem)] md:rounded-xl md:px-4 md:py-4';
+        return 'flex h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-none flex-col overflow-hidden rounded-lg border border-border bg-card p-0 text-card-foreground shadow-lg sm:max-h-[calc(100dvh-3rem)] sm:max-w-none md:h-[min(52rem,calc(100dvh-3rem))] md:w-[min(100vw-3rem,64rem)]';
     }
 
     return 'w-[min(100vw-1rem,34rem)] max-w-full bg-card text-card-foreground px-4 py-4 rounded-xl max-h-[calc(100dvh-1rem)] flex flex-col overflow-hidden md:px-6 md:max-h-[calc(100dvh-2rem)]';
@@ -236,14 +234,14 @@ export function Toolbar() {
                 animate={lightweightMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
                 exit={lightweightMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9 }}
                 transition={{ duration: lightweightMotion ? 0.12 : 0.2 }}
-                className="flex max-w-full items-center gap-1 rounded-xl border border-border bg-card p-1 sm:gap-2 sm:p-1.5"
+                className="flex max-w-full items-center gap-1 sm:gap-2 [&_.header-action-icon]:max-[380px]:!block [&_.header-action-icon]:max-[380px]:!size-4"
             >
                 {/* 搜索按钮/展开框 */}
                 <div
                     className={cn(
-                        'relative h-9 transition-[width] duration-300 ease-out sm:h-11',
+                        'relative h-9 shrink-0 transition-[width] duration-300 ease-out sm:h-11',
                         searchExpanded
-                            ? 'w-[min(13rem,calc(100vw-5rem))] sm:w-[min(18rem,calc(100vw-3rem))]'
+                            ? 'w-[min(13rem,calc(100vw-12rem))] sm:w-44 lg:w-60'
                             : 'w-9 sm:w-11'
                     )}
                 >
@@ -255,9 +253,8 @@ export function Toolbar() {
                             onClick={() => setExpandedSearchItem(toolbarItem)}
                             className={cn(
                                 buttonVariants({ variant: "ghost", size: "icon" }),
-                                "absolute inset-0 rounded-lg transition-none",
-                                COMMAND_ICON_BUTTON_CLASS,
-                                "h-9 w-9 sm:h-11 sm:w-11"
+                                "absolute inset-0",
+                                TOOLBAR_ICON_ACTION_CLASS
                             )}
                         >
                             <motion.span layout="position"><Search className="header-action-icon size-4 transition-colors duration-300" /></motion.span>
@@ -267,7 +264,7 @@ export function Toolbar() {
                             layoutId="search-box"
                             className={cn(
                                 "absolute inset-0 flex items-center gap-2 px-3.5",
-                                COMMAND_CELL_CLASS
+                                TOOLBAR_ACTION_CLASS
                             )}
                             transition={lightweightMotion ? { duration: 0.12 } : { type: 'spring', stiffness: 400, damping: 30 }}
                         >
@@ -301,7 +298,7 @@ export function Toolbar() {
                 {toolbarItem === 'group' && (
                     <CCSwitchLinkButton className="hidden sm:inline-flex" />
                 )}
-                <div className="flex h-9 min-w-0 items-center gap-0.5 rounded-xl border border-border bg-muted/30 p-0.5 sm:h-11 sm:gap-1 sm:p-1">
+                <div className="flex shrink-0 items-center">
                     <Popover>
                         <PopoverTrigger asChild>
                             <button
@@ -309,11 +306,12 @@ export function Toolbar() {
                                 aria-label={t('popover.ariaLabel')}
                                 className={cn(
                                     buttonVariants({ variant: 'ghost', size: 'default' }),
-                                    "h-8 min-h-8 rounded-md border border-transparent bg-transparent px-1.5 text-muted-foreground shadow-none transition-[color,background-color,border-color] duration-150 hover:border-border hover:bg-muted hover:text-foreground hover:shadow-none sm:h-9 sm:min-h-9 sm:px-3"
+                                    TOOLBAR_TEXT_ACTION_CLASS,
+                                    "w-9 px-0 sm:w-auto sm:px-3.5"
                                 )}
                             >
                                 <SlidersHorizontal className="header-action-icon size-4 transition-colors duration-300" />
-                                <span className="hidden text-xs font-semibold sm:inline">{t('popover.filter.title')}</span>
+                                <span className="hidden sm:inline">{t('popover.filter.title')}</span>
                             </button>
                         </PopoverTrigger>
                         <PopoverContent
@@ -571,7 +569,7 @@ export function Toolbar() {
                     {toolbarItem === 'channel' ? (
                         <ChannelGroupManagerDialog className={cn(
                             buttonVariants({ variant: "ghost", size: "default" }),
-                            COMMAND_TEXT_BUTTON_CLASS,
+                            TOOLBAR_TEXT_ACTION_CLASS,
                             "hidden sm:flex"
                         )} />
                     ) : null}
@@ -626,9 +624,8 @@ export function Toolbar() {
                         <MorphingDialogTrigger
                             ariaLabel={createAriaLabel}
                             className={cn(
-                                buttonVariants({ variant: "ghost", size: "default" }),
-                                COMMAND_TEXT_BUTTON_CLASS,
-                                "h-9 min-h-9 bg-primary px-2.5 text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground sm:h-11 sm:min-h-11 sm:px-3.5"
+                                buttonVariants({ variant: "default", size: "icon" }),
+                                TOOLBAR_PRIMARY_ACTION_CLASS
                             )}
                         >
                             <Plus className="header-action-icon size-4 transition-colors duration-300" />

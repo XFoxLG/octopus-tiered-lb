@@ -235,6 +235,7 @@ export interface ChannelFormProps {
     idPrefix?: string;
     showTemplatePicker?: boolean;
     onShowTemplatePicker?: () => void;
+    layout?: 'default' | 'create';
 }
 
 import {
@@ -254,15 +255,11 @@ function SectionHeader({
     hint?: string;
 }) {
     return (
-        <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-2">
-                <div className="inline-flex items-center gap-2 rounded-full border border-primary/12 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
-                    <Icon className="size-3.5" />
-                    {title}
-                    {hint ? <Hint text={hint} /> : null}
-                </div>
-            </div>
-        </div>
+        <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+            <Icon className="size-4 shrink-0 text-muted-foreground" />
+            <span>{title}</span>
+            {hint ? <Hint text={hint} /> : null}
+        </h3>
     );
 }
 
@@ -754,6 +751,7 @@ export function ChannelForm({
     idPrefix = 'channel',
     showTemplatePicker = true,
     onShowTemplatePicker,
+    layout = 'default',
 }: ChannelFormProps) {
     const t = useTranslations('channel.form');
     const isMobile = useIsMobile();
@@ -767,7 +765,10 @@ export function ChannelForm({
     const upstreamProtocolsSupported = formData.type === ChannelType.OpenAIChat
         || formData.type === ChannelType.OpenAIResponse
         || formData.type === ChannelType.MiMoChat;
-    const sectionClassName = 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
+    const isCreateLayout = layout === 'create';
+    const sectionClassName = isCreateLayout
+        ? 'min-w-0 space-y-3 border-b border-border pb-5'
+        : 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
     const labelClassName = 'text-sm font-medium text-card-foreground';
     const fieldGroupClassName = 'space-y-2';
 
@@ -1187,7 +1188,12 @@ export function ChannelForm({
 
     return (
         <form onSubmit={onSubmit} className="flex h-full min-h-0 flex-col">
-            <div className="flex-1 min-h-0 space-y-4 overflow-y-auto pb-2">
+            <div className={cn(
+                'min-h-0 flex-1 overflow-y-auto overscroll-contain',
+                isCreateLayout
+                    ? 'grid content-start gap-5 px-4 py-5 sm:px-6 md:grid-cols-2 md:gap-x-6 [&_input]:h-11 [&_[data-slot=select-trigger]]:h-11 [&_[data-slot=select-trigger]]:min-w-0'
+                    : 'space-y-4 pb-2',
+            )}>
             {showTemplatePicker ? (
                 <section className={sectionClassName}>
                     <SectionHeader icon={Sparkles} title={t('template.label')} hint={t('template.hint')} />
@@ -1197,7 +1203,7 @@ export function ChannelForm({
                         <TemplatePickerGrid onApplyTemplate={handleApplyTemplate} />
                     )}
                 </section>
-            ) : (
+            ) : onShowTemplatePicker ? (
                 <div className="flex justify-end">
                     <Button
                         type="button"
@@ -1210,11 +1216,11 @@ export function ChannelForm({
                         {t('template.open')}
                     </Button>
                 </div>
-            )}
+            ) : null}
 
-            <section className={sectionClassName}>
+            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <SectionHeader icon={Orbit} title={t('basicInfo')} />
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className={fieldGroupClassName}>
                         <label htmlFor={`${idPrefix}-name`} className={labelClassName}>
                         {t('name')}
@@ -1277,7 +1283,7 @@ export function ChannelForm({
                 </div>
             </section>
 
-            <section className={sectionClassName}>
+            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <SectionHeader icon={Cable} title={t('baseUrlConfig')} hint={t('baseUrlHint')} />
                 <div className="flex items-center justify-end gap-2">
                     <Badge variant="secondary" className="rounded-full">
@@ -1288,7 +1294,7 @@ export function ChannelForm({
                         variant="ghost"
                         size="sm"
                         onClick={handleAddBaseUrl}
-                        className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
+                        className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                         <Plus className="h-3 w-3 mr-1" />
                         {t('add')}
@@ -1304,6 +1310,7 @@ export function ChannelForm({
                                     value={u.url}
                                     onChange={(e) => handleUpdateBaseUrl(idx, { url: e.target.value })}
                                     placeholder={t('baseUrlUrl')}
+                                    aria-label={`${t('baseUrlUrl')} ${idx + 1}`}
                                     required={idx === 0}
                                     className="w-full flex-1 rounded-lg"
                                 />
@@ -1353,7 +1360,7 @@ export function ChannelForm({
                                         size="sm"
                                         onClick={() => handleRemoveBaseUrl(idx)}
                                         disabled={(formData.base_urls ?? []).length <= 1}
-                                        className="h-8 w-8 shrink-0 rounded-xl p-0 text-muted-foreground hover:bg-transparent hover:text-destructive disabled:opacity-40"
+                                        className="size-11 shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
                                         title={t('remove')}
                                     >
                                         <X className="h-4 w-4" />
@@ -1377,7 +1384,92 @@ export function ChannelForm({
                 </div>
             </section>
 
-            <section className={sectionClassName}>
+            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
+                <SectionHeader icon={Layers3} title={t('modelConfig')} />
+                <div className="flex items-center justify-end gap-2">
+                    <MorphingDialog onOpen={handleRefreshModels}>
+                        <MorphingDialogTrigger
+                            ariaLabel={t('modelRefresh')}
+                            disabled={!formData.base_urls?.[0]?.url || !effectiveKey || isFetchingModels}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                            <RefreshCw className={`size-4 ${isFetchingModels ? 'animate-spin' : ''}`} />
+                            {t('modelRefresh')}
+                        </MorphingDialogTrigger>
+                        <MorphingDialogContainer>
+                            <MorphingDialogContent className="h-[calc(100dvh-2rem)] w-[min(100vw-2rem,54rem)] max-w-full rounded-xl border border-border/35 bg-card p-0 md:h-[min(44rem,calc(100dvh-3rem))]">
+                                <ModelPickerDialogPanel
+                                    models={fetchedModels}
+                                    draftSelected={modelPickerDraft}
+                                    onDraftChange={setModelPickerDraft}
+                                    isLoading={isFetchingModels}
+                                    onApply={applyFetchedModelSelection}
+                                    perKeyResults={perKeyResults}
+                                    perKeyLoading={fetchModelsPerKey.isPending}
+                                    onFillPerKeyResult={canFillPerKeyModels ? handleFillPerKeyResult : undefined}
+                                    onFillAllPerKeyResults={canFillPerKeyModels ? handleFillAllPerKeyResults : undefined}
+                                />
+                            </MorphingDialogContent>
+                        </MorphingDialogContainer>
+                    </MorphingDialog>
+                </div>
+                <input type="hidden" value={formData.model} required />
+                <div className="flex min-w-0 items-center gap-2">
+                    <Input
+                        ref={inputRef}
+                        id={`${idPrefix}-model-custom`}
+                        type="text"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        onKeyDown={handleInputKeyDown}
+                        placeholder={t('modelCustomPlaceholder')}
+                        aria-label={t('modelCustomPlaceholder')}
+                        className="min-w-0 flex-1 rounded-lg"
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => handleAddModel(inputValue)}
+                        disabled={!inputValue.trim() || customModels.includes(inputValue.trim()) || autoModels.includes(inputValue.trim())}
+                        className="size-11 shrink-0 rounded-lg"
+                        aria-label={t('modelAdd')}
+                        title={t('modelAdd')}
+                    >
+                        <Plus className="size-4" />
+                    </Button>
+                </div>
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <label className="text-xs font-medium">{t('modelSelected')} ({autoModels.length + customModels.length})</label>
+                        {(autoModels.length + customModels.length) > 0 && (
+                            <Button type="button" variant="ghost" size="sm" onClick={() => updateModels([], [])} className="h-9 px-2 text-xs">
+                                {t('modelClearAll')}
+                            </Button>
+                        )}
+                    </div>
+                    <div className="max-h-40 min-h-12 overflow-y-auto rounded-lg border border-border p-2.5">
+                        {(autoModels.length + customModels.length) > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                                {[...autoModels, ...customModels].map((model) => (
+                                    <Badge key={model} variant="secondary" className="max-w-full gap-1">
+                                        <span className="min-w-0 break-all whitespace-normal">{model}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => customModels.includes(model) ? handleRemoveCustomModel(model) : handleRemoveAutoModel(model)}
+                                            className="grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                            aria-label={`${t('remove')} ${model}`}
+                                            title={t('remove')}
+                                        ><X className="size-3.5" /></button>
+                                    </Badge>
+                                ))}
+                            </div>
+                        ) : <div className="py-2 text-center text-xs text-muted-foreground">{t('modelNoSelected')}</div>}
+                    </div>
+                </div>
+            </section>
+
+            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <SectionHeader icon={KeyRound} title={t('apiKeyConfig')} />
                 <div className="flex items-center justify-end gap-2">
                     <Badge variant="secondary" className="rounded-full">
@@ -1389,7 +1481,7 @@ export function ChannelForm({
                         size="sm"
                         onClick={handleTestChannel}
                         disabled={testChannel.isPending || !(formData.base_urls?.some((u) => u.url.trim()) && formData.keys?.some((k) => k.channel_key.trim()))}
-                        className="h-6 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground hover:bg-transparent"
+                        className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                         {testChannel.isPending ? (
                             <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
@@ -1403,7 +1495,7 @@ export function ChannelForm({
                         variant="ghost"
                         size="sm"
                         onClick={handleAddKey}
-                        className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
+                        className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                         <Plus className="h-3 w-3 mr-1" />
                         {t('add')}
@@ -1413,16 +1505,17 @@ export function ChannelForm({
                     {(formData.keys ?? []).map((k, idx) => (
                         <div key={k.id ?? `new-${idx}`} className="rounded-lg border border-border/25 bg-card p-2 space-y-2">
                         <div className={cn(
-                            "grid gap-2 lg:items-center",
-                            showPriorityInput ? "lg:grid-cols-[minmax(0,1fr)_7rem_10rem_auto_auto]" : "lg:grid-cols-[minmax(0,1fr)_10rem_auto_auto]"
+                            "grid grid-cols-[minmax(0,1fr)_auto] gap-2 lg:items-center",
+                            showPriorityInput ? "lg:grid-cols-[minmax(0,1fr)_6rem_8rem_6.5rem_2.75rem]" : "lg:grid-cols-[minmax(0,1fr)_8rem_6.5rem_2.75rem]"
                         )}>
                             <Input
                                 type="text"
                                 value={k.channel_key}
                                 onChange={(e) => handleUpdateKey(idx, { channel_key: e.target.value })}
                                 placeholder={t('apiKey')}
+                                aria-label={`${t('apiKey')} ${idx + 1}`}
                                 required={idx === 0}
-                                className="rounded-lg"
+                                className="col-span-2 rounded-lg lg:col-span-1"
                             />
                             {showPriorityInput && (
                                 <Hint text={t('priorityHint')} side="top">
@@ -1440,7 +1533,7 @@ export function ChannelForm({
                                 value={k.remark ?? ''}
                                 onChange={(e) => handleUpdateKey(idx, { remark: e.target.value })}
                                 placeholder={t('remark')}
-                                className="rounded-lg md:w-40"
+                                className="col-span-2 min-w-0 rounded-lg lg:col-span-1"
                             />
                             <label className="flex items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground">
                                 <Switch
@@ -1455,7 +1548,7 @@ export function ChannelForm({
                                 size="sm"
                                 onClick={() => handleRemoveKey(idx)}
                                 disabled={(formData.keys ?? []).length <= 1}
-                                className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-destructive hover:bg-transparent disabled:opacity-40"
+                                className="size-11 shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
                                 title={t('remove')}
                             >
                                 <X className="h-4 w-4" />
@@ -1526,118 +1619,7 @@ export function ChannelForm({
                 )}
             </section>
 
-            <section className={sectionClassName}>
-                <SectionHeader icon={Layers3} title={t('modelConfig')} />
-                <div className="flex items-center justify-end gap-2">
-                    <MorphingDialog onOpen={handleRefreshModels}>
-                        <MorphingDialogTrigger
-                            disabled={!formData.base_urls?.[0]?.url || !effectiveKey || isFetchingModels}
-                            className="inline-flex h-6 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground/50 transition-colors hover:bg-transparent hover:text-muted-foreground"
-                        >
-                            <RefreshCw className={`h-3 w-3 ${isFetchingModels ? 'animate-spin' : ''}`} />
-                            {t('modelRefresh')}
-                        </MorphingDialogTrigger>
-                        <MorphingDialogContainer>
-                            <MorphingDialogContent className="h-[calc(100dvh-2rem)] w-[min(100vw-2rem,54rem)] max-w-full rounded-xl border border-border/35 bg-card p-0 md:h-[min(44rem,calc(100dvh-3rem))]">
-                                <ModelPickerDialogPanel
-                                    models={fetchedModels}
-                                    draftSelected={modelPickerDraft}
-                                    onDraftChange={setModelPickerDraft}
-                                    isLoading={isFetchingModels}
-                                    onApply={applyFetchedModelSelection}
-                                    perKeyResults={perKeyResults}
-                                    perKeyLoading={fetchModelsPerKey.isPending}
-                                    onFillPerKeyResult={canFillPerKeyModels ? handleFillPerKeyResult : undefined}
-                                    onFillAllPerKeyResults={canFillPerKeyModels ? handleFillAllPerKeyResults : undefined}
-                                />
-                            </MorphingDialogContent>
-                        </MorphingDialogContainer>
-                    </MorphingDialog>
-                </div>
-                <input type="hidden" value={formData.model} required />
-
-                <div className="relative">
-                    <Input
-                        ref={inputRef}
-                        id={`${idPrefix}-model-custom`}
-                        type="text"
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        onKeyDown={handleInputKeyDown}
-                        placeholder={t('modelCustomPlaceholder')}
-                        className="rounded-lg pr-10"
-                    />
-                    {inputValue.trim() && !customModels.includes(inputValue.trim()) && !autoModels.includes(inputValue.trim()) && (
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleAddModel(inputValue)}
-                            className="absolute rounded-lg right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                            title={t('modelAdd')}
-                        >
-                            <Plus className="size-4" />
-                        </Button>
-                    )}
-                </div>
-
-                <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                        <label className="text-xs font-medium text-card-foreground">
-                            {t('modelSelected')} {(autoModels.length + customModels.length) > 0 && `(${autoModels.length + customModels.length})`}
-                        </label>
-                        {(autoModels.length + customModels.length) > 0 && (
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                    updateModels([], []);
-                                }}
-                                className="h-6 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground hover:bg-transparent"
-                            >
-                                {t('modelClearAll')}
-                            </Button>
-                        )}
-                    </div>
-                    <div className="max-h-40 min-h-12 overflow-y-auto rounded-lg border border-border/25 bg-card p-2.5 shadow-sm">
-                        {(autoModels.length + customModels.length) > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                                {autoModels.map((model) => (
-                                    <Badge key={model} variant="secondary" className="bg-muted hover:bg-muted/80">
-                                        {model}
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveAutoModel(model)}
-                                            className="ml-1 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring"
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    </Badge>
-                                ))}
-                                {customModels.map((model) => (
-                                    <Badge key={model} className="bg-primary hover:bg-primary/90">
-                                        {model}
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveCustomModel(model)}
-                                            className="ml-1 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring"
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    </Badge>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="flex items-center justify-center h-8 text-xs text-muted-foreground">
-                                {t('modelNoSelected')}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </section>
-
-            <Accordion type="single" collapsible className="w-full">
+            <Accordion type="single" collapsible className={cn('w-full min-w-0', isCreateLayout && 'md:col-span-2')}>
                 <AccordionItem value="advanced" className="border-none">
                     <AccordionTrigger className="rounded-lg bg-card/70 px-4 py-4 text-sm font-medium text-card-foreground transition-colors hover:bg-card hover:no-underline">
                         <span className="flex items-center gap-2">
@@ -1647,14 +1629,35 @@ export function ChannelForm({
                     </AccordionTrigger>
                     <AccordionContent className="pt-4">
                         <div className="space-y-4">
-                        <ProxySelector
-                            value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
-                            onChange={(next) => onFormDataChange({
-                                ...formData,
-                                proxy_mode: next.proxy_mode as ChannelProxyMode,
-                                proxy_config_id: next.proxy_config_id ?? null,
-                            })}
-                        />
+                        <div className="grid min-w-0 items-start gap-4 md:grid-cols-2">
+                            <ProxySelector
+                                layout="stacked"
+                                value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
+                                onChange={(next) => onFormDataChange({
+                                    ...formData,
+                                    proxy_mode: next.proxy_mode as ChannelProxyMode,
+                                    proxy_config_id: next.proxy_config_id ?? null,
+                                })}
+                            />
+                            <div className={fieldGroupClassName}>
+                                <label htmlFor={`${idPrefix}-key-strategy`} className={labelClassName}>{t('keySelectionStrategy')}</label>
+                                <Select
+                                    value={formData.key_selection_strategy || '__inherit__'}
+                                    onValueChange={(value) => onFormDataChange({ ...formData, key_selection_strategy: value === '__inherit__' ? '' : value })}
+                                >
+                                    <SelectTrigger id={`${idPrefix}-key-strategy`} className="h-11 w-full rounded-lg">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-lg">
+                                        <SelectItem className="rounded-xl" value="__inherit__">{t('keySelectionStrategyInherit')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="cost">{t('keySelectionStrategyCost')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="availability">{t('keySelectionStrategyAvailability')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="speed">{t('keySelectionStrategySpeed')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="priority">{t('keySelectionStrategyPriority')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className={fieldGroupClassName}>
                                 <label htmlFor={`${idPrefix}-auto-group`} className={labelClassName}>
@@ -1701,7 +1704,7 @@ export function ChannelForm({
                                     variant="ghost"
                                     size="sm"
                                     onClick={handleAddHeader}
-                                    className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
+                                    className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                                 >
                                     <Plus className="h-3 w-3 mr-1" />
                                     {t('customHeaderAdd')}
@@ -1730,7 +1733,7 @@ export function ChannelForm({
                                             size="sm"
                                             onClick={() => handleRemoveHeader(idx)}
                                             disabled={(formData.custom_header ?? []).length <= 1}
-                                            className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-destructive hover:bg-transparent disabled:opacity-40"
+                                            className="size-11 shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
                                             title={t('remove')}
                                         >
                                             <X className="h-4 w-4" />
@@ -2176,7 +2179,7 @@ export function ChannelForm({
                     </AccordionContent>
                 </AccordionItem>
             </Accordion>
-            <section className={`${sectionClassName} flex flex-col gap-4`}>
+            <section className={cn(sectionClassName, 'flex flex-col gap-4', isCreateLayout && 'md:col-span-2')}>
                 <label className="flex items-center gap-2 cursor-pointer">
                     <Switch
                         checked={formData.enabled}
@@ -2184,7 +2187,7 @@ export function ChannelForm({
                     />
                     <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
                 </label>
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border/10 pt-4">
+                <div className="grid grid-cols-1 items-start gap-4 border-t border-border/10 pt-4 sm:grid-cols-2 lg:grid-cols-3">
                     <label className="flex items-center gap-2 cursor-pointer">
                         <Switch
                             checked={formData.auto_sync}
@@ -2222,47 +2225,35 @@ export function ChannelForm({
                         <span className="text-sm text-card-foreground">{t('disposable')}</span>
                     </label>
                     {formData.disposable && (
-                        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm text-card-foreground whitespace-nowrap">{t('expireAt')}</span>
+                        <div className="col-span-full grid min-w-0 gap-4 sm:grid-cols-2">
+                            <div className="min-w-0 space-y-2">
+                                <span className="text-sm text-card-foreground">{t('expireAt')}</span>
                                 <Input
                                     type="datetime-local"
-                                    className="h-8 w-48 rounded-lg"
+                                    className="h-11 w-full min-w-0 rounded-lg"
                                     value={formData.expire_at || ''}
                                     onChange={(e) => onFormDataChange({ ...formData, expire_at: e.target.value })}
                                 />
                             </div>
                         </div>
                     )}
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm text-card-foreground whitespace-nowrap">{t('keySelectionStrategy')}</span>
-                        <Select
-                            value={formData.key_selection_strategy || '__inherit__'}
-                            onValueChange={(value) => onFormDataChange({ ...formData, key_selection_strategy: value === '__inherit__' ? '' : value })}
-                        >
-                            <SelectTrigger className="h-8 w-36 rounded-lg">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="rounded-lg">
-                                <SelectItem className="rounded-xl" value="__inherit__">{t('keySelectionStrategyInherit')}</SelectItem>
-                                <SelectItem className="rounded-xl" value="cost">{t('keySelectionStrategyCost')}</SelectItem>
-                                <SelectItem className="rounded-xl" value="availability">{t('keySelectionStrategyAvailability')}</SelectItem>
-                                <SelectItem className="rounded-xl" value="speed">{t('keySelectionStrategySpeed')}</SelectItem>
-                                <SelectItem className="rounded-xl" value="priority">{t('keySelectionStrategyPriority')}</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
                 </div>
             </section>
             </div>
 
-            <div className={`shrink-0 flex flex-col gap-3 pt-4 ${onCancel ? 'sm:flex-row' : ''}`}>
+            <div className={cn(
+                'flex shrink-0 gap-3',
+                isCreateLayout
+                    ? 'justify-end border-t border-border bg-card px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6'
+                    : `flex-col pt-4 ${onCancel ? 'sm:flex-row' : ''}`,
+            )}>
                 {onCancel && cancelText && (
                     <Button
                         type="button"
                         variant="secondary"
                         onClick={onCancel}
-                        className="h-12 w-full rounded-lg sm:flex-1"
+                        disabled={isPending}
+                        className={cn('h-11 rounded-lg', isCreateLayout ? 'flex-1 sm:w-auto sm:flex-none sm:min-w-28' : 'w-full sm:flex-1')}
                     >
                         {cancelText}
                     </Button>
@@ -2270,7 +2261,7 @@ export function ChannelForm({
                 <Button
                     type="submit"
                     disabled={isPending}
-                    className="h-12 w-full rounded-lg sm:flex-1"
+                    className={cn('h-11 rounded-lg', isCreateLayout ? 'flex-1 sm:w-auto sm:flex-none sm:min-w-28' : 'w-full sm:flex-1')}
                 >
                     {isPending ? pendingText : submitText}
                 </Button>
