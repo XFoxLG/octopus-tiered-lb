@@ -81,7 +81,7 @@ function CreateDialogContent({ activeItem }: { activeItem: ToolbarPage }) {
 
 function getCreateDialogContentClassName(activeItem: ToolbarPage) {
     if (activeItem === 'group') {
-        return 'h-[calc(100dvh-1rem)] w-[min(100vw-1rem,92rem)] max-w-none rounded-xl border border-border bg-card px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] text-card-foreground shadow-lg flex flex-col overflow-hidden sm:max-w-none md:h-[calc(100dvh-2rem)] md:w-[min(100vw-2rem,92rem)] md:rounded-xl md:px-4 md:py-4';
+        return 'h-[calc(100dvh-1rem)] w-[min(100vw-1rem,92rem)] max-w-none rounded-xl border border-border bg-card px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] text-card-foreground shadow-lg flex flex-col overflow-hidden sm:max-w-none md:h-[calc(100dvh-2rem)] md:w-[min(100vw-2rem,92rem)] md:rounded-xl md:px-4 md:py-4 2xl:h-auto';
     }
 
     if (activeItem === 'channel') {

@@ -107,7 +107,7 @@ function EditDialogContent({
     const { setIsOpen } = useMorphingDialog();
     const t = useTranslations('group');
     return (
-        <div className="relative flex h-full min-h-0 w-full max-w-full flex-col">
+        <div className="relative flex h-full min-h-0 w-full max-w-full flex-1 flex-col 2xl:h-auto">
             <MorphingDialogTitle className="shrink-0">
                 <header className="relative mb-4 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
                     <div className="min-w-0 space-y-3">
@@ -148,7 +148,7 @@ function EditDialogContent({
                 </header>
             </MorphingDialogTitle>
             <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
-                <div className={cn('min-h-0 min-w-0 flex-1', group.id && (isTestingAvailability || availabilitySummary) ? 'hidden' : 'block')}>
+                <div className={cn('min-h-0 min-w-0 flex-1', group.id && (isTestingAvailability || availabilitySummary) ? 'hidden' : 'flex')}>
                     <GroupEditor
                         key={`edit-group-${group.id}`}
                         className="flex-1 min-h-0"
@@ -1246,7 +1246,7 @@ export function GroupListItem({ group }: { group: Group }) {
                                     </MorphingDialogTrigger>
 
                                     <MorphingDialogContainer>
-                                        <MorphingDialogContent className="max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-3rem)] lg:max-h-[calc(100dvh-1.5rem)] max-w-full sm:max-w-[92rem] lg:max-w-full relative flex h-[calc(100dvh-6rem)] w-[min(100vw-2rem,92rem)] lg:w-full lg:h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-xl border border-border/35 bg-card px-4 py-4 text-card-foreground shadow-md md:h-[calc(100dvh-3rem)] md:w-[min(100vw-2rem,92rem)] md:px-6">
+                                        <MorphingDialogContent className="max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-3rem)] lg:max-h-[calc(100dvh-1.5rem)] max-w-full sm:max-w-[92rem] lg:max-w-full relative flex h-[calc(100dvh-6rem)] w-[min(100vw-2rem,92rem)] lg:w-full lg:h-[calc(100dvh-1.5rem)] 2xl:h-auto flex-col overflow-hidden rounded-xl border border-border/35 bg-card px-4 py-4 text-card-foreground shadow-md md:h-[calc(100dvh-3rem)] md:w-[min(100vw-2rem,92rem)] md:px-6">
                                             <EditDialogContent
                                                 group={group}
                                                 editMembers={members}
