@@ -35,6 +35,7 @@ import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/common/Toast';
 import { CopyIconButton } from '@/components/common/CopyButton';
+import { Button } from '@/components/ui/button';
 import {
     Tooltip,
     TooltipContent,
@@ -108,8 +109,8 @@ function EditDialogContent({
     return (
         <div className="relative flex h-full min-h-0 w-full max-w-full flex-col">
             <MorphingDialogTitle className="shrink-0">
-                <header className="relative mb-4 flex items-start justify-between gap-4">
-                    <div className="space-y-3">
+                <header className="relative mb-4 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+                    <div className="min-w-0 space-y-3">
                         <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
                             <Waves className="size-3.5" />
                             {t('detail.actions.edit')}
@@ -118,31 +119,32 @@ function EditDialogContent({
                             <h2 className="text-2xl font-bold text-card-foreground">
                                 {t('detail.actions.edit')}
                             </h2>
-                            <p className="text-sm text-muted-foreground">{group.name}</p>
+                            <p className="truncate text-sm text-muted-foreground" title={group.name}>{group.name}</p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 empty:hidden sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:justify-end">
                         {group.id && supportsGroupTest(group.endpoint_type) ? (
                             <AIRouteButton
                                 scope="group"
                                 groupId={group.id}
-                                variant="default"
-                                className="h-10 rounded-lg px-3"
+                                variant="ghost"
+                                className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate"
                                 onSuccess={() => setIsOpen(false)}
                             />
                         ) : null}
                         {group.id && supportsGroupTest(group.endpoint_type) && !isTestingAvailability && !availabilitySummary ? (
-                            <button
+                            <Button
                                 type="button"
+                                variant="ghost"
                                 onClick={onTestAvailability}
-                                className="inline-flex h-10 items-center gap-2 rounded-lg border border-primary/20 bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:opacity-90"
+                                className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate"
                             >
                                 <TestTubeDiagonal className="size-4" />
-                                {t('detail.availability.testAll')}
-                            </button>
+                                <span>{t('detail.availability.testAll')}</span>
+                            </Button>
                         ) : null}
-                        <MorphingDialogClose className="relative right-0 top-0" />
                     </div>
+                    <MorphingDialogClose className="relative col-start-2 row-start-1 right-auto top-auto size-11 shrink-0 rounded-lg border-transparent bg-transparent p-2 text-muted-foreground hover:bg-muted sm:col-start-3 sm:right-auto sm:top-auto sm:size-9 sm:p-2 [&>svg]:size-4" />
                 </header>
             </MorphingDialogTitle>
             <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
