@@ -11,6 +11,16 @@ import { toast } from '@/components/common/Toast';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { Hint } from '@/components/ui/hint';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import type { MemberAvailabilityMeta, SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
@@ -70,6 +80,7 @@ function EditDialogContent({
 }: EditDialogContentProps) {
     const { setIsOpen } = useMorphingDialog();
     const t = useTranslations('group');
+    const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
     return (
         <div className="relative flex h-full min-h-0 w-full max-w-full flex-col">
             <MorphingDialogTitle className="shrink-0">
@@ -80,10 +91,7 @@ function EditDialogContent({
                             {t('detail.actions.edit')}
                         </div>
                         <div className="space-y-1">
-                            <h2 className="text-2xl font-bold text-card-foreground">
-                                {t('detail.actions.edit')}
-                            </h2>
-                            <p className="text-sm text-muted-foreground">{group.name}</p>
+                            <h2 className="text-2xl font-bold text-card-foreground">{group.name}</h2>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -152,7 +160,7 @@ function EditDialogContent({
                                 {canRemoveFailedModels ? (
                                     <button
                                         type="button"
-                                        onClick={onRemoveFailedModels}
+                                        onClick={() => setShowRemoveConfirm(true)}
                                         className="inline-flex h-9 items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/8 px-3 text-sm font-medium text-destructive transition-colors hover:bg-destructive/12"
                                     >
                                         <Trash2 className="size-4" />
@@ -246,6 +254,28 @@ function EditDialogContent({
                     </section>
                 ) : null}
             </MorphingDialogDescription>
+
+            <AlertDialog open={showRemoveConfirm} onOpenChange={setShowRemoveConfirm}>
+                <AlertDialogContent className="rounded-xl">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{t('detail.actions.removeFailedModels')}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t('detail.availability.removeFailedConfirm')}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>{t('detail.actions.cancel')}</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={() => {
+                                onRemoveFailedModels();
+                                setShowRemoveConfirm(false);
+                            }}
+                        >
+                            {t('detail.actions.confirmRemove')}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

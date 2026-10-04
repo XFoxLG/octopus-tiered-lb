@@ -2384,7 +2384,8 @@
         "resultTitle": "Check details",
         "resultPassed": "Passed",
         "resultFailed": "Failed",
-        "resultAttempts": "Retried {count} times"
+        "resultAttempts": "Retried {count} times",
+        "removeFailedConfirm": "Removed models will need to be re-tested to restore. Continue?"
       },
       "actions": {
         "edit": "Edit",
@@ -2394,7 +2395,8 @@
         "delete": "Delete",
         "confirmDelete": "Confirm Delete",
         "testAvailability": "Test availability",
-        "removeFailedModels": "Remove failed models"
+        "removeFailedModels": "Remove failed models",
+        "confirmRemove": "Confirm Remove"
       }
     },
     "form": {
@@ -2516,7 +2518,10 @@
         },
         "channelOverrideNotice": "An individual channel can declare its own upstream protocols and override this choice; channels without a declaration inherit this setting."
       },
-      "channelOverrideNotice": "All timeouts above (first token / attempt / stream idle) and the reasoning buffer strategy can be overridden per channel: leave the channel field empty or 0 to inherit this setting."
+      "channelOverrideNotice": "All timeouts above (first token / attempt / stream idle) and the reasoning buffer strategy can be overridden per channel: leave the channel field empty or 0 to inherit this setting.",
+      "advancedSettings": "Advanced Settings",
+      "nameRequired": "Please enter a group name",
+      "membersRequired": "Please select at least one model"
     },
     "mode": {
       "roundRobin": "Round Robin",

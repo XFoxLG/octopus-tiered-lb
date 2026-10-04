@@ -2333,7 +2333,8 @@
         "resultTitle": "????",
         "resultPassed": "??",
         "resultFailed": "??",
-        "resultAttempts": "?? {count} ?"
+        "resultAttempts": "?? {count} ?",
+        "removeFailedConfirm": "移除後需要重新檢測才能恢復，確定繼續嗎？"
       },
       "actions": {
         "edit": "編輯",
@@ -2343,7 +2344,8 @@
         "delete": "刪除",
         "confirmDelete": "確認刪除",
         "testAvailability": "檢測可用功能",
-        "removeFailedModels": "移除失敗模型"
+        "removeFailedModels": "移除失敗模型",
+        "confirmRemove": "確認移除"
       }
     },
     "form": {
@@ -2465,7 +2467,10 @@
         },
         "channelOverrideNotice": "單一渠道可以宣告自己的上游協定並覆蓋這裡的選擇；渠道未宣告時沿用此處設定。"
       },
-      "channelOverrideNotice": "以上超時（首字 / 單次嘗試 / 串流閒置）與推理緩衝策略都可被單一渠道覆蓋：渠道裡留空或填 0 就沿用這裡的設定。"
+      "channelOverrideNotice": "以上超時（首字 / 單次嘗試 / 串流閒置）與推理緩衝策略都可被單一渠道覆蓋：渠道裡留空或填 0 就沿用這裡的設定。",
+      "advancedSettings": "進階設定",
+      "nameRequired": "請輸入分組名稱",
+      "membersRequired": "請至少選擇一個模型"
     },
     "mode": {
       "roundRobin": "輪詢",

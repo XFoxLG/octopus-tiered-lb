@@ -2340,7 +2340,8 @@
         "resultTitle": "检测明细",
         "resultPassed": "通过",
         "resultFailed": "失败",
-        "resultAttempts": "重试 {count} 次"
+        "resultAttempts": "重试 {count} 次",
+        "removeFailedConfirm": "移除后需要重新检测才能恢复，确定继续吗？"
       },
       "actions": {
         "edit": "编辑",
@@ -2350,7 +2351,8 @@
         "delete": "删除",
         "confirmDelete": "确认删除",
         "testAvailability": "检测可用功能",
-        "removeFailedModels": "移除失败模型"
+        "removeFailedModels": "移除失败模型",
+        "confirmRemove": "确认移除"
       }
     },
     "form": {
@@ -2472,7 +2474,10 @@
         },
         "channelOverrideNotice": "单个渠道可以声明自己的上游协议并覆盖这里的选择；渠道未声明时沿用此处设置。"
       },
-      "channelOverrideNotice": "以上超时（首字 / 单次尝试 / 流式空闲）与推理缓冲策略都可被单个渠道覆盖：渠道里留空或填 0 就沿用这里的设置。"
+      "channelOverrideNotice": "以上超时（首字 / 单次尝试 / 流式空闲）与推理缓冲策略都可被单个渠道覆盖：渠道里留空或填 0 就沿用这里的设置。",
+      "advancedSettings": "高级配置",
+      "nameRequired": "请输入分组名称",
+      "membersRequired": "请至少选择一个模型"
     },
     "mode": {
       "roundRobin": "轮询",
