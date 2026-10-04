@@ -5,6 +5,7 @@ export interface AIRouteConfiguration {
     model: string;
     timeoutSeconds: string;
     parallelism: string;
+    maxModels: string;
     servicesJSON: string;
 }
 
@@ -108,7 +109,7 @@ export function getAIRouteConfigurationIssues(configuration: AIRouteConfiguratio
         if (!configuration.apiKey.trim()) issues.push('apiKey');
         if (!configuration.model.trim()) issues.push('model');
     }
-    for (const field of ['timeoutSeconds', 'parallelism'] as const) {
+    for (const field of ['timeoutSeconds', 'parallelism', 'maxModels'] as const) {
         const value = configuration[field].trim();
         if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) < 1) {
             issues.push(field);

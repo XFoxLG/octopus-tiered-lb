@@ -1294,6 +1294,26 @@
         "label": "延遲權重（0-100）",
         "hint": "值越大，自動策略越偏向低延遲渠道；值越小，越偏向成功率。",
         "placeholder": "30"
+      },
+      "ttftWeight": {
+        "label": "TTFT 權重（0-100）",
+        "hint": "首 Token 時間權重。大於 0 且渠道有 TTFT 樣本時，延遲評分改用首 Token 時間（串流體感優先）；無樣本自動回退總延遲。",
+        "placeholder": "0"
+      },
+      "priceWeight": {
+        "label": "成本權重（0-100）",
+        "hint": "大於 0 時按價格目錄的模型單價對評分降權，讓便宜且健康的渠道優先出場；無價格資料的渠道不受影響。",
+        "placeholder": "0"
+      },
+      "exploreRate": {
+        "label": "探索機率（0-100）",
+        "hint": "大於 0 時按評分 softmax 機率隨機化候選順序，避免單一渠道壟斷流量；0 保持純貪心（舊行為）。",
+        "placeholder": "0"
+      },
+      "bucketTolerance": {
+        "label": "同分桶容差（0-100）",
+        "hint": "評分差在該容差內的渠道視為同分，桶內隨機打散順序，消除輪流壟斷。0 關閉打散。",
+        "placeholder": "5"
       }
     },
     "aiRoute": {
@@ -1340,11 +1360,30 @@
         "label": "同時分析請求數",
         "hint": "填入正整數。同時請求越多，API 壓力和觸發限速的風險越大。"
       },
+      "maxModels": {
+        "label": "單批次最大模型數",
+        "placeholder": "請輸入大於 0 的整數",
+        "hint": "超過該數量的模型列表會按模型家族切分成多個分析批次。上下文窗口大的分析模型可調高（如 200）以獲得更完整的跨家族歸一；模型經常被拆散漏歸類時可嘗試調大。"
+      },
       "services": {
         "advanced": "進階：分析服務池",
-        "label": "服務池（JSON）",
-        "placeholder": "[]",
-        "description": "可選的服務設定陣列。每項須填入 base_url、api_key、model；name 和 enabled 可選，且至少啟用一項。非空服務池會覆蓋上面的單服務位址、金鑰與模型。設為 [] 恢復單服務。",
+        "label": "AI 服務池",
+        "placeholder": "請輸入 AI 服務設定 JSON 陣列",
+        "description": "可選的服務設定陣列，每項填入 base_url、api_key、model，name 和 enabled 可選。非空服務池會覆蓋上面的單服務位址、金鑰與模型。",
+        "hint": "留空或 [] 時會繼續使用上方單服務設定；設定服務後會啟用多服務池與失敗切換。",
+        "invalid": "AI 服務池 JSON 必須是陣列",
+        "add": "新增服務",
+        "empty": "目前沒有設定任何 AI 路由分析服務。",
+        "invalidStored": "存量 AI 服務池設定不是合法的 JSON 陣列。請在下方修正原文後重試，即可回到結構化編輯。",
+        "retryParse": "重新解析",
+        "serviceIndex": "服務 {index}",
+        "removeService": "移除服務 {index}",
+        "disabledTag": "已停用",
+        "enabledCount": "已啟用 {enabled}/{total}",
+        "namePlaceholder": "服務名稱（可選）",
+        "baseUrlPlaceholder": "Base URL（OpenAI 相容）",
+        "apiKeyPlaceholder": "API Key",
+        "modelPlaceholder": "模型名稱",
         "active": "目前使用進階服務池，上面的單服務設定不參與執行。",
         "single": "目前使用單服務設定。"
       },
@@ -1354,6 +1393,7 @@
         "model": "請填入分析模型或現有 Octopus 分組名稱。",
         "timeoutSeconds": "分析逾時必須是正整數秒數。",
         "parallelism": "同時分析請求數必須是正整數。",
+        "maxModels": "單批次最大模型數必須是正整數。",
         "servicesJSON": "服務池須為 JSON 陣列，每項包含有效的 HTTP(S) base_url、非空 api_key 和 model，且至少啟用一項。可選 name 為字串、enabled 為布林值。單服務請填 []。"
       },
       "save": {

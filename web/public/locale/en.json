@@ -1338,6 +1338,26 @@
         "label": "Latency Weight (%)",
         "hint": "Weight for latency in automatic channel selection (0-100). Higher values favor faster channels. Lower values favor reliability.",
         "placeholder": "30"
+      },
+      "ttftWeight": {
+        "label": "TTFT Weight (%)",
+        "hint": "Time-to-first-token weight. When above 0 and a channel has TTFT samples, the latency score switches to first-token time (streaming experience first); falls back to total latency when no samples exist.",
+        "placeholder": "0"
+      },
+      "priceWeight": {
+        "label": "Cost Weight (%)",
+        "hint": "When above 0, channels are scored down by the model unit price from the price catalog so cheap and healthy channels get picked first; channels without price data are unaffected.",
+        "placeholder": "0"
+      },
+      "exploreRate": {
+        "label": "Exploration Rate (%)",
+        "hint": "When above 0, candidate order is randomized by score softmax sampling to prevent a single channel from monopolizing traffic; 0 keeps pure greedy (legacy behavior).",
+        "placeholder": "0"
+      },
+      "bucketTolerance": {
+        "label": "Same-Score Bucket Tolerance (%)",
+        "hint": "Channels whose scores differ within this tolerance are treated as tied and shuffled within the bucket, removing round-robin monopolies. 0 disables shuffling.",
+        "placeholder": "5"
       }
     },
     "pageOrder": {
@@ -1491,11 +1511,30 @@
         "label": "Parallel analysis requests",
         "hint": "A positive whole number limiting concurrent analysis requests. Higher values can increase API load and rate-limit failures."
       },
+      "maxModels": {
+        "label": "Max Models per Batch",
+        "placeholder": "Enter an integer greater than 0",
+        "hint": "Model lists larger than this are split into multiple analysis batches by model family. Raise it (e.g. 200) for analysis models with larger context windows to get more complete cross-family consolidation; raise it too if models keep getting split and missed."
+      },
       "services": {
         "advanced": "Advanced: analysis service pool",
-        "label": "Service pool (JSON)",
-        "placeholder": "[]",
-        "description": "Optional JSON array of analysis services. Each entry needs base_url, api_key, and model; name and enabled are optional. At least one service must be enabled. A non-empty pool overrides the single-service URL, key, and model above. Use [] to return to the single-service configuration.",
+        "label": "AI service pool",
+        "placeholder": "Enter a JSON array of AI services",
+        "description": "Optional array of analysis services; each entry has base_url, api_key, and model, with optional name and enabled. A non-empty pool overrides the single-service URL, key, and model above.",
+        "hint": "Leave empty or [] to keep using the single-service settings above. Configured services enable multi-service pooling and failover.",
+        "invalid": "AI service pool JSON must be an array",
+        "add": "Add Service",
+        "empty": "No AI route analysis services are configured yet.",
+        "invalidStored": "The stored AI service pool value is not a valid JSON array. Fix the raw text below and click retry to return to the structured editor.",
+        "retryParse": "Retry parsing",
+        "serviceIndex": "Service {index}",
+        "removeService": "Remove service {index}",
+        "disabledTag": "Disabled",
+        "enabledCount": "{enabled}/{total} enabled",
+        "namePlaceholder": "Service name (optional)",
+        "baseUrlPlaceholder": "Base URL (OpenAI compatible)",
+        "apiKeyPlaceholder": "API Key",
+        "modelPlaceholder": "Model name",
         "active": "Advanced service pool selected: the single-service configuration is not used.",
         "single": "Single-service configuration selected."
       },
@@ -1505,6 +1544,7 @@
         "model": "Enter an analysis model or an existing Octopus group name.",
         "timeoutSeconds": "The analysis timeout must be a positive whole number of seconds.",
         "parallelism": "Parallelism must be a positive whole number.",
+        "maxModels": "Max models per batch must be a positive whole number.",
         "servicesJSON": "Enter a JSON array with a valid HTTP(S) base_url, non-empty api_key and model for every service, and at least one enabled service. Optional name must be a string and enabled a boolean. Use [] for a single service."
       },
       "save": {

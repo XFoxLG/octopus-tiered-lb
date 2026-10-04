@@ -81,6 +81,7 @@ function assertTranslatedPaths(localeName, messages, paths) {
         if (!messagePath.endsWith('.placeholder') && !messagePath.endsWith('.example')) {
             const translated = translate(messagePath, {
                 count: 2, completed: 1, total: 2, ms: 25, value: 'Chat', id: 1,
+                index: 1, enabled: 1,
                 backend: 'Redis / Valkey', health: 'Healthy', tls: 'TLS', error: 'Connection refused',
                 order: 'Chat Completions → Responses API',
                 summary: 'passed=3 failed=0 unsupported=2 unknown=0',
