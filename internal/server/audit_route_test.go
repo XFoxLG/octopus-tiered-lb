@@ -19,6 +19,7 @@ var exemptFromAudit = map[string]string{
 	"POST /api/v1/channel/test-model":           "single model availability probe — no state change",
 	"POST /api/v1/channel/test-model-sync":      "single model sync probe — no state change",
 	"POST /api/v1/channel/tools-probe":          "single model tools capability probe — writes probe verdict columns only",
+	"POST /api/v1/channel/:id/probe":            "channel capability probe — writes probe history rows only, never the channel config",
 	"POST /api/v1/channel/fetch-models-per-key": "model fetch per key probe — no state change",
 	"POST /api/v1/user/login":                   "authentication — auditing every login would flood the log",
 	"POST /api/v1/group/test":                   "group routing test — no state change",

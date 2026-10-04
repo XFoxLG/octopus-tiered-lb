@@ -3014,7 +3014,12 @@
         "passed": "Test Passed",
         "failed": "Test Failed",
         "attempts": "Retried {count} times",
-        "skipped": "This channel is set to skip model availability tests (some upstream providers penalize low-byte probe requests). Testing is disabled."
+        "skipped": "This channel is set to skip model availability tests (some upstream providers penalize low-byte probe requests). Testing is disabled.",
+        "probe": "Test connection"
+      },
+      "probeDialog": {
+        "title": "Test Connection",
+        "description": "Verifies the protocols and capabilities this channel supports. The probe only adds; results are written back only when you click Apply."
       }
     },
     "create": {
@@ -3296,6 +3301,46 @@
       "channelReasoningBufferStrategyImmediate": "Immediate (lower latency)",
       "baseUrlProtocolAny": "Any protocol",
       "baseUrlProtocolLabel": "Upstream protocol served by this URL"
+    },
+    "probe": {
+      "title": "Test Connection",
+      "description": "Verifies which upstream protocols this channel supports, then checks each model capability. Results are only written back when you click Apply; the probe only adds, never removes existing settings.",
+      "modelLabel": "Select a model to test",
+      "modelPlaceholder": "Type or pick a model name",
+      "modelHint": "This sends real requests to the model and consumes quota, so it only runs when you click it — never on a schedule.",
+      "modelRequired": "Pick a model to test first",
+      "skipModelTestWarning": "This channel is marked \"no liveness testing\" (some free stations ban accounts over liveness keywords). Continue anyway?",
+      "skipModelTestConfirm": "I understand, probe anyway",
+      "idleHint": "Click Start probe to run a test.",
+      "running": "Probing item by item…",
+      "sectionProtocol": "Protocols",
+      "sectionCapability": "Capabilities",
+      "summary": "Overall: {summary}",
+      "start": "Start probe",
+      "rerun": "Probe again",
+      "close": "Close",
+      "apply": "Apply results",
+      "applied": "Applied",
+      "applyHint": "Apply only adds protocols that passed; nothing existing is ever removed.",
+      "applyNoChange": "Nothing new to write (results match the current config, or the evidence was inconclusive)",
+      "applyAdded": "Added protocols: {protocols}",
+      "item": {
+        "protocol_chat": "Protocol: Chat Completions",
+        "protocol_responses": "Protocol: Responses API",
+        "protocol_messages": "Protocol: Anthropic Messages",
+        "protocol_gemini": "Protocol: Gemini generateContent",
+        "models": "Capability: model list",
+        "text_generation": "Capability: text generation",
+        "tool_calling": "Capability: tool calling",
+        "structured_output": "Capability: structured output",
+        "web_search": "Capability: web search"
+      },
+      "verdict": {
+        "pass": "passed",
+        "fail": "failed",
+        "unsupported": "unsupported",
+        "unknown": "inconclusive"
+      }
     }
   },
   "errors": {

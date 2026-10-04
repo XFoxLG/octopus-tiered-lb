@@ -254,7 +254,7 @@ func performChannelModelFallback(ctx context.Context, channel *appmodel.Channel,
 		if adapter == nil {
 			continue
 		}
-			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, adapter, adapterType, &cloned, apiKey, appmodel.EndpointTypeAll, modelName)
+		statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, adapter, adapterType, &cloned, apiKey, appmodel.EndpointTypeAll, modelName)
 		if err == nil {
 			return statusCode, responseText, internalResp, nil
 		}

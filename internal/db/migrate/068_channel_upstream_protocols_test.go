@@ -68,11 +68,11 @@ func TestAddChannelUpstreamProtocols(t *testing.T) {
 	}
 
 	type storedRow struct {
-		ID                     int
-		UpstreamProtocols      string
-		FirstTokenTimeOut      int
-		AttemptTimeOut         int
-		StreamIdleTimeout      int
+		ID                      int
+		UpstreamProtocols       string
+		FirstTokenTimeOut       int
+		AttemptTimeOut          int
+		StreamIdleTimeout       int
 		ReasoningBufferStrategy string
 	}
 	readRow := func(id int) storedRow {

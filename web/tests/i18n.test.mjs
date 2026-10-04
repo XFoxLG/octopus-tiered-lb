@@ -83,6 +83,8 @@ function assertTranslatedPaths(localeName, messages, paths) {
                 count: 2, completed: 1, total: 2, ms: 25, value: 'Chat', id: 1,
                 backend: 'Redis / Valkey', health: 'Healthy', tls: 'TLS', error: 'Connection refused',
                 order: 'Chat Completions → Responses API',
+                summary: 'passed=3 failed=0 unsupported=2 unknown=0',
+                protocols: 'chat_only, responses_only',
             });
             assert.notEqual(translated, messagePath, `${localeName} renders a raw key at ${messagePath}`);
         }
@@ -241,6 +243,20 @@ function assertGroupUiTranslations() {
         // 字面量扫描看不到，必须显式枚举，否则漏键会静默显示原始 key。
         ...['chat', 'responses', 'messages', 'chat_only', 'responses_only', 'messages_only', 'passthrough', 'raw']
             .flatMap((protocol) => [`channel.form.upstreamProtocol.${protocol}`, `channel.form.upstreamProtocolHint.${protocol}`]),
+        // 探测弹窗：协议/能力项的键名通过模板拼接，同样必须显式枚举。
+        ...[
+            'title', 'description', 'modelLabel', 'modelPlaceholder', 'modelHint', 'modelRequired',
+            'skipModelTestWarning', 'skipModelTestConfirm', 'idleHint', 'running',
+            'sectionProtocol', 'sectionCapability', 'summary', 'start', 'rerun', 'close',
+            'apply', 'applied', 'applyHint', 'applyNoChange', 'applyAdded',
+        ].map((key) => `channel.probe.${key}`),
+        ...['protocol_chat', 'protocol_responses', 'protocol_messages', 'protocol_gemini',
+            'models', 'text_generation', 'tool_calling', 'structured_output', 'web_search']
+            .map((item) => `channel.probe.item.${item}`),
+        ...['pass', 'fail', 'unsupported', 'unknown'].map((verdict) => `channel.probe.verdict.${verdict}`),
+        'channel.detail.testModel.probe',
+        'channel.detail.probeDialog.title',
+        'channel.detail.probeDialog.description',
     ]);
     for (const localeName of localeFiles) {
         assertTranslatedPaths(localeName, readJson(path.join(localeDir, localeName)), paths);

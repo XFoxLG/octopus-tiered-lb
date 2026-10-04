@@ -10,9 +10,9 @@ import (
 
 func TestNormalizeUpstreamProtocolsOrdersAndDeduplicates(t *testing.T) {
 	cases := []struct {
-		name   string
-		input  []string
-		want   []string
+		name  string
+		input []string
+		want  []string
 	}{
 		{name: "empty", input: nil, want: nil},
 		{name: "blank entries", input: []string{"", "  "}, want: nil},

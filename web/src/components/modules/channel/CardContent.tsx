@@ -14,7 +14,8 @@ import {
     ShieldAlert,
     Stethoscope,
     FlaskConical,
-    Loader2
+    Loader2,
+    Cable
 } from 'lucide-react';
 import {
     useUpdateChannel,
@@ -66,6 +67,14 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import { ProbeDialog } from './ProbeDialog';
 import { toast } from '@/components/common/Toast';
 
 export function CardContent({ channel, stats }: { channel: Channel; stats: StatsMetricsFormatted }) {
@@ -80,6 +89,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     // 此时弹出确认对话框允许直接删除该渠道。
     const [checkResult, setCheckResult] = useState<TestChannelSummary | null>(null);
     const [showUnavailableDelete, setShowUnavailableDelete] = useState(false);
+    // 能力探测弹窗（手动触发，无后台定时）。
+    const [isProbing, setIsProbing] = useState(false);
 
     const testChannelModel = useTestChannelModel();
 
@@ -715,6 +726,21 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                         : <FlaskConical className="size-4" />}
                                                     {isTestingModel ? t('testModel.testing') : t('testModel.test')}
                                                 </Button>
+                                                {/*
+                                                  能力探测与上面的「测试模型」是两件事：
+                                                  上面只验证"这个模型能不能应答"，这里逐条验证
+                                                  协议与能力（工具调用/结构化输出/联网搜索），
+                                                  结果需要用户确认后才写回渠道配置。
+                                                */}
+                                                <Button
+                                                    onClick={() => setIsProbing(true)}
+                                                    disabled={!selectedModel || availableModels.length === 0}
+                                                    variant="outline"
+                                                    className="h-10 sm:w-auto"
+                                                >
+                                                    <Cable className="size-4" />
+                                                    {t('testModel.probe')}
+                                                </Button>
                                             </div>
 
                                             {isTestingModel && (
@@ -860,6 +886,25 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                     </TabsContents>
                 </Tabs>
             </MorphingDialogDescription>
+
+            {/*
+              能力探测弹窗。刻意挂在 AlertDialog 之外、用独立的 Dialog：
+              它内容较长（协议层 + 能力层逐行结果），且需要滚动查看，
+              与"确认删除"这类短确认弹窗的交互模型不同。
+            */}
+            <Dialog open={isProbing} onOpenChange={setIsProbing}>
+                <DialogContent className="max-h-[85vh] overflow-y-auto rounded-xl sm:max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>{t('probeDialog.title')}</DialogTitle>
+                        <DialogDescription>{t('probeDialog.description')}</DialogDescription>
+                    </DialogHeader>
+                    <ProbeDialog
+                        channel={channel}
+                        availableModels={availableModels}
+                        onClose={() => setIsProbing(false)}
+                    />
+                </DialogContent>
+            </Dialog>
 
             <AlertDialog open={showUnavailableDelete} onOpenChange={setShowUnavailableDelete}>
                 <AlertDialogContent className="rounded-xl">

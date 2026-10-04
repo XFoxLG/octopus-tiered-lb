@@ -27,6 +27,10 @@ import (
 
 var errModelTestSkipped = errors.New("channel skipped model test (issue #98)")
 
+// ErrModelTestSkipped 暴露给上层 handler：把"渠道禁止测活、需要用户确认"
+// 与普通参数错误区分开，前端据此弹确认框而不是报错。
+func ErrModelTestSkipped() error { return errModelTestSkipped }
+
 type GroupModelTestRequest struct {
 	GroupID int `json:"group_id" binding:"required"`
 }

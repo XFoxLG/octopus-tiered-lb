@@ -635,6 +635,127 @@ export function useFetchModelsPerKey() {
     });
 }
 
+/**
+ * 渠道能力探测（手动触发，无后台定时）。
+ *
+ * 后端路由：
+ *   POST /api/v1/channel/:id/probe           跑一次探测（协议层 + 能力层）
+ *   POST /api/v1/channel/:id/probe/apply     把某次结果应用回渠道（只加不减）
+ *   GET  /api/v1/channel/:id/probe/history   探测历史
+ *   GET  /api/v1/channel/:id/capabilities    渠道×模型能力结论
+ */
+
+/** 单项探测判定。只有 pass / unsupported 会被允许写入配置。 */
+export type ProbeVerdict = 'pass' | 'fail' | 'unsupported' | 'unknown';
+
+export type ProbeKind = 'protocol' | 'capability';
+
+export type ChannelProbeResult = {
+    id: number;
+    run_id: number;
+    channel_id: number;
+    model_name: string;
+    kind: ProbeKind;
+    item: string;
+    verdict: ProbeVerdict;
+    status_code?: number;
+    latency_ms?: number;
+    summary?: string;
+    /** 已脱敏的上游回显片段；绝不包含密钥。 */
+    detail?: string;
+    created_at?: string;
+};
+
+export type ChannelProbeRun = {
+    id: number;
+    channel_id: number;
+    model_name: string;
+    key_id: number;
+    started_at: string;
+    ended_at: string;
+    summary?: string;
+    applied: boolean;
+    applied_at?: string;
+    created_at?: string;
+    results?: ChannelProbeResult[];
+};
+
+export type ChannelProbeApplyResult = {
+    added_protocols: string[];
+    capabilities: number;
+};
+
+export type ChannelModelCapability = {
+    id: number;
+    channel_id: number;
+    model_name: string;
+    capability: 'tool_calling' | 'structured_output' | 'web_search' | 'streaming';
+    supported: boolean;
+    source: string;
+    probe_key_id: number;
+    probed_at: string;
+    updated_at: string;
+};
+
+export type StartChannelProbeRequest = {
+    model_name: string;
+    /** 指定用哪个 Key（下标）；负值或省略 = 由后端挑一个可用 Key。 */
+    key_index?: number;
+    /** 显式确认"即使渠道标记了禁止测活也要探测"。 */
+    allow_skip_model_test?: boolean;
+};
+
+export function useChannelProbe() {
+    return useMutation({
+        mutationFn: async ({ channelId, request }: { channelId: number; request: StartChannelProbeRequest }) => {
+            return apiClient.post<ChannelProbeRun>(`/api/v1/channel/${channelId}/probe`, request);
+        },
+        onError: (error) => {
+            logger.error('渠道能力探测失败:', error);
+        },
+    });
+}
+
+export function useApplyChannelProbe() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ channelId, runId }: { channelId: number; runId: number }) => {
+            return apiClient.post<ChannelProbeApplyResult>(`/api/v1/channel/${channelId}/probe/apply`, { run_id: runId });
+        },
+        onSuccess: () => {
+            // 应用会改写渠道协议声明与能力表，两处缓存都要失效，
+            // 否则界面会继续显示旧配置，用户以为没生效。
+            queryClient.invalidateQueries({ queryKey: ['channel', 'list'] });
+        },
+        onError: (error) => {
+            logger.error('应用探测结果失败:', error);
+        },
+    });
+}
+
+export function useChannelProbeHistory(channelId: number | undefined, enabled = true) {
+    return useQuery({
+        queryKey: ['channel', channelId, 'probe-history'],
+        queryFn: async () => {
+            if (!channelId) return [] as ChannelProbeRun[];
+            return apiClient.get<ChannelProbeRun[]>(`/api/v1/channel/${channelId}/probe/history`);
+        },
+        enabled: enabled && Boolean(channelId),
+    });
+}
+
+export function useChannelCapabilities(channelId: number | undefined, modelName?: string, enabled = true) {
+    return useQuery({
+        queryKey: ['channel', channelId, 'capabilities', modelName ?? ''],
+        queryFn: async () => {
+            if (!channelId) return [] as ChannelModelCapability[];
+            const suffix = modelName ? `?model=${encodeURIComponent(modelName)}` : '';
+            return apiClient.get<ChannelModelCapability[]>(`/api/v1/channel/${channelId}/capabilities${suffix}`);
+        },
+        enabled: enabled && Boolean(channelId),
+    });
+}
+
 export function useTestChannel() {
     return useMutation({
         mutationFn: async (data: CreateChannelRequest | UpdateChannelRequest | FetchModelRequest) => {

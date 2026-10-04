@@ -1806,7 +1806,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				continue
 			}
 
-				attemptTypes := outboundAttemptTypesForChannel(channel.Type, req.internalRequest, group.OutboundFormat, channel.OutboundFormatOverride, channel.UpstreamProtocols)
+			attemptTypes := outboundAttemptTypesForChannel(channel.Type, req.internalRequest, group.OutboundFormat, channel.OutboundFormatOverride, channel.UpstreamProtocols)
 			if len(attemptTypes) == 0 || outbound.Get(attemptTypes[0]) == nil {
 				routeIter.Skip(channel.ID, 0, channel.Name, fmt.Sprintf("unsupported channel type: %d", channel.Type))
 				continue
@@ -1944,8 +1944,8 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						adapterType:          attemptType,
 						channel:              channel,
 						usedKey:              usedKey,
-							firstTokenTimeOutSec: channel.EffectiveFirstTokenTimeOut(group.FirstTokenTimeOut),
-							attemptTimeOutSec:    channel.EffectiveAttemptTimeOut(group.AttemptTimeOut),
+						firstTokenTimeOutSec: channel.EffectiveFirstTokenTimeOut(group.FirstTokenTimeOut),
+						attemptTimeOutSec:    channel.EffectiveAttemptTimeOut(group.AttemptTimeOut),
 						tryIndex:             keyRound,
 						tryTotal:             maxKeyRetriesPerRoute,
 					}

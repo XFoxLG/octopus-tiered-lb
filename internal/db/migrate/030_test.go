@@ -127,6 +127,11 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := addChannelUpstreamProtocols(db); err != nil {
 		t.Fatalf("addChannelUpstreamProtocols: %v", err)
 	}
+	// Run migration 069 to add the capability probe tables
+	// (test uses latest models; the migration also backfills legacy tools verdicts)
+	if err := migrateChannelCapabilityProbe(db); err != nil {
+		t.Fatalf("migrateChannelCapabilityProbe: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

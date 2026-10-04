@@ -125,9 +125,9 @@ func Create(ch *model.Channel, ctx context.Context) error {
 			return err
 		}
 		ch.OutboundFormatOverride = normalizedOverride
-			if err := normalizeChannelProtocolFields(ch); err != nil {
-				return err
-			}
+		if err := normalizeChannelProtocolFields(ch); err != nil {
+			return err
+		}
 		if err := normalizeChannelProxyFields(ch); err != nil {
 			return err
 		}

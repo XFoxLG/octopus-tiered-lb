@@ -31,6 +31,7 @@ var auditedManagementWriteRoutes = map[string]struct{}{
 	"POST /api/v1/channel/update":                                                    {},
 	"DELETE /api/v1/channel/delete/:id":                                              {},
 	"POST /api/v1/channel/check-keys/:id":                                            {},
+	"POST /api/v1/channel/:id/probe/apply":                                           {},
 	"POST /api/v1/channel/group/create":                                              {},
 	"POST /api/v1/channel/group/update":                                              {},
 	"DELETE /api/v1/channel/group/delete/:id":                                        {},

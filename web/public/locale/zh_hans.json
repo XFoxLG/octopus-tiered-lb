@@ -2970,7 +2970,12 @@
         "passed": "测试通过",
         "failed": "测试失败",
         "attempts": "重试 {count} 次",
-        "skipped": "该渠道已设置跳过模型可用性测试（部分上游会因低字节探测请求扣额度/封禁），测试已禁用。"
+        "skipped": "该渠道已设置跳过模型可用性测试（部分上游会因低字节探测请求扣额度/封禁），测试已禁用。",
+        "probe": "测试连接"
+      },
+      "probeDialog": {
+        "title": "测试连接",
+        "description": "逐项验证该渠道支持的协议与能力。探测只加不减，需要你点「应用」才会写回配置。"
       }
     },
     "create": {
@@ -3252,6 +3257,46 @@
       "channelReasoningBufferStrategyImmediate": "立即下发（实时体验）",
       "baseUrlProtocolAny": "通用地址",
       "baseUrlProtocolLabel": "该地址服务的上游协议"
+    },
+    "probe": {
+      "title": "测试连接",
+      "description": "依次验证该渠道支持哪些上游协议，再逐项验证模型能力。结果需要你点「应用」才会写回渠道配置；探测只加不减，不会删掉现有设置。",
+      "modelLabel": "选择测试模型",
+      "modelPlaceholder": "输入或选择模型名",
+      "modelHint": "会向该模型发真实请求并消耗额度，所以只在手动点击时执行，不会后台定时跑。",
+      "modelRequired": "请先选择要测试的模型",
+      "skipModelTestWarning": "该渠道标记了「禁止测活」（部分公益站会因测活关键词封禁账号）。确认要继续吗？",
+      "skipModelTestConfirm": "我确认，仍然探测",
+      "idleHint": "点右下角「开始探测」发起一次测试。",
+      "running": "正在逐个探测…",
+      "sectionProtocol": "协议层",
+      "sectionCapability": "能力层",
+      "summary": "整体结果：{summary}",
+      "start": "开始探测",
+      "rerun": "重新探测",
+      "close": "关闭",
+      "apply": "应用结果",
+      "applied": "已应用",
+      "applyHint": "「应用结果」只把探测通过的协议加进渠道声明，不会删除任何现有项。",
+      "applyNoChange": "没有新的可写入项（探测结果与当前配置一致，或结论不足以判定）",
+      "applyAdded": "已加入协议：{protocols}",
+      "item": {
+        "protocol_chat": "协议：Chat Completions",
+        "protocol_responses": "协议：Responses API",
+        "protocol_messages": "协议：Anthropic Messages",
+        "protocol_gemini": "协议：Gemini generateContent",
+        "models": "能力：模型列表",
+        "text_generation": "能力：文本生成",
+        "tool_calling": "能力：工具调用",
+        "structured_output": "能力：结构化输出",
+        "web_search": "能力：联网搜索"
+      },
+      "verdict": {
+        "pass": "已通过",
+        "fail": "失败",
+        "unsupported": "不支持",
+        "unknown": "证据不足"
+      }
     }
   },
   "errors": {

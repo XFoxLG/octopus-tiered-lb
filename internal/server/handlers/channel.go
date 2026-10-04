@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -91,6 +92,24 @@ func init() {
 			router.NewRoute("/tools-probe", http.MethodPost).
 				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
 				Handle(testChannelToolsProbe),
+		).
+		AddRoute(
+			router.NewRoute("/:id/probe", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(probeChannel),
+		).
+		AddRoute(
+			router.NewRoute("/:id/probe/apply", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(applyChannelProbe),
+		).
+		AddRoute(
+			router.NewRoute("/:id/probe/history", http.MethodGet).
+				Handle(listChannelProbeHistory),
+		).
+		AddRoute(
+			router.NewRoute("/:id/capabilities", http.MethodGet).
+				Handle(listChannelCapabilities),
 		).
 		AddRoute(
 			router.NewRoute("/group/list", http.MethodGet).
@@ -472,29 +491,163 @@ func testChannelToolsProbe(c *gin.Context) {
 	resp.Success(c, result)
 }
 
+// probeChannel 手动触发一次渠道能力探测（协议层 + 能力层），同步阻塞返回。
+//
+// 只在前端点击时执行：没有后台定时任务，也没有自动重试。多数公益站禁止测活、
+// 部分还有测活关键词拦截，所以默认遵守渠道的 skip_model_test 开关，
+// 必须由调用方显式传 allow_skip_model_test 才越过。
+func probeChannel(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	var req model.ChannelProbeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	channel, err := ch.Get(channelID, c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, "channel not found")
+		return
+	}
+
+	run, err := helper.RunChannelCapabilityProbe(c.Request.Context(), channel, req)
+	if err != nil {
+		if errors.Is(err, helper.ErrModelTestSkipped()) {
+			// 用 409 而不是 400：这是"需要你确认后重试"的语义，
+			// 前端据此弹出"该渠道标记了禁止测活，是否仍然探测？"。
+			resp.Error(c, http.StatusConflict, err.Error())
+			return
+		}
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := ch.SaveProbeRun(c.Request.Context(), run); err != nil {
+		// 落库失败不影响本次结果展示：探测是只读行为，不能因为历史写不进去
+		// 就把用户等到的结果丢掉。
+		log.Warnf("failed to persist channel probe run (channel=%d): %v", channelID, err)
+	}
+	resp.Success(c, run)
+}
+
+// applyChannelProbe 把某次探测的结论应用到渠道配置（严格只加不减）。
+func applyChannelProbe(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	var req model.ChannelProbeApplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	channel, err := ch.Get(channelID, c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, "channel not found")
+		return
+	}
+	run, err := ch.GetProbeRun(c.Request.Context(), req.RunID)
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, "probe run not found")
+		return
+	}
+	if run.ChannelID != channelID {
+		resp.Error(c, http.StatusBadRequest, "probe run does not belong to this channel")
+		return
+	}
+
+	applyResult, err := helper.ApplyChannelProbeRun(c.Request.Context(), channel, run)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	added, err := ch.ApplyProbeProtocols(c.Request.Context(), channelID, applyResult.AddedProtocols)
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	applyResult.AddedProtocols = added
+
+	// 能力结论落库：只写明确结论（pass / unsupported），Unknown 一律跳过。
+	verdicts := helper.CapabilityVerdicts(run)
+	for capability, supported := range verdicts {
+		record := model.ChannelModelCapability{
+			ChannelID:  channelID,
+			ModelName:  run.ModelName,
+			Capability: capability,
+			Supported:  supported,
+			Source:     "probe",
+			ProbeKeyID: run.KeyID,
+			ProbedAt:   time.Now(),
+		}
+		if err := ch.UpsertCapability(c.Request.Context(), record); err != nil {
+			log.Warnf("failed to persist capability %s (channel=%d model=%s): %v",
+				capability, channelID, run.ModelName, err)
+		}
+	}
+	if err := ch.MarkProbeRunApplied(c.Request.Context(), run.ID); err != nil {
+		log.Warnf("failed to mark probe run %d applied: %v", run.ID, err)
+	}
+	resp.Success(c, applyResult)
+}
+
+// listChannelProbeHistory 返回某渠道最近的探测历史（不含逐行结果）。
+func listChannelProbeHistory(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	runs, err := ch.ListProbeRuns(c.Request.Context(), channelID, limit)
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, runs)
+}
+
+// listChannelCapabilities 返回某渠道的能力结论（可按 model 过滤）。
+func listChannelCapabilities(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	capabilities, err := ch.ListCapabilities(c.Request.Context(), channelID, strings.TrimSpace(c.Query("model")))
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, capabilities)
+}
+
 type channelRequestPayload struct {
-	ID                      int                         `json:"id"`
-	Name                    string                      `json:"name"`
-	GroupID                 int                         `json:"group_id"`
-	Type                    outbound.OutboundType       `json:"type"`
-	Enabled                 bool                        `json:"enabled"`
-	BaseUrls                []model.BaseUrl             `json:"base_urls"`
-	Keys                    []channelKeyRequestPayload  `json:"keys"`
-	Model                   string                      `json:"model"`
-	CustomModel             string                      `json:"custom_model"`
-	ProxyMode               model.ProxyUsageMode        `json:"proxy_mode"`
-	ProxyConfigID           *int                        `json:"proxy_config_id"`
-	Proxy                   bool                        `json:"proxy"`
-	AutoSync                bool                        `json:"auto_sync"`
-	AutoGroup               model.AutoGroupType         `json:"auto_group"`
-	SkipModelTest           bool                        `json:"skip_model_test"`
-	Disposable              bool                        `json:"disposable"`
-	ExpireAt                *time.Time                  `json:"expire_at,omitempty"`
-	KeySelectionStrategy    string                      `json:"key_selection_strategy"`
-	CustomHeader            []model.CustomHeader        `json:"custom_header"`
-	ParamOverride           *string                     `json:"param_override"`
-	OutboundFormatOverride  *string                     `json:"outbound_format_override"`
-	UpstreamProtocols       []string                    `json:"upstream_protocols"`
+	ID                     int                        `json:"id"`
+	Name                   string                     `json:"name"`
+	GroupID                int                        `json:"group_id"`
+	Type                   outbound.OutboundType      `json:"type"`
+	Enabled                bool                       `json:"enabled"`
+	BaseUrls               []model.BaseUrl            `json:"base_urls"`
+	Keys                   []channelKeyRequestPayload `json:"keys"`
+	Model                  string                     `json:"model"`
+	CustomModel            string                     `json:"custom_model"`
+	ProxyMode              model.ProxyUsageMode       `json:"proxy_mode"`
+	ProxyConfigID          *int                       `json:"proxy_config_id"`
+	Proxy                  bool                       `json:"proxy"`
+	AutoSync               bool                       `json:"auto_sync"`
+	AutoGroup              model.AutoGroupType        `json:"auto_group"`
+	SkipModelTest          bool                       `json:"skip_model_test"`
+	Disposable             bool                       `json:"disposable"`
+	ExpireAt               *time.Time                 `json:"expire_at,omitempty"`
+	KeySelectionStrategy   string                     `json:"key_selection_strategy"`
+	CustomHeader           []model.CustomHeader       `json:"custom_header"`
+	ParamOverride          *string                    `json:"param_override"`
+	OutboundFormatOverride *string                    `json:"outbound_format_override"`
+	UpstreamProtocols      []string                   `json:"upstream_protocols"`
 	// 三个超时用指针：nil = 字段缺省（旧客户端/未配置）= 跟随分组（-1），
 	// 显式 0 才表示"关闭该看门狗"。若用值类型，缺省会退化成 0，
 	// 等于把所有存量渠道的看门狗静默关掉。
@@ -551,7 +704,7 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		}
 	}
 
-		channel := model.Channel{
+	channel := model.Channel{
 		Name:                    p.Name,
 		GroupID:                 p.GroupID,
 		Type:                    p.Type,
@@ -572,8 +725,8 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		CustomHeader:            p.CustomHeader,
 		ParamOverride:           p.ParamOverride,
 		OutboundFormatOverride:  derefString(p.OutboundFormatOverride),
-			UpstreamProtocols:       p.UpstreamProtocols,
-			ReasoningBufferStrategy: p.ReasoningBufferStrategy,
+		UpstreamProtocols:       p.UpstreamProtocols,
+		ReasoningBufferStrategy: p.ReasoningBufferStrategy,
 		ChannelProxy:            channelProxy,
 		RequestRewrite:          p.RequestRewrite,
 		MatchRegex:              p.MatchRegex,
@@ -584,12 +737,12 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		NonRetryableStatusCodes: p.NonRetryableStatusCodes,
 		ErrorMessageTemplate:    p.ErrorMessageTemplate,
 	}
-		// 超时三项缺省 = 0（跟随分组）。显式传 -1 表示关闭看门狗，
-		// 不能被缺省值混淆，所以用指针判空后回填。
-		channel.FirstTokenTimeOut = defaultFollowGroup(p.FirstTokenTimeOut)
-		channel.AttemptTimeOut = defaultFollowGroup(p.AttemptTimeOut)
-		channel.StreamIdleTimeout = defaultFollowGroup(p.StreamIdleTimeout)
-		return channel
+	// 超时三项缺省 = 0（跟随分组）。显式传 -1 表示关闭看门狗，
+	// 不能被缺省值混淆，所以用指针判空后回填。
+	channel.FirstTokenTimeOut = defaultFollowGroup(p.FirstTokenTimeOut)
+	channel.AttemptTimeOut = defaultFollowGroup(p.AttemptTimeOut)
+	channel.StreamIdleTimeout = defaultFollowGroup(p.StreamIdleTimeout)
+	return channel
 }
 
 // defaultFollowGroup 把可空超时字段解引用成渠道语义值：nil = 0（跟随分组）。
