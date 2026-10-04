@@ -337,3 +337,76 @@ func TestChannelPayloadToModelDropsReadonlyAndRuntimeFields(t *testing.T) {
 		t.Fatalf("writable key fields not preserved: %+v", key)
 	}
 }
+
+// TestChannelPayloadToModelWithKeyIDsPreservesKeyID 锁住诊断端点的关键行为：
+// toChannelWithKeyIDs() 必须保留每个 key 的 ID，且与 payload.Keys 按索引一一对应。
+// POST /channel/fetch-models-per-key 靠它把逐 key 抓取结果回映射到具体 key
+// （helper.KeyModelResult.KeyID）；丢了 ID，前端拿到的 key_id 恒为 0。
+//
+// 同时确认它**不**放开其它只读/运行时字段的清洗（与 toChannel 一致），
+// 只额外透传 ID 这一项。
+func TestChannelPayloadToModelWithKeyIDsPreservesKeyID(t *testing.T) {
+	payload := channelRequestPayload{
+		ID:      99,
+		Name:    "diagnostic",
+		Enabled: true,
+		Keys: []channelKeyRequestPayload{
+			{ID: 11, Enabled: true, ChannelKey: "sk-a", Remark: "first", StatusCode: 429, TotalCost: 5},
+			{ID: 22, Enabled: true, ChannelKey: "sk-b", Remark: "second"},
+			{ID: 0, Enabled: true, ChannelKey: "sk-unsaved", Remark: "unsaved"}, // 未保存的新 key，ID=0
+		},
+		Stats: &model.StatsChannel{ChannelID: 99},
+	}
+
+	channel := payload.toChannelWithKeyIDs()
+
+	if channel.ID != 0 {
+		t.Fatalf("channel.ID = %d, want 0 (payload channel id must still be dropped)", channel.ID)
+	}
+	if channel.Stats != nil {
+		t.Fatal("channel.Stats should still be sanitized to nil")
+	}
+	if len(channel.Keys) != 3 {
+		t.Fatalf("keys len = %d, want 3", len(channel.Keys))
+	}
+
+	wantIDs := []int{11, 22, 0}
+	wantRemarks := []string{"first", "second", "unsaved"}
+	for i, key := range channel.Keys {
+		if key.ID != wantIDs[i] {
+			t.Errorf("keys[%d].ID = %d, want %d", i, key.ID, wantIDs[i])
+		}
+		if key.Remark != wantRemarks[i] {
+			t.Errorf("keys[%d].Remark = %q, want %q (ID must line up with the right key)", i, key.Remark, wantRemarks[i])
+		}
+		// 其它运行时字段仍须清洗：StatusCode / TotalCost / ChannelID 不来自请求体。
+		if key.StatusCode != 0 || key.TotalCost != 0 || key.ChannelID != 0 {
+			t.Errorf("keys[%d] runtime fields not sanitized: %+v", i, key)
+		}
+	}
+
+	// 可写字段照常保留。
+	if channel.Keys[0].ChannelKey != "sk-a" || !channel.Keys[0].Enabled {
+		t.Errorf("writable key fields not preserved: %+v", channel.Keys[0])
+	}
+}
+
+// TestChannelPayloadToModelStillDropsKeyID 回归守卫：普通的 toChannel()（创建/
+// 更新路径用）必须继续丢弃请求体里的 key.ID，不能被诊断端点的变体带偏。
+func TestChannelPayloadToModelStillDropsKeyID(t *testing.T) {
+	payload := channelRequestPayload{
+		Name: "create",
+		Keys: []channelKeyRequestPayload{
+			{ID: 12345, Enabled: true, ChannelKey: "sk-a", Remark: "first"},
+		},
+	}
+
+	channel := payload.toChannel()
+
+	if len(channel.Keys) != 1 {
+		t.Fatalf("keys len = %d, want 1", len(channel.Keys))
+	}
+	if channel.Keys[0].ID != 0 {
+		t.Fatalf("toChannel() keys[0].ID = %d, want 0 (create path must not trust client-supplied primary keys)", channel.Keys[0].ID)
+	}
+}

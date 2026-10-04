@@ -3167,7 +3167,17 @@
         "applySuccess": "已新增 {count} 個模型",
         "allModels": "全部模型",
         "perKey": "按 Key 檢視",
-        "noModels": "未返回模型"
+        "noModels": "未返回模型",
+        "perKeyHint": "把每個 key 抓取到的模型回填至該 key 的「支援模型」限制中；僅變更表單狀態，儲存前仍可編輯。",
+        "fillAll": "全部填充",
+        "fillOne": "填充至該 key",
+        "fillAllSuccess": "已為 {count} 個 key 填充支援模型",
+        "fillOneSuccess": "已為 key {key} 填充 {count} 個模型",
+        "fillSkippedFailed": "略過 {count} 個抓取失敗的 key：{keys}",
+        "fillSkippedEmpty": "略過 {count} 個上游未返回模型的 key：{keys}",
+        "fillUnmatched": "略過 {count} 個無法對應到表單 key 的項目：{keys}",
+        "fillNothing": "沒有可填充的支援模型",
+        "fillKeyFallback": "第 {index} 個 key"
       },
       "template": {
         "label": "內建供應商模板",
@@ -3240,6 +3250,8 @@
       "typeVolcengine": "火山引擎",
       "typeMimo": "MiMo",
       "autoSync": "自動同步",
+      "autoSyncKeyModels": "按 key 同步模型",
+      "autoSyncKeyModelsHint": "開啟後，模型自動同步會逐個 key 抓取其支援的模型，並回填到每個 key 的「支援模型」限制中；抓取失敗的 key 保留原值。適用於同一渠道下不同 key 支援不同模型的場景。",
       "skipModelTest": "跳過模型測試",
       "disposable": "一次性管道",
       "expireAt": "到期時間",

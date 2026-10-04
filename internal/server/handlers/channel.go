@@ -308,7 +308,10 @@ func fetchModelsPerKey(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
-	request := payload.toChannel()
+	// 用 toChannelWithKeyIDs：诊断端点需要 key.ID 把逐 key 结果回映射到具体 key
+	// （见 helper.KeyModelResult.KeyID）。本端点只读、不落库，所以透传客户端
+	// 提供的 key.ID 不会像创建/更新路径那样有“拿主键影响落库”的风险。
+	request := payload.toChannelWithKeyIDs()
 	result, err := helper.FetchModelsPerKey(c.Request.Context(), request)
 	if err != nil {
 		resp.InternalError(c)
@@ -638,6 +641,7 @@ type channelRequestPayload struct {
 	ProxyConfigID          *int                       `json:"proxy_config_id"`
 	Proxy                  bool                       `json:"proxy"`
 	AutoSync               bool                       `json:"auto_sync"`
+	AutoSyncKeyModels      bool                       `json:"auto_sync_key_models"`
 	AutoGroup              model.AutoGroupType        `json:"auto_group"`
 	SkipModelTest          bool                       `json:"skip_model_test"`
 	Disposable             bool                       `json:"disposable"`
@@ -683,6 +687,10 @@ func (p channelRequestPayload) toChannel() model.Channel {
 	keys := make([]model.ChannelKey, 0, len(p.Keys))
 	for _, key := range p.Keys {
 		// 空 key 也允许保留（issue #157：支持无 key 渠道）
+		// 注意：有意**不**透传 key.ID / ChannelID / StatusCode 等运行时与主键字段
+		//（锁在 TestChannelPayloadToModelDropsReadonlyAndRuntimeFields）——不能拿请求
+		// 体里的主键去影响落库。需要 key.ID 的只读诊断端点走
+		// toChannelWithKeyIDs()。
 		keys = append(keys, model.ChannelKey{
 			Enabled:         key.Enabled,
 			ChannelKey:      key.ChannelKey,
@@ -716,6 +724,7 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		ProxyConfigID:           p.ProxyConfigID,
 		Proxy:                   p.Proxy,
 		AutoSync:                p.AutoSync,
+		AutoSyncKeyModels:       p.AutoSyncKeyModels,
 		SkipModelTest:           p.SkipModelTest,
 		Disposable:              p.Disposable,
 		ExpireAt:                p.ExpireAt,
@@ -758,6 +767,26 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// toChannelWithKeyIDs 与 toChannel() 相同，但额外保留每个 key 的 ID。
+//
+// 为什么需要单独一个变体：toChannel() 有意丢弃请求体里的 key.ID（防止拿客户端
+// 提供的主键影响落库，锁在 TestChannelPayloadToModelDropsReadonlyAndRuntimeFields）。
+// 但只读诊断端点 POST /channel/fetch-models-per-key 不落库，它需要 key.ID 才能
+// 把逐 key 抓取结果回映射到具体 key（helper.KeyModelResult.KeyID）；否则前端
+// 收到的 key_id 恒为 0，无法按 key 精确匹配。
+//
+// toChannel() 逐个遍历 p.Keys 且不丢弃任何条目（空 key 也保留，issue #157），
+// 因此返回的 Keys 与 p.Keys 严格按索引对齐，可以直接按位置回填 ID。
+func (p channelRequestPayload) toChannelWithKeyIDs() model.Channel {
+	ch := p.toChannel()
+	for i := range ch.Keys {
+		if i < len(p.Keys) {
+			ch.Keys[i].ID = p.Keys[i].ID
+		}
+	}
+	return ch
 }
 
 func listChannelGroup(c *gin.Context) {

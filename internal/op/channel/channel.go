@@ -519,6 +519,10 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		selectFields = append(selectFields, "auto_sync")
 		updates.AutoSync = *req.AutoSync
 	}
+	if req.AutoSyncKeyModels != nil {
+		selectFields = append(selectFields, "auto_sync_key_models")
+		updates.AutoSyncKeyModels = *req.AutoSyncKeyModels
+	}
 	if req.SkipModelTest != nil {
 		selectFields = append(selectFields, "skip_model_test")
 		updates.SkipModelTest = *req.SkipModelTest

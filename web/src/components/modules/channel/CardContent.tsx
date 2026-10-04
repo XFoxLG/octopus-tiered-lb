@@ -174,6 +174,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         proxy_mode: deriveChannelProxyMode(channel),
         proxy_config_id: channel.proxy_config_id ?? null,
         auto_sync: channel.auto_sync,
+        auto_sync_key_models: channel.auto_sync_key_models ?? false,
         auto_group: channel.auto_group,
         skip_model_test: channel.skip_model_test,
         disposable: channel.disposable ?? false,
@@ -235,6 +236,9 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             req.proxy_config_id = nextProxyConfigId;
         }
         if (formData.auto_sync !== channel.auto_sync) req.auto_sync = formData.auto_sync;
+        if (formData.auto_sync_key_models !== (channel.auto_sync_key_models ?? false)) {
+            req.auto_sync_key_models = formData.auto_sync_key_models;
+        }
         if (formData.skip_model_test !== channel.skip_model_test) req.skip_model_test = formData.skip_model_test;
         if (formData.disposable !== (channel.disposable ?? false)) req.disposable = formData.disposable;
         const curExpireAt = channel.expire_at ? channel.expire_at.slice(0, 16) : '';

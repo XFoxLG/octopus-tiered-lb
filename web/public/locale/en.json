@@ -3211,7 +3211,17 @@
         "applySuccess": "Added {count} models",
         "allModels": "All Models",
         "perKey": "Per Key",
-        "noModels": "No models returned"
+        "noModels": "No models returned",
+        "perKeyHint": "Fill the models fetched for each key into that key's supported models restriction. Changes stay in the form until you save.",
+        "fillAll": "Fill all keys",
+        "fillOne": "Fill this key",
+        "fillAllSuccess": "Filled supported models for {count} key(s)",
+        "fillOneSuccess": "Filled {count} model(s) into key {key}",
+        "fillSkippedFailed": "Skipped {count} key(s) because fetching failed: {keys}",
+        "fillSkippedEmpty": "Skipped {count} key(s) because the upstream returned no models: {keys}",
+        "fillUnmatched": "Skipped {count} key(s) that could not be matched to a form key: {keys}",
+        "fillNothing": "No supported models were filled",
+        "fillKeyFallback": "Key {index}"
       },
       "template": {
         "label": "Built-in Templates",
@@ -3284,6 +3294,8 @@
       "typeVolcengine": "Volcengine",
       "typeMimo": "MiMo",
       "autoSync": "Auto Sync",
+      "autoSyncKeyModels": "Sync models per key",
+      "autoSyncKeyModelsHint": "When enabled, automatic model sync fetches the models of every key separately and writes them back into that key's supported models restriction; keys that fail to fetch keep their current value. Use this when different keys of the same channel have access to different models.",
       "skipModelTest": "Skip Model Test",
       "disposable": "Disposable",
       "expireAt": "Expire At",
