@@ -633,7 +633,7 @@ export function GroupEditor({
                                     </AccordionTrigger>
                                     <AccordionContent className="pb-0">
                                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
-                                <Field className="md:col-span-2">
+                                <Field className="col-span-full">
                                     <FieldLabel htmlFor="group-match-regex">{t('form.matchRegex')}</FieldLabel>
                                     <Input
                                         id="group-match-regex"
