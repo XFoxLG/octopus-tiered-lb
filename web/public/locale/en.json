@@ -102,7 +102,9 @@
     "endpointCount": "{count, plural, =0 {No endpoints} one {# endpoint} other {# endpoints}}",
     "modelCount": "{count, plural, =0 {No models} one {# model} other {# models}}",
     "empty": "No available endpoints",
-    "noMatch": "No endpoints or models match your search"
+    "noMatch": "No endpoints or models match your search",
+    "showLessModels": "Show fewer models",
+    "showMoreModels": "Show {count} more models"
   },
   "model_mapping": {
     "title": "Model Mapping",
@@ -2607,7 +2609,9 @@
       "cacheWrite": "Cache Write",
       "submit": "Create",
       "submitting": "Creating...",
-      "priceHint": "Price unit: USD / 1M tokens"
+      "priceHint": "Price unit: USD / 1M tokens",
+      "nameRequired": "Enter a model name",
+      "priceInvalid": "Enter a valid non-negative price in every field. Use 0 for free pricing."
     },
     "summary": {
       "title": "Model Market",
@@ -2628,7 +2632,8 @@
       "updated": "Model price updated",
       "updateFailed": "Update failed",
       "deleted": "Model deleted",
-      "deleteFailed": "Delete failed"
+      "deleteFailed": "Delete failed",
+      "created": "Model created"
     },
     "card": {
       "inputCache": "Input/Cache",
@@ -2667,7 +2672,10 @@
       "cacheWrite": "Cache Write",
       "save": "Save",
       "priceHint": "Price unit: USD / 1M tokens",
-      "peakBillingHint": "Above are PEAK prices. Off-peak (9–12 / 14–18 outside) is charged at half."
+      "peakBillingHint": "Above are PEAK prices. Off-peak (9–12 / 14–18 outside) is charged at half.",
+      "priceInvalid": "Enter a valid non-negative price in every field. Use 0 for free pricing.",
+      "deleteTitle": "Delete model",
+      "deleteDescription": "Delete the price record for “{name}”? This action cannot be undone."
     },
     "capabilities": {
       "title": "Model Capabilities",
@@ -2775,6 +2783,19 @@
       "actions": "Actions",
       "cancel": "Cancel",
       "toastError": "Operation failed"
+    },
+    "priceRule": {
+      "nameRequired": "Name is required",
+      "ruleValueRequired": "Rule value is required",
+      "invalidNumber": "Enter a valid number. Use 0 for zero pricing.",
+      "nonNegativeRequired": "Value must be non-negative",
+      "invalidInteger": "Enter a valid integer",
+      "windowIncomplete": "Fill both start and end, or leave both empty to disable the window. End may be 24:00.",
+      "windowInverted": "Start cannot be later than end. Equal times disable the window.",
+      "windowOverlapWarn": "The windows overlap; the overlap is billed as peak.",
+      "disabled": "Disabled",
+      "loadFailed": "Failed to load. Please retry.",
+      "retry": "Retry"
     }
   },
   "log": {
@@ -3538,7 +3559,9 @@
     "filterTitle": "Filter",
     "filterExpand": "Expand filter",
     "filterCollapse": "Collapse filter",
-    "filterSummary": "{count, plural, =0 {No filters} one {# filter} other {# filters}} active"
+    "filterSummary": "{count, plural, =0 {No filters} one {# filter} other {# filters}} active",
+    "reset": "Reset filters",
+    "resultCount": "{visible} / {total} models"
   },
   "notification": {
     "title": "Notification Center",

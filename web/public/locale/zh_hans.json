@@ -102,7 +102,9 @@
     "endpointCount": "{count, plural, =0 {暂无端点} other {# 个端点}}",
     "modelCount": "{count, plural, =0 {暂无模型} other {# 个模型}}",
     "empty": "暂无可用端点",
-    "noMatch": "没有符合搜索条件的端点或模型"
+    "noMatch": "没有符合搜索条件的端点或模型",
+    "showLessModels": "收起模型",
+    "showMoreModels": "展开其余 {count} 个模型"
   },
   "model_mapping": {
     "title": "模型映射",
@@ -2563,7 +2565,9 @@
       "cacheWrite": "缓存写入",
       "submit": "创建",
       "submitting": "创建中...",
-      "priceHint": "价格单位：美元 / 百万 tokens"
+      "priceHint": "价格单位：美元 / 百万 tokens",
+      "nameRequired": "请输入模型名称",
+      "priceInvalid": "价格不能为空，请输入非负的有效数字，免费价格请填写 0"
     },
     "summary": {
       "title": "模型广场",
@@ -2584,7 +2588,8 @@
       "updated": "模型价格已更新",
       "updateFailed": "更新失败",
       "deleted": "模型已删除",
-      "deleteFailed": "删除失败"
+      "deleteFailed": "删除失败",
+      "created": "模型已创建"
     },
     "card": {
       "inputCache": "输入/缓存",
@@ -2623,7 +2628,10 @@
       "cacheWrite": "缓存写入",
       "save": "保存",
       "priceHint": "价格单位：美元 / 百万 tokens",
-      "peakBillingHint": "以上为高峰价，北京 9–12 / 14–18 按此计费，其余时段减半。"
+      "peakBillingHint": "以上为高峰价，北京 9–12 / 14–18 按此计费，其余时段减半。",
+      "priceInvalid": "价格不能为空，请输入非负的有效数字，免费价格请填写 0",
+      "deleteTitle": "删除模型",
+      "deleteDescription": "确认删除模型「{name}」的价格记录？此操作不可撤销。"
     },
     "capabilities": {
       "title": "模型能力",
@@ -2731,6 +2739,19 @@
       "actions": "操作",
       "cancel": "取消",
       "toastError": "操作失败"
+    },
+    "priceRule": {
+      "nameRequired": "名称不能为空",
+      "ruleValueRequired": "规则值不能为空",
+      "invalidNumber": "请输入有效数字，零价格请填写 0",
+      "nonNegativeRequired": "数值不能为负",
+      "invalidInteger": "请输入有效整数",
+      "windowIncomplete": "请同时填写开始与结束时间，或同时留空以关闭时段；结束可填 24:00",
+      "windowInverted": "开始时间不能晚于结束时间，相同时间表示关闭该时段",
+      "windowOverlapWarn": "两个时段存在重叠，重叠部分按高峰计费",
+      "disabled": "禁用",
+      "loadFailed": "加载失败，请重试",
+      "retry": "重试"
     }
   },
   "log": {
@@ -3494,7 +3515,9 @@
     "filterTitle": "筛选",
     "filterExpand": "展开筛选",
     "filterCollapse": "收起筛选",
-    "filterSummary": "已选 {count} 项"
+    "filterSummary": "已选 {count} 项",
+    "reset": "重置筛选",
+    "resultCount": "{visible} / {total} 个模型"
   },
   "report": {
     "title": "使用报表",

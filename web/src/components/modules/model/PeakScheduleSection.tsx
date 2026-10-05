@@ -19,13 +19,6 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -40,45 +33,37 @@ import {
   useDeletePriceSchedule,
   type ModelPriceSchedule,
 } from '@/api/endpoints/model'
+import { useNavStore } from '@/components/modules/navbar'
+import { useModelViewStore } from './view-store'
+import { ConfirmDeleteDialog, EnabledBadge, PriceRuleFields } from './PriceRuleFields'
+import {
+  buildPriceRuleBasePayload,
+  formatPriceValue,
+  formatWindowsLabel,
+  hasErrors,
+  isPriceRuleType,
+  parsePriceInput,
+  resolveScheduleWindows,
+  validatePriceRuleBase,
+  windowErrorKey,
+  windowToForm,
+  type PriceRuleFormBase,
+  type PriceScheduleErrors,
+  type WindowInput,
+} from './price-form'
 
-type RuleType = 'exact' | 'prefix' | 'contains'
-
-// 分钟 → "HH:MM"（如 540 → "09:00"）
-function minutesToHHMM(m: number): string {
-  const h = Math.floor(m / 60)
-  const mm = m % 60
-  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
-}
-
-// "HH:MM" → 分钟（空/非法 → 0）
-function hhmmToMinutes(v: string): number {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim())
-  if (!m) return 0
-  const h = Number(m[1])
-  const mm = Number(m[2])
-  if (h > 23 || mm > 59) return 0
-  return h * 60 + mm
-}
-
-interface FormState {
-  name: string
-  rule_type: RuleType
-  rule_value: string
-  input: string
-  output: string
-  cache_read: string
-  cache_write: string
+// 峰谷规则表单 = 共用基础字段 + 倍率 / 周末开关 / 两段北京时间窗口。
+// 窗口留空（两端全空）= 关闭该时段（后端 0,0 语义），两窗全关 = 全天空闲。
+interface ScheduleFormState extends PriceRuleFormBase {
   off_peak_mul: string
   weekend_off_peak: boolean
   w1_start: string
   w1_end: string
   w2_start: string
   w2_end: string
-  sort_order: string
-  enabled: boolean
 }
 
-const EMPTY_FORM: FormState = {
+const EMPTY_FORM: ScheduleFormState = {
   name: '',
   rule_type: 'contains',
   rule_value: '',
@@ -96,107 +81,123 @@ const EMPTY_FORM: FormState = {
   enabled: true,
 }
 
-function formatPrice(v: number): string {
-  return String(v ?? 0)
-}
+const NO_ERRORS: PriceScheduleErrors = {}
 
-function parsePrice(v: string): number {
-  const n = Number(v)
-  return Number.isFinite(n) ? n : 0
-}
-
-function windowLabel(s: ModelPriceSchedule, t: (key: string) => string): string {
-  const w1 = s.window1_start < s.window1_end ? `${minutesToHHMM(s.window1_start)}-${minutesToHHMM(s.window1_end)}` : null
-  const w2 = s.window2_start < s.window2_end ? `${minutesToHHMM(s.window2_start)}-${minutesToHHMM(s.window2_end)}` : null
-  if (!w1 && !w2) return t('noWindow')
-  return [w1, w2].filter(Boolean).join(' / ')
+function formWindows(form: ScheduleFormState): { w1: WindowInput; w2: WindowInput } {
+  return {
+    w1: { start: form.w1_start, end: form.w1_end },
+    w2: { start: form.w2_start, end: form.w2_end },
+  }
 }
 
 export function PeakScheduleSection() {
   const t = useTranslations('model.peakSchedule')
-  const { data: schedules, isLoading } = usePriceScheduleList()
+  // 校验错误 / 加载失败 / 禁用徽标等新文案走共享命名空间（见 price-form.ts 头注）。
+  const tv = useTranslations('model.priceRule')
+  // keep-alive：路由级切换不卸载本组件，峰谷查询需按「模型广场 + 分类页签可见」门控，
+  // 避免停留在其他页面时持续轮询。
+  const activeItem = useNavStore((s) => s.activeItem)
+  const modelView = useModelViewStore((s) => s.modelView)
+  const queriesEnabled = activeItem === 'model' && modelView === 'categories'
+
+  const { data: schedules, isLoading, isError, refetch } = usePriceScheduleList(queriesEnabled)
   const createMutation = useCreatePriceSchedule()
   const updateMutation = useUpdatePriceSchedule()
   const deleteMutation = useDeletePriceSchedule()
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<ModelPriceSchedule | null>(null)
-  const [form, setForm] = useState<FormState>(EMPTY_FORM)
+  const [form, setForm] = useState<ScheduleFormState>(EMPTY_FORM)
+  // 提交尝试后才展示校验错误；此后随输入实时重算（错误消失即通过）。
+  const [showErrors, setShowErrors] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ModelPriceSchedule | null>(null)
+
+  // 门控关闭且尚无缓存数据时按加载中处理（此时面板不可见，仅避免闪现空态）。
+  const showLoading = queriesEnabled ? isLoading : !schedules
+  const showError = isError && !schedules
+  const saving = createMutation.isPending || updateMutation.isPending
+
+  // 实时校验结果：错误展示与两窗重叠提示（重叠后端允许，仅提示不阻断）。
+  const baseErrors = validatePriceRuleBase(form)
+  const mul = parsePriceInput(form.off_peak_mul)
+  const { w1, w2 } = formWindows(form)
+  const windowResult = resolveScheduleWindows(w1, w2)
+  const errors: PriceScheduleErrors = showErrors
+    ? {
+        ...baseErrors,
+        off_peak_mul: mul === null ? 'invalidNumber' : mul < 0 ? 'nonNegativeRequired' : undefined,
+        ...(windowResult.ok ? {} : windowResult.errors),
+      }
+    : NO_ERRORS
+  const overlapWarn = windowResult.ok && windowResult.overlap
 
   const openCreate = () => {
     setEditing(null)
     setForm(EMPTY_FORM)
+    setShowErrors(false)
     setDialogOpen(true)
   }
 
   const openEdit = (s: ModelPriceSchedule) => {
     setEditing(s)
+    const w1 = windowToForm({ start: s.window1_start, end: s.window1_end })
+    const w2 = windowToForm({ start: s.window2_start, end: s.window2_end })
     setForm({
       name: s.name,
-      rule_type: s.rule_type as RuleType,
+      rule_type: isPriceRuleType(s.rule_type) ? s.rule_type : 'contains',
       rule_value: s.rule_value,
-      input: formatPrice(s.input),
-      output: formatPrice(s.output),
-      cache_read: formatPrice(s.cache_read),
-      cache_write: formatPrice(s.cache_write),
-      off_peak_mul: String(s.off_peak_mul ?? 0.5),
+      input: formatPriceValue(s.input),
+      output: formatPriceValue(s.output),
+      cache_read: formatPriceValue(s.cache_read),
+      cache_write: formatPriceValue(s.cache_write),
+      off_peak_mul: formatPriceValue(s.off_peak_mul ?? 0.5),
       weekend_off_peak: s.weekend_off_peak,
-      w1_start: minutesToHHMM(s.window1_start),
-      w1_end: minutesToHHMM(s.window1_end),
-      w2_start: minutesToHHMM(s.window2_start),
-      w2_end: minutesToHHMM(s.window2_end),
+      w1_start: w1.start,
+      w1_end: w1.end,
+      w2_start: w2.start,
+      w2_end: w2.end,
       sort_order: String(s.sort_order ?? 0),
       enabled: s.enabled,
     })
+    setShowErrors(false)
     setDialogOpen(true)
   }
 
-  const handleDelete = (id: number) => {
-    if (window.confirm(t('confirmDelete'))) {
-      deleteMutation.mutate(id, {
-        onSuccess: () => toast.success(t('toastDeleted')),
-        onError: (e: Error) => toast.error(e.message || t('toastError')),
-      })
-    }
+  const handleDelete = () => {
+    if (!deleteTarget || deleteMutation.isPending) return
+    deleteMutation.mutate(deleteTarget.id, {
+      onSuccess: () => {
+        setDeleteTarget(null)
+        toast.success(t('toastDeleted'))
+      },
+    })
   }
 
   const handleSubmit = () => {
+    if (saving) return
+    if (hasErrors(baseErrors) || mul === null || mul < 0 || !windowResult.ok) {
+      setShowErrors(true)
+      return
+    }
     const payload = {
-      name: form.name.trim(),
-      rule_type: form.rule_type,
-      rule_value: form.rule_value.trim(),
-      input: parsePrice(form.input),
-      output: parsePrice(form.output),
-      cache_read: parsePrice(form.cache_read),
-      cache_write: parsePrice(form.cache_write),
-      off_peak_mul: parsePrice(form.off_peak_mul),
+      ...buildPriceRuleBasePayload(form),
+      off_peak_mul: mul,
       weekend_off_peak: form.weekend_off_peak,
-      window1_start: hhmmToMinutes(form.w1_start),
-      window1_end: hhmmToMinutes(form.w1_end),
-      window2_start: hhmmToMinutes(form.w2_start),
-      window2_end: hhmmToMinutes(form.w2_end),
-      sort_order: Number.parseInt(form.sort_order || '0', 10),
-      enabled: form.enabled,
+      window1_start: windowResult.w1.start,
+      window1_end: windowResult.w1.end,
+      window2_start: windowResult.w2.start,
+      window2_end: windowResult.w2.end,
+    }
+    const options = {
+      onSuccess: () => {
+        toast.success(t('toastSaved'))
+        setDialogOpen(false)
+      },
     }
     if (editing) {
-      updateMutation.mutate(
-        { ...payload, id: editing.id },
-        {
-          onSuccess: () => {
-            toast.success(t('toastSaved'))
-            setDialogOpen(false)
-          },
-          onError: (e: Error) => toast.error(e.message || t('toastError')),
-        },
-      )
+      updateMutation.mutate({ ...payload, id: editing.id }, options)
     } else {
-      createMutation.mutate(payload, {
-        onSuccess: () => {
-          toast.success(t('toastSaved'))
-          setDialogOpen(false)
-        },
-        onError: (e: Error) => toast.error(e.message || t('toastError')),
-      })
+      createMutation.mutate(payload, options)
     }
   }
 
@@ -232,9 +233,18 @@ export function PeakScheduleSection() {
         <p className="mt-3 text-xs text-muted-foreground">{t('description')}</p>
       </section>
 
-      {isLoading ? (
+      {showLoading ? (
         <div className="flex h-32 items-center justify-center rounded-2xl border border-border bg-card">
           <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : showError ? (
+        <div className="flex h-40 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-destructive/40 text-sm text-muted-foreground">
+          <Zap className="size-8 opacity-40" />
+          <p>{tv('loadFailed')}</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="mr-1.5 size-4" />
+            {tv('retry')}
+          </Button>
         </div>
       ) : !schedules || schedules.length === 0 ? (
         <div className="flex h-40 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border text-sm text-muted-foreground">
@@ -252,11 +262,14 @@ export function PeakScheduleSection() {
                   <TableHead>{t('ruleValue')}</TableHead>
                   <TableHead className="text-right">{t('input')}</TableHead>
                   <TableHead className="text-right">{t('output')}</TableHead>
-                  <TableHead className="text-right">{t('cacheRead')}</TableHead>
-                  <TableHead className="text-right">{t('cacheWrite')}</TableHead>
+                  <TableHead className="hidden text-right md:table-cell">{t('cacheRead')}</TableHead>
+                  <TableHead className="hidden text-right md:table-cell">{t('cacheWrite')}</TableHead>
                   <TableHead className="text-right">{t('offPeakMul')}</TableHead>
-                  <TableHead>{t('window')}</TableHead>
-                  <TableHead className="text-right">{t('sortOrder')}</TableHead>
+                  <TableHead>
+                    {t('window')}
+                    <Hint text={t('windowHint')} />
+                  </TableHead>
+                  <TableHead className="hidden text-right lg:table-cell">{t('sortOrder')}</TableHead>
                   <TableHead>{t('enabled')}</TableHead>
                   <TableHead className="text-right">{t('actions')}</TableHead>
                 </TableRow>
@@ -264,29 +277,40 @@ export function PeakScheduleSection() {
               <TableBody>
                 {schedules.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell className="font-medium">{s.name}</TableCell>
+                    <TableCell className="max-w-40 truncate font-medium" title={s.name}>
+                      {s.name}
+                    </TableCell>
                     <TableCell>{ruleLabel(s.rule_type)}</TableCell>
-                    <TableCell className="font-mono text-sm">{s.rule_value}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{s.input}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{s.output}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{s.cache_read}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{s.cache_write}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">×{s.off_peak_mul}</TableCell>
+                    <TableCell className="max-w-40 truncate font-mono text-sm" title={s.rule_value}>
+                      {s.rule_value}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-mono text-sm">{s.input}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-mono text-sm">{s.output}</TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right font-mono text-sm md:table-cell">
+                      {s.cache_read}
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right font-mono text-sm md:table-cell">
+                      {s.cache_write}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-mono text-sm">×{s.off_peak_mul}</TableCell>
                     <TableCell className="whitespace-nowrap font-mono text-xs">
-                      {windowLabel(s, t)}
+                      {formatWindowsLabel(
+                        { start: s.window1_start, end: s.window1_end },
+                        { start: s.window2_start, end: s.window2_end },
+                      ) ?? t('noWindow')}
                       {s.weekend_off_peak && (
                         <Badge variant="outline" className="ml-1.5 border-sky-400/50 text-sky-500 dark:text-sky-400">
                           {t('weekendOffPeakBadge')}
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">{s.sort_order}</TableCell>
+                    <TableCell className="hidden text-right lg:table-cell">{s.sort_order}</TableCell>
                     <TableCell>
-                      {s.enabled ? (
-                        <Badge variant="default">{t('enabled')}</Badge>
-                      ) : (
-                        <Badge variant="secondary">{t('missing')}</Badge>
-                      )}
+                      <EnabledBadge
+                        enabled={s.enabled}
+                        enabledLabel={t('enabled')}
+                        disabledLabel={tv('disabled')}
+                      />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -301,7 +325,7 @@ export function PeakScheduleSection() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDelete(s.id)}
+                          onClick={() => setDeleteTarget(s)}
                           aria-label={t('delete')}
                         >
                           <Trash2 className="size-4 text-destructive" />
@@ -316,116 +340,39 @@ export function PeakScheduleSection() {
         </section>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!saving) setDialogOpen(open) }}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? t('edit') : t('add')}</DialogTitle>
             <DialogDescription>{t('description')}</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-2">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="ps-name">{t('name')} *</Label>
-                <Input
-                  id="ps-name"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder={t('namePlaceholder')}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ps-sort">
-                  {t('sortOrder')}
-                  <Hint text={t('sortOrderHint')} />
-                </Label>
-                <Input
-                  id="ps-sort"
-                  type="number"
-                  value={form.sort_order}
-                  onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="ps-rule-type">{t('ruleType')} *</Label>
-                <Select
-                  value={form.rule_type}
-                  onValueChange={(v) => setForm({ ...form, rule_type: v as RuleType })}
-                >
-                  <SelectTrigger id="ps-rule-type" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="exact">{t('exact')}</SelectItem>
-                    <SelectItem value="prefix">{t('prefix')}</SelectItem>
-                    <SelectItem value="contains">{t('contains')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ps-rule-value">{t('ruleValue')} *</Label>
-                <Input
-                  id="ps-rule-value"
-                  value={form.rule_value}
-                  onChange={(e) => setForm({ ...form, rule_value: e.target.value })}
-                  placeholder={t('ruleValuePlaceholder')}
-                  className="font-mono"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="grid gap-2">
-                <Label htmlFor="ps-input">
-                  {t('input')}
-                  <Hint text={t('priceHint')} />
-                </Label>
-                <Input
-                  id="ps-input"
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={form.input}
-                  onChange={(e) => setForm({ ...form, input: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ps-output">{t('output')}</Label>
-                <Input
-                  id="ps-output"
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={form.output}
-                  onChange={(e) => setForm({ ...form, output: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ps-cache-read">{t('cacheRead')}</Label>
-                <Input
-                  id="ps-cache-read"
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={form.cache_read}
-                  onChange={(e) => setForm({ ...form, cache_read: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ps-cache-write">{t('cacheWrite')}</Label>
-                <Input
-                  id="ps-cache-write"
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={form.cache_write}
-                  onChange={(e) => setForm({ ...form, cache_write: e.target.value })}
-                />
-              </div>
-            </div>
+          <fieldset disabled={saving} className="grid gap-4 py-2">
+            <PriceRuleFields
+              idPrefix="ps"
+              base={form}
+              errors={errors}
+              showErrors={showErrors}
+              onChange={(patch) => setForm({ ...form, ...patch })}
+              labels={{
+                name: t('name'),
+                namePlaceholder: t('namePlaceholder'),
+                ruleType: t('ruleType'),
+                ruleValue: t('ruleValue'),
+                ruleValuePlaceholder: t('ruleValuePlaceholder'),
+                exact: t('exact'),
+                prefix: t('prefix'),
+                contains: t('contains'),
+                sortOrder: t('sortOrder'),
+                sortOrderHint: t('sortOrderHint'),
+                input: t('input'),
+                output: t('output'),
+                cacheRead: t('cacheRead'),
+                cacheWrite: t('cacheWrite'),
+                priceHint: t('priceHint'),
+                enabled: t('enabled'),
+              }}
+            />
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
@@ -440,57 +387,88 @@ export function PeakScheduleSection() {
                   min="0"
                   value={form.off_peak_mul}
                   onChange={(e) => setForm({ ...form, off_peak_mul: e.target.value })}
+                  aria-invalid={showErrors && errors.off_peak_mul ? true : undefined}
                 />
-              </div>
-              <div className="grid gap-2">
-                <Label>
-                  {t('window')}
-                  <Hint text={t('windowHint')} />
-                </Label>
+                {showErrors && errors.off_peak_mul ? (
+                  <p className="mt-1 text-xs text-destructive">{tv(errors.off_peak_mul)}</p>
+                ) : null}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="grid gap-2">
-                <Label htmlFor="ps-w1s">{t('window1Start')}</Label>
-                <Input
-                  id="ps-w1s"
-                  type="time"
-                  step="60"
-                  value={form.w1_start}
-                  onChange={(e) => setForm({ ...form, w1_start: e.target.value })}
-                />
+            <div className="grid gap-2">
+              <Label>
+                {t('window')}
+                <Hint text={t('windowHint')} />
+              </Label>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="ps-w1s">{t('window1Start')}</Label>
+                  <Input
+                    id="ps-w1s"
+                    type="text"
+                    inputMode="text"
+                    placeholder="HH:MM"
+                    value={form.w1_start}
+                    onChange={(e) => setForm({ ...form, w1_start: e.target.value })}
+                    aria-invalid={showErrors && errors.w1 ? true : undefined}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="ps-w1e">{t('window1End')}</Label>
+                  <Input
+                    id="ps-w1e"
+                    type="text"
+                    inputMode="text"
+                    placeholder="HH:MM"
+                    value={form.w1_end}
+                    onChange={(e) => setForm({ ...form, w1_end: e.target.value })}
+                    aria-invalid={showErrors && errors.w1 ? true : undefined}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="ps-w2s">{t('window2Start')}</Label>
+                  <Input
+                    id="ps-w2s"
+                    type="text"
+                    inputMode="text"
+                    placeholder="HH:MM"
+                    value={form.w2_start}
+                    onChange={(e) => setForm({ ...form, w2_start: e.target.value })}
+                    aria-invalid={showErrors && errors.w2 ? true : undefined}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="ps-w2e">{t('window2End')}</Label>
+                  <Input
+                    id="ps-w2e"
+                    type="text"
+                    inputMode="text"
+                    placeholder="HH:MM"
+                    value={form.w2_end}
+                    onChange={(e) => setForm({ ...form, w2_end: e.target.value })}
+                    aria-invalid={showErrors && errors.w2 ? true : undefined}
+                  />
+                </div>
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ps-w1e">{t('window1End')}</Label>
-                <Input
-                  id="ps-w1e"
-                  type="time"
-                  step="60"
-                  value={form.w1_end}
-                  onChange={(e) => setForm({ ...form, w1_end: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ps-w2s">{t('window2Start')}</Label>
-                <Input
-                  id="ps-w2s"
-                  type="time"
-                  step="60"
-                  value={form.w2_start}
-                  onChange={(e) => setForm({ ...form, w2_start: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="ps-w2e">{t('window2End')}</Label>
-                <Input
-                  id="ps-w2e"
-                  type="time"
-                  step="60"
-                  value={form.w2_end}
-                  onChange={(e) => setForm({ ...form, w2_end: e.target.value })}
-                />
-              </div>
+              {showErrors && (errors.w1 || errors.w2) ? (
+                <div className="space-y-1" role="alert">
+                  {errors.w1 ? (
+                    <p className="text-xs text-destructive">
+                      {t('window1Start')}: {tv(windowErrorKey(errors.w1))}
+                    </p>
+                  ) : null}
+                  {errors.w2 ? (
+                    <p className="text-xs text-destructive">
+                      {t('window2Start')}: {tv(windowErrorKey(errors.w2))}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {overlapWarn ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400" role="status">
+                  {tv('windowOverlapWarn')}
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -505,30 +483,31 @@ export function PeakScheduleSection() {
                   <Hint text={t('weekendOffPeakHint')} />
                 </Label>
               </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  id="ps-enabled"
-                  checked={form.enabled}
-                  onCheckedChange={(checked) => setForm({ ...form, enabled: checked })}
-                />
-                <Label htmlFor="ps-enabled">{t('enabled')}</Label>
-              </div>
             </div>
-          </div>
+          </fieldset>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+            <Button variant="outline" disabled={saving} onClick={() => setDialogOpen(false)}>
               {t('cancel')}
             </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={createMutation.isPending || updateMutation.isPending}
-            >
-              {createMutation.isPending || updateMutation.isPending ? t('saving') : t('save')}
+            <Button onClick={handleSubmit} disabled={saving}>
+              {saving ? t('saving') : t('save')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+        title={t('confirmDeleteTitle')}
+        description={deleteTarget ? t('confirmDelete') : ''}
+        pending={deleteMutation.isPending}
+        onConfirm={handleDelete}
+        labels={{ cancel: t('cancel'), confirm: t('delete'), deleting: t('deleting') }}
+      />
     </div>
   )
 }
