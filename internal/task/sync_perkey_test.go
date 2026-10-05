@@ -77,6 +77,17 @@ func TestBuildKeySupportedModelUpdatesSkipsEmptyAndOversized(t *testing.T) {
 	}
 }
 
+func TestBuildKeySupportedModelUpdatesAcceptsCatalogLongerThanOldVarchar(t *testing.T) {
+	// 迁移 070 之后，公益站常见的两千多字符模型目录必须能回填。
+	// 旧的 512 上限会让「按 key 同步模型」打开后仍然不落库。
+	catalog := strings.TrimSuffix(strings.Repeat("gpt-4o-mini,", 200), ",")
+	results := []helper.KeyModelResult{{KeyID: 1, Passed: true, Models: strings.Split(catalog, ",")}}
+	updates := buildKeySupportedModelUpdates(results, []model.ChannelKey{{ID: 1, SupportedModels: "old"}})
+	if len(updates) != 1 || updates[0].SupportedModels == nil || *updates[0].SupportedModels != catalog {
+		t.Fatalf("long catalog was not backfilled: %#v", updates)
+	}
+}
+
 func TestBuildKeySupportedModelUpdatesNilResults(t *testing.T) {
 	if updates := buildKeySupportedModelUpdates(nil, []model.ChannelKey{{ID: 1}}); updates != nil {
 		t.Fatalf("updates = %#v, want nil for the single-key (non per-key) path", updates)
