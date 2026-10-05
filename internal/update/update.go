@@ -28,14 +28,14 @@ func getUpdateURL() string {
 	if u := conf.AppConfig.External.UpdateURL; u != "" {
 		return u
 	}
-	return "https://github.com/lingyuins/octopus/releases/latest/download"
+	return "https://github.com/XFoxLG/octopus-tiered-lb/releases/latest/download"
 }
 
 func getUpdateAPIURL() string {
 	if u := conf.AppConfig.External.UpdateAPIURL; u != "" {
 		return u
 	}
-	return "https://api.github.com/repos/lingyuins/octopus/releases/latest"
+	return "https://api.github.com/repos/XFoxLG/octopus-tiered-lb/releases/latest"
 }
 
 type LatestInfo struct {

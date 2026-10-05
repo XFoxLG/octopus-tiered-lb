@@ -227,7 +227,7 @@ build_frontend() {
 
     # Build the project
     log_info "Building frontend project..."
-    if ! NEXT_PUBLIC_APP_VERSION="$GIT_VERSION" pnpm run build; then
+    if ! NEXT_PUBLIC_APP_VERSION="$GIT_VERSION" NEXT_PUBLIC_GITHUB_REPO="https://github.com/XFoxLG/octopus-tiered-lb" pnpm run build; then
         log_error "Failed to build frontend project"
         cd ..
         return 1

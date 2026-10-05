@@ -11,7 +11,7 @@ var (
 	Commit    = "unknown"
 	BuildTime = "unknown"
 	Author    = "lingyu"
-	Repo      = "https://github.com/lingyuins/octopus"
+	Repo      = "https://github.com/XFoxLG/octopus-tiered-lb"
 )
 
 func init() {

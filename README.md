@@ -57,7 +57,7 @@ docker run -d --name octopus \
   -p 8080:8080 \
   -v octopus-data:/app/data \
   -e OCTOPUS_AUTH_JWT_SECRET="replace-with-a-long-random-secret" \
-  lingyuins/octopus:latest
+  ghcr.io/xfoxlg/octopus-tiered-lb:latest
 ```
 
 Recommended on Windows Docker Desktop:
@@ -68,7 +68,7 @@ docker run -d --name octopus `
   -p 8080:8080 `
   -v octopus-data:/app/data `
   -e OCTOPUS_AUTH_JWT_SECRET="replace-with-a-long-random-secret" `
-  lingyuins/octopus:latest
+  ghcr.io/xfoxlg/octopus-tiered-lb:latest
 ```
 
 Or use docker compose:
@@ -76,7 +76,7 @@ Or use docker compose:
 ```yaml
 services:
   octopus:
-    image: lingyuins/octopus:latest
+    image: ghcr.io/xfoxlg/octopus-tiered-lb:latest
     container_name: octopus
     restart: unless-stopped
     ports:

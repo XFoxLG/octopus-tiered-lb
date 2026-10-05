@@ -7,7 +7,40 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/lingyuins/octopus/internal/conf"
 )
+
+func TestUpdateURLs_DefaultToForkRepository(t *testing.T) {
+	original := conf.AppConfig.External
+	conf.AppConfig.External = conf.External{}
+	defer func() { conf.AppConfig.External = original }()
+
+	const wantDownloadURL = "https://github.com/XFoxLG/octopus-tiered-lb/releases/latest/download"
+	const wantAPIURL = "https://api.github.com/repos/XFoxLG/octopus-tiered-lb/releases/latest"
+	if got := getUpdateURL(); got != wantDownloadURL {
+		t.Fatalf("getUpdateURL() = %q, want %q", got, wantDownloadURL)
+	}
+	if got := getUpdateAPIURL(); got != wantAPIURL {
+		t.Fatalf("getUpdateAPIURL() = %q, want %q", got, wantAPIURL)
+	}
+}
+
+func TestUpdateURLs_ConfigOverrideStillWins(t *testing.T) {
+	original := conf.AppConfig.External
+	conf.AppConfig.External = conf.External{
+		UpdateURL:    "https://example.com/octopus/download",
+		UpdateAPIURL: "https://example.com/api/octopus/latest",
+	}
+	defer func() { conf.AppConfig.External = original }()
+
+	if got, want := getUpdateURL(), conf.AppConfig.External.UpdateURL; got != want {
+		t.Fatalf("getUpdateURL() = %q, want %q", got, want)
+	}
+	if got, want := getUpdateAPIURL(), conf.AppConfig.External.UpdateAPIURL; got != want {
+		t.Fatalf("getUpdateAPIURL() = %q, want %q", got, want)
+	}
+}
 
 func TestDoRequest_AllowsLargeDownloadWithoutLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

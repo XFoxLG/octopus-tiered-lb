@@ -19,7 +19,8 @@ COPY web/ ./
 
 # Build frontend with version injected
 ARG APP_VERSION=dev
-RUN NEXT_PUBLIC_APP_VERSION="${APP_VERSION}" pnpm build
+ARG GITHUB_REPO=https://github.com/XFoxLG/octopus-tiered-lb
+RUN NEXT_PUBLIC_APP_VERSION="${APP_VERSION}" NEXT_PUBLIC_GITHUB_REPO="${GITHUB_REPO}" pnpm build
 
 # =============================================================================
 # Build stage for Go binary
