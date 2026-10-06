@@ -87,6 +87,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, "model is required")
 		return
 	}
+	if !dbmodel.ModelMatches(c.GetString("supported_models"), requestModel) {
+		resp.Error(c, http.StatusBadRequest, "model not supported")
+		return
+	}
 
 	apiKeyID := c.GetInt("api_key_id")
 	clientIP := c.ClientIP()
@@ -370,7 +374,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, true)
 					balancer.RecordAutoSuccess(channel.ID, resolvedModel)
 					balancer.RecordAutoLatency(channel.ID, resolvedModel, span.Duration().Milliseconds())
-					balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID)
+					balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID, resolvedModel)
 
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
 					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, nil, clientIP, mediaReportedIP, userAgent, requestTrace)

@@ -409,7 +409,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 		return result
 	}
 
-	usedKey := channel.GetChannelKey()
+	usedKey := channel.GetChannelKeyWithCooldown(item.ModelName, 300)
 	if strings.TrimSpace(usedKey.ChannelKey) == "" {
 		result.Message = "no available key"
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)

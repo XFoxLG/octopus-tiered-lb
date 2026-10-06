@@ -715,8 +715,8 @@ export type StartChannelProbeRequest = {
 
 export function useChannelProbe() {
     return useMutation({
-        mutationFn: async ({ channelId, request }: { channelId: number; request: StartChannelProbeRequest }) => {
-            return apiClient.post<ChannelProbeRun>(`/api/v1/channel/${channelId}/probe`, request);
+        mutationFn: async ({ channelId, request, signal }: { channelId: number; request: StartChannelProbeRequest; signal?: AbortSignal }) => {
+            return apiClient.post<ChannelProbeRun>(`/api/v1/channel/${channelId}/probe`, request, undefined, true, signal);
         },
         onError: (error) => {
             logger.error('渠道能力探测失败:', error);
@@ -733,7 +733,8 @@ export function useApplyChannelProbe() {
         onSuccess: () => {
             // 应用会改写渠道协议声明与能力表，两处缓存都要失效，
             // 否则界面会继续显示旧配置，用户以为没生效。
-            queryClient.invalidateQueries({ queryKey: ['channel', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['channels', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['channel'] });
         },
         onError: (error) => {
             logger.error('应用探测结果失败:', error);

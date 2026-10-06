@@ -137,6 +137,9 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := migrateChannelKeySupportedModelsToText(db); err != nil {
 		t.Fatalf("migrateChannelKeySupportedModelsToText: %v", err)
 	}
+	if err := repairCapabilityMetadata(db); err != nil {
+		t.Fatalf("repairCapabilityMetadata: %v", err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

@@ -73,7 +73,11 @@ func RunChannelCapabilityProbe(
 		return nil, err
 	}
 
-	capabilityProbeSemaphore <- struct{}{}
+	select {
+	case capabilityProbeSemaphore <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	defer func() { <-capabilityProbeSemaphore }()
 
 	run := &appmodel.ChannelProbeRun{
@@ -89,6 +93,7 @@ func RunChannelCapabilityProbe(
 	}
 
 	results := make([]appmodel.ChannelProbeResult, 0, 8)
+	passedAdapters := make(map[outbound.OutboundType]bool)
 
 	// ---- 协议层：逐条验证可用端点 ----
 	for _, target := range buildProtocolProbeTargets(channel.Type, modelName) {
@@ -96,11 +101,21 @@ func RunChannelCapabilityProbe(
 			break
 		}
 		outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, target.AdapterType, target.Request)
+		passedAdapters[target.AdapterType] = outcome.Verdict == appmodel.ProbeVerdictPass
 		results = append(results, buildProbeResult(run, appmodel.ProbeKindProtocol, target.Item, outcome, selectedKey.Key.ChannelKey))
 	}
 
 	// ---- 能力层：5 项能力（部分渠道会直接标 unsupported） ----
 	capabilityAdapter := buildCapabilityProbeAdapter(channel.Type)
+	textRequest, _ := buildCapabilityProbeRequest(appmodel.ProbeItemTextGeneration, modelName)
+	capabilityAdapterReady := false
+	for _, adapterType := range outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, textRequest, "", channel.OutboundFormatOverride, channel.UpstreamProtocols) {
+		if passedAdapters[adapterType] {
+			capabilityAdapter = adapterType
+			capabilityAdapterReady = true
+			break
+		}
+	}
 	capabilityItems := []string{
 		appmodel.ProbeItemModels,
 		appmodel.ProbeItemTextGeneration,
@@ -129,6 +144,10 @@ func RunChannelCapabilityProbe(
 			results = append(results, probeChannelModelList(ctx, channel, selectedKey.Key.ChannelKey, modelName))
 			continue
 		}
+		if !capabilityAdapterReady {
+			results = append(results, appmodel.ChannelProbeResult{ChannelID: channel.ID, ModelName: modelName, Kind: appmodel.ProbeKindCapability, Item: item, Verdict: appmodel.ProbeVerdictUnknown, Summary: "No verified protocol available for capability probe"})
+			continue
+		}
 		probeRequest, buildErr := buildCapabilityProbeRequest(item, modelName)
 		if buildErr != nil {
 			results = append(results, appmodel.ChannelProbeResult{
@@ -142,12 +161,24 @@ func RunChannelCapabilityProbe(
 			})
 			continue
 		}
-		outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, capabilityAdapter, probeRequest)
+		probeAdapter := capabilityAdapter
+		if item == appmodel.ProbeItemWebSearch && passedAdapters[outbound.OutboundTypeOpenAIResponse] {
+			probeAdapter = outbound.OutboundTypeOpenAIResponse
+		}
+		outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, probeAdapter, probeRequest, item)
 		outcome.Verdict = judgeCapabilityResponse(item, outcome)
 		results = append(results, buildProbeResult(run, appmodel.ProbeKindCapability, item, outcome, selectedKey.Key.ChannelKey))
 	}
 
 	run.EndedAt = time.Now()
+	secrets := []string{selectedKey.Key.ChannelKey}
+	for _, header := range channel.CustomHeader {
+		secrets = append(secrets, header.HeaderValue)
+	}
+	for i := range results {
+		results[i].Summary = redactProbeDetail(results[i].Summary, secrets...)
+		results[i].Detail = redactProbeDetail(results[i].Detail, secrets...)
+	}
 	run.Summary = summarizeProbeRun(results)
 	run.Results = results
 	return run, nil
@@ -176,7 +207,7 @@ func buildProbeResult(
 	result.Verdict = outcome.Verdict
 	result.StatusCode = outcome.StatusCode
 	result.LatencyMS = outcome.LatencyMS
-	result.Summary = truncateProbeSummary(outcome.Summary)
+	result.Summary = redactProbeDetail(outcome.Summary, secret)
 	result.Detail = redactProbeDetail(outcome.Body, secret)
 	return result
 }
@@ -230,7 +261,7 @@ func probeChannelModelList(
 		// fetchChannelModelIDs 把状态码语义丢掉了，这里保守判 Unknown：
 		// 拿不到列表不代表渠道不可用，绝不据此改写配置。
 		result.Verdict = appmodel.ProbeVerdictUnknown
-		result.Summary = truncateProbeSummary(err.Error())
+		result.Summary = redactProbeDetail(err.Error(), key)
 		return result
 	}
 	if len(models) == 0 {
@@ -286,7 +317,7 @@ func ApplyChannelProbeRun(
 		seen[protocol] = true
 	}
 	for _, protocol := range passingProtocols {
-		if seen[protocol] {
+		if seen[protocol] || seen[strings.TrimSuffix(protocol, "_only")] || seen["passthrough"] || seen["raw"] {
 			continue
 		}
 		seen[protocol] = true
@@ -378,8 +409,7 @@ func CapabilityVerdicts(run *appmodel.ChannelProbeRun) map[appmodel.CapabilityNa
 func OutboundProtocolDeclarableForChannelType(channelType outbound.OutboundType) bool {
 	switch channelType {
 	case outbound.OutboundTypeOpenAIChat,
-		outbound.OutboundTypeOpenAIResponse,
-		outbound.OutboundTypeMimo:
+		outbound.OutboundTypeOpenAIResponse:
 		return true
 	default:
 		return false

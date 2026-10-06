@@ -268,8 +268,9 @@ func unionKeyModels(results []helper.KeyModelResult, currentKeys []model.Channel
 	}
 
 	for _, r := range results {
-		if r.Passed {
-			add(r.Models)
+		models := xstrings.TrimCompact(r.Models)
+		if r.Passed && len(models) > 0 {
+			add(models)
 			continue
 		}
 		if old, ok := supportedByKey[r.KeyID]; ok && old != "" {

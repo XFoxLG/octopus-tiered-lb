@@ -70,6 +70,7 @@ func followUpUncoveredInputs(
 	targetGroupName string,
 	batchIndex int,
 	firstRoutes []model.AIRouteEntry,
+	reportFailure ...func(error),
 ) []model.AIRouteEntry {
 	if ctx.Err() != nil {
 		return firstRoutes
@@ -94,6 +95,9 @@ func followUpUncoveredInputs(
 
 	content, callErr := callAIRouteChatCompletion(ctx, service, systemPrompt, userPrompt)
 	if callErr != nil {
+		if len(reportFailure) > 0 && reportFailure[0] != nil {
+			reportFailure[0](callErr)
+		}
 		log.Warnf("ai route bucket %d follow-up call failed (keeping first-pass routes): %v", batchIndex, callErr)
 		return firstRoutes
 	}

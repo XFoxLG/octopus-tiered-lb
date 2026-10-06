@@ -25,25 +25,31 @@ func SaveProbeRun(ctx context.Context, run *model.ChannelProbeRun) error {
 		return nil
 	}
 	database := db.GetDB().WithContext(ctx)
-	return database.Transaction(func(tx *gorm.DB) error {
-		results := run.Results
-		run.Results = nil
-		if err := tx.Create(run).Error; err != nil {
+	stored := *run
+	results := append([]model.ChannelProbeResult(nil), run.Results...)
+	stored.Results = nil
+	err := database.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&stored).Error; err != nil {
 			return fmt.Errorf("create probe run: %w", err)
 		}
 		if len(results) == 0 {
 			return nil
 		}
 		for index := range results {
-			results[index].RunID = run.ID
-			results[index].ChannelID = run.ChannelID
+			results[index].RunID = stored.ID
+			results[index].ChannelID = stored.ChannelID
 		}
 		if err := tx.Create(&results).Error; err != nil {
 			return fmt.Errorf("create probe results: %w", err)
 		}
-		run.Results = results
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	stored.Results = results
+	*run = stored
+	return nil
 }
 
 // GetProbeRun 读取一次探测（含逐行结果），供「应用」按钮使用。
@@ -176,9 +182,12 @@ func ApplyProbeProtocols(ctx context.Context, channelID int, protocols []string)
 	if err := db.GetDB().WithContext(ctx).
 		Model(&model.Channel{}).
 		Where("id = ?", channelID).
-		Update("upstream_protocols", normalized).Error; err != nil {
+		Select("upstream_protocols").
+		Updates(&model.Channel{UpstreamProtocols: normalized}).Error; err != nil {
 		return nil, fmt.Errorf("update channel protocols: %w", err)
 	}
-	chCache.Del(channelID)
+	if err := RefreshCacheByID(channelID, ctx); err != nil {
+		return added, fmt.Errorf("channel protocols saved but cache refresh failed: %w", err)
+	}
 	return added, nil
 }

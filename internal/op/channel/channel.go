@@ -880,13 +880,6 @@ func RefreshCacheByID(id int, ctx context.Context) error {
 	runtimeUpdateLock.Lock()
 	defer runtimeUpdateLock.Unlock()
 
-	if old, ok := chCache.Get(id); ok {
-		for _, k := range old.Keys {
-			if k.ID != 0 {
-				keyCache.Del(k.ID)
-			}
-		}
-	}
 	var ch model.Channel
 	if err := db.GetDB().WithContext(ctx).
 		Preload("Keys").
@@ -896,6 +889,14 @@ func RefreshCacheByID(id int, ctx context.Context) error {
 	}
 	// 渠道 Key 解密回明文供运行时使用（存量明文原样通过）。
 	decryptChannelKeysInPlace(ch.Keys)
+	// Keep the existing channel and keys usable if the database read fails.
+	if old, ok := chCache.Get(id); ok {
+		for _, k := range old.Keys {
+			if k.ID != 0 {
+				keyCache.Del(k.ID)
+			}
+		}
+	}
 	chCache.Set(ch.ID, ch)
 	for _, k := range ch.Keys {
 		if k.ID != 0 {

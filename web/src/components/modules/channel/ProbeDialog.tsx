@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, CheckCircle2, Loader2, MinusCircle, Play, ShieldAlert, XCircle } from 'lucide-react';
 import {
@@ -54,6 +54,9 @@ export function ProbeDialog({ channel, availableModels, onClose }: ProbeDialogPr
     const [allowSkipModelTest, setAllowSkipModelTest] = useState(false);
     const [run, setRun] = useState<ChannelProbeRun | null>(null);
     const [needsSkipConfirmation, setNeedsSkipConfirmation] = useState(false);
+    const probeController = useRef<AbortController | null>(null);
+    const [cancelled, setCancelled] = useState(false);
+    useEffect(() => () => probeController.current?.abort(), []);
 
     const probe = useChannelProbe();
     const apply = useApplyChannelProbe();
@@ -71,9 +74,13 @@ export function ProbeDialog({ channel, availableModels, onClose }: ProbeDialogPr
             return;
         }
         setNeedsSkipConfirmation(false);
+        setCancelled(false);
+        const controller = new AbortController();
+        probeController.current = controller;
         probe.mutate(
             {
                 channelId: channel.id,
+                signal: controller.signal,
                 request: {
                     model_name: modelName.trim(),
                     key_index: -1,
@@ -83,6 +90,7 @@ export function ProbeDialog({ channel, availableModels, onClose }: ProbeDialogPr
             {
                 onSuccess: (data) => setRun(data),
                 onError: (error) => {
+                    if (controller.signal.aborted) return;
                     // 后端用 409 表达"该渠道禁止测活，需确认后重试"。
                     const message = error instanceof Error ? error.message : String(error);
                     if (message.includes('skipped model test') || message.includes('409')) {
@@ -192,7 +200,8 @@ export function ProbeDialog({ channel, availableModels, onClose }: ProbeDialogPr
             ) : null}
 
             {/* 日志区：协议层在前、能力层在后，全部堆在同一个滚动框里 */}
-            <div className="min-h-40 max-h-80 overflow-y-auto rounded-lg border border-border/40 bg-muted/20 p-3">
+            <div className="min-h-40 max-h-80 overflow-y-auto rounded-lg border border-border/40 bg-muted/20 p-3" aria-busy={running}>
+                {cancelled && <p role="status" className="text-xs text-muted-foreground">{t('cancelled')}</p>}
                 {results.length === 0 && !running ? (
                     <p className="text-xs leading-5 text-muted-foreground">{t('idleHint')}</p>
                 ) : null}
@@ -221,7 +230,8 @@ export function ProbeDialog({ channel, availableModels, onClose }: ProbeDialogPr
             ) : null}
 
             <div className="flex flex-wrap items-center justify-end gap-2">
-                <Button type="button" variant="ghost" className="rounded-lg" onClick={onClose} disabled={running}>
+                {running && <Button type="button" variant="outline" onClick={() => { probeController.current?.abort(); setCancelled(true); }}>{t('cancel')}</Button>}
+                <Button type="button" variant="ghost" className="rounded-lg" onClick={() => { probeController.current?.abort(); onClose(); }}>
                     {t('close')}
                 </Button>
                 <Button

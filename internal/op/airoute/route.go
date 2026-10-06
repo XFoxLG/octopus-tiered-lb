@@ -625,11 +625,18 @@ func generateAIRoutesForBucket(
 			tracker,
 		)
 		if callErr == nil {
-			servicePool.Release(lease, aiRouteServiceOutcome{Success: true})
 
 			// A1 自校验闭环：AI 漏归类的输入模型不静默丢失，对同一个服务追问一轮，
 			// 把补充 routes 合并进结果。追问失败不致命（保留首轮结果）。
-			routes = followUpUncoveredInputs(ctx, lease.Service, bucket, targetGroupName, batchIndex, routes)
+			var followupErr error
+			routes = followUpUncoveredInputs(ctx, lease.Service, bucket, targetGroupName, batchIndex, routes, func(err error) { followupErr = err })
+			outcome := aiRouteServiceOutcome{Success: followupErr == nil, Err: followupErr}
+			var retryErr *aiRouteCallError
+			if errors.As(followupErr, &retryErr) && retryErr.Retryable {
+				outcome.Retryable = true
+				outcome.Cooldown = retryErr.Cooldown
+			}
+			servicePool.Release(lease, outcome)
 
 			if tracker != nil {
 				tracker.CompleteBatch(batchIndex, bucket, lease.Service.Name, attempt)

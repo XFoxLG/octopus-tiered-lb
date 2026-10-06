@@ -763,8 +763,7 @@ export function ChannelForm({
     // 后端也只在这两种渠道类型上展开协议回退），其他类型不渲染该控件，
     // 避免"设置了但不生效"的误导。
     const upstreamProtocolsSupported = formData.type === ChannelType.OpenAIChat
-        || formData.type === ChannelType.OpenAIResponse
-        || formData.type === ChannelType.MiMoChat;
+        || formData.type === ChannelType.OpenAIResponse;
     const isCreateLayout = layout === 'create';
     const sectionClassName = isCreateLayout
         ? 'min-w-0 space-y-3 border-b border-border pb-5'

@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -181,6 +182,7 @@ func sendProbeRequest(
 	key string,
 	adapterType outbound.OutboundType,
 	request *transmodel.InternalLLMRequest,
+	capability ...string,
 ) *probeRequestOutcome {
 	outcome := &probeRequestOutcome{Verdict: appmodel.ProbeVerdictUnknown}
 	if channel == nil {
@@ -201,6 +203,33 @@ func sendProbeRequest(
 	if err != nil {
 		outcome.Summary = fmt.Sprintf("failed to build probe request: %v", err)
 		return outcome
+	}
+	if len(capability) > 0 && capability[0] == appmodel.ProbeItemWebSearch {
+		if adapterType != outbound.OutboundTypeOpenAIResponse && adapterType != outbound.OutboundTypeGemini {
+			outcome.Verdict = appmodel.ProbeVerdictUnsupported
+			outcome.Summary = "No native search probe for this protocol"
+			return outcome
+		}
+		var body map[string]any
+		if err := json.NewDecoder(httpRequest.Body).Decode(&body); err != nil {
+			outcome.Summary = "Could not build native search probe"
+			return outcome
+		}
+		_ = httpRequest.Body.Close()
+		if adapterType == outbound.OutboundTypeGemini {
+			body["tools"] = []any{map[string]any{"google_search": map[string]any{}}}
+		} else {
+			body["tools"] = []any{map[string]any{"type": "web_search"}}
+			body["tool_choice"] = map[string]any{"type": "web_search"}
+		}
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			outcome.Summary = "Could not encode native search probe"
+			return outcome
+		}
+		httpRequest.Body = io.NopCloser(bytes.NewReader(encoded))
+		httpRequest.ContentLength = int64(len(encoded))
+		httpRequest.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(encoded)), nil }
 	}
 	for _, header := range channel.CustomHeader {
 		if strings.TrimSpace(header.HeaderKey) != "" {
@@ -225,13 +254,30 @@ func sendProbeRequest(
 	}
 	defer response.Body.Close()
 
-	rawBody, _ := io.ReadAll(io.LimitReader(response.Body, capabilityProbeMaxBody))
+	rawBody, readErr := io.ReadAll(io.LimitReader(response.Body, capabilityProbeMaxBody+1))
 	outcome.StatusCode = response.StatusCode
 	outcome.Body = string(rawBody)
+	if readErr != nil || len(rawBody) > capabilityProbeMaxBody {
+		outcome.Summary = "Incomplete or oversized probe response"
+		return outcome
+	}
 	outcome.Verdict = probeHTTPStatusVerdict(response.StatusCode)
 	outcome.Summary = response.Status
-	if bodyVerdict, ok := classifyProbeBody(outcome.Body); ok {
-		outcome.Verdict = bodyVerdict
+	if outcome.Verdict == appmodel.ProbeVerdictUnknown {
+		return outcome
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if bodyVerdict, ok := classifyProbeBody(outcome.Body); ok {
+			outcome.Verdict = bodyVerdict
+		}
+		return outcome
+	}
+	decodedResponse := *response
+	decodedResponse.Body = io.NopCloser(bytes.NewReader(rawBody))
+	decoded, decodeErr := adapter.TransformResponse(probeCtx, &decodedResponse)
+	if decodeErr != nil || decoded == nil || decoded.Error != nil || len(decoded.Choices) == 0 {
+		outcome.Verdict = appmodel.ProbeVerdictUnknown
+		outcome.Summary = "Upstream did not return a valid generation response"
 	}
 	return outcome
 }
@@ -398,7 +444,7 @@ func buildCapabilityProbeRequest(item, modelName string) (*transmodel.InternalLL
 			JSONSchema: &transmodel.ResponseFormatJSONSchema{
 				Name:   "verify_schema",
 				Strict: &strict,
-				Schema: []byte(`{"type":"object","properties":{"ok":{"type":"boolean","const":true}},"required":["ok"]}`),
+				Schema: []byte(`{"type":"object","properties":{"ok":{"type":"boolean","const":true}},"required":["ok"],"additionalProperties":false}`),
 			},
 		}
 		return &transmodel.InternalLLMRequest{
@@ -487,6 +533,10 @@ func walkCapabilitySignals(node any, signals *capabilityResponseSignals) {
 			case "content", "text", "output_text", "completion":
 				if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
 					signals.HasVisibleText = true
+					var object map[string]any
+					if json.Unmarshal([]byte(text), &object) == nil && len(object) == 1 && object["ok"] == true {
+						signals.HasStructuredOK = true
+					}
 				}
 			case "ok":
 				if boolean, ok := value.(bool); ok && boolean {

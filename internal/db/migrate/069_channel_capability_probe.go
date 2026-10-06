@@ -46,17 +46,22 @@ func migrateChannelCapabilityProbe(database *gorm.DB) error {
 }
 
 func migrateGroupItemToolsCapability(database *gorm.DB) error {
+	return migrateGroupItemToolsCapabilityWithRepair(database, false)
+}
+
+func migrateGroupItemToolsCapabilityWithRepair(database *gorm.DB, repair bool) error {
 	type legacyToolsRow struct {
 		ChannelID     int
 		ModelName     string
 		SupportsTools *bool
-		ProbedAt      *int64
-		ProbeKeyID    *int
+		ProbedAt      *int64 `gorm:"column:supports_tools_probed_at"`
+		ProbeKeyID    *int   `gorm:"column:supports_tools_probe_key_id"`
 	}
 	rows := make([]legacyToolsRow, 0)
 	if err := database.Table("group_items").
 		Select("channel_id", "model_name", "supports_tools", "supports_tools_probed_at", "supports_tools_probe_key_id").
 		Where("supports_tools IS NOT NULL").
+		Order("id ASC").
 		Scan(&rows).Error; err != nil {
 		return fmt.Errorf("scan legacy group item tools verdicts: %w", err)
 	}
@@ -122,6 +127,15 @@ func migrateGroupItemToolsCapability(database *gorm.DB) error {
 			return fmt.Errorf("check existing capability: %w", err)
 		}
 		if existingCount > 0 {
+			if repair && value.probedAt > 0 {
+				// Only repair the signature of the old migration bug. Results
+				// subsequently produced by a probe or a person are never replaced.
+				if err := database.Model(&model.ChannelModelCapability{}).
+					Where("channel_id = ? AND model_name = ? AND capability = ? AND source = ? AND probe_key_id = ?", key.channelID, key.modelName, model.CapabilityToolCalling, "migrated", 0).
+					Updates(map[string]any{"supported": record.Supported, "probe_key_id": record.ProbeKeyID, "probed_at": record.ProbedAt, "updated_at": time.Now()}).Error; err != nil {
+					return fmt.Errorf("repair migrated capability: %w", err)
+				}
+			}
 			continue
 		}
 		if err := database.Create(&record).Error; err != nil {

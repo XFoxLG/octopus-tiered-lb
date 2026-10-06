@@ -122,6 +122,7 @@ async function request<T>(
     body?: BodyInit,
     params?: Record<string, string | number | boolean>,
     includeAuth = true,
+    signal?: AbortSignal,
 ): Promise<T> {
     // 构建 URL
     const searchParams = params ? new URLSearchParams(
@@ -151,6 +152,7 @@ async function request<T>(
         method,
         headers,
         body,
+        signal,
     });
 
     return handleResponse<T>(response);
@@ -169,8 +171,8 @@ export const apiClient = {
     /**
      * POST 请求
      */
-    post: <T>(path: string, data?: unknown, params?: Record<string, string | number | boolean>, includeAuth = true): Promise<T> =>
-        request<T>('POST', path, JSON.stringify(data ?? {}), params, includeAuth),
+    post: <T>(path: string, data?: unknown, params?: Record<string, string | number | boolean>, includeAuth = true, signal?: AbortSignal): Promise<T> =>
+        request<T>('POST', path, JSON.stringify(data ?? {}), params, includeAuth, signal),
 
     /**
      * PUT 请求
