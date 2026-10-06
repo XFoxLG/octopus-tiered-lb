@@ -7,6 +7,7 @@ import { useLogs, type LogFilter } from '@/api/endpoints/log';
 import { useModelList } from '@/api/endpoints/model';
 import { LogCard } from './Item';
 import { ErrorLogView } from './ErrorLogView';
+import { LiveRequests } from './LiveRequests';
 import { Loader2, X, Columns3, Check, ChevronsUpDown, Search } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { useLogFieldVisibilityStore, useLogModelSearchStore, useLogAutoRefreshStore, type LogFieldName } from './ui-store';
@@ -343,7 +344,7 @@ export function Log() {
         () => (modelSearch ? { ...filter, model: modelSearch } : filter),
         [filter, modelSearch],
     );
-    const { logs, hasMore, isLoading, isLoadingMore, loadMore, refresh } = useLogs({ filter: combinedFilter });
+    const { logs, liveRequests, isConnected, hasMore, isLoading, isLoadingMore, loadMore, refresh } = useLogs({ filter: combinedFilter });
     const { data: channels = [] } = useChannelList();
 
     // 自动刷新：按用户在设置中选择的间隔轮询日志列表（0 = 关闭）。
@@ -430,6 +431,7 @@ export function Log() {
             ) : (
                 <>
                     <LogFilterBar filter={filter} onChange={setFilter} />
+                    <LiveRequests requests={liveRequests} connected={isConnected} />
                     {isLoading && logs.length === 0 ? (
                         <div className="flex min-h-[18rem] items-center justify-center rounded-xl border border-border/35 bg-card">
                             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

@@ -753,6 +753,11 @@ func RelayRequestTraceMiddleware() gin.HandlerFunc {
 			captureContent = false
 		}
 		trace := newRelayRequestTrace(ginContext.Request, captureContent)
+		relaylog.UpdateLiveRequest(trace.id, func(entry *relaylog.LiveRequest) {
+			entry.State = "received"
+			entry.StartedAt = trace.startedAt.UnixMilli()
+			entry.EndpointType = relayTraceEndpointType(trace.requestPath)
+		})
 		ginContext.Set(relayRequestTraceContextKey, trace)
 		ginContext.Writer = &relayCaptureResponseWriter{ResponseWriter: ginContext.Writer, trace: trace}
 		defer trace.close()
@@ -764,6 +769,10 @@ func RelayRequestTraceMiddleware() gin.HandlerFunc {
 
 		ginContext.Next()
 		trace.completeClientEgress(ginContext.Writer.Status(), ginContext.Writer.Header())
+		relaylog.UpdateLiveRequest(trace.id, func(entry *relaylog.LiveRequest) {
+			entry.State = "completed"
+			entry.HTTPStatus = ginContext.Writer.Status()
+		})
 		if !trace.hasPersistedLog() {
 			saveUnclaimedRelayTrace(ginContext, trace)
 		}
@@ -904,6 +913,14 @@ func relayLogOutcomes(relayLog model.RelayLog) (generationOutcome string, upstre
 	}
 	if successfulAttempts > 0 && relayLog.Error == "" {
 		return model.RelayLogGenerationSuccess, model.RelayLogUpstreamSuccess
+	}
+	switch relayLog.TerminationCause {
+	case "content_filter", "prompt_blocked", "recitation", "refusal":
+		for _, attempt := range relayLog.Attempts {
+			if attempt.HTTPStatus >= 200 && attempt.HTTPStatus < 300 {
+				return model.RelayLogGenerationFailed, model.RelayLogUpstreamSuccess
+			}
+		}
 	}
 	if failedAttempts > 0 || relayLog.Error != "" {
 		return model.RelayLogGenerationFailed, model.RelayLogUpstreamFailed

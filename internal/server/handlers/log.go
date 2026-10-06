@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"github.com/lingyuins/octopus/internal/utils/json"
 	"mime"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -179,7 +182,7 @@ func logDetail(c *gin.Context) {
 
 	log, err := relaylog.RelayLogGetByID(c.Request.Context(), id)
 	if err != nil {
-		resp.InternalError(c)
+		logReadError(c, err)
 		return
 	}
 	if log == nil {
@@ -198,7 +201,7 @@ func logContent(c *gin.Context) {
 	}
 	contentRef, payload, err := relaylog.RelayLogContentGet(c.Request.Context(), referenceID)
 	if err != nil {
-		resp.InternalError(c)
+		logReadError(c, err)
 		return
 	}
 	if contentRef == nil {
@@ -218,6 +221,15 @@ func logContent(c *gin.Context) {
 		c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": contentRef.FileName}))
 	}
 	c.Data(http.StatusOK, contentType, payload)
+}
+
+func logReadError(c *gin.Context, err error) {
+	var networkError net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &networkError) && networkError.Timeout() {
+		resp.ErrorWithKey(c, http.StatusGatewayTimeout, "The log database timed out. Try again; this does not mean the record was deleted.", "log.detailDatabaseTimeout", nil)
+		return
+	}
+	resp.InternalError(c)
 }
 
 func logHealth(c *gin.Context) {
@@ -258,9 +270,46 @@ func streamLog(c *gin.Context) {
 	c.Writer.Flush()
 
 	ctx := c.Request.Context()
+	var liveChan chan relaylog.LiveRequest
+	writeLive := func(event string, payload any) bool {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data); err != nil {
+			return false
+		}
+		c.Writer.Flush()
+		return true
+	}
+	if c.Query("version") == "2" {
+		var snapshot []relaylog.LiveRequest
+		var unsubscribe func()
+		liveChan, snapshot, unsubscribe = relaylog.SubscribeLiveRequests()
+		defer unsubscribe()
+		visible := make([]relaylog.LiveRequest, 0, len(snapshot))
+		for _, entry := range snapshot {
+			if !relaylog.RelayLogStreamExcluded(entry.RequestModel) {
+				visible = append(visible, entry)
+			}
+		}
+		if !writeLive("requests", visible) {
+			return
+		}
+	}
 
 	for {
 		select {
+		case entry, ok := <-liveChan:
+			if !ok {
+				return
+			}
+			if relaylog.RelayLogStreamExcluded(entry.RequestModel) {
+				entry = relaylog.LiveRequest{TraceID: entry.TraceID, State: "recorded"}
+			}
+			if !writeLive("request", entry) {
+				return
+			}
 		case <-ctx.Done():
 			return
 		case <-heartbeatTicker.C:

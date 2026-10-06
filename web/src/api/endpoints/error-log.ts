@@ -1,12 +1,14 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../client';
 import { logger } from '@/lib/logger';
+import { withExactId } from '@/lib/exact-id';
 
 /**
  * 错误日志条目（前后端崩溃/错误，与转发日志 relay_logs 分离）。
  */
 export interface ErrorLog {
-    id: number;
+    id: string | number;
+    id_str?: string;
     time: number;              // 时间戳（秒）
     source: 'backend' | 'frontend'; // 来源
     level: string;             // panic | error | unhandledrejection | uncaught
@@ -49,7 +51,7 @@ export function useErrorLogs(options: { pageSize?: number; filter?: ErrorLogFilt
             if (filter.start_time != null) params.set('start_time', String(filter.start_time));
             if (filter.end_time != null) params.set('end_time', String(filter.end_time));
             const result = await apiClient.get<ErrorLog[] | null>(`/api/v1/error-log/list?${params.toString()}`);
-            return result ?? [];
+            return (result ?? []).map(withExactId);
         },
         getNextPageParam: (lastPage, allPages) => {
             if (!lastPage || lastPage.length < pageSize) return undefined;

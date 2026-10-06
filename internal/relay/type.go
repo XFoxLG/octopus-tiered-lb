@@ -412,7 +412,9 @@ type relayAttempt struct {
 
 	// streamTermination records the most recent terminal cause decoded from the
 	// upstream stream. It is internal-only and never serialized to clients.
-	streamTermination model.TerminationMetadata
+	streamTermination  model.TerminationMetadata
+	streamAnswerText   string
+	streamAnswerBypass bool
 }
 
 func (ra *relayAttempt) markStreamOutputCommitted() {

@@ -58,7 +58,7 @@ function ContentRecord({ content }: { content: RelayLogContentRef }) {
     const t = useTranslations('log.card.forensics');
     const downloadContent = useDownloadRelayLogContent();
     const displayText = useMemo(() => formatContentText(content), [content]);
-    const canDownload = content.state === 'ready' && content.id > 0;
+    const canDownload = content.state === 'ready' && (content.id_str ?? String(content.id)) !== '0';
 
     return (
         <div className="space-y-2 rounded-xl border border-border/50 bg-card/70 p-3">

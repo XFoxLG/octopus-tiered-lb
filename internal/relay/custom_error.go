@@ -77,6 +77,7 @@ var builtinCredentialRetryKeywords = []string{
 // 刻意不含泛化的 "not supported" —— 那会误伤「Requests ending with a model
 // turn are not supported」这类真正的请求方错误。
 var builtinChannelRetryKeywords = []string{
+	"user location is not supported for the api use",
 	"model not found",
 	"model_not_found",
 	"no such model",
@@ -264,6 +265,9 @@ func classifyErrorForClient(statusCode int, upstreamText string) ErrorClass {
 		if strings.Contains(lowered, marker) {
 			return ErrorClassRequest
 		}
+	}
+	if strings.Contains(lowered, "user location is not supported for the api use") {
+		return ErrorClassUpstream
 	}
 	switch statusCode {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusRequestEntityTooLarge,

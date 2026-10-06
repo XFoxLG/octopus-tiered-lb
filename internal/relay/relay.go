@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -436,6 +437,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name, ra.internalRequest.Model)
 	span.SetAdapterType(ra.adapterType.String())
 	ra.logAttemptNumber = span.AttemptNumber()
+	ra.metrics.liveAttempt(ra.channel.ID, ra.channel.Name, ra.internalRequest.Model, ra.logAttemptNumber)
 
 	// 转发请求
 	statusCode, fwdErr := ra.forward()
@@ -488,12 +490,13 @@ func (ra *relayAttempt) attempt() attemptResult {
 	//（如 context_length_exceeded、content_filter、refusal），对同一请求重发
 	//必然得到同一结果。直接终态，不进入默认分类，更不被自定义重试白名单覆盖。
 	if termination, ok := terminalCauseFromError(fwdErr); ok && customErrorIsDeterministicFailure(termination) {
+		ra.collectResponse()
 		span.End(dbmodel.AttemptFailed, statusCode, "deterministic provider failure, no retry")
 		return attemptResult{
 			Success:  false,
 			Written:  written,
 			Err:      fwdErr,
-			Decision: RetryDecision{Scope: ScopeNone, Reason: "deterministic provider failure, no retry", Code: statusCode, IsError: true},
+			Decision: RetryDecision{Scope: ScopeNone, Reason: "deterministic provider failure, no retry", Code: statusCode, IsError: true, SkipFailureAccounting: true},
 		}
 	}
 
@@ -549,14 +552,14 @@ func (ra *relayAttempt) attempt() attemptResult {
 		// Auto策略：记录首 Token 延迟（TTFT，毫秒）。仅流式请求有 FirstTokenTime；
 		// 非流式请求无首 token 概念，IsZero()==true 时自然跳过不记录（issue #183）。
 		if !ra.metrics.FirstTokenTime.IsZero() {
-			balancer.RecordAutoTTFT(ra.channel.ID, ra.internalRequest.Model, ra.metrics.FirstTokenTime.Sub(ra.metrics.StartTime).Milliseconds())
+			balancer.RecordAutoTTFT(ra.channel.ID, ra.internalRequest.Model, ra.metrics.FirstTokenTime.Sub(span.StartedAt()).Milliseconds())
 		}
 		// 可用度：成功加分（上限 100），仅 availability 策略生效。
 		balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, true)
 		// 速度策略：记录 EMA 平滑 TPS（output_tokens / duration_seconds），仅 speed 策略生效。
 		balancer.RecordKeySpeed(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.metrics.Stats.OutputToken, span.Duration().Milliseconds())
 		// 会话保持：更新粘性记录
-		balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID)
+		balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 
 		return attemptResult{Success: true, Decision: decision}
 	}
@@ -782,6 +785,10 @@ func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelT
 	if c == nil || c.Writer.Written() {
 		return
 	}
+	if termination, ok := terminalCauseFromError(err); ok && termination.Cause.IsProviderRefusal() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": termination.Detail, "type": "invalid_request_error", "code": "content_filter"}})
+		return
+	}
 	if statusCode < 400 {
 		resp.BadGateway(c)
 		return
@@ -940,6 +947,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 	if ct := response.Header.Get("Content-Type"); ct != "" && !strings.Contains(strings.ToLower(ct), "text/event-stream") {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
+		if isExplicitAnswerNotice(string(body)) {
+			return providerTerminalFailureError(answerNoticeTermination())
+		}
 		return fmt.Errorf("upstream returned non-SSE content-type %q for stream request: %s", ct, string(body))
 	}
 
@@ -1174,7 +1184,47 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		defer clientGoneTicker.Stop()
 	}
 
+	noticeBuffer := &answerNoticeBuffer{}
+	var noticeTimer *time.Timer
+	var noticeTimerC <-chan time.Time
+	defer func() {
+		if noticeTimer != nil {
+			noticeTimer.Stop()
+		}
+	}()
+	flushNotice := func() {
+		if noticeTimer != nil {
+			noticeTimer.Stop()
+		}
+		noticeTimerC = nil
+		if len(noticeBuffer.payloads) == 0 {
+			return
+		}
+		writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+		reasoningBuffer, reasoningBufferBytes = nil, 0
+		writeReasoningBuffer(ra, noticeBuffer.payloads, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+		noticeBuffer.payloads, noticeBuffer.bytes, noticeBuffer.released = nil, 0, true
+		hasVisibleContent = true
+		hasDownstreamOutput = ra.streamOutputWasCommitted()
+	}
+	blockNotice := func() error {
+		ra.streamTermination = answerNoticeTermination()
+		ra.streamTermination.ProviderReason = ra.streamFinishReason
+		blockedErr := providerTerminalFailureError(ra.streamTermination)
+		ra.collectResponse()
+		if ra.metrics.InternalResponse != nil {
+			ra.metrics.InternalResponse.Termination = ra.streamTermination
+		}
+		noticeBuffer.payloads = nil
+		reasoningBuffer = nil
+		emitStreamInterruption(blockedErr, false)
+		return blockedErr
+	}
 	finishAcceptedTerminal := func() error {
+		if noticeBuffer.blocked() {
+			return blockNotice()
+		}
+		flushNotice()
 		// A provider refusal, prompt block, pause_turn, or context exhaustion
 		// must be delivered as-is rather than retried with the identical
 		// request. Other empty buffered streams remain eligible for the
@@ -1237,6 +1287,12 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		)
 
 		select {
+		case <-noticeTimerC:
+			flushNotice()
+			if clientDisconnected && ra.streamSession == nil {
+				return errClientDisconnected
+			}
+			continue
 		case <-ctx.Done():
 			if ra.streamSession == nil && isClientDisconnected(ra.clientCtx) {
 				return errClientDisconnected
@@ -1422,6 +1478,23 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			stopFirstVisibleOutputTimer()
 			startStreamIdleTimer()
 		}
+		shouldHoldNotice := noticeBuffer.observe(ra.streamAnswerText, ra.streamAnswerBypass)
+		if ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && noticeBuffer.blocked() {
+			return blockNotice()
+		}
+		if shouldHoldNotice && noticeBuffer.bytes+len(data) <= answerNoticeLimit {
+			noticeBuffer.payloads = append(noticeBuffer.payloads, data)
+			noticeBuffer.bytes += len(data)
+			if noticeTimer == nil {
+				noticeTimer = time.NewTimer(time.Second)
+				noticeTimerC = noticeTimer.C
+			}
+			continue
+		}
+		if noticeBuffer.bytes+len(data) > answerNoticeLimit {
+			noticeBuffer.released = true
+		}
+		flushNotice()
 
 		// issue #155：根据策略决定是否缓冲 reasoning chunks。
 		// buffer 策略：暂存到 buffer，待可见内容到达后统一 flush（安全重试但 CF 可能超时）
@@ -1546,6 +1619,7 @@ func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected 
 // transformStreamData 转换流式数据，返回转换后的 SSE 字节、该 chunk 是否包含可见内容、以及错误。
 // hasVisibleContent 用于流式空输出检测：仅含 reasoning 的 chunk 不算可见内容（issue #155）。
 func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([]byte, bool, error) {
+	ra.streamAnswerText, ra.streamAnswerBypass = "", false
 	internalStream, err := ra.outAdapter.TransformStream(ctx, []byte(data))
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform stream: %v", err)
@@ -1556,6 +1630,7 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	}
 
 	hasVisible := streamChunkHasVisibleContent(internalStream)
+	ra.streamAnswerText, ra.streamAnswerBypass = answerText(internalStream, true)
 
 	ra.recordStreamTermination(internalStream)
 
@@ -1565,6 +1640,10 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		return nil, false, err
 	}
 
+	if termination, blocked := responseContentBlock(internalStream); blocked {
+		ra.collectResponse()
+		return nil, false, providerTerminalFailureError(termination)
+	}
 	return inStream, hasVisible, nil
 }
 
@@ -1625,6 +1704,16 @@ func (ra *relayAttempt) hasUnfinishedObservedStreamChoices() bool {
 
 // handleResponse 处理非流式响应
 func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Response) error {
+	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/plain") {
+		prefix, readErr := io.ReadAll(io.LimitReader(response.Body, answerNoticeLimit+1))
+		if readErr != nil {
+			return readErr
+		}
+		if isExplicitAnswerNotice(string(prefix)) {
+			return providerTerminalFailureError(answerNoticeTermination())
+		}
+		response.Body = &prefixResponseBody{Reader: io.MultiReader(bytes.NewReader(prefix), response.Body), Closer: response.Body}
+	}
 	internalResponse, err := ra.outAdapter.TransformResponse(ctx, response)
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform response: %v", err)
@@ -1632,6 +1721,21 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 	}
 
 	applyReasoningExhaustedHeader(ra.c, internalResponse)
+	if termination, blocked := responseContentBlock(internalResponse); blocked {
+		ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
+		return providerTerminalFailureError(termination)
+	}
+	text, bypass := answerText(internalResponse, false)
+	if !bypass && isExplicitAnswerNotice(text) {
+		termination := answerNoticeTermination()
+		termination.ProviderReason = internalResponse.Termination.ProviderReason
+		if termination.ProviderReason == "" && len(internalResponse.Choices) > 0 {
+			termination.ProviderReason = terminationForChoice(internalResponse.Choices[0]).ProviderReason
+		}
+		internalResponse.Termination = termination
+		ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
+		return providerTerminalFailureError(internalResponse.Termination)
+	}
 
 	// 空输出检测（issue #106/#155）：上游返回 200 但无可见内容。
 	// 不依赖 CompletionTokens 判断——推理模型可能 CompletionTokens > 0 但无可见内容。
