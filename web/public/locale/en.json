@@ -1,4 +1,5 @@
 {
+    "groupMutation": {"failed":"Group update failed; saving is not confirmed. Keep your edits and contact the administrator. Reference: {id}","committed":"Saved, but runtime refresh failed. Do not submit again; refresh the page or contact the administrator. Reference: {id}"},
   "login": {
     "welcome": "Welcome back",
     "username": "Username",
@@ -2799,6 +2800,21 @@
     }
   },
   "log": {
+    "detailDatabaseTimeout": "The log database timed out. Try again; this does not mean the record was deleted.",
+    "live": {
+        "title": "Live requests",
+        "scope": "Status from this instance only. History includes shared database records.",
+        "disconnected": "Disconnected. Showing last received status while reconnecting.",
+        "received": "Received",
+        "waiting": "Waiting for routing",
+        "attempt": "Trying channel",
+        "streaming": "Streaming",
+        "completed": "Finished, saving log",
+        "recorded": "Recorded",
+        "unavailable": "Finished, log could not be saved",
+        "attemptCount": "Attempt {count}",
+        "instance": "Instance {id}"
+    },
     "actions": {
       "refresh": "Refresh Logs",
       "refreshSuccess": "Logs refreshed",
@@ -2916,8 +2932,8 @@
       "reportedIPHint": "Reported by the {source} header for display only. It may identify a proxy rather than the original client and is not used for IP allowlists or login rate limits.",
       "forensics": {
         "detailUnavailable": "Log detail is unavailable",
-        "detailNotFound": "This log no longer exists",
-        "detailNotFoundHint": "The log row was pruned or deleted. Retained content is bounded by the log retention policy and disk budget.",
+        "detailNotFound": "Log record not found",
+        "detailNotFoundHint": "The server could not find this record. Refresh the list and try again; this alone does not prove that the log was deleted.",
         "detailRequestFailed": "Failed to load log detail",
         "detailRequestFailedHint": "The read request itself failed (network, auth, or server error). This does not mean the log content was pruned.",
         "traceId": "Trace ID",
@@ -3398,6 +3414,8 @@
       "baseUrlProtocolLabel": "Upstream protocol served by this URL"
     },
     "probe": {
+      "cancel": "Stop probe",
+      "cancelled": "Probe stopped. Results are not applied automatically.",
       "title": "Test Connection",
       "description": "Verifies which upstream protocols this channel supports, then checks each model capability. Results are only written back when you click Apply; the probe only adds, never removes existing settings.",
       "modelLabel": "Select a model to test",

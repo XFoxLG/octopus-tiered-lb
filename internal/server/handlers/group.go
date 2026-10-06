@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/dlclark/regexp2"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
@@ -149,12 +151,18 @@ func updateGroup(c *gin.Context) {
 	}
 	group, err := grp.GroupUpdate(&req, c.Request.Context())
 	if err != nil {
-		if status, message, ok := classifyGroupMutationError(err); ok {
-			resp.Error(c, status, message)
+		requestID := uuid.NewString()
+		c.Header("X-Request-ID", requestID)
+		log.Errorf("update group failed: request_id=%s group=%d error=%v", requestID, req.ID, err)
+		if errors.Is(err, grp.ErrGroupCacheRefresh) {
+			resp.ErrorWithKey(c, http.StatusServiceUnavailable, "Saved, but runtime refresh failed. Do not submit again. Reference: "+requestID, "groupMutation.committed", map[string]any{"id": requestID})
 			return
 		}
-		log.Errorf("update group failed: %v", err)
-		resp.InternalError(c)
+		if status, message, ok := classifyGroupMutationError(err); ok {
+			resp.ErrorWithKey(c, status, message+" ("+requestID+")", "", nil)
+			return
+		}
+		resp.ErrorWithKey(c, http.StatusInternalServerError, "Group update failed; changes were not confirmed. Reference: "+requestID, "groupMutation.failed", map[string]any{"id": requestID})
 		return
 	}
 	resp.Success(c, group)

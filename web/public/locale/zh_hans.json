@@ -1,4 +1,5 @@
 {
+    "groupMutation": {"failed":"分组更新失败，尚未确认保存成功。请保留当前编辑并联系管理员。编号：{id}","committed":"配置已保存，但运行时刷新失败，请勿重复提交。请刷新页面或联系管理员。编号：{id}"},
   "login": {
     "welcome": "欢迎回来",
     "username": "用户名",
@@ -2755,6 +2756,21 @@
     }
   },
   "log": {
+    "detailDatabaseTimeout": "读取日志数据库超时，请稍后重试；这不表示日志已被删除。",
+    "live": {
+        "title": "实时请求",
+        "scope": "仅显示当前实例的状态；历史日志包含共享数据库记录。",
+        "disconnected": "连接中断，显示的是最后收到的状态，正在重新连接。",
+        "received": "已接收",
+        "waiting": "等待调度",
+        "attempt": "正在尝试渠道",
+        "streaming": "正在输出",
+        "completed": "请求已结束，正在保存日志",
+        "recorded": "已记录",
+        "unavailable": "请求已结束，日志保存失败",
+        "attemptCount": "第 {count} 次尝试",
+        "instance": "实例 {id}"
+    },
     "actions": {
       "refresh": "刷新日志",
       "refreshSuccess": "日志已刷新",
@@ -2872,8 +2888,8 @@
       "reportedIPHint": "来自 {source} 转发头，仅作为来源线索展示；不保证是原始客户端，也不用于 IP 白名单或登录限流。",
       "forensics": {
         "detailUnavailable": "无法读取日志详情",
-        "detailNotFound": "这条日志已不存在",
-        "detailNotFoundHint": "日志行已被清理或删除。可读取的内容受日志保留策略与磁盘上限控制。",
+        "detailNotFound": "未找到这条日志",
+        "detailNotFoundHint": "服务器未找到该记录。请刷新列表后重试；这并不能单独证明日志已被清理。",
         "detailRequestFailed": "日志详情加载失败",
         "detailRequestFailedHint": "这次是读取请求本身失败（网络、鉴权或服务端错误），不代表日志内容被清理。",
         "traceId": "追踪 ID",
@@ -3354,6 +3370,8 @@
       "baseUrlProtocolLabel": "该地址服务的上游协议"
     },
     "probe": {
+      "cancel": "停止探测",
+      "cancelled": "已停止本次探测；不会自动应用结果。",
       "title": "测试连接",
       "description": "依次验证该渠道支持哪些上游协议，再逐项验证模型能力。结果需要你点「应用」才会写回渠道配置；探测只加不减，不会删掉现有设置。",
       "modelLabel": "选择测试模型",

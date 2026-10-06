@@ -1,4 +1,5 @@
 {
+    "groupMutation": {"failed":"分組更新失敗，尚未確認儲存成功。請保留目前編輯並聯絡管理員。編號：{id}","committed":"設定已儲存，但執行階段重新整理失敗，請勿重複提交。請重新整理頁面或聯絡管理員。編號：{id}"},
   "login": {
     "welcome": "歡迎回來",
     "username": "使用者名稱",
@@ -2755,6 +2756,21 @@
     }
   },
   "log": {
+    "detailDatabaseTimeout": "讀取日誌資料庫逾時，請稍後重試；這不表示日誌已被刪除。",
+    "live": {
+        "title": "即時請求",
+        "scope": "僅顯示目前執行個體的狀態；歷史日誌包含共用資料庫記錄。",
+        "disconnected": "連線中斷，顯示的是最後收到的狀態，正在重新連線。",
+        "received": "已接收",
+        "waiting": "等待排程",
+        "attempt": "正在嘗試渠道",
+        "streaming": "正在輸出",
+        "completed": "請求已結束，正在儲存日誌",
+        "recorded": "已記錄",
+        "unavailable": "請求已結束，日誌儲存失敗",
+        "attemptCount": "第 {count} 次嘗試",
+        "instance": "執行個體 {id}"
+    },
     "actions": {
       "refresh": "重新整理日誌",
       "refreshSuccess": "日誌已重新整理",
@@ -2872,8 +2888,8 @@
       "reportedIPHint": "來自 {source} 轉發標頭，僅作為來源線索展示；不保證是原始用戶端，也不用於 IP 白名單或登入限流。",
       "forensics": {
         "detailUnavailable": "無法讀取日誌詳情",
-        "detailNotFound": "這條日誌已不存在",
-        "detailNotFoundHint": "日誌行已被清理或刪除。可讀取的內容受日誌保留策略與磁碟上限控制。",
+        "detailNotFound": "未找到這條日誌",
+        "detailNotFoundHint": "伺服器未找到該記錄。請重新整理列表後重試；這並不能單獨證明日誌已被清理。",
         "detailRequestFailed": "日誌詳情載入失敗",
         "detailRequestFailedHint": "這次是讀取請求本身失敗（網路、鑑權或伺服器錯誤），不代表日誌內容被清理。",
         "traceId": "追蹤 ID",
@@ -3354,6 +3370,8 @@
       "baseUrlProtocolLabel": "該位址服務的上游協定"
     },
     "probe": {
+      "cancel": "停止探測",
+      "cancelled": "已停止本次探測；不會自動套用結果。",
       "title": "測試連線",
       "description": "依序驗證該渠道支援哪些上游協定，再逐項驗證模型能力。結果需要你點「套用」才會寫回渠道設定；探測只加不減，不會刪掉現有設定。",
       "modelLabel": "選擇測試模型",

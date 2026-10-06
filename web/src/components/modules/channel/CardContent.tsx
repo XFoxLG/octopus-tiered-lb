@@ -439,7 +439,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
     return (
         <>
-            <MorphingDialogTitle>
+            <MorphingDialogTitle className="shrink-0">
                 <header className="relative flex items-center justify-between gap-4 px-1 pb-4 pt-1">
                     <div className="space-y-3">
                         <div className="flex items-center gap-2">
@@ -465,11 +465,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                 </header>
             </MorphingDialogTitle>
 
-            <MorphingDialogDescription disableLayoutAnimation className="min-h-0 flex-1 overflow-hidden px-1">
-                <Tabs value={currentView} className="flex h-full min-h-0 flex-col">
+            <MorphingDialogDescription disableLayoutAnimation className="flex min-h-0 flex-1 flex-col overflow-hidden px-1">
+                <Tabs value={currentView} className="flex min-h-0 flex-1 flex-col">
                     <TabsContents className="flex min-h-0 flex-1 flex-col">
-                        <TabsContent value="viewing" className="flex flex-1 min-h-0 flex-col overflow-y-auto">
-                            <div className="space-y-4 pr-1 sm:space-y-5">
+                        <TabsContent value="viewing" className="flex flex-1 min-h-0 flex-col">
+                            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain space-y-4 pr-1 sm:space-y-5">
                                 <dl className="grid grid-cols-3 gap-2 sm:gap-3">
                                     <div className="rounded-lg border border-chart-1/18 bg-linear-to-br from-chart-1/10 via-background/42 to-chart-1/5 p-3.5 shadow-sm sm:p-4">
                                         <dt className="flex items-center gap-2 mb-2 text-xs font-medium text-muted-foreground">
@@ -849,7 +849,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                     </div>
                                 ) : null}
 
-                                <div className="grid gap-3 sm:grid-cols-2">
+                            </div>
+                                <div className="grid shrink-0 gap-3 border-t border-border/30 pt-3 sm:grid-cols-2">
                                 <Button
                                     onClick={() => (isConfirmingDelete ? setIsConfirmingDelete(false) : setIsEditing(true))}
                                     variant={isConfirmingDelete ? 'secondary' : 'default'}
@@ -871,7 +872,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                             : t('actions.delete')}
                                 </Button>
                                 </div>
-                            </div>
                         </TabsContent>
 
                         <TabsContent value="editing" className="flex flex-1 min-h-0 flex-col">

@@ -3,6 +3,7 @@ package group
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -22,6 +23,7 @@ import (
 )
 
 var groupCache = cache.New[int, model.Group](16)
+var ErrGroupCacheRefresh = errors.New("group update committed but cache refresh failed")
 var groupMap = cache.New[string, model.Group](16)
 
 // GetCache returns the internal group cache (for backward compatibility).
@@ -706,14 +708,6 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 	normalizedItemsToUpdate := normalizeGroupItemUpdateRequests(group.Items, req.ItemsToUpdate)
 	normalizedItemsToAdd := normalizeGroupItemAddRequests(group.Items, normalizedItemsToUpdate, req.ItemsToDelete, req.ItemsToAdd)
 
-	tx := db.GetDB().WithContext(ctx).Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			log.Errorf("panic recovered in transaction: %v", r)
-		}
-	}()
-
 	var selectFields []string
 	updates := model.Group{ID: req.ID}
 
@@ -806,6 +800,14 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		updates.CustomHeader = *req.CustomHeader
 	}
 
+	// Validate before acquiring a transaction. Roll back every non-commit path,
+	// including request cancellation and panic; Rollback after Commit is harmless.
+	tx := db.GetDB().WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return nil, fmt.Errorf("failed to begin group update: %w", tx.Error)
+	}
+	defer tx.Rollback()
+
 	if len(selectFields) > 0 {
 		if err := tx.Model(&model.Group{}).Where("id = ?", req.ID).Select(selectFields).Updates(&updates).Error; err != nil {
 			tx.Rollback()
@@ -841,14 +843,15 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		}
 		priorityCase += " END"
 		weightCase += " END"
-		retryOverrideCase += " END"
+		// The typed ELSE keeps PostgreSQL from resolving an all-NULL CASE as text.
+		retryOverrideCase += " ELSE relay_retry_count_override END"
 
 		if err := tx.Model(&model.GroupItem{}).
 			Where("id IN ? AND group_id = ?", ids, req.ID).
 			Updates(map[string]interface{}{
-				"priority":                    gorm.Expr(priorityCase),
-				"weight":                      gorm.Expr(weightCase),
-				"relay_retry_count_override":  gorm.Expr(retryOverrideCase),
+				"priority":                   gorm.Expr(priorityCase),
+				"weight":                     gorm.Expr(weightCase),
+				"relay_retry_count_override": gorm.Expr(retryOverrideCase),
 			}).Error; err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to update items: %w", err)
@@ -880,7 +883,7 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 
 	// 刷新缓存并返回最新数据
 	if err := RefreshCacheByID(req.ID, ctx); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrGroupCacheRefresh, err)
 	}
 
 	updatedGroup, _ := groupCache.Get(req.ID)

@@ -2,11 +2,36 @@ name: CI
 
 on:
   push:
-    branches: [tiered-adaptive-lb, master]
+    branches: [tiered-adaptive-lb, master, codex/lingyuins-v262-port]
+  workflow_dispatch:
   pull_request:
     branches: [master]
 
 jobs:
+  postgres-stability:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: octopus_test
+          POSTGRES_DB: octopus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OCTOPUS_TEST_POSTGRES_DSN: postgres://postgres:octopus_test@localhost:5432/octopus_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - run: go test -count=1 -p 1 ./internal/op/group -run TestGroupUpdateStability
   build-and-test:
     runs-on: ubuntu-latest
     env:
