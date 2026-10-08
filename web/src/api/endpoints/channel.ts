@@ -135,9 +135,16 @@ export type ConnectionMigrationPreview = {
 export function useChannelConnectionPreview(id?: number) {
     return useQuery({
         queryKey: ['channel', 'connection-preview', id],
-        queryFn: () => apiClient.get<ConnectionMigrationPreview>(`/api/v1/channel/${id}/connection-preview`),
         enabled: !!id,
         staleTime: 0,
+        retry: false,
+        meta: { skipGlobalErrorHandler: true },
+        queryFn: ({ signal }) => {
+            // 预览只是打开编辑表单时的只读辅助，不能拖住表单，也不能重复弹全局错误。
+            const timeoutSignal = AbortSignal.timeout(10_000);
+            const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+            return apiClient.get<ConnectionMigrationPreview>(`/api/v1/channel/${id}/connection-preview`, undefined, true, requestSignal);
+        },
     });
 }
 

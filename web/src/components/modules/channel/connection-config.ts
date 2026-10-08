@@ -7,6 +7,34 @@ export function newConnectionConfig(): ConnectionConfig {
     const endpoint = newEndpoint();
     return { version: 1, selection: 'same_protocol', endpoints: [endpoint], catalog: { format: 'openai', endpoint_id: endpoint.id } };
 }
+
+const CATALOG_FORMAT_BY_PROTOCOL: Partial<Record<ChannelEndpoint['protocol'], ConnectionConfig['catalog']['format']>> = {
+    chat: 'openai',
+    responses: 'openai',
+    embeddings: 'openai',
+    messages: 'anthropic',
+    gemini: 'gemini',
+    cloudflare: 'cloudflare',
+};
+
+export function catalogFormatForEndpointProtocol(protocol: ChannelEndpoint['protocol']): ConnectionConfig['catalog']['format'] | undefined {
+    return CATALOG_FORMAT_BY_PROTOCOL[protocol];
+}
+
+/**
+ * 目录格式与生成接口协议是独立设置；只有当前格式确实是“旧接口协议的默认格式”时，
+ * 切换来源接口才自动跟随，避免覆盖用户特意选好的解析器。
+ */
+export function autoCatalogFormatOnEndpointChange(
+    previousProtocol: ChannelEndpoint['protocol'],
+    nextProtocol: ChannelEndpoint['protocol'],
+    currentFormat: ConnectionConfig['catalog']['format'],
+): ConnectionConfig['catalog']['format'] {
+    const nextFormat = catalogFormatForEndpointProtocol(nextProtocol);
+    const previousFormat = catalogFormatForEndpointProtocol(previousProtocol);
+    if (!nextFormat || currentFormat !== previousFormat) return currentFormat;
+    return nextFormat;
+}
 export function connectionURLPreview(endpoint: ChannelEndpoint, model = 'MODEL', stream = false): string {
     try {
         const url = new URL(endpoint.url);

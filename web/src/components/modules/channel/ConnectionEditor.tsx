@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ArrowDown, ArrowUp, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useChannelConnectionPreview, type ChannelEndpoint, type ConnectionConfig } from '@/api/endpoints/channel';
-import { connectionURLPreview, newEndpoint } from './connection-config';
+import { autoCatalogFormatOnEndpointChange, connectionURLPreview, newConnectionConfig, newEndpoint } from './connection-config';
 
 const selectClass = 'h-11 w-full min-w-0 rounded-lg border border-border bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+const detailsSummaryClass = 'flex min-h-8 cursor-pointer list-none content-center items-center justify-between gap-2 rounded-md text-sm font-medium transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden';
+const chevronClass = 'size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180';
 
 export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
     value?: ConnectionConfig; onChange: (config: ConnectionConfig) => void;
@@ -32,10 +34,14 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
     // 预填结果先直接作为本次渲染的草稿，避免父级状态回写前闪一帧加载态。
     const config = value ?? (needsPrefill ? preview.data?.config : undefined);
     if (!config) {
-        if (needsPrefill && preview.isError) return (
+        const previewSettledWithoutConfig = needsPrefill && !preview.isLoading && (preview.isError || !!preview.data);
+        if (needsPrefill && previewSettledWithoutConfig) return (
             <div className="min-w-0 space-y-3 rounded-lg border border-border p-4">
-                <p role="alert" className="text-sm text-destructive">{t('previewFailed')}</p>
-                <Button type="button" variant="outline" size="sm" onClick={() => { void preview.refetch(); }}>{t('previewRetry')}</Button>
+                <p role="alert" aria-live="polite" className="text-sm text-destructive">{preview.isError ? t('previewFailed') : t('previewUnavailable')}</p>
+                <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => { void preview.refetch(); }}>{t('previewRetry')}</Button>
+                    <Button type="button" size="sm" onClick={() => onChange(newConnectionConfig())}>{t('manualConfig')}</Button>
+                </div>
             </div>
         );
         return <div role="status" aria-live="polite" className="flex min-h-24 items-center justify-center gap-2 rounded-lg border border-border p-4">
@@ -84,7 +90,11 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                     </div>
                     <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
                         <label className="min-w-0 space-y-1 text-sm" htmlFor={`${prefix}-protocol`}><span>{t('protocol')}</span>
-                            <select id={`${prefix}-protocol`} className={selectClass} value={endpoint.protocol} onChange={(e) => update(endpoint.id, { protocol: e.target.value as ChannelEndpoint['protocol'], compatibility: '', forward_mode: 'convert', auth: 'default' })}>
+                            <select id={`${prefix}-protocol`} className={selectClass} value={endpoint.protocol} onChange={(e) => {
+                                const protocol = e.target.value as ChannelEndpoint['protocol'];
+                                const catalog = { ...config.catalog, format: autoCatalogFormatOnEndpointChange(endpoint.protocol, protocol, config.catalog.format) };
+                                onChange({ ...config, endpoints: config.endpoints.map((entry) => entry.id === endpoint.id ? { ...entry, protocol, compatibility: '', forward_mode: 'convert', auth: 'default' } : entry), catalog });
+                            }}>
                                 <option value="chat">Chat Completions</option><option value="responses">Responses</option><option value="messages">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="embeddings">Embeddings</option>
                                 {['cloudflare', 'volcengine', 'codex'].includes(endpoint.protocol) && <optgroup label={t('legacy')}><option value={endpoint.protocol}>{endpoint.protocol}</option></optgroup>}
                             </select>
@@ -95,8 +105,8 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                     </div>
                     {previewURL && endpoint.forward_mode !== 'raw' && <p className="break-all text-xs text-muted-foreground">{t('preview')}: {previewURL}</p>}
                     {endpoint.url_mode === 'base' && /\/(chat\/completions|responses|messages|embeddings)(\?|$)/.test(endpoint.url) && <div className="space-y-1 text-sm"><p>{t('fullSuggestion')}</p><Button type="button" variant="outline" size="sm" onClick={() => update(endpoint.id, { url_mode: 'full', forward_mode: 'convert' })}>{t('useFull')}</Button></div>}
-                    <details className="min-w-0 rounded-md bg-muted/30 p-2">
-                        <summary className="cursor-pointer text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t('advanced')}</summary>
+                    <details className="group min-w-0 rounded-md bg-muted/30 p-2">
+                        <summary className={detailsSummaryClass}>{t('advanced')}<ChevronDown className={chevronClass} aria-hidden="true" /></summary>
                         <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
                             <label className="space-y-1 text-sm"><span>{t('urlMode')}</span><select className={selectClass} value={endpoint.url_mode} onChange={(e) => update(endpoint.id, { url_mode: e.target.value as ChannelEndpoint['url_mode'], forward_mode: 'convert' })}><option value="base">{t('base')}</option><option value="full">{t('full')}</option></select></label>
                             <label className="space-y-1 text-sm"><span>{t('auth')}</span><select className={selectClass} value={endpoint.auth} onChange={(e) => update(endpoint.id, { auth: e.target.value as ChannelEndpoint['auth'] })}>
@@ -123,15 +133,20 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                 </li>;
             })}
         </ol>
-        <details className="rounded-lg border border-border p-3" open={config.catalog.format === 'manual'}>
-            <summary className="cursor-pointer text-sm font-medium">{t('catalog')}</summary>
+        <details className="group rounded-lg border border-border p-3" open={config.catalog.format === 'manual'}>
+            <summary className={detailsSummaryClass}>{t('catalog')}<ChevronDown className={chevronClass} aria-hidden="true" /></summary>
             <div className="mt-3 space-y-3">
                 <p className="text-xs text-muted-foreground">{t('catalogHint')}</p>
                 <label className="block space-y-1 text-sm"><span>{t('catalogFormat')}</span><select className={selectClass} value={config.catalog.format} onChange={(e) => onChange({ ...config, catalog: { ...config.catalog, format: e.target.value as ConnectionConfig['catalog']['format'], endpoint_id: config.catalog.endpoint_id || config.endpoints[0]?.id } })}>
                     <option value="manual">{t('manual')}</option><option value="openai">OpenAI data[]</option><option value="anthropic">Anthropic data[]</option><option value="gemini">Gemini models[]</option>{config.catalog.format === 'cloudflare' && <option value="cloudflare">Cloudflare result[] ({t('legacy')})</option>}
                 </select></label>
                 {config.catalog.format !== 'manual' && <>
-                    <label className="block space-y-1 text-sm"><span>{t('catalogEndpoint')}</span><select className={selectClass} value={config.catalog.endpoint_id || ''} required onChange={(e) => onChange({ ...config, catalog: { ...config.catalog, endpoint_id: e.target.value } })}>
+                    <label className="block space-y-1 text-sm"><span>{t('catalogEndpoint')}</span><select className={selectClass} value={config.catalog.endpoint_id || ''} required onChange={(e) => {
+                        const previousEndpoint = config.endpoints.find((entry) => entry.id === config.catalog.endpoint_id);
+                        const nextEndpoint = config.endpoints.find((entry) => entry.id === e.target.value);
+                        const format = previousEndpoint && nextEndpoint ? autoCatalogFormatOnEndpointChange(previousEndpoint.protocol, nextEndpoint.protocol, config.catalog.format) : config.catalog.format;
+                        onChange({ ...config, catalog: { ...config.catalog, endpoint_id: e.target.value, format } });
+                    }}>
                         <option value="" disabled>{t('selectEndpoint')}</option>{config.endpoints.map((endpoint, i) => <option key={endpoint.id} value={endpoint.id}>{i + 1}. {endpoint.protocol}</option>)}
                     </select></label>
                     <label className="block space-y-1 text-sm"><span>{t('catalogURL')}</span><Input type="url" value={config.catalog.url || ''} placeholder="https://example.com/v1/models" required={config.endpoints.find((e) => e.id === config.catalog.endpoint_id)?.url_mode === 'full'} onChange={(e) => onChange({ ...config, catalog: { ...config.catalog, url: e.target.value } })} /></label>

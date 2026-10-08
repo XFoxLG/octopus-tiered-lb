@@ -154,3 +154,36 @@ func TestConnectionMigrationPreservesLegacyBehavior(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectionMigrationPrefersStandardWhenEquivalent(t *testing.T) {
+	ch := Channel{Type: outbound.OutboundTypeAnthropic, BaseUrls: []BaseUrl{{URL: "https://example.com", SuffixMode: "auto"}}, OutboundFormatOverride: "chat_only", CustomHeader: []CustomHeader{{HeaderKey: "X-Test", HeaderValue: "preserved"}}}
+	preview := ch.PreviewConnectionMigration()
+	if !preview.Automatic {
+		t.Fatalf("standard Anthropic migration requires review: %s", preview.Reason)
+	}
+	if len(preview.Config.Endpoints) != 1 {
+		t.Fatal("missing migrated endpoint")
+	}
+	e := preview.Config.Endpoints[0]
+	if e.Auth != "default" || e.Compatibility != "" {
+		t.Fatalf("standard values not preferred: auth=%q compatibility=%q", e.Auth, e.Compatibility)
+	}
+	if !ch.connectionMigrationEquivalent(preview.Config) {
+		t.Fatal("standard migration is not equivalent")
+	}
+}
+
+func TestConnectionMigrationFallsBackToLegacyWhenStandardDiffers(t *testing.T) {
+	ch := Channel{Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []BaseUrl{{URL: "https://example.com", SuffixMode: "auto"}}, OutboundFormatOverride: "chat_only", CustomHeader: []CustomHeader{{HeaderKey: "api-key", HeaderValue: "preserved"}}}
+	preview := ch.PreviewConnectionMigration()
+	if !preview.Automatic {
+		t.Fatalf("legacy-compatible migration requires review: %s", preview.Reason)
+	}
+	e := preview.Config.Endpoints[0]
+	if e.Auth != "legacy" || e.Compatibility != "legacy" {
+		t.Fatalf("legacy fallback not preserved: auth=%q compatibility=%q", e.Auth, e.Compatibility)
+	}
+	if !ch.connectionMigrationEquivalent(preview.Config) {
+		t.Fatal("legacy fallback is not equivalent")
+	}
+}

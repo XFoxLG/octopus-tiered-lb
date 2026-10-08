@@ -53,7 +53,7 @@ import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Search, Check, ListFilter, ChevronRight } from 'lucide-react';
+import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Search, Check, ListFilter, ChevronDown, ChevronRight } from 'lucide-react';
 import { getModelIcon } from '@/lib/model-icons';
 
 export interface ChannelKeyFormItem {
@@ -1398,11 +1398,14 @@ export function ChannelForm({
                 </div>
             </section>
 
-            <details className={cn('w-full min-w-0 rounded-lg border border-border/35 bg-card/70', isCreateLayout && 'md:col-span-2')}>
-                <summary className="cursor-pointer rounded-lg px-4 py-4 text-sm font-medium text-card-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    <span className="flex items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-primary/70" />
-                        {t('advanced')}
+            <details className={cn('group w-full min-w-0 rounded-lg border border-border/35 bg-card/70', isCreateLayout && 'md:col-span-2')}>
+                <summary className="flex min-h-14 cursor-pointer list-none content-center items-center rounded-lg px-4 py-4 text-sm font-medium text-card-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                    <span className="flex flex-1 items-center justify-between gap-2">
+                        <span className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-primary/70" />
+                            {t('advanced')}
+                        </span>
+                        <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
                     </span>
                 </summary>
                 <div className="px-4 pb-4">

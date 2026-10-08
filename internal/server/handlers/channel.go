@@ -346,7 +346,7 @@ func fetchModel(c *gin.Context) {
 	request := payload.toChannel()
 	models, err := helper.FetchModels(c.Request.Context(), request)
 	if err != nil {
-		resp.InternalError(c)
+		resp.Error(c, http.StatusBadGateway, err.Error())
 		return
 	}
 	resp.Success(c, models)
@@ -366,7 +366,7 @@ func fetchModelsPerKey(c *gin.Context) {
 	request := payload.toChannelWithKeyIDs()
 	result, err := helper.FetchModelsPerKey(c.Request.Context(), request)
 	if err != nil {
-		resp.InternalError(c)
+		resp.Error(c, http.StatusBadGateway, err.Error())
 		return
 	}
 	resp.Success(c, result)

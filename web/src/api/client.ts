@@ -165,8 +165,8 @@ export const apiClient = {
     /**
      * GET 请求
      */
-    get: <T>(path: string, params?: Record<string, string | number | boolean>, includeAuth = true): Promise<T> =>
-        request<T>('GET', path, undefined, params, includeAuth),
+    get: <T>(path: string, params?: Record<string, string | number | boolean>, includeAuth = true, signal?: AbortSignal): Promise<T> =>
+        request<T>('GET', path, undefined, params, includeAuth, signal),
 
     /**
      * POST 请求

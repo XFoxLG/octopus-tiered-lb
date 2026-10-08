@@ -42,7 +42,7 @@ func (c *Channel) PreviewConnectionMigration() ConnectionMigrationPreview {
 	}
 	r := &tm.InternalLLMRequest{Model: "migration-model", RawAPIFormat: tm.APIFormatOpenAIChatCompletion, Messages: []tm.Message{{Role: "user", Content: tm.MessageContent{Content: connectionString("migration")}}}}
 	plans := c.ResolveConnectionPlans(r, "")
-	config := &ConnectionConfig{Version: 1, Selection: "configured", Catalog: ModelCatalog{Format: "manual"}}
+	legacyConfig := &ConnectionConfig{Version: 1, Selection: "configured", Catalog: ModelCatalog{Format: "manual"}}
 	for i, p := range plans {
 		if p.AdapterType == outbound.OutboundTypePassthrough || p.AdapterType == outbound.OutboundTypeRaw {
 			return fail("passthrough_requires_review")
@@ -85,9 +85,9 @@ func (c *Channel) PreviewConnectionMigration() ConnectionMigrationPreview {
 		if old.URL.String() != next.URL.String() {
 			return fail("request_path_differs")
 		}
-		config.Endpoints = append(config.Endpoints, e)
+		legacyConfig.Endpoints = append(legacyConfig.Endpoints, e)
 	}
-	if len(config.Endpoints) > 0 {
+	if len(legacyConfig.Endpoints) > 0 {
 		format := "openai"
 		if c.Type == outbound.OutboundTypeGemini {
 			format = "gemini"
@@ -95,15 +95,33 @@ func (c *Channel) PreviewConnectionMigration() ConnectionMigrationPreview {
 		if c.Type == outbound.OutboundTypeAnthropic {
 			format = "anthropic"
 		}
-		config.Catalog = ModelCatalog{EndpointID: config.Endpoints[0].ID, Format: format, URL: c.GetNormalizedBaseUrl() + "/models"}
+		legacyConfig.Catalog = ModelCatalog{EndpointID: legacyConfig.Endpoints[0].ID, Format: format, URL: c.GetNormalizedBaseUrl() + "/models"}
 	}
-	if config.Validate() != nil {
+	if legacyConfig.Validate() != nil {
 		return fail("conversion_requires_review")
 	}
-	if !c.connectionMigrationEquivalent(config) {
-		return ConnectionMigrationPreview{Config: config, Reason: "request_variants_require_review"}
+
+	// Prefer the clean representation when it is provably byte-equivalent.
+	// Legacy adapters duplicate auth headers and normalize OpenAI bodies for
+	// older relays, so fall back whenever any request variant differs.
+	standardConfig := *legacyConfig
+	standardConfig.Endpoints = append([]ChannelEndpoint(nil), legacyConfig.Endpoints...)
+	for i := range standardConfig.Endpoints {
+		p := plans[i]
+		standardConfig.Endpoints[i].Auth = "default"
+		if p.AdapterType == outbound.OutboundTypeMimo {
+			standardConfig.Endpoints[i].Compatibility = "mimo"
+		} else {
+			standardConfig.Endpoints[i].Compatibility = ""
+		}
 	}
-	return ConnectionMigrationPreview{Config: config, Automatic: true, Reason: "equivalent"}
+	if standardConfig.Validate() == nil && c.connectionMigrationEquivalent(&standardConfig) {
+		return ConnectionMigrationPreview{Config: &standardConfig, Automatic: true, Reason: "equivalent"}
+	}
+	if !c.connectionMigrationEquivalent(legacyConfig) {
+		return ConnectionMigrationPreview{Config: legacyConfig, Reason: "request_variants_require_review"}
+	}
+	return ConnectionMigrationPreview{Config: legacyConfig, Automatic: true, Reason: "equivalent"}
 }
 
 // Compare every supported conversational ingress, stream mode and inherited group

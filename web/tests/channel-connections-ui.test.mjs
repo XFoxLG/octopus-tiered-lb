@@ -22,7 +22,7 @@ function all(node, predicate) {
     if (!node?.props) return [];
     return [...(predicate(node) ? [node] : []), ...all(node.props.children, predicate)];
 }
-function fixture({ locale = 'en', value = helpers.newConnectionConfig(), preview, legacyMode = false } = {}) {
+function fixture({ locale = 'en', value = helpers.newConnectionConfig(), preview, previewError = false, previewLoading = false, legacyMode = false } = {}) {
     let config = legacyMode ? undefined : value;
     const messages = JSON.parse(read(`../public/locale/${locale}.json`));
     const translate = createTranslator({ locale: locale.replace('_', '-'), messages, namespace: 'channel.connection', onError: (error) => { throw error; } });
@@ -34,7 +34,7 @@ function fixture({ locale = 'en', value = helpers.newConnectionConfig(), preview
             useRef: (initial) => ({ current: initial }),
         },
         'next-intl': { useTranslations: () => translate },
-        '@/api/endpoints/channel': { useChannelConnectionPreview: () => ({ data: preview }) },
+        '@/api/endpoints/channel': { useChannelConnectionPreview: () => ({ data: preview, isError: previewError, isLoading: previewLoading, refetch: () => {} }) },
         '@/components/ui/button': { Button: 'button' },
         '@/components/ui/input': { Input: 'input' },
         './connection-config': helpers,
@@ -70,6 +70,25 @@ test('non-equivalent legacy preview is still applied silently as the draft', () 
     ui.render();
     assert.equal(ui.value, proposed);
 });
+test('a failed preview never sticks on loading and offers manual configuration', () => {
+    const ui = fixture({ legacyMode: true, preview: { automatic: false, reason: 'multiple_or_missing_addresses' }, previewLoading: false });
+    const buttons = all(ui.render(), (node) => node.type === 'button');
+    assert.ok(buttons.some((button) => button.props.children === 'Configure manually'));
+    assert.doesNotMatch(renderToStaticMarkup(buttons[0]), /Loading legacy configuration/);
+});
+test('preview request errors provide the same manual escape hatch', () => {
+    const ui = fixture({ legacyMode: true, previewError: true });
+    const manual = all(ui.render(), (node) => node.type === 'button' && node.props.children === 'Configure manually')[0];
+    manual.props.onClick();
+    assert.equal(ui.value.selection, 'same_protocol');
+    assert.equal(ui.value.endpoints.length, 1);
+});
+test('catalog format follows a source change only when it had followed the old protocol', () => {
+    assert.equal(helpers.catalogFormatForEndpointProtocol('messages'), 'anthropic');
+    assert.equal(helpers.autoCatalogFormatOnEndpointChange('chat', 'messages', 'openai'), 'anthropic');
+    assert.equal(helpers.autoCatalogFormatOnEndpointChange('chat', 'responses', 'anthropic'), 'anthropic');
+    assert.equal(helpers.autoCatalogFormatOnEndpointChange('messages', 'gemini', 'anthropic'), 'gemini');
+});
 test('brand choices are retired while Chat retains an optional MiMo profile', () => {
     const ui = fixture();
     const options = all(ui.render(), (e) => e.type === 'option').map((e) => e.props.value);
@@ -85,6 +104,15 @@ for (const locale of ['en', 'zh_hans', 'zh_hant']) test(`${locale}: interface fi
     assert.match(markup, /<label[^>]*for="fixture-endpoint-/);
     assert.match(markup, /<summary/);
     assert.ok(all(ui.render(), (e) => e.type === 'button').every((e) => e.props.type === 'button'));
+});
+
+test('native disclosure arrows match the app chevron and stay keyboard visible', () => {
+    for (const path of ['ConnectionEditor.tsx', 'Form.tsx']) {
+        const source = read(`../src/components/modules/channel/${path}`);
+        assert.match(source, /\[&::-webkit-details-marker\]:hidden/);
+        assert.match(source, /group-open:rotate-180/);
+        assert.match(source, /focus-visible:ring-2 focus-visible:ring-ring/);
+    }
 });
 test('URL previews preserve custom prefixes and do not show query credentials', () => {
   const endpoint = { ...helpers.newEndpoint(), url: 'https://example.com/proxy%2Ftenant?token=secret&x=1' };
