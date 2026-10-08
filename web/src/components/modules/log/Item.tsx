@@ -200,7 +200,12 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts, channelNameB
     );
 }
 
-export const LogCard = memo(function LogCard({ log, channelNameById }: { log: RelayLog; channelNameById?: ReadonlyMap<number, string> }) {
+export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyLabelById }: {
+    log: RelayLog;
+    channelNameById?: ReadonlyMap<number, string>;
+    // 上游渠道 Key 标识：channel_key_id → 「备注 / 脱敏 Key」；本地只读取已加载的渠道列表，不新增后端字段。
+    channelKeyLabelById?: ReadonlyMap<number, string>;
+}) {
     const t = useTranslations('log.card');
     const tCommon = useTranslations('common');
     const tGroup = useTranslations('group');
@@ -695,6 +700,11 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                                                             {attempt.adapter_type && (
                                                                                 <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
                                                                                     {attempt.adapter_type}
+                                                                                </span>
+                                                                            )}
+                                                                            {typeof attempt.channel_key_id === 'number' && attempt.channel_key_id > 0 && (
+                                                                                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-muted/70 text-muted-foreground" title={t('channelKeyHint')}>
+                                                                                    {channelKeyLabelById?.get(attempt.channel_key_id) ?? t('channelKeyFallback', { id: attempt.channel_key_id })}
                                                                                 </span>
                                                                             )}
                                                                             <span className="ml-auto text-muted-foreground tabular-nums font-mono">

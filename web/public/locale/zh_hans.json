@@ -2861,6 +2861,8 @@
         "not_applicable": "不适用"
       },
       "reportedIPHint": "来自 {source} 转发头，仅作为来源线索展示；不保证是原始客户端，也不用于 IP 白名单或登录限流。",
+      "channelKeyHint": "该次尝试使用的上游渠道 Key（备注 / 脱敏 Key）",
+      "channelKeyFallback": "Key #{id}",
       "issueSummary": {
         "blocked": "上游阻止了这次内容生成。详情中保留了原始原因。",
         "limited": "请求遇到限流，本次未完成。",

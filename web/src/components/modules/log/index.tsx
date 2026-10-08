@@ -23,6 +23,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { ENDPOINT_TYPE_OPTIONS } from '@/components/modules/group/utils';
+import { maskChannelKeySecret } from '@/components/modules/channel/key-model-fill';
 
 const EMPTY_FILTER: LogFilter = {};
 
@@ -385,6 +386,22 @@ export function Log() {
         return map;
     }, [channels]);
 
+    // 日志详情里的 channel_key_id → 「备注 / 脱敏 Key」。只用已加载的渠道列表建索引，
+    // 不新增后端字段；映射不到时由 Item 回退显示 Key #id。
+    const channelKeyLabelById = useMemo(() => {
+        const map = new Map<number, string>();
+        for (const item of channels) {
+            for (const key of item.raw.keys ?? []) {
+                if (typeof key.id !== 'number' || key.id <= 0) continue;
+                const masked = maskChannelKeySecret(key.channel_key);
+                const remark = key.remark?.trim();
+                const label = remark && masked ? `${remark} / ${masked}` : (remark || masked);
+                if (label) map.set(key.id, label);
+            }
+        }
+        return map;
+    }, [channels]);
+
     const canLoadMore = hasMore && !isLoading && !isLoadingMore && logs.length > 0;
     const handleReachEnd = useCallback(() => {
         if (!canLoadMore) return;
@@ -456,7 +473,7 @@ export function Log() {
                                 estimateItemHeight={180}
                                 overscan={8}
                                 getItemKey={(log) => `log-${log.id}`}
-                                renderItem={(log) => <LogCard log={log} channelNameById={channelNameById} />}
+                                renderItem={(log) => <LogCard log={log} channelNameById={channelNameById} channelKeyLabelById={channelKeyLabelById} />}
                                 footer={footer}
                                 onReachEnd={handleReachEnd}
                                 reachEndEnabled={canLoadMore}
