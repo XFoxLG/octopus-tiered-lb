@@ -1399,20 +1399,6 @@
         "invalid": "Provide at least a status code or a keyword"
       }
     },
-    "downstreamRateLimit": {
-      "title": "Downstream rate limit (global)",
-      "description": "Applies to the four forwarding routes: request rate and in-flight concurrency. Admin API, login and logs are unaffected. 0 = disabled.",
-      "rpm": {
-        "label": "Global requests per minute",
-        "hint": "Combined per-minute cap across all forwarding requests. 0 = unlimited.",
-        "placeholder": "e.g. 600 (0 = unlimited)"
-      },
-      "concurrency": {
-        "label": "Global max concurrency",
-        "hint": "Maximum in-flight forwarding requests; excess requests get 429 immediately. 0 = unlimited.",
-        "placeholder": "e.g. 32 (0 = unlimited)"
-      }
-    },
     "saved": "Saved",
     "saveFailed": "Save failed",
     "backup": {
@@ -1735,18 +1721,6 @@
         "maxTokens": "Max Tokens",
         "maxTokensPlaceholder": "e.g. 100w, 5亿, 1000000",
         "maxTokensHint": "Token usage cap (input + output). Supports shorthand: k=1k, w/万=10k, m=1M, b=1B(10亿), 亿=100M",
-        "rateLimitRpm": {
-          "label": "Rate Limit (RPM)",
-          "placeholder": "Requests per minute, 0 = unlimited"
-        },
-        "rateLimitTpm": {
-          "label": "Rate Limit (TPM)",
-          "placeholder": "Tokens per minute, 0 = unlimited"
-        },
-        "perModelQuota": {
-          "label": "Per-Model Quota (JSON)",
-          "placeholder": "{\"gpt-4o\":{\"rpm\":5,\"tpm\":50000}}"
-        },
         "allowedIPs": "Allowed IPs",
         "allowedIPsPlaceholder": "Comma-separated IPs or CIDR, e.g. 10.0.0.1,192.168.0.0/16",
         "unlimited": "Unlimited",
@@ -2844,6 +2818,7 @@
       "clear": "Clear"
     },
     "viewOptions": {
+      "compact": "Compact view",
       "title": "Display Fields",
       "endpointType": "Outbound Protocol",
       "channelName": "Channel Name",
@@ -2930,7 +2905,19 @@
         "not_applicable": "Not applicable"
       },
       "reportedIPHint": "Reported by the {source} header for display only. It may identify a proxy rather than the original client and is not used for IP allowlists or login rate limits.",
+      "issueSummary": {
+        "blocked": "The upstream blocked generation. The original reason is available in details.",
+        "limited": "The request was rate limited and did not complete.",
+        "empty": "The upstream returned no usable answer.",
+        "timeout": "The request timed out.",
+        "failed": "The request did not complete. Open details for the reason."
+      },
       "forensics": {
+        "requestPreview": "Request",
+        "responsePreview": "Answer",
+        "diagnostics": "Diagnostics and raw content",
+        "loading": "Loading log details",
+        "previewHint": "Text preview. Full protocol content, tool calls and attachments are available in diagnostics.",
         "detailUnavailable": "Log detail is unavailable",
         "detailNotFound": "Log record not found",
         "detailNotFoundHint": "The server could not find this record. Refresh the list and try again; this alone does not prove that the log was deleted.",
@@ -3031,6 +3018,61 @@
     }
   },
   "channel": {
+    "connection": {
+      "title": "Interfaces and addresses",
+      "hint": "Choose a protocol and address per interface. All interfaces share this channel's keys and limits. Addresses do not identify protocols.",
+      "add": "Add interface",
+      "selection": "Attempt order",
+      "sameProtocol": "Client protocol first, then configured order",
+      "configured": "Configured order",
+      "endpoint": "Interface {index}",
+      "up": "Move interface {index} up",
+      "down": "Move interface {index} down",
+      "remove": "Remove interface {index}",
+      "moved": "Moved to position {position}",
+      "protocol": "Protocol",
+      "url": "Service address",
+      "preview": "Example request URL",
+      "native": "Advanced native interfaces",
+      "advanced": "Advanced settings",
+      "urlMode": "Address mode",
+      "base": "API base URL",
+      "full": "Full request URL",
+      "auth": "Authentication",
+      "default": "Protocol default",
+      "noAuth": "Send no key",
+      "legacy": "Keep legacy behavior",
+      "compatibility": "Compatibility",
+      "standard": "Standard interface",
+      "forwardMode": "Forwarding",
+      "convert": "Protocol conversion",
+      "passthrough": "Protocol passthrough",
+      "raw": "Raw passthrough",
+      "advancedHint": "Full URLs receive no automatic version prefix. Native Gemini / Cloudflare paths require a MODEL placeholder. Passthrough supports the existing three LLM protocols only; cross-protocol conversion is not lossless.",
+      "headers": "Extra headers (override channel headers)",
+      "headerName": "Header name",
+      "headerValue": "Header value",
+      "removeHeader": "Remove header",
+      "addHeader": "Add header",
+      "catalog": "Model catalog",
+      "catalogHint": "A catalog failure does not mean generation is unavailable. Choose manual models if no catalog exists; full request URLs require a separate catalog URL.",
+      "catalogFormat": "Catalog format",
+      "catalogEndpoint": "Use authentication from interface",
+      "catalogURL": "Full catalog URL (optional)",
+      "selectEndpoint": "Select interface",
+      "manual": "Manage models manually",
+      "legacyTitle": "Legacy connection · review required",
+      "legacyHint": "This channel continues using legacy rules. Conversion only edits the draft; review interfaces and the model catalog before saving. Legacy data is retained.",
+      "legacyType": "Internal adapter number",
+      "inherited": "Legacy rules",
+      "previewFailed": "Could not load migration preview. Reopen to retry.",
+      "equivalent": "An equivalent configuration preview is available. Review before saving.",
+      "reviewRequired": "Automatic equivalence has not been established. These groups still use legacy rules; verify addresses, protocols, authentication and catalog.",
+      "configure": "Configure interfaces and confirm migration",
+      "fullSuggestion": "This address appears to contain a full request path. Base mode would append it again. Confirm the address mode.",
+      "useFull": "Use as full request URL",
+      "probeReadOnly": "Interface probe results are saved in history. Edit interfaces in the channel form; a single interface's capabilities are not applied to the entire channel."
+    },
     "empty": "There are no channels yet",
     "card": {
       "requestCount": "Requests",

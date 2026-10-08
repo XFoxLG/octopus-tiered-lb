@@ -10,7 +10,7 @@ import { ErrorLogView } from './ErrorLogView';
 import { LiveRequests } from './LiveRequests';
 import { Loader2, X, Columns3, Check, ChevronsUpDown, Search } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
-import { useLogFieldVisibilityStore, useLogModelSearchStore, useLogAutoRefreshStore, type LogFieldName } from './ui-store';
+import { useLogFieldVisibility, useLogFieldVisibilityStore, useLogModelSearchStore, useLogAutoRefreshStore, type LogFieldName } from './ui-store';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
@@ -42,7 +42,8 @@ function LogFilterBar({
     const { data: channels = [] } = useChannelList();
     const { data: apiKeys = [] } = useAPIKeyList();
     const { data: models = [] } = useModelList();
-    const visibility = useLogFieldVisibilityStore((s) => s.visibility);
+    const visibility = useLogFieldVisibility();
+    const compact = useLogFieldVisibilityStore((s) => s.compact);
 
     const hasFilter = !!(
         filter.channel_id != null ||
@@ -295,12 +296,17 @@ function LogFilterBar({
                         type="button"
                         className="flex items-center gap-1 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                         title={tView('title')}
+                        aria-label={tView('title')}
                     >
                         <Columns3 className="size-3.5" />
                     </button>
                 </PopoverTrigger>
                 <PopoverContent align="end" className="w-52 p-3">
                     <p className="text-xs font-medium text-muted-foreground mb-2">{tView('title')}</p>
+                    <label className="mb-2 flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={compact} onChange={() => useLogFieldVisibilityStore.getState().toggleCompact()} />
+                        {tView('compact')}
+                    </label>
                     <div className="flex flex-col gap-1">
                         {(['endpointType', 'channelName', 'actualModel', 'apiKeyName', 'clientIP', 'cost', 'tps', 'cacheHitRate', 'reasoningEffort', 'reasoningTokens'] as LogFieldName[]).map((field) => (
                             <label key={field} className="flex items-center gap-2 cursor-pointer rounded px-1.5 py-1 text-xs hover:bg-muted transition-colors">
@@ -415,6 +421,7 @@ export function Log() {
                         key={v}
                         type="button"
                         onClick={() => setView(v)}
+                        aria-pressed={view === v}
                         className={cn(
                             'rounded-md px-3 py-1 text-xs transition-colors',
                             view === v

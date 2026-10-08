@@ -9,6 +9,26 @@ import (
 
 const viewerMaskedDomain = "***"
 
+// Copy before redaction: cached endpoint objects are shared with the relay.
+func maskConnectionConfig(config *model.ConnectionConfig) *model.ConnectionConfig {
+	if config == nil {
+		return nil
+	}
+	masked := *config
+	masked.Endpoints = append([]model.ChannelEndpoint(nil), config.Endpoints...)
+	for i := range masked.Endpoints {
+		masked.Endpoints[i].URL = viewerMaskedDomain
+		masked.Endpoints[i].Headers = append([]model.CustomHeader(nil), masked.Endpoints[i].Headers...)
+		for j := range masked.Endpoints[i].Headers {
+			masked.Endpoints[i].Headers[j].HeaderValue = viewerMaskedDomain
+		}
+	}
+	if masked.Catalog.URL != "" {
+		masked.Catalog.URL = viewerMaskedDomain
+	}
+	return &masked
+}
+
 func isViewerRole(role string) bool {
 	return strings.TrimSpace(role) == model.UserRoleViewer
 }

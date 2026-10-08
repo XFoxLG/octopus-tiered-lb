@@ -74,7 +74,7 @@ func SyncModelsTask() {
 	fg.SetLimit(syncFetchConcurrency())
 	for _, ch := range channels {
 		ch := ch
-		if !ch.Enabled || !ch.AutoSync {
+		if !ch.Enabled || !ch.AutoSync || (ch.ConnectionConfig != nil && ch.ConnectionConfig.Catalog.Format == "manual") {
 			continue
 		}
 		if syncFailureTracker.ShouldSkip(ch.ID) {

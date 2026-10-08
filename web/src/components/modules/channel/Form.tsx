@@ -16,13 +16,11 @@ import {
     type ChannelProxyMode,
     type UpstreamProtocol,
     type ChannelReasoningBufferStrategy,
-    UPSTREAM_PROTOCOL_OPTIONS,
 } from '@/api/endpoints/channel';
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
-import { channelTemplates } from './templates';
-import { CHANNEL_TYPE_OPTIONS } from './type-options';
-import { isOpenAICompatBaseUrlSuffixMode } from './base-url-suffix';
+import { ConnectionEditor } from './ConnectionEditor';
+import { canFetchConnectionModels, hasConnectionAddress } from './connection-config';
 import { normalizeFetchedModels, toggleModelSelection } from './model-picker';
 import {
     applyPerKeyModelFill,
@@ -53,10 +51,9 @@ import {
 } from '@/components/ui/morphing-dialog';
 import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
-import { useIsMobile } from '@/hooks/use-mobile';
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Cable, Search, Check, ListFilter, ChevronRight } from 'lucide-react';
+import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Search, Check, ListFilter, ChevronRight } from 'lucide-react';
 import { getModelIcon } from '@/lib/model-icons';
 
 export interface ChannelKeyFormItem {
@@ -72,6 +69,7 @@ export interface ChannelKeyFormItem {
 }
 
 export interface ChannelFormData {
+    connection_config?: Channel['connection_config'];
     name: string;
     group_id: number;
     type: ChannelType;
@@ -148,9 +146,9 @@ export function isRequestRewriteSupportedChannelType(channelType: ChannelType): 
     return channelType === ChannelType.OpenAIChat || channelType === ChannelType.MiMoChat || channelType === ChannelType.OpenAIResponse;
 }
 
-export function getEffectiveRequestRewriteFormData(channelType: ChannelType, config?: RequestRewriteConfig | null): RequestRewriteConfig {
+export function getEffectiveRequestRewriteFormData(channelType: ChannelType, config?: RequestRewriteConfig | null, connection?: Channel['connection_config']): RequestRewriteConfig {
     const normalized = normalizeRequestRewriteFormData(config);
-    if (isRequestRewriteSupportedChannelType(channelType)) {
+    if (connection ? connection.endpoints.some((e) => e.protocol === 'chat' || e.protocol === 'responses') : isRequestRewriteSupportedChannelType(channelType)) {
         return normalized;
     }
 
@@ -160,10 +158,6 @@ export function getEffectiveRequestRewriteFormData(channelType: ChannelType, con
     };
 }
 
-function hasManualVersionSuffix(rawUrl: string): boolean {
-    const normalized = rawUrl.trim().split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase();
-    return /\/(v\d+(?:beta)?|api\/v\d+)$/.test(normalized);
-}
 
 /**
  * 切换一个协议的勾选状态，保持「勾选顺序 = 优先级顺序」。
@@ -190,14 +184,6 @@ export function toggleUpstreamProtocol(
  * - passthrough / raw 是整体透传，不能与任何其它协议共存；
  * - chat_only / responses_only / messages_only 与同协议的宽松模式互相矛盾。
  */
-function upgradeProtocolSelectionIssue(
-    protocols: UpstreamProtocol[],
-    candidate: UpstreamProtocol,
-): boolean {
-    if (protocols.includes(candidate)) return false;
-    const merged = [...protocols, candidate];
-    return upstreamProtocolConflict(merged);
-}
 
 /** 上报当前选择里是否存在会被后端拒绝的互斥组合。 */
 export function upstreamProtocolConflict(protocols: UpstreamProtocol[]): boolean {
@@ -233,8 +219,7 @@ export interface ChannelFormProps {
     onCancel?: () => void;
     cancelText?: string;
     idPrefix?: string;
-    showTemplatePicker?: boolean;
-    onShowTemplatePicker?: () => void;
+    channelId?: number;
     layout?: 'default' | 'create';
 }
 
@@ -674,71 +659,6 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
     );
 }
 
-export function TemplatePickerGrid({
-    onApplyTemplate,
-}: {
-    onApplyTemplate: (templateKey: string) => void;
-}) {
-    const t = useTranslations('channel.form');
-
-    return (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {channelTemplates.map((template) => (
-                <Button
-                    key={template.key}
-                    type="button"
-                    variant="outline"
-                    onClick={() => onApplyTemplate(template.key)}
-                    className="h-auto min-h-20 flex-col items-start gap-1 rounded-lg border-border/30 bg-card px-3.5 py-3 text-left whitespace-normal hover:bg-card md:min-h-24 md:rounded-lg md:px-4"
-                >
-                    <span className="text-sm font-semibold">{template.name}</span>
-                    <span className="text-xs text-muted-foreground">{t(template.descriptionKey)}</span>
-                </Button>
-            ))}
-        </div>
-    );
-}
-
-/**
- * 移动端高密度版模板选择器：下拉 Select 替代卡片网格，
- * 选择即应用，触发区显示当前已选模板名。
- */
-export function TemplatePickerSelect({
-    onApplyTemplate,
-}: {
-    onApplyTemplate: (templateKey: string) => void;
-}) {
-    const t = useTranslations('channel.form');
-    const [selected, setSelected] = useState('');
-
-    return (
-        <Select
-            value={selected}
-            onValueChange={(value) => {
-                setSelected(value);
-                onApplyTemplate(value);
-            }}
-        >
-            <SelectTrigger
-                id="channel-template-select"
-                className="w-full rounded-lg border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-                <SelectValue placeholder={t('template.selectPlaceholder')} />
-            </SelectTrigger>
-            <SelectContent className="max-h-80 min-w-0 rounded-lg" style={{ width: 'var(--radix-select-trigger-width)' }}>
-                {channelTemplates.map((template) => (
-                    <SelectItem key={template.key} className="rounded-xl py-2.5" value={template.key}>
-                        <span className="flex min-w-0 items-center gap-2">
-                            <span className="shrink-0 font-medium">{template.name}</span>
-                            <span className="truncate text-xs text-muted-foreground">{t(template.descriptionKey)}</span>
-                        </span>
-                    </SelectItem>
-                ))}
-            </SelectContent>
-        </Select>
-    );
-}
-
 export function ChannelForm({
     formData,
     onFormDataChange,
@@ -749,21 +669,15 @@ export function ChannelForm({
     onCancel,
     cancelText,
     idPrefix = 'channel',
-    showTemplatePicker = true,
-    onShowTemplatePicker,
+    channelId,
     layout = 'default',
 }: ChannelFormProps) {
     const t = useTranslations('channel.form');
-    const isMobile = useIsMobile();
     const { data: settings } = useSettingList();
     const { data: channelGroups = [] } = useChannelGroupList();
     const [formOpenedAt] = useState(() => Math.floor(Date.now() / 1000));
-    const requestRewriteSupported = isRequestRewriteSupportedChannelType(formData.type);
-    // 协议声明仅对 OpenAI 兼容渠道生效（原生协议渠道只会说自己的原生协议，
-    // 后端也只在这两种渠道类型上展开协议回退），其他类型不渲染该控件，
-    // 避免"设置了但不生效"的误导。
-    const upstreamProtocolsSupported = formData.type === ChannelType.OpenAIChat
-        || formData.type === ChannelType.OpenAIResponse;
+    const requestRewriteSupported = formData.connection_config ? formData.connection_config.endpoints.some((e) => e.protocol === 'chat' || e.protocol === 'responses') : isRequestRewriteSupportedChannelType(formData.type);
+
     const isCreateLayout = layout === 'create';
     const sectionClassName = isCreateLayout
         ? 'min-w-0 space-y-3 border-b border-border pb-5'
@@ -960,6 +874,8 @@ export function ChannelForm({
     );
 
     const buildTestPayload = () => ({
+        connection_config: formData.connection_config,
+        skip_model_test: formData.skip_model_test,
         type: formData.type,
         base_urls: (formData.base_urls ?? []).filter((u) => u.url.trim()).map((u) => ({
             url: u.url.trim(),
@@ -1027,12 +943,13 @@ export function ChannelForm({
     };
 
     const handleRefreshModels = async () => {
-        if (!formData.base_urls?.[0]?.url || !effectiveKey) return;
+        if (!canFetchConnectionModels(formData.connection_config, formData.base_urls) || !effectiveKey) return;
         setModelPickerDraft(autoModels);
         setFetchedModels([]);
         setPerKeyResults(null);
 
         const payload = {
+            connection_config: formData.connection_config,
             type: formData.type,
             base_urls: formData.base_urls,
             keys: formData.keys
@@ -1142,24 +1059,6 @@ export function ChannelForm({
         onFormDataChange({ ...formData, keys: next });
     };
 
-    const handleAddBaseUrl = () => {
-        onFormDataChange({
-            ...formData,
-            base_urls: [...(formData.base_urls ?? []), { url: '', delay: 0, suffix_mode: 'openai_compat' }],
-        });
-    };
-
-    const handleUpdateBaseUrl = (idx: number, patch: Partial<Channel['base_urls'][number]>) => {
-        const next = (formData.base_urls ?? []).map((u, i) => (i === idx ? { ...u, ...patch } : u));
-        onFormDataChange({ ...formData, base_urls: next });
-    };
-
-    const handleRemoveBaseUrl = (idx: number) => {
-        const curr = formData.base_urls ?? [];
-        if (curr.length <= 1) return;
-        onFormDataChange({ ...formData, base_urls: curr.filter((_, i) => i !== idx) });
-    };
-
     const handleAddHeader = () => {
         onFormDataChange({
             ...formData,
@@ -1178,12 +1077,6 @@ export function ChannelForm({
         onFormDataChange({ ...formData, custom_header: curr.filter((_, i) => i !== idx) });
     };
 
-    const handleApplyTemplate = (templateKey: string) => {
-        const template = channelTemplates.find((item) => item.key === templateKey);
-        if (!template) return;
-        onFormDataChange(template.apply(formData));
-        setTestSummary(null);
-    };
 
     return (
         <form onSubmit={onSubmit} className="flex h-full min-h-0 flex-col">
@@ -1193,33 +1086,9 @@ export function ChannelForm({
                     ? 'grid content-start gap-5 px-4 py-5 sm:px-6 md:grid-cols-2 md:gap-x-6 [&_input]:h-11 [&_[data-slot=select-trigger]]:h-11 [&_[data-slot=select-trigger]]:min-w-0'
                     : 'space-y-4 pb-2',
             )}>
-            {showTemplatePicker ? (
-                <section className={sectionClassName}>
-                    <SectionHeader icon={Sparkles} title={t('template.label')} hint={t('template.hint')} />
-                    {isMobile ? (
-                        <TemplatePickerSelect onApplyTemplate={handleApplyTemplate} />
-                    ) : (
-                        <TemplatePickerGrid onApplyTemplate={handleApplyTemplate} />
-                    )}
-                </section>
-            ) : onShowTemplatePicker ? (
-                <div className="flex justify-end">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={onShowTemplatePicker}
-                        className="h-8 rounded-lg text-xs transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-100 ease-out active:scale-[0.98]"
-                    >
-                        <Sparkles className="size-3.5" />
-                        {t('template.open')}
-                    </Button>
-                </div>
-            ) : null}
-
-            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
+<section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <SectionHeader icon={Orbit} title={t('basicInfo')} />
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className={fieldGroupClassName}>
                         <label htmlFor={`${idPrefix}-name`} className={labelClassName}>
                         {t('name')}
@@ -1234,24 +1103,7 @@ export function ChannelForm({
                         />
                     </div>
 
-                    <div className={fieldGroupClassName}>
-                        <label htmlFor={`${idPrefix}-type`} className={labelClassName}>
-                        {t('type')}
-                        </label>
-                        <Select
-                            value={String(formData.type)}
-                            onValueChange={(value) => onFormDataChange({ ...formData, type: Number(value) as ChannelType })}
-                        >
-                            <SelectTrigger id={`${idPrefix}-type`} className="w-full rounded-lg border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="rounded-lg">
-                                {CHANNEL_TYPE_OPTIONS.map(option => (
-                                    <SelectItem key={option.value} className="rounded-xl" value={String(option.value)}>{t(option.labelKey)}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
+
 
                     <div className={fieldGroupClassName}>
                         <label htmlFor={`${idPrefix}-group`} className={labelClassName}>
@@ -1283,104 +1135,7 @@ export function ChannelForm({
             </section>
 
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
-                <SectionHeader icon={Cable} title={t('baseUrlConfig')} hint={t('baseUrlHint')} />
-                <div className="flex items-center justify-end gap-2">
-                    <Badge variant="secondary" className="rounded-full">
-                        {formData.base_urls.length}
-                    </Badge>
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleAddBaseUrl}
-                        className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                    >
-                        <Plus className="h-3 w-3 mr-1" />
-                        {t('add')}
-                    </Button>
-                </div>
-                <div className="space-y-2">
-                    {(formData.base_urls ?? []).map((u, idx) => (
-                        <div key={`baseurl-${idx}`} className="space-y-1.5 rounded-lg border border-border/25 bg-card p-2">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                <Input
-                                    id={`${idPrefix}-base-${idx}`}
-                                    type="url"
-                                    value={u.url}
-                                    onChange={(e) => handleUpdateBaseUrl(idx, { url: e.target.value })}
-                                    placeholder={t('baseUrlUrl')}
-                                    aria-label={`${t('baseUrlUrl')} ${idx + 1}`}
-                                    required={idx === 0}
-                                    className="w-full flex-1 rounded-lg"
-                                />
-                                <div className="flex items-center gap-2 sm:shrink-0">
-                                    <Select
-                                        value={isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) ? 'openai_compat' : 'custom'}
-                                        onValueChange={(value) => handleUpdateBaseUrl(idx, { suffix_mode: value as Channel['base_urls'][number]['suffix_mode'] })}
-                                    >
-                                        <SelectTrigger className="h-10 min-w-0 flex-1 rounded-lg sm:w-36 lg:w-44 sm:flex-none">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="rounded-lg">
-                                            <SelectItem className="rounded-xl" value="openai_compat">{t('baseUrlSuffixOpenAI')}</SelectItem>
-                                            <SelectItem className="rounded-xl" value="custom">{t('baseUrlSuffixCustom')}</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                    {/*
-                                      多协议渠道可以给每条地址绑定协议（如火山方舟：OpenAI 兼容在
-                                      /api/v3、Anthropic 兼容在 /api/compatible）。留空即通用地址，
-                                      单地址渠道不需要动这一项。
-                                    */}
-                                    <Select
-                                        value={u.protocol || 'any'}
-                                        onValueChange={(value) => handleUpdateBaseUrl(idx, {
-                                            protocol: value === 'any' ? '' : (value as UpstreamProtocol),
-                                        })}
-                                    >
-                                        <SelectTrigger
-                                            id={`${idPrefix}-base-protocol-${idx}`}
-                                            aria-label={t('baseUrlProtocolLabel')}
-                                            className="h-10 min-w-0 flex-1 rounded-lg sm:w-32 lg:w-40 sm:flex-none"
-                                        >
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="rounded-lg">
-                                            <SelectItem className="rounded-xl" value="any">{t('baseUrlProtocolAny')}</SelectItem>
-                                            {UPSTREAM_PROTOCOL_OPTIONS.map((protocol) => (
-                                                <SelectItem key={protocol} className="rounded-xl" value={protocol}>
-                                                    {t(`upstreamProtocol.${protocol}`)}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleRemoveBaseUrl(idx)}
-                                        disabled={(formData.base_urls ?? []).length <= 1}
-                                        className="size-11 shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
-                                        title={t('remove')}
-                                    >
-                                        <X className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-                            {isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) && hasManualVersionSuffix(u.url) ? (
-                                <p className="px-1 text-xs leading-5 text-destructive">{t('baseUrlOpenAIWarning')}</p>
-                            ) : (
-                                <Hint
-                                    className="sm:shrink-0"
-                                    text={
-                                        isOpenAICompatBaseUrlSuffixMode(u.suffix_mode)
-                                            ? t('baseUrlOpenAIHint')
-                                            : t('baseUrlCustomHint')
-                                    }
-                                />
-                            )}
-                        </div>
-                    ))}
-                </div>
+                <ConnectionEditor value={formData.connection_config} onChange={(connection_config) => onFormDataChange({ ...formData, connection_config, ...(connection_config.catalog.format === 'manual' ? { auto_sync: false, auto_sync_key_models: false } : {}) })} legacy={formData} channelId={channelId} idPrefix={idPrefix} />
             </section>
 
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
@@ -1389,7 +1144,7 @@ export function ChannelForm({
                     <MorphingDialog onOpen={handleRefreshModels}>
                         <MorphingDialogTrigger
                             ariaLabel={t('modelRefresh')}
-                            disabled={!formData.base_urls?.[0]?.url || !effectiveKey || isFetchingModels}
+                            disabled={!canFetchConnectionModels(formData.connection_config, formData.base_urls) || !effectiveKey || isFetchingModels}
                             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
                             <RefreshCw className={`size-4 ${isFetchingModels ? 'animate-spin' : ''}`} />
@@ -1479,7 +1234,7 @@ export function ChannelForm({
                         variant="ghost"
                         size="sm"
                         onClick={handleTestChannel}
-                        disabled={testChannel.isPending || !(formData.base_urls?.some((u) => u.url.trim()) && formData.keys?.some((k) => k.channel_key.trim()))}
+                        disabled={testChannel.isPending || formData.skip_model_test || !hasConnectionAddress(formData.connection_config, formData.base_urls) || !formData.keys?.some((k) => k.channel_key.trim())}
                         className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                         {testChannel.isPending ? (
@@ -1861,79 +1616,7 @@ export function ChannelForm({
                             />
                         </div>
 
-                        {upstreamProtocolsSupported ? (
-                            <div className={fieldGroupClassName}>
-                                <label id={`${idPrefix}-upstream-protocols-label`} className={labelClassName}>
-                                    {t('upstreamProtocols')}
-                                    <Hint text={t('upstreamProtocolsHint')} />
-                                </label>
-                                {/*
-                                  多选 + 按勾选顺序即优先级。不用拖拽组件：勾选顺序本身
-                                  就是顺序，少一个可拖的交互面，键盘与读屏也更好操作。
-                                */}
-                                <div
-                                    role="group"
-                                    aria-labelledby={`${idPrefix}-upstream-protocols-label`}
-                                    className="space-y-1.5 rounded-lg border border-border/35 bg-card p-2"
-                                >
-                                    {UPSTREAM_PROTOCOL_OPTIONS.map((protocol) => {
-                                        const checked = formData.upstream_protocols.includes(protocol);
-                                        // 与已选协议互斥的项直接禁用：让用户点一个必然被后端
-                                        // 拒绝的组合再报错，比当场挡住更差。
-                                        const blocked = upgradeProtocolSelectionIssue(formData.upstream_protocols, protocol);
-                                        return (
-                                            <label
-                                                key={protocol}
-                                                className={cn(
-                                                    'flex items-start gap-2 rounded-md px-2 py-1.5',
-                                                    blocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-muted/40',
-                                                )}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-border"
-                                                    checked={checked}
-                                                    disabled={blocked}
-                                                    aria-describedby={blocked ? `${idPrefix}-upstream-protocols-conflict` : undefined}
-                                                    onChange={(e) => onFormDataChange({
-                                                        ...formData,
-                                                        upstream_protocols: toggleUpstreamProtocol(
-                                                            formData.upstream_protocols,
-                                                            protocol,
-                                                            e.target.checked,
-                                                        ),
-                                                    })}
-                                                />
-                                                <span className="min-w-0">
-                                                    <span className="block text-sm text-card-foreground">{t(`upstreamProtocol.${protocol}`)}</span>
-                                                    <span className="block text-xs text-muted-foreground">{t(`upstreamProtocolHint.${protocol}`)}</span>
-                                                </span>
-                                            </label>
-                                        );
-                                    })}
-                                </div>
-                                {formData.upstream_protocols.length > 0 ? (
-                                    <p className="px-1 text-xs leading-5 text-muted-foreground">
-                                        {t('upstreamProtocolsOrder', {
-                                            order: formData.upstream_protocols
-                                                .map((protocol) => t(`upstreamProtocol.${protocol}`))
-                                                .join(' → '),
-                                        })}
-                                    </p>
-                                ) : (
-                                    <p className="px-1 text-xs leading-5 text-muted-foreground">{t('upstreamProtocolsFollowGroup')}</p>
-                                )}
-                                {upstreamProtocolConflict(formData.upstream_protocols) ? (
-                                    <p
-                                        id={`${idPrefix}-upstream-protocols-conflict`}
-                                        role="alert"
-                                        className="px-1 text-xs leading-5 text-destructive"
-                                    >
-                                        {t('upstreamProtocolsConflict')}
-                                    </p>
-                                ) : null}
-                            </div>
-                        ) : null}
+
 
                         <div className={fieldGroupClassName}>
                             <label htmlFor={`${idPrefix}-first-token-timeout`} className={labelClassName}>
@@ -2189,7 +1872,8 @@ export function ChannelForm({
                 <div className="grid grid-cols-1 items-start gap-4 border-t border-border/10 pt-4 sm:grid-cols-2 lg:grid-cols-3">
                     <label className="flex items-center gap-2 cursor-pointer">
                         <Switch
-                            checked={formData.auto_sync}
+                            checked={formData.auto_sync && formData.connection_config?.catalog.format !== 'manual'}
+                            disabled={formData.connection_config?.catalog.format === 'manual'}
                             onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync: checked })}
                         />
                         <span className="text-sm text-card-foreground">{t('autoSync')}</span>
@@ -2200,7 +1884,7 @@ export function ChannelForm({
                         <label className={cn('flex items-center gap-2', formData.auto_sync ? 'cursor-pointer' : 'cursor-not-allowed')}>
                             <Switch
                                 checked={formData.auto_sync_key_models}
-                                disabled={!formData.auto_sync}
+                                disabled={!formData.auto_sync || formData.connection_config?.catalog.format === 'manual'}
                                 onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync_key_models: checked })}
                             />
                             <span className={cn('text-sm text-card-foreground', !formData.auto_sync && 'text-muted-foreground/60')}>

@@ -94,86 +94,97 @@ func RunChannelCapabilityProbe(
 
 	results := make([]appmodel.ChannelProbeResult, 0, 8)
 	passedAdapters := make(map[outbound.OutboundType]bool)
+	if channel.ConnectionConfig != nil {
+		results = runConfiguredConnectionProbe(ctx, channel, run, selectedKey.Key.ChannelKey, modelName)
+	} else {
 
-	// ---- 协议层：逐条验证可用端点 ----
-	for _, target := range buildProtocolProbeTargets(channel.Type, modelName) {
-		if ctx.Err() != nil {
-			break
+		// ---- 协议层：逐条验证可用端点 ----
+		for _, target := range buildProtocolProbeTargets(channel.Type, modelName) {
+			if ctx.Err() != nil {
+				break
+			}
+			outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, target.AdapterType, target.Request)
+			passedAdapters[target.AdapterType] = outcome.Verdict == appmodel.ProbeVerdictPass
+			results = append(results, buildProbeResult(run, appmodel.ProbeKindProtocol, target.Item, outcome, selectedKey.Key.ChannelKey))
 		}
-		outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, target.AdapterType, target.Request)
-		passedAdapters[target.AdapterType] = outcome.Verdict == appmodel.ProbeVerdictPass
-		results = append(results, buildProbeResult(run, appmodel.ProbeKindProtocol, target.Item, outcome, selectedKey.Key.ChannelKey))
-	}
 
-	// ---- 能力层：5 项能力（部分渠道会直接标 unsupported） ----
-	capabilityAdapter := buildCapabilityProbeAdapter(channel.Type)
-	textRequest, _ := buildCapabilityProbeRequest(appmodel.ProbeItemTextGeneration, modelName)
-	capabilityAdapterReady := false
-	for _, adapterType := range outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, textRequest, "", channel.OutboundFormatOverride, channel.UpstreamProtocols) {
-		if passedAdapters[adapterType] {
-			capabilityAdapter = adapterType
-			capabilityAdapterReady = true
-			break
+		// ---- 能力层：5 项能力（部分渠道会直接标 unsupported） ----
+		capabilityAdapter := buildCapabilityProbeAdapter(channel.Type)
+		textRequest, _ := buildCapabilityProbeRequest(appmodel.ProbeItemTextGeneration, modelName)
+		capabilityAdapterReady := false
+		for _, adapterType := range outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, textRequest, "", channel.OutboundFormatOverride, channel.UpstreamProtocols) {
+			if passedAdapters[adapterType] {
+				capabilityAdapter = adapterType
+				capabilityAdapterReady = true
+				break
+			}
 		}
-	}
-	capabilityItems := []string{
-		appmodel.ProbeItemModels,
-		appmodel.ProbeItemTextGeneration,
-		appmodel.ProbeItemToolCalling,
-		appmodel.ProbeItemStructuredOutput,
-		appmodel.ProbeItemWebSearch,
-	}
-	for _, item := range capabilityItems {
-		if ctx.Err() != nil {
-			break
+		capabilityItems := []string{
+			appmodel.ProbeItemModels,
+			appmodel.ProbeItemTextGeneration,
+			appmodel.ProbeItemToolCalling,
+			appmodel.ProbeItemStructuredOutput,
+			appmodel.ProbeItemWebSearch,
 		}
-		if !capabilityProbeSupportedForChannel(item, channel.Type) {
-			results = append(results, appmodel.ChannelProbeResult{
-				RunID:     run.ID,
-				ChannelID: channel.ID,
-				ModelName: modelName,
-				Kind:      appmodel.ProbeKindCapability,
-				Item:      item,
-				Verdict:   appmodel.ProbeVerdictUnsupported,
-				Summary:   "该渠道类型没有统一的探测入口",
-			})
-			continue
+		for _, item := range capabilityItems {
+			if ctx.Err() != nil {
+				break
+			}
+			if !capabilityProbeSupportedForChannel(item, channel.Type) {
+				results = append(results, appmodel.ChannelProbeResult{
+					RunID:     run.ID,
+					ChannelID: channel.ID,
+					ModelName: modelName,
+					Kind:      appmodel.ProbeKindCapability,
+					Item:      item,
+					Verdict:   appmodel.ProbeVerdictUnsupported,
+					Summary:   "该渠道类型没有统一的探测入口",
+				})
+				continue
+			}
+			// 模型列表不是生成类探测：走 fetchModel 那套单独的 HTTP 路径。
+			if item == appmodel.ProbeItemModels {
+				results = append(results, probeChannelModelList(ctx, channel, selectedKey.Key.ChannelKey, modelName))
+				continue
+			}
+			if !capabilityAdapterReady {
+				results = append(results, appmodel.ChannelProbeResult{ChannelID: channel.ID, ModelName: modelName, Kind: appmodel.ProbeKindCapability, Item: item, Verdict: appmodel.ProbeVerdictUnknown, Summary: "No verified protocol available for capability probe"})
+				continue
+			}
+			probeRequest, buildErr := buildCapabilityProbeRequest(item, modelName)
+			if buildErr != nil {
+				results = append(results, appmodel.ChannelProbeResult{
+					RunID:     run.ID,
+					ChannelID: channel.ID,
+					ModelName: modelName,
+					Kind:      appmodel.ProbeKindCapability,
+					Item:      item,
+					Verdict:   appmodel.ProbeVerdictUnknown,
+					Summary:   truncateProbeSummary(buildErr.Error()),
+				})
+				continue
+			}
+			probeAdapter := capabilityAdapter
+			if item == appmodel.ProbeItemWebSearch && passedAdapters[outbound.OutboundTypeOpenAIResponse] {
+				probeAdapter = outbound.OutboundTypeOpenAIResponse
+			}
+			outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, probeAdapter, probeRequest, item)
+			outcome.Verdict = judgeCapabilityResponse(item, outcome)
+			results = append(results, buildProbeResult(run, appmodel.ProbeKindCapability, item, outcome, selectedKey.Key.ChannelKey))
 		}
-		// 模型列表不是生成类探测：走 fetchModel 那套单独的 HTTP 路径。
-		if item == appmodel.ProbeItemModels {
-			results = append(results, probeChannelModelList(ctx, channel, selectedKey.Key.ChannelKey, modelName))
-			continue
-		}
-		if !capabilityAdapterReady {
-			results = append(results, appmodel.ChannelProbeResult{ChannelID: channel.ID, ModelName: modelName, Kind: appmodel.ProbeKindCapability, Item: item, Verdict: appmodel.ProbeVerdictUnknown, Summary: "No verified protocol available for capability probe"})
-			continue
-		}
-		probeRequest, buildErr := buildCapabilityProbeRequest(item, modelName)
-		if buildErr != nil {
-			results = append(results, appmodel.ChannelProbeResult{
-				RunID:     run.ID,
-				ChannelID: channel.ID,
-				ModelName: modelName,
-				Kind:      appmodel.ProbeKindCapability,
-				Item:      item,
-				Verdict:   appmodel.ProbeVerdictUnknown,
-				Summary:   truncateProbeSummary(buildErr.Error()),
-			})
-			continue
-		}
-		probeAdapter := capabilityAdapter
-		if item == appmodel.ProbeItemWebSearch && passedAdapters[outbound.OutboundTypeOpenAIResponse] {
-			probeAdapter = outbound.OutboundTypeOpenAIResponse
-		}
-		outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, probeAdapter, probeRequest, item)
-		outcome.Verdict = judgeCapabilityResponse(item, outcome)
-		results = append(results, buildProbeResult(run, appmodel.ProbeKindCapability, item, outcome, selectedKey.Key.ChannelKey))
-	}
 
+	}
 	run.EndedAt = time.Now()
 	secrets := []string{selectedKey.Key.ChannelKey}
 	for _, header := range channel.CustomHeader {
 		secrets = append(secrets, header.HeaderValue)
+	}
+	if channel.ConnectionConfig != nil {
+		for _, endpoint := range channel.ConnectionConfig.Endpoints {
+			for _, header := range endpoint.Headers {
+				secrets = append(secrets, header.HeaderValue)
+			}
+		}
 	}
 	for i := range results {
 		results[i].Summary = redactProbeDetail(results[i].Summary, secrets...)
@@ -290,6 +301,9 @@ func ApplyChannelProbeRun(
 	if run == nil {
 		return nil, fmt.Errorf("probe run is nil")
 	}
+	if channel.ConnectionConfig != nil {
+		return nil, fmt.Errorf("connection_config_conflict: interface results are diagnostic; edit interfaces explicitly")
+	}
 
 	applyResult := &appmodel.ChannelProbeApplyResult{}
 
@@ -389,7 +403,7 @@ func CapabilityVerdicts(run *appmodel.ChannelProbeRun) map[appmodel.CapabilityNa
 		return verdicts
 	}
 	for _, result := range run.Results {
-		if result.Kind != appmodel.ProbeKindCapability || !result.Verdict.IsConclusive() {
+		if result.EndpointID != "" || result.Kind != appmodel.ProbeKindCapability || !result.Verdict.IsConclusive() {
 			continue
 		}
 		capability, ok := capabilityForProbeItem(result.Item)

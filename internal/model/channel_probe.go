@@ -82,6 +82,7 @@ func (ChannelProbeRun) TableName() string { return "channel_probe_runs" }
 
 // ChannelProbeResult 是一次探测里的单行结果（一个协议或一项能力）。
 type ChannelProbeResult struct {
+	EndpointID string       `json:"endpoint_id,omitempty" gorm:"size:64"`
 	ID         int64        `json:"id" gorm:"primaryKey;autoIncrement"`
 	RunID      int64        `json:"run_id" gorm:"not null;index"`
 	ChannelID  int          `json:"channel_id" gorm:"not null;index"`

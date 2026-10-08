@@ -288,7 +288,9 @@ type Channel struct {
 	StreamIdleTimeout int `json:"stream_idle_timeout,omitempty" gorm:"column:stream_idle_timeout;not null;default:0"`
 	// ReasoningBufferStrategy 渠道级推理缓冲策略覆盖：空 = 跟随分组，
 	// buffer / immediate = 显式指定。
-	ReasoningBufferStrategy string `json:"reasoning_buffer_strategy,omitempty" gorm:"column:reasoning_buffer_strategy;type:varchar(20);not null;default:''"`
+	ReasoningBufferStrategy string            `json:"reasoning_buffer_strategy,omitempty" gorm:"column:reasoning_buffer_strategy;type:varchar(20);not null;default:''"`
+	ConnectionConfig        *ConnectionConfig `json:"connection_config,omitempty" gorm:"serializer:json;type:text"`
+	SelectedEndpointID      string            `json:"-" gorm:"-"`
 }
 
 type BaseUrl struct {
@@ -363,18 +365,19 @@ var KeyCooldownFunc func(channelID, keyID int, modelName string) bool
 
 // ChannelUpdateRequest 渠道更新请求 - 仅包含变更的数据
 type ChannelUpdateRequest struct {
-	ID            int                    `json:"id" binding:"required"`
-	Name          *string                `json:"name,omitempty"`
-	GroupID       *int                   `json:"group_id,omitempty"`
-	Type          *outbound.OutboundType `json:"type,omitempty"`
-	Enabled       *bool                  `json:"enabled,omitempty"`
-	BaseUrls      *[]BaseUrl             `json:"base_urls,omitempty"`
-	Model         *string                `json:"model,omitempty"`
-	CustomModel   *string                `json:"custom_model,omitempty"`
-	ProxyMode     *ProxyUsageMode        `json:"proxy_mode,omitempty"`
-	ProxyConfigID *int                   `json:"proxy_config_id,omitempty"`
-	Proxy         *bool                  `json:"proxy,omitempty"`
-	AutoSync      *bool                  `json:"auto_sync,omitempty"`
+	ConnectionConfig *ConnectionConfig      `json:"connection_config,omitempty"`
+	ID               int                    `json:"id" binding:"required"`
+	Name             *string                `json:"name,omitempty"`
+	GroupID          *int                   `json:"group_id,omitempty"`
+	Type             *outbound.OutboundType `json:"type,omitempty"`
+	Enabled          *bool                  `json:"enabled,omitempty"`
+	BaseUrls         *[]BaseUrl             `json:"base_urls,omitempty"`
+	Model            *string                `json:"model,omitempty"`
+	CustomModel      *string                `json:"custom_model,omitempty"`
+	ProxyMode        *ProxyUsageMode        `json:"proxy_mode,omitempty"`
+	ProxyConfigID    *int                   `json:"proxy_config_id,omitempty"`
+	Proxy            *bool                  `json:"proxy,omitempty"`
+	AutoSync         *bool                  `json:"auto_sync,omitempty"`
 	// AutoSyncKeyModels 为 true 时，模型自动同步任务逐个 key 抓取并回填每个 key 的
 	// SupportedModels；nil 表示本次请求不修改该开关（白名单补丁语义）。
 	AutoSyncKeyModels       *bool                 `json:"auto_sync_key_models,omitempty"`

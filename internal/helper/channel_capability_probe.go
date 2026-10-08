@@ -189,7 +189,12 @@ func sendProbeRequest(
 		outcome.Summary = "channel is nil"
 		return outcome
 	}
-	adapter := outbound.Get(adapterType)
+	plan, planErr := channel.ConnectionPlanFor(adapterType)
+	if planErr != nil {
+		outcome.Summary = planErr.Error()
+		return outcome
+	}
+	adapter := plan.Adapter()
 	if adapter == nil {
 		outcome.Summary = fmt.Sprintf("unsupported adapter type: %d", adapterType)
 		return outcome
@@ -198,8 +203,12 @@ func sendProbeRequest(
 	probeCtx, cancel := context.WithTimeout(ctx, capabilityProbeTimeout)
 	defer cancel()
 
-	baseURL := channel.GetNormalizedBaseUrlForProtocol(outbound.EndpointProtocolForAdapter(adapterType))
-	httpRequest, err := adapter.TransformRequest(probeCtx, request, baseURL, strings.TrimSpace(key))
+	request, err := prepareConnectionProbeRequest(probeCtx, channel, plan, request, key)
+	if err != nil {
+		outcome.Summary = err.Error()
+		return outcome
+	}
+	httpRequest, err := channel.BuildConnectionRequest(probeCtx, plan, adapter, request, strings.TrimSpace(key))
 	if err != nil {
 		outcome.Summary = fmt.Sprintf("failed to build probe request: %v", err)
 		return outcome
@@ -231,11 +240,7 @@ func sendProbeRequest(
 		httpRequest.ContentLength = int64(len(encoded))
 		httpRequest.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(encoded)), nil }
 	}
-	for _, header := range channel.CustomHeader {
-		if strings.TrimSpace(header.HeaderKey) != "" {
-			httpRequest.Header.Set(header.HeaderKey, header.HeaderValue)
-		}
-	}
+	channel.ApplyConnectionHeaders(httpRequest, plan, strings.TrimSpace(key))
 
 	httpClient, err := ChannelHttpClient(channel)
 	if err != nil {
@@ -275,7 +280,7 @@ func sendProbeRequest(
 	decodedResponse := *response
 	decodedResponse.Body = io.NopCloser(bytes.NewReader(rawBody))
 	decoded, decodeErr := adapter.TransformResponse(probeCtx, &decodedResponse)
-	if decodeErr != nil || decoded == nil || decoded.Error != nil || len(decoded.Choices) == 0 {
+	if decodeErr != nil || decoded == nil || decoded.Error != nil || (len(decoded.Choices) == 0 && len(decoded.EmbeddingData) == 0) {
 		outcome.Verdict = appmodel.ProbeVerdictUnknown
 		outcome.Summary = "Upstream did not return a valid generation response"
 	}

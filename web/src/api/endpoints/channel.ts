@@ -109,6 +109,38 @@ export type CustomHeader = {
     header_value: string;
 };
 
+export type EndpointProtocol = 'chat' | 'responses' | 'messages' | 'gemini' | 'embeddings' | 'cloudflare' | 'volcengine' | 'codex';
+export type ChannelEndpoint = {
+    id: string;
+    protocol: EndpointProtocol;
+    url: string;
+    url_mode: 'base' | 'full';
+    auth: 'default' | 'bearer' | 'api_key' | 'x_api_key' | 'google' | 'none' | 'legacy';
+    compatibility?: '' | 'legacy' | 'mimo' | 'legacy_mimo';
+    forward_mode?: '' | 'convert' | 'passthrough' | 'raw';
+    headers?: CustomHeader[];
+};
+export type ConnectionConfig = {
+    version: 1;
+    selection: 'same_protocol' | 'configured';
+    endpoints: ChannelEndpoint[];
+    catalog: { endpoint_id?: string; format: 'manual' | 'openai' | 'anthropic' | 'gemini' | 'cloudflare'; url?: string };
+};
+export type ConnectionMigrationPreview = {
+    config?: ConnectionConfig;
+    automatic: boolean;
+    reason?: string;
+    groups?: { name: string; outbound_format: string; endpoint_type: string }[];
+};
+export function useChannelConnectionPreview(id?: number) {
+    return useQuery({
+        queryKey: ['channel', 'connection-preview', id],
+        queryFn: () => apiClient.get<ConnectionMigrationPreview>(`/api/v1/channel/${id}/connection-preview`),
+        enabled: !!id,
+        staleTime: 0,
+    });
+}
+
 export type ChannelKey = {
     id: number;
     channel_id: number;
@@ -139,6 +171,7 @@ export type ChannelBatchGroupResult = {
  * 渠道完整数据（与后端 model.Channel 对齐；数组字段在前端保证为 []）
  */
 export type Channel = {
+    connection_config?: ConnectionConfig;
     id: number;
     name: string;
     group_id: number;
@@ -200,6 +233,7 @@ type ChannelServer = Omit<Channel, 'base_urls' | 'custom_header' | 'keys'> & {
  * 创建渠道请求：必填字段 + 可选字段
  */
 export type CreateChannelRequest = {
+    connection_config?: ConnectionConfig;
     name: string;
     group_id?: number;
     type: ChannelType;
@@ -242,6 +276,7 @@ export type CreateChannelRequest = {
  * 更新渠道请求：id + 可选字段 + keys diff
  */
 export type UpdateChannelRequest = {
+    connection_config?: ConnectionConfig;
     id: number;
     name?: string;
     group_id?: number;
@@ -285,6 +320,7 @@ export type UpdateChannelRequest = {
 };
 
 export type FetchModelRequest = {
+    connection_config?: ConnectionConfig;
     type: ChannelType;
     base_urls: BaseUrl[];
     // id / remark 为可选：按 key 抓取时一并上传，后端在结果的 key_id / key_remark 里原样回传，
@@ -299,6 +335,7 @@ export type FetchModelRequest = {
 };
 
 export type TestChannelResult = {
+    endpoint_id?: string;
     base_url: string;
     key_remark?: string;
     key_masked?: string;
@@ -659,6 +696,7 @@ export type ProbeVerdict = 'pass' | 'fail' | 'unsupported' | 'unknown';
 export type ProbeKind = 'protocol' | 'capability';
 
 export type ChannelProbeResult = {
+    endpoint_id?: string;
     id: number;
     run_id: number;
     channel_id: number;

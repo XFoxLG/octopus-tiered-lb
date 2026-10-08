@@ -1450,20 +1450,6 @@
         "invalid": "请至少填写错误码或关键词"
       }
     },
-    "downstreamRateLimit": {
-      "title": "下游限速(全站)",
-      "description": "作用于 4 条转发路由:请求频率与同时在途并发。管理 API、登录、日志不受影响,默认 0 = 关闭。",
-      "rpm": {
-        "label": "全站每分钟请求上限",
-        "hint": "所有转发请求合计每分钟上限。0 = 不限制。",
-        "placeholder": "例如 600(0 = 不限制)"
-      },
-      "concurrency": {
-        "label": "全站最大并发",
-        "hint": "同时在途的转发请求上限,超出的请求立即返回 429。0 = 不限制。",
-        "placeholder": "例如 32(0 = 不限制)"
-      }
-    },
     "saved": "已保存",
     "saveFailed": "保存失败",
     "backup": {
@@ -1691,18 +1677,6 @@
         "maxTokens": "Token 上限",
         "maxTokensPlaceholder": "如 100w、5亿、1000000",
         "maxTokensHint": "Token 用量上限（输入+输出）。支持简写：k=千、w/万=万、m=百万、b=10亿、亿=亿",
-        "rateLimitRpm": {
-          "label": "速率限制（RPM）",
-          "placeholder": "每分钟请求数，0 表示无限制"
-        },
-        "rateLimitTpm": {
-          "label": "速率限制（TPM）",
-          "placeholder": "每分钟 Token 数，0 表示无限制"
-        },
-        "perModelQuota": {
-          "label": "按模型配额（JSON）",
-          "placeholder": "{\"gpt-4o\":{\"rpm\":5,\"tpm\":50000}}"
-        },
         "allowedIPs": "IP 白名单",
         "allowedIPsPlaceholder": "逗号分隔的 IP 或 CIDR，如 10.0.0.1,192.168.0.0/16",
         "unlimited": "无限制",
@@ -2800,6 +2774,7 @@
       "clear": "清除"
     },
     "viewOptions": {
+      "compact": "简洁显示",
       "title": "显示字段",
       "endpointType": "出站协议",
       "channelName": "渠道名称",
@@ -2886,7 +2861,19 @@
         "not_applicable": "不适用"
       },
       "reportedIPHint": "来自 {source} 转发头，仅作为来源线索展示；不保证是原始客户端，也不用于 IP 白名单或登录限流。",
+      "issueSummary": {
+        "blocked": "上游阻止了这次内容生成。详情中保留了原始原因。",
+        "limited": "请求遇到限流，本次未完成。",
+        "empty": "上游未返回有效回答。",
+        "timeout": "请求等待超时。",
+        "failed": "请求未完成，打开详情查看原因。"
+      },
       "forensics": {
+        "requestPreview": "请求",
+        "responsePreview": "回答",
+        "diagnostics": "排查详情与原始内容",
+        "loading": "正在读取日志详情",
+        "previewHint": "以下为正文预览；完整协议内容、工具调用和附件信息可在排查详情查看。",
         "detailUnavailable": "无法读取日志详情",
         "detailNotFound": "未找到这条日志",
         "detailNotFoundHint": "服务器未找到该记录。请刷新列表后重试；这并不能单独证明日志已被清理。",
@@ -2987,6 +2974,61 @@
     }
   },
   "channel": {
+    "connection": {
+      "title": "接口与地址",
+      "hint": "每条接口选择协议和地址，共用本渠道的 Key 池与限速。地址不会自动识别协议。",
+      "add": "添加接口",
+      "selection": "尝试顺序",
+      "sameProtocol": "优先使用客户端相同协议，再按列表顺序回退",
+      "configured": "严格按列表顺序尝试",
+      "endpoint": "接口 {index}",
+      "up": "上移接口 {index}",
+      "down": "下移接口 {index}",
+      "remove": "删除接口 {index}",
+      "moved": "已移到第 {position} 位",
+      "protocol": "接口协议",
+      "url": "服务地址",
+      "preview": "最终请求地址示例",
+      "native": "高级原生接口",
+      "advanced": "高级设置",
+      "urlMode": "地址模式",
+      "base": "API 根地址",
+      "full": "完整请求地址",
+      "auth": "鉴权方式",
+      "default": "跟随接口协议",
+      "noAuth": "不发送 Key",
+      "legacy": "保留旧兼容行为",
+      "compatibility": "兼容配置",
+      "standard": "标准接口",
+      "forwardMode": "转发方式",
+      "convert": "协议转换",
+      "passthrough": "协议透传",
+      "raw": "原始透传",
+      "advancedHint": "完整地址不自动补版本路径。Gemini / Cloudflare 原生完整地址需在路径中包含模型占位符。透传仅支持已有的三种 LLM 协议，不保证跨协议无损。",
+      "headers": "额外请求头（覆盖渠道级设置）",
+      "headerName": "请求头名称",
+      "headerValue": "请求头值",
+      "removeHeader": "删除请求头",
+      "addHeader": "添加请求头",
+      "catalog": "模型目录",
+      "catalogHint": "目录失败不代表生成不可用。没有目录接口时选择手工维护；完整请求地址需要单独填写目录 URL。",
+      "catalogFormat": "目录格式",
+      "catalogEndpoint": "使用接口的鉴权",
+      "catalogURL": "完整目录地址（可选）",
+      "selectEndpoint": "选择接口",
+      "manual": "手工维护模型",
+      "legacyTitle": "旧连接配置 · 等待确认",
+      "legacyHint": "此渠道继续按旧规则运行。转换仅修改本地草稿，检查接口和模型目录后保存才生效；旧数据仍保留。",
+      "legacyType": "内部适配器编号",
+      "inherited": "沿用旧规则",
+      "previewFailed": "读取迁移预览失败，请重新打开后重试。",
+      "equivalent": "已生成等价配置预览；请检查后保存。",
+      "reviewRequired": "当前配置无法证明自动迁移等价。下列分组仍使用旧规则；请逐条核对地址、协议、鉴权与目录。",
+      "configure": "配置接口并确认迁移",
+      "fullSuggestion": "这个地址看起来已包含完整请求路径。按根地址使用会重复追加路径，请确认地址模式。",
+      "useFull": "确认使用完整请求地址",
+      "probeReadOnly": "接口探测结果已保存在历史中。修改接口请到渠道编辑页；不会把单个接口的能力结论当作整个渠道的能力。"
+    },
     "empty": "当前没有任何渠道",
     "card": {
       "requestCount": "请求次数",

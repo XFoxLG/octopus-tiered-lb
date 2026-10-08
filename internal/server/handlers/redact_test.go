@@ -27,6 +27,17 @@ func TestMaskURLDomainForViewer(t *testing.T) {
 	}
 }
 
+func TestConnectionRedactionDoesNotMutateRelayCache(t *testing.T) {
+	config := &model.ConnectionConfig{Version: 1, Endpoints: []model.ChannelEndpoint{{ID: "one", URL: "https://private.test/v1?token=secret", Headers: []model.CustomHeader{{HeaderKey: "X-Secret", HeaderValue: "secret"}}}}, Catalog: model.ModelCatalog{URL: "https://private.test/models?key=secret"}}
+	masked := maskConnectionConfig(config)
+	if masked.Endpoints[0].URL != "***" || masked.Endpoints[0].Headers[0].HeaderValue != "***" || masked.Catalog.URL != "***" {
+		t.Fatal("connection secret leaked")
+	}
+	if config.Endpoints[0].URL == "***" || config.Endpoints[0].Headers[0].HeaderValue != "secret" || config.Catalog.URL == "***" {
+		t.Fatal("redaction corrupted cached connection")
+	}
+}
+
 func TestRedactChannelBaseURLsForViewer(t *testing.T) {
 	proxy := "socks5://user:pass@proxy.example.com:1080"
 	channels := []model.Channel{{

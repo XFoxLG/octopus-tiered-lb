@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
 import {
     MorphingDialogClose,
     MorphingDialogTitle,
@@ -11,25 +10,24 @@ import {
     AutoGroupType,
     useCreateChannel,
 } from '@/api/endpoints/channel';
-import { ArrowLeft, Sparkles, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import {
     ChannelForm,
-    TemplatePickerGrid,
     createDefaultRequestRewriteFormData,
     getEffectiveRequestRewriteFormData,
     type ChannelFormData,
 } from './Form';
-import { channelTemplates } from './templates';
+import { newConnectionConfig } from './connection-config';
 import { DEFAULT_CHANNEL_TYPE } from './type-options';
 import { toast } from '@/components/common/Toast';
 
 export function CreateDialogContent() {
     const { setIsOpen } = useMorphingDialog();
     const createChannel = useCreateChannel();
-    const [showPresetPicker, setShowPresetPicker] = useState(false);
     const [formData, setFormData] = useState<ChannelFormData>({
         name: '',
+        connection_config: newConnectionConfig(),
         group_id: 0,
         type: DEFAULT_CHANNEL_TYPE,
         base_urls: [{ url: '', delay: 0, suffix_mode: 'auto' }],
@@ -72,6 +70,7 @@ export function CreateDialogContent() {
     const resetFormData = () => {
         setFormData({
             name: '',
+            connection_config: newConnectionConfig(),
             group_id: 0,
             type: DEFAULT_CHANNEL_TYPE,
             base_urls: [{ url: '', delay: 0, suffix_mode: 'auto' }],
@@ -107,14 +106,6 @@ export function CreateDialogContent() {
             non_retryable_status_codes: '',
             error_message_template: '',
         });
-        setShowPresetPicker(false);
-    };
-
-    const handleApplyTemplate = (templateKey: string) => {
-        const template = channelTemplates.find((item) => item.key === templateKey);
-        if (!template) return;
-        setFormData((current) => template.apply(current));
-        setShowPresetPicker(false);
     };
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -146,10 +137,11 @@ export function CreateDialogContent() {
         const channelProxy = formData.channel_proxy.trim();
         const paramOverride = formData.param_override.trim();
         const outboundFormatOverride = formData.outbound_format_override.trim();
-        const requestRewrite = getEffectiveRequestRewriteFormData(formData.type, formData.request_rewrite);
+        const requestRewrite = getEffectiveRequestRewriteFormData(formData.type, formData.request_rewrite, formData.connection_config);
         createChannel.mutate(
             {
                 name: formData.name,
+                connection_config: formData.connection_config,
                 group_id: formData.group_id || undefined,
                 type: formData.type,
                 enabled: formData.enabled,
@@ -202,15 +194,7 @@ export function CreateDialogContent() {
                 <header className="flex min-h-16 items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-6">
                     <h2 className="min-w-0 text-lg font-semibold">{t('dialogTitle')}</h2>
                     <div className="flex shrink-0 items-center gap-2">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setShowPresetPicker(!showPresetPicker)}
-                        className="h-10 rounded-lg px-3 text-xs sm:text-sm"
-                    >
-                        {showPresetPicker ? <ArrowLeft className="size-4" /> : <Sparkles className="size-4" />}
-                        <span>{showPresetPicker ? tForm('template.skip') : tForm('template.open')}</span>
-                    </Button>
+
                     {createChannel.isPending ? (
                         <Button
                             type="button"
@@ -236,48 +220,7 @@ export function CreateDialogContent() {
                 </header>
             </MorphingDialogTitle>
             <MorphingDialogDescription disableLayoutAnimation className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                <AnimatePresence mode="wait" initial={false}>
-                {showPresetPicker ? (
-                    <motion.div
-                        key="preset-picker"
-                        initial={{ opacity: 0, scale: 0.98, y: 6 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.98, y: -4 }}
-                        transition={{ duration: 0.16, ease: 'easeOut' }}
-                        className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6"
-                    >
-                        <div>
-                            <div className="mb-4 space-y-2">
-                                <div className="flex items-center justify-between gap-3">
-                                    <div className="inline-flex min-w-0 items-center gap-2 rounded-full border border-primary/12 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
-                                        <Sparkles className="size-3.5" />
-                                        {tForm('template.label')}
-                                    </div>
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => setShowPresetPicker(false)}
-                                        className="h-8 shrink-0 rounded-lg text-xs text-muted-foreground transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-100 ease-out active:scale-[0.98]"
-                                    >
-                                        {tForm('template.skip')}
-                                    </Button>
-                                </div>
-                                <p className="text-xs leading-5 text-muted-foreground">{tForm('template.pickerHint')}</p>
-                            </div>
-                            <TemplatePickerGrid onApplyTemplate={handleApplyTemplate} />
-                        </div>
-                    </motion.div>
-                ) : (
-                    <motion.div
-                        key="manual-form"
-                        initial={{ opacity: 0, scale: 0.98, y: 6 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.98, y: -4 }}
-                        transition={{ duration: 0.16, ease: 'easeOut' }}
-                        className="h-full min-h-0"
-                    >
-                        <ChannelForm
+                <ChannelForm
                             formData={formData}
                             onFormDataChange={setFormData}
                             onSubmit={handleSubmit}
@@ -285,14 +228,10 @@ export function CreateDialogContent() {
                             submitText={t('submit')}
                             pendingText={t('submitting')}
                             idPrefix="new-channel"
-                            showTemplatePicker={false}
                             layout="create"
                             onCancel={() => setIsOpen(false)}
                             cancelText={tForm('modelPicker.cancel')}
                         />
-                    </motion.div>
-                )}
-                </AnimatePresence>
             </MorphingDialogDescription>
         </div>
     );

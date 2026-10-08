@@ -40,7 +40,8 @@ frontend_err.txt
 frontend_out.txt
 
 # planning & docs
-docs/
+docs/*
+!docs/channel-connections.md
 
 # git hooks (husky)
 .husky/

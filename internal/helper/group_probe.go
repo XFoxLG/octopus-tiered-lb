@@ -422,7 +422,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 		return result
 	}
 
-	if err := validateGroupProbeChannelType(endpointType, channel.Type); err != nil {
+	if err := validateGroupProbeChannelType(endpointType, channel.Type); err != nil && channel.ConnectionConfig == nil {
 		result.Message = err.Error()
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
 		return result
@@ -440,7 +440,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 	// (/v1/responses)。这与 relay 主流程的 outboundAttemptTypes 一致，
 	// 避免 type=1 渠道在只支持 chat completions 的上游上探测失败（issue #187）。
 	// 渠道级协议覆盖与主流程同规则：覆盖非空时禁用回退，探测与转发一致。
-	adapterTypes := outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, probeRequest, "", channel.OutboundFormatOverride, channel.UpstreamProtocols)
+	plans := channel.ResolveConnectionPlans(probeRequest, "")
 
 	startTime := time.Now()
 	var logAttempts []appmodel.ChannelAttempt
@@ -448,8 +448,9 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 
 	attemptNum := 0
 probeAdapters:
-	for _, adapterType := range adapterTypes {
-		outAdapter := outbound.Get(adapterType)
+	for _, plan := range plans {
+		adapterType := plan.AdapterType
+		outAdapter := plan.Adapter()
 		if outAdapter == nil {
 			continue
 		}
@@ -461,7 +462,7 @@ probeAdapters:
 				break probeAdapters
 			}
 			attemptStart := time.Now()
-			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, adapterType, &channel, usedKey.ChannelKey, endpointType, item.ModelName)
+			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, adapterType, channel.WithConnectionPlan(plan), usedKey.ChannelKey, endpointType, item.ModelName)
 			attemptDuration := int(time.Since(attemptStart).Milliseconds())
 
 			result.StatusCode = statusCode
@@ -691,17 +692,23 @@ func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, 
 
 	// 地址按本次探测实际使用的 adapter 协议挑选：多协议渠道可以把不同协议
 	// 绑到不同 base URL，探测与真实转发保持同一套地址选择规则。
-	probeBaseURL := channel.GetNormalizedBaseUrlForProtocol(outbound.EndpointProtocolForAdapter(adapterType))
-	req, err := outAdapter.TransformRequest(ctx, probeRequest, probeBaseURL, key)
+	plan, err := channel.ConnectionPlanFor(adapterType)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	if plan.Endpoint != nil {
+		outAdapter = plan.Adapter()
+	}
+	probeRequest, err = prepareConnectionProbeRequest(ctx, channel, plan, probeRequest, key)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	req, err := channel.BuildConnectionRequest(ctx, plan, outAdapter, probeRequest, key)
 	if err != nil {
 		return 0, "", nil, err
 	}
 
-	for _, header := range channel.CustomHeader {
-		if strings.TrimSpace(header.HeaderKey) != "" {
-			req.Header.Set(header.HeaderKey, header.HeaderValue)
-		}
-	}
+	channel.ApplyConnectionHeaders(req, plan, key)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

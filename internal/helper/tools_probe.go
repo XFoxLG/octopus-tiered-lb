@@ -69,13 +69,20 @@ var toolsProbeConfirmCounts = struct {
 //	required 2xx 无 tool_call → required_ignored（不写）
 //	required 4xx             → 降级 auto 对照
 func TestToolsSupport(ctx context.Context, channel *appmodel.Channel, modelName, toolChoice string) (appmodel.ToolsProbeResult, error) {
+	if channel != nil && channel.ConnectionConfig != nil {
+		request, _ := buildGroupProbeRequest(appmodel.EndpointTypeChat, modelName)
+		plans := channel.ResolveConnectionPlans(request, "")
+		if len(plans) > 0 {
+			channel = channel.WithConnectionPlan(plans[0])
+		}
+	}
 	if channel == nil {
 		return appmodel.ToolsProbeResult{}, fmt.Errorf("channel is nil")
 	}
 	if channel.SkipModelTest {
 		return appmodel.ToolsProbeResult{}, errModelTestSkipped
 	}
-	if !outbound.IsChatChannelType(channel.Type) {
+	if channel.ConnectionConfig == nil && !outbound.IsChatChannelType(channel.Type) {
 		return appmodel.ToolsProbeResult{}, fmt.Errorf("channel type %d is not a chat channel, tools probe skipped", channel.Type)
 	}
 	modelName = strings.TrimSpace(modelName)
@@ -84,7 +91,7 @@ func TestToolsSupport(ctx context.Context, channel *appmodel.Channel, modelName,
 	}
 	var usedKey *appmodel.ChannelKey
 	for i := range channel.Keys {
-		if channel.Keys[i].Enabled && strings.TrimSpace(channel.Keys[i].ChannelKey) != "" {
+		if channel.Keys[i].Enabled && strings.TrimSpace(channel.Keys[i].ChannelKey) != "" && appmodel.ModelMatches(channel.Keys[i].SupportedModels, modelName) {
 			usedKey = &channel.Keys[i]
 			break
 		}
@@ -255,22 +262,25 @@ func doToolsProbeRequest(ctx context.Context, channel *appmodel.Channel, usedKey
 	probeCtx, cancel := context.WithTimeout(ctx, toolsProbeTimeout)
 	defer cancel()
 
-	adapter := outbound.Get(channel.Type)
+	plan, err := channel.ConnectionPlanFor(channel.Type)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	adapter := plan.Adapter()
 	if adapter == nil {
 		return nil, 0, nil, fmt.Errorf("unsupported outbound type: %d", channel.Type)
 	}
 	internalReq := buildToolsProbeInternalRequest(modelName, toolChoice, channel.Type)
-	// 地址按本次探测实际使用的 adapter 协议挑选（多协议渠道可绑定不同地址）。
-	probeBaseURL := channel.GetNormalizedBaseUrlForProtocol(outbound.EndpointProtocolForAdapter(channel.Type))
-	req, err := adapter.TransformRequest(probeCtx, internalReq, probeBaseURL, strings.TrimSpace(usedKey.ChannelKey))
+	internalReq, err = prepareConnectionProbeRequest(probeCtx, channel, plan, internalReq, strings.TrimSpace(usedKey.ChannelKey))
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	for _, header := range channel.CustomHeader {
-		if strings.TrimSpace(header.HeaderKey) != "" {
-			req.Header.Set(header.HeaderKey, header.HeaderValue)
-		}
+	// 地址按本次探测实际使用的 adapter 协议挑选（多协议渠道可绑定不同地址）。
+	req, err := channel.BuildConnectionRequest(probeCtx, plan, adapter, internalReq, strings.TrimSpace(usedKey.ChannelKey))
+	if err != nil {
+		return nil, 0, nil, err
 	}
+	channel.ApplyConnectionHeaders(req, plan, strings.TrimSpace(usedKey.ChannelKey))
 
 	httpClient, err := ChannelHttpClient(channel)
 	if err != nil {

@@ -12,24 +12,26 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/model"
 )
 
-type ChatOutbound struct{}
+type ChatOutbound struct{ PreserveRequest bool }
 
 func (o *ChatOutbound) TransformRequest(ctx context.Context, request *model.InternalLLMRequest, baseUrl, key string) (*http.Request, error) {
 	compatRequest := CloneRequestForOpenAICompat(request)
 	if compatRequest == nil {
 		return nil, fmt.Errorf("request is nil")
 	}
-	isMimoChannel := strings.Contains(strings.ToLower(strings.TrimSpace(baseUrl)), "xiaomimimo")
-	SanitizeRequestForOpenAICompat(compatRequest, baseUrl, isMimoChannel)
+	if !o.PreserveRequest {
+		isMimoChannel := strings.Contains(strings.ToLower(strings.TrimSpace(baseUrl)), "xiaomimimo")
+		SanitizeRequestForOpenAICompat(compatRequest, baseUrl, isMimoChannel)
 
-	// Convert developer role to system role for compatibility
-	for i := range compatRequest.Messages {
-		if compatRequest.Messages[i].Role == "developer" {
-			compatRequest.Messages[i].Role = "system"
+		// Convert developer role to system role for compatibility
+		for i := range compatRequest.Messages {
+			if compatRequest.Messages[i].Role == "developer" {
+				compatRequest.Messages[i].Role = "system"
+			}
 		}
-	}
 
-	NormalizeMessagesForOpenAICompat(compatRequest.Messages)
+		NormalizeMessagesForOpenAICompat(compatRequest.Messages)
+	}
 
 	if compatRequest.Stream != nil && *compatRequest.Stream {
 		if compatRequest.StreamOptions == nil {

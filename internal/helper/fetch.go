@@ -43,13 +43,17 @@ func FetchModelsShortTimeout(ctx context.Context, request model.Channel) ([]stri
 func fetchModelsWithClient(client *http.Client, ctx context.Context, request model.Channel) ([]string, error) {
 	fetchModel := make([]string, 0)
 	var err error
-	switch request.Type {
-	case outbound.OutboundTypeAnthropic:
-		fetchModel, err = fetchAnthropicModels(client, ctx, request)
-	case outbound.OutboundTypeGemini:
-		fetchModel, err = fetchGeminiModels(client, ctx, request)
-	default:
-		fetchModel, err = fetchOpenAIModels(client, ctx, request)
+	if request.ConnectionConfig != nil {
+		fetchModel, err = fetchConnectionModels(client, ctx, request)
+	} else {
+		switch request.Type {
+		case outbound.OutboundTypeAnthropic:
+			fetchModel, err = fetchAnthropicModels(client, ctx, request)
+		case outbound.OutboundTypeGemini:
+			fetchModel, err = fetchGeminiModels(client, ctx, request)
+		default:
+			fetchModel, err = fetchOpenAIModels(client, ctx, request)
+		}
 	}
 	if err != nil {
 		return nil, err

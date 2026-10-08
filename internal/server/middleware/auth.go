@@ -113,9 +113,6 @@ func APIKeyAuth() gin.HandlerFunc {
 		c.Set("supported_models", apiKeyObj.SupportedModels)
 		c.Set("allowed_group_categories", apiKeyObj.AllowedGroupCategories)
 		c.Set("api_key_id", apiKeyObj.ID)
-		c.Set("rate_limit_rpm", apiKeyObj.RateLimitRPM)
-		c.Set("rate_limit_tpm", apiKeyObj.RateLimitTPM)
-		c.Set("per_model_quota_json", apiKeyObj.PerModelQuotaJSON)
 		c.Set("excluded_channels", apiKeyObj.ExcludedChannels)
 		c.Next()
 	}

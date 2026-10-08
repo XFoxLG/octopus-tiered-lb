@@ -76,7 +76,7 @@ func RunGroupHealthCandidate(ctx context.Context, channel *appmodel.Channel, use
 }
 
 func candidateAdapterTypes(channel *appmodel.Channel, modelName, endpointType string) []outbound.OutboundType {
-	if channel == nil || outbound.Get(channel.Type) == nil {
+	if channel == nil || (channel.ConnectionConfig == nil && outbound.Get(channel.Type) == nil) {
 		return nil
 	}
 	endpoint := strings.TrimSpace(endpointType)
@@ -87,7 +87,12 @@ func candidateAdapterTypes(channel *appmodel.Channel, modelName, endpointType st
 	if err != nil {
 		return nil
 	}
-	return outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, probeRequest, "", channel.OutboundFormatOverride, channel.UpstreamProtocols)
+	plans := channel.ResolveConnectionPlans(probeRequest, "")
+	types := make([]outbound.OutboundType, len(plans))
+	for i, plan := range plans {
+		types[i] = plan.AdapterType
+	}
+	return types
 }
 
 // resolveGroupHealthProbeMode 解析拨测模式（仅首个 full 生效，其余回 standard）。

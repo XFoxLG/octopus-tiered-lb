@@ -126,12 +126,13 @@ export function ProbeDialog({ channel, availableModels, onClose }: ProbeDialogPr
         const { Icon, className } = verdictPresentation(row.verdict);
         const latency = formatLatency(row.latency_ms);
         return (
-            <div key={`${row.kind}-${row.item}-${row.id ?? 'pending'}`} className="flex items-start gap-2 py-1.5">
+            <div key={`${row.endpoint_id || 'legacy'}-${row.kind}-${row.item}-${row.id ?? 'pending'}`} className="flex items-start gap-2 py-1.5">
                 <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', className)} aria-hidden />
                 <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                         <span className="text-sm text-foreground">
-                            {t(`item.${row.item}` as never)}
+                            {row.endpoint_id ? `${channel.connection_config?.endpoints.findIndex((e) => e.id === row.endpoint_id) !== -1 ? (channel.connection_config?.endpoints.findIndex((e) => e.id === row.endpoint_id) ?? 0) + 1 : row.endpoint_id} · ` : ''}
+                            {row.item === 'protocol_embeddings' ? 'Embeddings' : t(`item.${row.item}` as never)}
                         </span>
                         <span className={cn('text-xs font-medium', className)}>
                             {t(`verdict.${row.verdict}` as never)}
@@ -247,7 +248,7 @@ export function ProbeDialog({ channel, availableModels, onClose }: ProbeDialogPr
                     {running ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : <Play className="mr-1 h-4 w-4" aria-hidden />}
                     {run ? t('rerun') : t('start')}
                 </Button>
-                <Button
+                {!channel.connection_config && <Button
                     type="button"
                     className="rounded-lg"
                     onClick={applyResults}
@@ -255,7 +256,7 @@ export function ProbeDialog({ channel, availableModels, onClose }: ProbeDialogPr
                 >
                     {apply.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden /> : null}
                     {run?.applied ? t('applied') : t('apply')}
-                </Button>
+                </Button>}
             </div>
             <p className="text-right text-xs leading-5 text-muted-foreground">{t('applyHint')}</p>
         </div>

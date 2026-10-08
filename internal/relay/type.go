@@ -375,15 +375,16 @@ type relayRequest struct {
 type relayAttempt struct {
 	*relayRequest // 嵌入请求级上下文
 
-	outAdapter           model.Outbound
-	adapterType          outbound.OutboundType
-	channel              *dbmodel.Channel
-	usedKey              dbmodel.ChannelKey
-	firstTokenTimeOutSec int
-	attemptTimeOutSec    int
-	tryIndex             int
-	tryTotal             int
-	logAttemptNumber     int
+	outAdapter                model.Outbound
+	adapterType               outbound.OutboundType
+	channel                   *dbmodel.Channel
+	usedKey                   dbmodel.ChannelKey
+	firstTokenTimeOutSec      int
+	attemptTimeOutSec         int
+	tryIndex                  int
+	tryTotal                  int
+	logAttemptNumber          int
+	protocolFallbackRemaining bool
 
 	// streamFinishReason is retained for legacy log messages. Canonical policy
 	// decisions use streamTermination instead.

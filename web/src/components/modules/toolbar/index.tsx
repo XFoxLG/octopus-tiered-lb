@@ -594,7 +594,7 @@ export function Toolbar() {
                     ) : null}
 
                     {/* 创建按钮 */}
-                    <MorphingDialog>
+                    <MorphingDialog disableSharedLayout={toolbarItem === 'channel'}>
                         <MorphingDialogTrigger
                             ariaLabel={createAriaLabel}
                             className={cn(
@@ -605,7 +605,7 @@ export function Toolbar() {
                             <Plus className="header-action-icon size-4 transition-colors duration-300" />
                         </MorphingDialogTrigger>
 
-                        <MorphingDialogContainer>
+                        <MorphingDialogContainer unmountOnClose={toolbarItem === 'channel'}>
                             <MorphingDialogContent
                                 className={getCreateDialogContentClassName(toolbarItem)}
                                 dismissOnOverlayClick={toolbarItem !== 'channel'}

@@ -989,6 +989,9 @@ func buildHTTPMetadataContent(boundary string, attemptNumber int, protocol strin
 	statusCode := 0
 	if request != nil {
 		metadata["method"] = request.Method
+		if id := model.EndpointIDFromRequest(request); id != "" {
+			metadata["endpoint_id"] = id
+		}
 		metadata["url"] = sanitizeRelayLogURL(request)
 		metadata["headers"] = sanitizeRelayLogHeaders(request.Header)
 		metadata["content_length"] = request.ContentLength

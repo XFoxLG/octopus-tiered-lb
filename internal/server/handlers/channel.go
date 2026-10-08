@@ -111,6 +111,7 @@ func init() {
 			router.NewRoute("/:id/capabilities", http.MethodGet).
 				Handle(listChannelCapabilities),
 		).
+		AddRoute(router.NewRoute("/:id/connection-preview", http.MethodGet).Use(middleware.RequirePermission(auth.PermChannelsWrite)).Handle(previewChannelConnection)).
 		AddRoute(
 			router.NewRoute("/group/list", http.MethodGet).
 				Handle(listChannelGroup),
@@ -158,6 +159,7 @@ func listChannel(c *gin.Context) {
 	for i, channel := range channels {
 		if !canViewRawKeys {
 			channels[i].Keys = maskChannelKeys(channel.Keys)
+			channels[i].ConnectionConfig = maskConnectionConfig(channel.ConnectionConfig)
 		}
 		normalizeChannelListSlices(&channels[i])
 		stats := st.ChannelGet(channel.ID)
@@ -173,6 +175,10 @@ func createChannel(c *gin.Context) {
 		return
 	}
 	channel := req.toChannel()
+	if err := channel.ConnectionConfig.Validate(); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := ch.Create(&channel, c.Request.Context()); err != nil {
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
@@ -206,8 +212,16 @@ func updateChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
+	if err := req.ConnectionConfig.Validate(); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	channel, err := ch.Update(&req, c.Request.Context())
 	if err != nil {
+		if strings.HasPrefix(err.Error(), "connection_config_conflict:") {
+			resp.Error(c, http.StatusConflict, err.Error())
+			return
+		}
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
 			return
@@ -234,6 +248,42 @@ func updateChannel(c *gin.Context) {
 		helper.ChannelAutoGroup(channel, ctx)
 	}(channel)
 	resp.Success(c, channel)
+}
+
+func previewChannelConnection(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		resp.Error(c, 400, "invalid channel id")
+		return
+	}
+	channel, err := ch.Get(id, c.Request.Context())
+	if err != nil {
+		resp.Error(c, 404, "channel not found")
+		return
+	}
+	type groupView struct {
+		Name           string `json:"name"`
+		OutboundFormat string `json:"outbound_format"`
+		EndpointType   string `json:"endpoint_type"`
+	}
+	groups := []groupView{}
+	preview := channel.PreviewConnectionMigration()
+	for _, group := range grp.GetCache().GetAll() {
+		for _, item := range group.Items {
+			if item.ChannelID == id {
+				if !model.IsConversationEndpointType(group.EndpointType) && group.EndpointType != model.EndpointTypeEmbeddings {
+					preview.Automatic = false
+					preview.Reason = "media_scope_requires_review"
+				}
+				groups = append(groups, groupView{group.Name, group.OutboundFormat, group.EndpointType})
+				break
+			}
+		}
+	}
+	resp.Success(c, struct {
+		model.ConnectionMigrationPreview
+		Groups []groupView `json:"groups"`
+	}{preview, groups})
 }
 
 func enableChannel(c *gin.Context) {
@@ -653,6 +703,7 @@ type channelRequestPayload struct {
 	ParamOverride          *string                    `json:"param_override"`
 	OutboundFormatOverride *string                    `json:"outbound_format_override"`
 	UpstreamProtocols      []string                   `json:"upstream_protocols"`
+	ConnectionConfig       *model.ConnectionConfig    `json:"connection_config,omitempty"`
 	// 三个超时用指针：nil = 字段缺省（旧客户端/未配置）= 跟随分组（-1），
 	// 显式 0 才表示"关闭该看门狗"。若用值类型，缺省会退化成 0，
 	// 等于把所有存量渠道的看门狗静默关掉。
@@ -736,6 +787,7 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		ParamOverride:           p.ParamOverride,
 		OutboundFormatOverride:  derefString(p.OutboundFormatOverride),
 		UpstreamProtocols:       p.UpstreamProtocols,
+		ConnectionConfig:        p.ConnectionConfig,
 		ReasoningBufferStrategy: p.ReasoningBufferStrategy,
 		ChannelProxy:            channelProxy,
 		RequestRewrite:          p.RequestRewrite,

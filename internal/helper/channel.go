@@ -129,6 +129,11 @@ func ChannelBaseUrlDelayUpdate(channel *model.Channel, ctx context.Context) erro
 	if channel == nil {
 		return errors.New("channel is nil")
 	}
+	// Explicit interfaces use configured ordering. Never probe or rewrite their
+	// retained legacy addresses (those fields are the rollback snapshot).
+	if channel.ConnectionConfig != nil {
+		return nil
+	}
 	newBaseUrls := make([]model.BaseUrl, 0, len(channel.BaseUrls))
 	allFailed := true
 
@@ -151,6 +156,7 @@ func ChannelBaseUrlDelayUpdate(channel *model.Channel, ctx context.Context) erro
 			URL:        baseUrl.URL,
 			Delay:      delay,
 			SuffixMode: baseUrl.SuffixMode,
+			Protocol:   baseUrl.Protocol,
 		})
 	}
 	if len(newBaseUrls) > 0 {

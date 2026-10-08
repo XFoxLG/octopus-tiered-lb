@@ -158,6 +158,9 @@ func ApplyProbeProtocols(ctx context.Context, channelID int, protocols []string)
 	if !ok {
 		return nil, fmt.Errorf("channel not found")
 	}
+	if current.ConnectionConfig != nil {
+		return nil, fmt.Errorf("connection_config_conflict: edit interfaces instead of legacy protocol declarations")
+	}
 	existing := current.EffectiveUpstreamProtocols()
 	merged := make([]string, 0, len(existing)+len(protocols))
 	merged = append(merged, existing...)

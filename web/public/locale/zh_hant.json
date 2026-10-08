@@ -1450,20 +1450,6 @@
         "invalid": "請至少填寫錯誤碼或關鍵詞"
       }
     },
-    "downstreamRateLimit": {
-      "title": "下游限速(全站)",
-      "description": "作用於 4 條轉發路由:請求頻率與同時在途並發。管理 API、登入、日誌不受影響,預設 0 = 關閉。",
-      "rpm": {
-        "label": "全站每分鐘請求上限",
-        "hint": "所有轉發請求合計每分鐘上限。0 = 不限制。",
-        "placeholder": "例如 600(0 = 不限制)"
-      },
-      "concurrency": {
-        "label": "全站最大並發",
-        "hint": "同時在途的轉發請求上限,超出的請求立即回傳 429。0 = 不限制。",
-        "placeholder": "例如 32(0 = 不限制)"
-      }
-    },
     "saved": "已儲存",
     "saveFailed": "儲存失敗",
     "backup": {
@@ -1691,18 +1677,6 @@
         "maxTokens": "Token 上限",
         "maxTokensPlaceholder": "如 100w、5億、1000000",
         "maxTokensHint": "Token 用量上限（輸入+輸出）。支援簡寫：k=千、w/萬=萬、m=百萬、b=10億、億=億",
-        "rateLimitRpm": {
-          "label": "速率限制（RPM）",
-          "placeholder": "每分鐘請求數，0 表示無限制"
-        },
-        "rateLimitTpm": {
-          "label": "速率限制（TPM）",
-          "placeholder": "每分鐘 Token 數，0 表示無限制"
-        },
-        "perModelQuota": {
-          "label": "按模型限額（JSON）",
-          "placeholder": "{\"gpt-4o\":{\"rpm\":5,\"tpm\":50000}}"
-        },
         "allowedIPs": "IP 白名單",
         "allowedIPsPlaceholder": "逗號分隔的 IP 或 CIDR，如 10.0.0.1,192.168.0.0/16",
         "unlimited": "無限制",
@@ -2800,6 +2774,7 @@
       "clear": "清除"
     },
     "viewOptions": {
+      "compact": "簡潔顯示",
       "title": "顯示欄位",
       "endpointType": "出站協議",
       "channelName": "渠道名稱",
@@ -2886,7 +2861,19 @@
         "not_applicable": "不適用"
       },
       "reportedIPHint": "來自 {source} 轉發標頭，僅作為來源線索展示；不保證是原始用戶端，也不用於 IP 白名單或登入限流。",
+      "issueSummary": {
+        "blocked": "上游阻止了這次內容生成。詳情中保留了原始原因。",
+        "limited": "請求遇到限流，本次未完成。",
+        "empty": "上游未回傳有效回答。",
+        "timeout": "請求等待逾時。",
+        "failed": "請求未完成，開啟詳情查看原因。"
+      },
       "forensics": {
+        "requestPreview": "請求",
+        "responsePreview": "回答",
+        "diagnostics": "排查詳情與原始內容",
+        "loading": "正在讀取日誌詳情",
+        "previewHint": "以下為正文預覽；完整協定內容、工具呼叫和附件資訊可在排查詳情查看。",
         "detailUnavailable": "無法讀取日誌詳情",
         "detailNotFound": "未找到這條日誌",
         "detailNotFoundHint": "伺服器未找到該記錄。請重新整理列表後重試；這並不能單獨證明日誌已被清理。",
@@ -2987,6 +2974,61 @@
     }
   },
   "channel": {
+    "connection": {
+      "title": "介面與位址",
+      "hint": "每條介面選擇協定和位址，共用本渠道的 Key 池與限速。位址不會自動識別協定。",
+      "add": "新增介面",
+      "selection": "嘗試順序",
+      "sameProtocol": "優先使用客戶端相同協定，再按清單順序回退",
+      "configured": "嚴格按清單順序嘗試",
+      "endpoint": "介面 {index}",
+      "up": "上移介面 {index}",
+      "down": "下移介面 {index}",
+      "remove": "刪除介面 {index}",
+      "moved": "已移到第 {position} 位",
+      "protocol": "介面協定",
+      "url": "服務位址",
+      "preview": "最終請求位址範例",
+      "native": "進階原生介面",
+      "advanced": "進階設定",
+      "urlMode": "位址模式",
+      "base": "API 根位址",
+      "full": "完整請求位址",
+      "auth": "驗證方式",
+      "default": "跟隨介面協定",
+      "noAuth": "不傳送 Key",
+      "legacy": "保留舊相容行為",
+      "compatibility": "相容設定",
+      "standard": "標準介面",
+      "forwardMode": "轉發方式",
+      "convert": "協定轉換",
+      "passthrough": "協定透傳",
+      "raw": "原始透傳",
+      "advancedHint": "完整位址不自動補版本路徑。Gemini / Cloudflare 原生完整位址需在路徑中包含模型佔位符。透傳僅支援已有的三種 LLM 協定，不保證跨協定無損。",
+      "headers": "額外請求標頭（覆蓋渠道設定）",
+      "headerName": "標頭名稱",
+      "headerValue": "標頭值",
+      "removeHeader": "刪除標頭",
+      "addHeader": "新增標頭",
+      "catalog": "模型目錄",
+      "catalogHint": "目錄失敗不代表生成不可用。沒有目錄介面時選擇手動維護；完整請求位址需要單獨填寫目錄 URL。",
+      "catalogFormat": "目錄格式",
+      "catalogEndpoint": "使用介面的驗證",
+      "catalogURL": "完整目錄位址（選填）",
+      "selectEndpoint": "選擇介面",
+      "manual": "手動維護模型",
+      "legacyTitle": "舊連線設定 · 等待確認",
+      "legacyHint": "此渠道繼續按舊規則執行。轉換僅修改本機草稿，檢查介面和模型目錄後儲存才生效；舊資料仍保留。",
+      "legacyType": "內部適配器編號",
+      "inherited": "沿用舊規則",
+      "previewFailed": "讀取遷移預覽失敗，請重新開啟後重試。",
+      "equivalent": "已生成等價設定預覽；請檢查後儲存。",
+      "reviewRequired": "目前設定無法證明自動遷移等價。下列分組仍使用舊規則；請逐條核對位址、協定、驗證與目錄。",
+      "configure": "設定介面並確認遷移",
+      "fullSuggestion": "這個位址看起來已包含完整請求路徑。按根位址使用會重複追加路徑，請確認位址模式。",
+      "useFull": "確認使用完整請求位址",
+      "probeReadOnly": "介面探測結果已儲存在歷史中。修改介面請到渠道編輯頁；不會把單個介面的能力結論當作整個渠道的能力。"
+    },
     "empty": "目前沒有任何供應源",
     "card": {
       "requestCount": "請求次數",

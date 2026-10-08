@@ -115,13 +115,16 @@ func decryptChannelKeysInPlace(keys []model.ChannelKey) {
 
 func Create(ch *model.Channel, ctx context.Context) error {
 	if ch != nil {
+		if err := ch.ConnectionConfig.Validate(); err != nil {
+			return err
+		}
 		if ch.RelayLogRawSSEUntil < 0 {
 			return fmt.Errorf("relay log raw SSE expiry must be greater than or equal to 0")
 		}
 		if ch.MaxConcurrency < 0 || ch.RPMLimit < 0 {
 			return fmt.Errorf("max concurrency and rpm limit must be greater than or equal to 0")
 		}
-		if err := ch.RequestRewrite.Validate(ch.Type); err != nil {
+		if err := ch.RequestRewrite.Validate(ch.RequestRewriteType()); err != nil {
 			return err
 		}
 		normalizedOverride, err := model.NormalizeOutboundFormatOverride(ch.OutboundFormatOverride)
@@ -401,10 +404,23 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 	if !ok {
 		return nil, fmt.Errorf("channel not found")
 	}
+	if (current.ConnectionConfig != nil || req.ConnectionConfig != nil) && (req.Type != nil || req.BaseUrls != nil || req.UpstreamProtocols != nil || req.OutboundFormatOverride != nil) {
+		return nil, fmt.Errorf("connection_config_conflict: update endpoints instead of legacy connection fields")
+	}
+	if err := req.ConnectionConfig.Validate(); err != nil {
+		return nil, err
+	}
 
 	effectiveType := current.Type
 	if req.Type != nil {
 		effectiveType = *req.Type
+	}
+	connectionChannel := current
+	if req.ConnectionConfig != nil {
+		connectionChannel.ConnectionConfig = req.ConnectionConfig
+	}
+	if connectionChannel.ConnectionConfig != nil {
+		effectiveType = connectionChannel.RequestRewriteType()
 	}
 
 	effectiveRewrite := current.RequestRewrite
@@ -438,6 +454,10 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 
 	var selectFields []string
 	updates := model.Channel{ID: req.ID}
+	if req.ConnectionConfig != nil {
+		selectFields = append(selectFields, "connection_config")
+		updates.ConnectionConfig = req.ConnectionConfig
+	}
 
 	if req.Name != nil {
 		selectFields = append(selectFields, "name")

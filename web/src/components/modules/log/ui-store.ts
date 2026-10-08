@@ -30,7 +30,15 @@ export const DEFAULT_LOG_FIELD_VISIBILITY: LogFieldVisibility = {
     reasoningTokens: true,
 };
 
+export const COMPACT_LOG_FIELD_VISIBILITY: LogFieldVisibility = {
+    ...DEFAULT_LOG_FIELD_VISIBILITY,
+    endpointType: false, apiKeyName: false, clientIP: false, tps: false,
+    cacheHitRate: false, reasoningEffort: false, reasoningTokens: false,
+};
+
 type LogFieldVisibilityState = {
+    compact: boolean;
+    toggleCompact: () => void;
     visibility: LogFieldVisibility;
     toggleField: (field: LogFieldName) => void;
     resetFields: () => void;
@@ -39,20 +47,24 @@ type LogFieldVisibilityState = {
 export const useLogFieldVisibilityStore = create<LogFieldVisibilityState>()(
     persist(
         (set) => ({
+            compact: true,
+            toggleCompact: () => set(state => ({ compact: !state.compact })),
             visibility: { ...DEFAULT_LOG_FIELD_VISIBILITY },
             toggleField: (field) =>
                 set((state) => ({
+                    compact: false,
                     visibility: {
-                        ...state.visibility,
-                        [field]: !state.visibility[field],
+                        ...(state.compact ? COMPACT_LOG_FIELD_VISIBILITY : state.visibility),
+                        [field]: !(state.compact ? COMPACT_LOG_FIELD_VISIBILITY : state.visibility)[field],
                     },
                 })),
             resetFields: () =>
-                set({ visibility: { ...DEFAULT_LOG_FIELD_VISIBILITY } }),
+                set({ compact: true, visibility: { ...DEFAULT_LOG_FIELD_VISIBILITY } }),
         }),
         {
             name: 'log-field-visibility-storage',
             partialize: (state) => ({
+                compact: state.compact,
                 visibility: state.visibility,
             }),
         },
@@ -60,7 +72,7 @@ export const useLogFieldVisibilityStore = create<LogFieldVisibilityState>()(
 );
 
 export function useLogFieldVisibility() {
-    return useLogFieldVisibilityStore((s) => s.visibility);
+    return useLogFieldVisibilityStore((s) => s.compact ? COMPACT_LOG_FIELD_VISIBILITY : s.visibility);
 }
 
 /**

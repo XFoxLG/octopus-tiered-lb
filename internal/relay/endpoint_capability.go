@@ -14,6 +14,9 @@ import (
 // the balancer, preventing chat-only items from being tried against
 // media endpoints like image_generation or music_generation.
 func itemSupportsEndpoint(item dbmodel.GroupItem, channel dbmodel.Channel, endpointType string) bool {
+	if channel.ConnectionConfig != nil {
+		return channelSupportsEndpoint(channel, endpointType)
+	}
 	return channelSupportsEndpoint(channel, endpointType) || modelNameHintsEndpoint(item.ModelName, endpointType)
 }
 
@@ -28,6 +31,14 @@ func itemSupportsEndpoint(item dbmodel.GroupItem, channel dbmodel.Channel, endpo
 func channelSupportsEndpoint(channel dbmodel.Channel, endpointType string) bool {
 	switch endpointType {
 	case dbmodel.EndpointTypeEmbeddings:
+		if channel.ConnectionConfig != nil {
+			for _, e := range channel.ConnectionConfig.Endpoints {
+				if e.Protocol == "embeddings" {
+					return true
+				}
+			}
+			return false
+		}
 		return outbound.IsEmbeddingChannelType(channel.Type)
 	default:
 		return false

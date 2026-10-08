@@ -210,6 +210,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel disabled")
 				continue
 			}
+			if channel.ConnectionConfig != nil {
+				routeIter.Skip(channel.ID, 0, channel.Name, "media forwarding requires a legacy media connection")
+				continue
+			}
 
 			resolvedModel := resolveCandidateModelName(requestModel, item)
 			if resolvedModel == "" {

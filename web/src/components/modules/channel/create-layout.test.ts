@@ -6,12 +6,11 @@ const create = readFileSync(new URL('./Create.tsx', import.meta.url), 'utf8');
 const form = readFileSync(new URL('./Form.tsx', import.meta.url), 'utf8');
 const toolbar = readFileSync(new URL('../toolbar/index.tsx', import.meta.url), 'utf8');
 
-test('channel creation starts with the form and allows presets on every viewport', () => {
-  assert.match(create, /\[showPresetPicker, setShowPresetPicker\] = useState\(false\)/);
-  assert.match(create, /onClick=\{\(\) => setShowPresetPicker\(!showPresetPicker\)\}/);
-  assert.doesNotMatch(create, /!isMobile && showPresetPicker/);
+test('channel creation starts with explicit interfaces without brand presets', () => {
+  assert.match(create, /connection_config: newConnectionConfig\(\)/);
+  assert.doesNotMatch(create, /showPresetPicker|TemplatePickerGrid/);
+  assert.match(form, /<ConnectionEditor/);
   assert.match(create, /layout="create"/);
-  assert.match(create, /showTemplatePicker=\{false\}/);
   assert.match(create, /cancelText=\{tForm\('modelPicker.cancel'\)\}/);
 });
 

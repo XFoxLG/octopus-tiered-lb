@@ -3,12 +3,12 @@ package handlers
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/relay"
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/router"
 	"github.com/lingyuins/octopus/internal/transformer/inbound"
-	"github.com/gin-gonic/gin"
 )
 
 func init() {
@@ -16,7 +16,6 @@ func init() {
 		Use(middleware.APIKeyAuth()).
 		Use(middleware.DevMockPublicSuccess()).
 		Use(middleware.RequireJSON()).
-		Use(middleware.GlobalRelayRateLimit()).
 		AddRoute(
 			router.NewRoute("/chat/completions", http.MethodPost).
 				Handle(chat),

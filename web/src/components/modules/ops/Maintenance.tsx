@@ -5,18 +5,16 @@ import { SettingCircuitBreaker } from '@/components/modules/setting/CircuitBreak
 import { SettingRetry } from '@/components/modules/setting/Retry';
 import { SettingRequestFilter } from '@/components/modules/setting/RequestFilter';
 import { SettingErrorPolicy } from '@/components/modules/setting/ErrorPolicy';
-import { SettingDownstreamRateLimit } from '@/components/modules/setting/DownstreamRateLimit';
 
 type MaintenanceSectionId =
     | 'retry'
     | 'error-policy'
-    | 'downstream-rate-limit'
     | 'circuit-breaker'
     | 'request-filter';
 
-// 常用:日常最常调的重试、错误策略与下游限速。高级:阈值偏高、改动风险大的熔断器与输入拦截。
+// 常用:重试与错误策略。高级:熔断器与输入拦截。
 // 先配置重试策略,再配置熔断器保护阈值,符合用户操作的自然逻辑(见 issue #95 改动4)。
-const COMMON_SECTIONS: MaintenanceSectionId[] = ['retry', 'error-policy', 'downstream-rate-limit'];
+const COMMON_SECTIONS: MaintenanceSectionId[] = ['retry', 'error-policy'];
 const ADVANCED_SECTIONS: MaintenanceSectionId[] = ['circuit-breaker', 'request-filter'];
 
 function MaintenanceSection({ id }: { id: MaintenanceSectionId }) {
@@ -25,7 +23,6 @@ function MaintenanceSection({ id }: { id: MaintenanceSectionId }) {
             {id === 'circuit-breaker' && <SettingCircuitBreaker />}
             {id === 'retry' && <SettingRetry />}
             {id === 'error-policy' && <SettingErrorPolicy />}
-            {id === 'downstream-rate-limit' && <SettingDownstreamRateLimit />}
             {id === 'request-filter' && <SettingRequestFilter />}
         </article>
     );

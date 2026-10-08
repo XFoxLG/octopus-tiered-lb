@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -148,55 +147,7 @@ func isZenCandidateChannelAllowed(requestModel string, channelType outbound.Outb
 	return ok
 }
 
-type perModelQuota struct {
-	RPM int `json:"rpm"`
-	TPM int `json:"tpm"`
-}
-
-func resolveAPIRateLimit(modelName string, c *gin.Context) (rpm int, tpm int) {
-	rpm = c.GetInt("rate_limit_rpm")
-	tpm = c.GetInt("rate_limit_tpm")
-
-	perModelJSON := c.GetString("per_model_quota_json")
-	if perModelJSON == "" {
-		return
-	}
-
-	var quotas map[string]perModelQuota
-	if err := jsonAPI.Unmarshal([]byte(perModelJSON), &quotas); err != nil {
-		return
-	}
-
-	if q, ok := quotas[modelName]; ok {
-		if q.RPM > 0 {
-			rpm = q.RPM
-		}
-		if q.TPM > 0 {
-			tpm = q.TPM
-		}
-	}
-	return
-}
-
-// consumeAPIRateLimitTokens 在请求成功后按真实 input+output token 数回扣 API Key
-// 级 TPM。门口 CheckRateLimit 只做「预占 1」的门槛检查(此时 usage 未知),
-// 真实用量在这里补扣;否则无论多长的请求都只扣 1 个 token,TPM 形同虚设。
-// 配额来自 context(effective_rate_limit_tpm);tpm<=0 或 token 数不可用时安全跳过。
-func consumeAPIRateLimitTokens(c *gin.Context, apiKeyID int, requestModel string, inputTokens, outputTokens int) {
-	if c == nil || apiKeyID <= 0 {
-		return
-	}
-	total := inputTokens + outputTokens
-	if total <= 0 {
-		return
-	}
-	tpm := c.GetInt("effective_rate_limit_tpm")
-	if tpm <= 0 {
-		return
-	}
-	rl.ConsumeTokens(apiKeyID, requestModel, tpm, total)
-}
-
+// Downstream rate limits are retired; channel admission remains per attempt.
 func resolveCandidateModelName(requestModel string, item dbmodel.GroupItem) string {
 	if upstreamModel, ok := resolveRequestedUpstreamModel(requestModel); ok {
 		if strings.TrimSpace(item.ModelName) == "" || strings.EqualFold(strings.TrimSpace(item.ModelName), "zen") {
@@ -250,28 +201,6 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 
 	requestModel := internalRequest.Model
 	apiKeyID := c.GetInt("api_key_id")
-	// API Key 级 TPM 的事后校准需要在成功路径拿到真实 token 数与配额,
-	// 先把它们存到 context(CheckRateLimit 只做「预占 1」的门槛检查)。
-	apiRateRPM, apiRateTPM := resolveAPIRateLimit(requestModel, c)
-	c.Set("effective_rate_limit_rpm", apiRateRPM)
-	c.Set("effective_rate_limit_tpm", apiRateTPM)
-
-	// Rate limiting: check RPM/TPM before forwarding
-	if rpm := c.GetInt("rate_limit_rpm"); rpm > 0 || c.GetInt("rate_limit_tpm") > 0 {
-		effectiveRPM, effectiveTPM := apiRateRPM, apiRateTPM
-		if effectiveRPM > 0 || effectiveTPM > 0 {
-			allowed, remaining, retryAfter := rl.CheckRateLimit(apiKeyID, requestModel, effectiveRPM, effectiveTPM, 0)
-			if !allowed {
-				c.Header("X-RateLimit-Remaining", "0")
-				c.Header("Retry-After", strconv.Itoa(retryAfter))
-				resp.Error(c, http.StatusTooManyRequests, "rate limit exceeded")
-				return
-			}
-			if effectiveRPM > 0 {
-				c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
-			}
-		}
-	}
 	var streamSession *relayStreamSession
 	var streamSessionOwned bool
 	var lastErr error
@@ -511,7 +440,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 
 	// 记录按模型粒度的 key 冷却：某模型触发错误时，仅冷却该 (keyID, model) 组合，
 	// 不影响该 key 上其它模型的可用性（见 issue #94）。仅错误响应（≥400）才冷却。
-	if statusCode >= 400 {
+	if statusCode >= 400 && !(ra.protocolFallbackRemaining && !written && decision.Scope == ScopeNextChannel) {
 		balancer.RecordKeyCooldownWithRetryAfter(
 			ra.channel.ID,
 			ra.usedKey.ID,
@@ -674,13 +603,11 @@ func (ra *relayAttempt) forward() (int, error) {
 	// 地址按本次尝试实际选中的 adapter 所属协议来挑选：多协议渠道可以把不同
 	// 协议绑到不同 base URL（如火山方舟的 OpenAI 兼容在 /api/v3、Anthropic
 	// 兼容在 /api/compatible）。未绑定协议或单地址渠道行为不变。
-	baseURL := ra.channel.GetNormalizedBaseUrlForProtocol(ra.adapterEndpointProtocol())
-	outboundRequest, err := ra.outAdapter.TransformRequest(
-		ctx,
-		requestForOutbound,
-		baseURL,
-		ra.usedKey.ChannelKey,
-	)
+	plan, err := ra.channel.ConnectionPlanFor(ra.adapterType)
+	if err != nil {
+		return 0, err
+	}
+	outboundRequest, err := ra.channel.BuildConnectionRequest(ctx, plan, ra.outAdapter, requestForOutbound, ra.usedKey.ChannelKey)
 	if err != nil {
 		log.Warnf("failed to create request: %v", err)
 		return 0, fmt.Errorf("failed to create request: %w", err)
@@ -688,6 +615,9 @@ func (ra *relayAttempt) forward() (int, error) {
 
 	// 复制请求头
 	ra.copyHeaders(outboundRequest, effectiveRewrite)
+	if plan.Endpoint != nil {
+		ra.channel.ApplyConnectionHeaders(outboundRequest, plan, ra.usedKey.ChannelKey)
+	}
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
 		trace.wrapUpstreamRequest(ra.logAttemptNumber, ra.adapterType.String(), outboundRequest)
 		trace.markUpstreamSendStarted(ra.logAttemptNumber)
@@ -1945,20 +1875,24 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				continue
 			}
 
-			attemptTypes := outboundAttemptTypesForChannel(channel.Type, req.internalRequest, group.OutboundFormat, channel.OutboundFormatOverride, channel.UpstreamProtocols)
+			plans := channel.ResolveConnectionPlans(req.internalRequest, group.OutboundFormat)
+			attemptTypes := make([]outbound.OutboundType, len(plans))
+			for i, plan := range plans {
+				attemptTypes[i] = plan.AdapterType
+			}
 			if len(attemptTypes) == 0 || outbound.Get(attemptTypes[0]) == nil {
 				routeIter.Skip(channel.ID, 0, channel.Name, fmt.Sprintf("unsupported channel type: %d", channel.Type))
 				continue
 			}
-			if req.internalRequest.IsEmbeddingRequest() && !outbound.IsEmbeddingChannelType(channel.Type) {
+			if channel.ConnectionConfig == nil && req.internalRequest.IsEmbeddingRequest() && !outbound.IsEmbeddingChannelType(channel.Type) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not compatible with embedding request")
 				continue
 			}
-			if req.internalRequest.IsChatRequest() && !outbound.IsChatChannelType(channel.Type) {
+			if channel.ConnectionConfig == nil && req.internalRequest.IsChatRequest() && !outbound.IsChatChannelType(channel.Type) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not compatible with chat request")
 				continue
 			}
-			if !isZenCandidateChannelAllowed(requestModel, channel.Type, req.internalRequest.IsEmbeddingRequest()) {
+			if channel.ConnectionConfig == nil && !isZenCandidateChannelAllowed(requestModel, channel.Type, req.internalRequest.IsEmbeddingRequest()) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not preferred for zen model prefix")
 				continue
 			}
@@ -2073,20 +2007,22 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						lastErr = err
 						goto exhausted
 					}
-					outAdapter := outbound.Get(attemptType)
+					plan := plans[adapterIndex]
+					outAdapter := plan.Adapter()
 					if outAdapter == nil {
 						continue
 					}
 					ra := &relayAttempt{
-						relayRequest:         req,
-						outAdapter:           outAdapter,
-						adapterType:          attemptType,
-						channel:              channel,
-						usedKey:              usedKey,
-						firstTokenTimeOutSec: channel.EffectiveFirstTokenTimeOut(group.FirstTokenTimeOut),
-						attemptTimeOutSec:    channel.EffectiveAttemptTimeOut(group.AttemptTimeOut),
-						tryIndex:             keyRound,
-						tryTotal:             maxKeyRetriesPerRoute,
+						relayRequest:              req,
+						outAdapter:                outAdapter,
+						adapterType:               attemptType,
+						channel:                   channel.WithConnectionPlan(plan),
+						usedKey:                   usedKey,
+						firstTokenTimeOutSec:      channel.EffectiveFirstTokenTimeOut(group.FirstTokenTimeOut),
+						attemptTimeOutSec:         channel.EffectiveAttemptTimeOut(group.AttemptTimeOut),
+						tryIndex:                  keyRound,
+						tryTotal:                  maxKeyRetriesPerRoute,
+						protocolFallbackRemaining: adapterIndex < len(attemptTypes)-1 && (maxTotalAttempts <= 0 || budget.forwardedBase+routeIter.ForwardedAttempts()+1 < maxTotalAttempts),
 					}
 
 					// 渠道并发上限（阶段1）attempt 级原子占用：真实转发前占名额，
@@ -2128,9 +2064,6 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
 					// 离群窗口：记录成功样本（与熔断器同级证据）。
 					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
-					// API Key 级 TPM:用真实 input+output token 回扣,替代门口
-					// 那次「预占 1」的假限额。ConsumeTokens 内部对 tpm<=0 直接返回。
-					consumeAPIRateLimitTokens(req.c, req.apiKeyID, requestModel, int(req.metrics.Stats.InputToken), int(req.metrics.Stats.OutputToken))
 					req.metrics.Save(true, nil, currentAttempts)
 					return nil
 				}

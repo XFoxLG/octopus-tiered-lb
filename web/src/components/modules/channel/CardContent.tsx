@@ -129,7 +129,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         testChannelModel.mutate({
             channel_id: channel.id,
             model_name: selectedModel,
-            endpoint_type: inferEndpointType(channel.type),
+            endpoint_type: channel.connection_config ? (channel.connection_config.endpoints.every((e) => e.protocol === 'embeddings') ? 'embeddings' : '*') : inferEndpointType(channel.type),
         }, {
             onSuccess: (progress) => {
                 setCurrentTestId(progress.id);
@@ -140,6 +140,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     const testResult = testProgress?.results?.[0];
 
     const [formData, setFormData] = useState<ChannelFormData>({
+        connection_config: channel.connection_config,
         name: channel.name,
         group_id: channel.group_id,
         type: channel.type,
@@ -210,14 +211,17 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             return;
         }
         const req: UpdateChannelRequest = { id: channel.id };
-        const effectiveRequestRewrite = getEffectiveRequestRewriteFormData(formData.type, formData.request_rewrite);
+        if (formData.connection_config && JSON.stringify(formData.connection_config) !== JSON.stringify(channel.connection_config)) {
+            req.connection_config = formData.connection_config;
+        }
+        const effectiveRequestRewrite = getEffectiveRequestRewriteFormData(formData.type, formData.request_rewrite, formData.connection_config);
 
         // only send changed fields to avoid accidental clears
         if (formData.name !== channel.name) req.name = formData.name;
         if (formData.group_id !== channel.group_id) req.group_id = formData.group_id;
-        if (formData.type !== channel.type) req.type = formData.type;
+        if (!formData.connection_config && formData.type !== channel.type) req.type = formData.type;
         if (formData.enabled !== channel.enabled) req.enabled = formData.enabled;
-        if (!baseUrlsEqual(formData.base_urls, channel.base_urls)) {
+        if (!formData.connection_config && !baseUrlsEqual(formData.base_urls, channel.base_urls)) {
             req.base_urls = (formData.base_urls ?? []).filter((u) => u.url.trim()).map((u) => ({
                 url: u.url.trim(),
                 delay: Number(u.delay || 0),
@@ -272,7 +276,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
         const nextOutboundFormatOverride = formData.outbound_format_override.trim();
         const curOutboundFormatOverride = channel.outbound_format_override ?? '';
-        if (nextOutboundFormatOverride !== curOutboundFormatOverride) {
+        if (!formData.connection_config && nextOutboundFormatOverride !== curOutboundFormatOverride) {
             // Empty string means "follow group outbound_format" (patch semantics).
             req.outbound_format_override = nextOutboundFormatOverride;
         }
@@ -280,7 +284,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         // 协议声明按顺序比较：顺序本身就是优先级，重排必须触发保存。
         const nextUpstreamProtocols = formData.upstream_protocols ?? [];
         const curUpstreamProtocols = channel.upstream_protocols ?? [];
-        if (nextUpstreamProtocols.join(',') !== curUpstreamProtocols.join(',')) {
+        if (!formData.connection_config && nextUpstreamProtocols.join(',') !== curUpstreamProtocols.join(',')) {
             req.upstream_protocols = nextUpstreamProtocols;
         }
 
@@ -601,7 +605,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                         {t('sections.baseUrls')}
                                     </h4>
                                     <div className="space-y-2">
-                                        {channel.base_urls?.map((url, i) => (
+                                        {channel.connection_config?.endpoints.map((endpoint) => <div key={endpoint.id} className="min-w-0 rounded-lg border border-border p-3"><span className="text-sm font-medium">{endpoint.protocol}</span><p className="break-all text-sm text-muted-foreground">{endpoint.url}</p></div>)}
+                                        {!channel.connection_config && channel.base_urls?.map((url, i) => (
                                             <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-border/25 bg-card p-3 shadow-sm">
                                                 <div className="flex flex-col gap-1 min-w-0">
                                                     <span className="font-mono text-sm truncate select-all">{url.url}</span>
@@ -621,7 +626,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                 </Badge>
                                             </div>
                                         ))}
-                                        {(!channel.base_urls || channel.base_urls.length === 0) && (
+                                        {!channel.connection_config && (!channel.base_urls || channel.base_urls.length === 0) && (
                                             <div className="rounded-lg border border-dashed border-border/30 bg-card p-4 text-center text-sm text-muted-foreground">{t('noBaseUrls')}</div>
                                         )}
                                     </div>
@@ -876,6 +881,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
                         <TabsContent value="editing" className="flex flex-1 min-h-0 flex-col">
                             <ChannelForm
+                                channelId={channel.id}
                                 formData={formData}
                                 onFormDataChange={setFormData}
                                 onSubmit={handleUpdate}

@@ -13,7 +13,8 @@ import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
 import { resolveLogDisplayFields } from './display';
 import { BoundaryDetails } from './BoundaryDetails';
-import { useLogFieldVisibility } from './ui-store';
+import { logIssueSummary } from './body-preview';
+import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
 import { useSettingStore } from '@/stores/setting';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import {
@@ -217,6 +218,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);
     const displayFields = useMemo(() => resolveLogDisplayFields(log, detail, channelNameById), [channelNameById, detail, log]);
     const vis = useLogFieldVisibility();
+    const compact = useLogFieldVisibilityStore(s => s.compact);
     const chinaMode = useSettingStore((s) => s.chinaMode);
     const { Avatar: ModelAvatar, color: brandColor } = useMemo(
         () => getModelIcon(displayFields.actualModelName),
@@ -330,6 +332,9 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                 <span className="min-w-0 max-w-full font-semibold text-card-foreground truncate md:max-w-[32%]" title={displayRequestModelName}>
                                     {displayRequestModelName}
                                 </span>
+                                <Badge variant={hasError && !clientDisconnected ? 'destructive' : 'secondary'}>
+                                    {clientDisconnected ? t('clientDisconnected') : t(hasError ? 'failed' : 'success')}
+                                </Badge>
                                 {log.is_test && (
                                     <Badge
                                         variant="outline"
@@ -340,7 +345,6 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         {t('testLog')}
                                     </Badge>
                                 )}
-                                <ArrowRight className="size-3.5 shrink-0 text-muted-foreground/50" />
                                 {vis.endpointType && displayEndpointType && (
                                     <Badge
                                         variant="secondary"
@@ -373,7 +377,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         )}
                                     </>
                                 )}
-                                {vis.actualModel && (
+                                {vis.actualModel && (!compact || displayActualModelName !== displayRequestModelName) && (
                                     <span className="min-w-0 text-muted-foreground truncate md:flex-1" title={displayActualModelName}>
                                         {displayActualModelName}
                                     </span>
@@ -382,7 +386,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     <Pin className="size-3.5 shrink-0 text-amber-500" />
                                 )}
                             </div>
-                            <div className="grid grid-cols-2 md:grid-cols-7 gap-x-4 gap-y-1.5 text-xs tabular-nums text-muted-foreground">
+                            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs tabular-nums text-muted-foreground">
                                 <div className="flex items-center gap-1.5">
                                     <Clock className="size-3.5 shrink-0" style={{ color: badgeColor }} />
                                     <span>{formatTime(log.time)}</span>
@@ -504,7 +508,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     title={clientDisconnected ? t('clientDisconnectedHint') : undefined}
                                 >
                                     <p className={cn("text-xs line-clamp-2", clientDisconnected ? "text-muted-foreground" : "text-destructive")}>
-                                        {clientDisconnected ? t('clientDisconnected') : log.error}
+                                        {clientDisconnected ? t('clientDisconnected') : compact ? t(`issueSummary.${logIssueSummary(log.error || '')}`) : log.error}
                                     </p>
                                 </div>
                             )}
@@ -569,10 +573,10 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                         </MorphingDialogTitle>
 
                         <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
-                            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+                            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
                                 {(hasError || hasMultipleAttempts) && (
                                     <div className={cn(
-                                        "flex-initial min-h-0 flex flex-col rounded-2xl border overflow-hidden max-h-[40%]",
+                                        "flex flex-col rounded-xl border",
                                         hasError
                                             ? "bg-destructive/5 border-destructive/20"
                                             : "bg-secondary/30 border-border/50"

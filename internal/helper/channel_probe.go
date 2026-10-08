@@ -16,6 +16,7 @@ import (
 )
 
 type ChannelTestResult struct {
+	EndpointID   string `json:"endpoint_id,omitempty"`
 	BaseURL      string `json:"base_url"`
 	KeyRemark    string `json:"key_remark,omitempty"`
 	KeyMasked    string `json:"key_masked,omitempty"`
@@ -32,6 +33,9 @@ type ChannelTestSummary struct {
 }
 
 func TestChannel(ctx context.Context, request appmodel.Channel) (*ChannelTestSummary, error) {
+	if request.ConnectionConfig != nil {
+		return testConfiguredChannel(ctx, request)
+	}
 	if conf.IsDevMockSuccess() {
 		baseURL := "dev-mock://local"
 		if len(request.BaseUrls) > 0 && strings.TrimSpace(request.BaseUrls[0].URL) != "" {
