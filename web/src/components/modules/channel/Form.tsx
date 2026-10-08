@@ -223,13 +223,6 @@ export interface ChannelFormProps {
     layout?: 'default' | 'create';
 }
 
-import {
-    Accordion,
-    AccordionContent,
-    AccordionItem,
-    AccordionTrigger,
-} from "@/components/ui/accordion";
-
 function SectionHeader({
     icon: Icon,
     title,
@@ -1131,96 +1124,18 @@ export function ChannelForm({
                             </SelectContent>
                         </Select>
                     </div>
+                    <label className="flex items-center gap-2 cursor-pointer sm:col-span-2">
+                        <Switch
+                            checked={formData.enabled}
+                            onCheckedChange={(checked) => onFormDataChange({ ...formData, enabled: checked })}
+                        />
+                        <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
+                    </label>
                 </div>
             </section>
 
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
-                <ConnectionEditor value={formData.connection_config} onChange={(connection_config) => onFormDataChange({ ...formData, connection_config, ...(connection_config.catalog.format === 'manual' ? { auto_sync: false, auto_sync_key_models: false } : {}) })} legacy={formData} channelId={channelId} idPrefix={idPrefix} />
-            </section>
-
-            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
-                <SectionHeader icon={Layers3} title={t('modelConfig')} />
-                <div className="flex items-center justify-end gap-2">
-                    <MorphingDialog onOpen={handleRefreshModels}>
-                        <MorphingDialogTrigger
-                            ariaLabel={t('modelRefresh')}
-                            disabled={!canFetchConnectionModels(formData.connection_config, formData.base_urls) || !effectiveKey || isFetchingModels}
-                            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        >
-                            <RefreshCw className={`size-4 ${isFetchingModels ? 'animate-spin' : ''}`} />
-                            {t('modelRefresh')}
-                        </MorphingDialogTrigger>
-                        <MorphingDialogContainer>
-                            <MorphingDialogContent className="h-[calc(100dvh-2rem)] w-[min(100vw-2rem,54rem)] max-w-full rounded-xl border border-border/35 bg-card p-0 md:h-[min(44rem,calc(100dvh-3rem))]">
-                                <ModelPickerDialogPanel
-                                    models={fetchedModels}
-                                    draftSelected={modelPickerDraft}
-                                    onDraftChange={setModelPickerDraft}
-                                    isLoading={isFetchingModels}
-                                    onApply={applyFetchedModelSelection}
-                                    perKeyResults={perKeyResults}
-                                    perKeyLoading={fetchModelsPerKey.isPending}
-                                    onFillPerKeyResult={canFillPerKeyModels ? handleFillPerKeyResult : undefined}
-                                    onFillAllPerKeyResults={canFillPerKeyModels ? handleFillAllPerKeyResults : undefined}
-                                />
-                            </MorphingDialogContent>
-                        </MorphingDialogContainer>
-                    </MorphingDialog>
-                </div>
-                <input type="hidden" value={formData.model} required />
-                <div className="flex min-w-0 items-center gap-2">
-                    <Input
-                        ref={inputRef}
-                        id={`${idPrefix}-model-custom`}
-                        type="text"
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        onKeyDown={handleInputKeyDown}
-                        placeholder={t('modelCustomPlaceholder')}
-                        aria-label={t('modelCustomPlaceholder')}
-                        className="min-w-0 flex-1 rounded-lg"
-                    />
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => handleAddModel(inputValue)}
-                        disabled={!inputValue.trim() || customModels.includes(inputValue.trim()) || autoModels.includes(inputValue.trim())}
-                        className="size-11 shrink-0 rounded-lg"
-                        aria-label={t('modelAdd')}
-                        title={t('modelAdd')}
-                    >
-                        <Plus className="size-4" />
-                    </Button>
-                </div>
-                <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                        <label className="text-xs font-medium">{t('modelSelected')} ({autoModels.length + customModels.length})</label>
-                        {(autoModels.length + customModels.length) > 0 && (
-                            <Button type="button" variant="ghost" size="sm" onClick={() => updateModels([], [])} className="h-9 px-2 text-xs">
-                                {t('modelClearAll')}
-                            </Button>
-                        )}
-                    </div>
-                    <div className="max-h-40 min-h-12 overflow-y-auto rounded-lg border border-border p-2.5">
-                        {(autoModels.length + customModels.length) > 0 ? (
-                            <div className="flex flex-wrap gap-2">
-                                {[...autoModels, ...customModels].map((model) => (
-                                    <Badge key={model} variant="secondary" className="max-w-full gap-1">
-                                        <span className="min-w-0 break-all whitespace-normal">{model}</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => customModels.includes(model) ? handleRemoveCustomModel(model) : handleRemoveAutoModel(model)}
-                                            className="grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                            aria-label={`${t('remove')} ${model}`}
-                                            title={t('remove')}
-                                        ><X className="size-3.5" /></button>
-                                    </Badge>
-                                ))}
-                            </div>
-                        ) : <div className="py-2 text-center text-xs text-muted-foreground">{t('modelNoSelected')}</div>}
-                    </div>
-                </div>
+                <ConnectionEditor value={formData.connection_config} onChange={(connection_config) => onFormDataChange({ ...formData, connection_config, ...(connection_config.catalog.format === 'manual' ? { auto_sync: false, auto_sync_key_models: false } : {}) })} channelId={channelId} idPrefix={idPrefix} />
             </section>
 
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
@@ -1373,15 +1288,124 @@ export function ChannelForm({
                 )}
             </section>
 
-            <Accordion type="single" collapsible className={cn('w-full min-w-0', isCreateLayout && 'md:col-span-2')}>
-                <AccordionItem value="advanced" className="border-none">
-                    <AccordionTrigger className="rounded-lg bg-card/70 px-4 py-4 text-sm font-medium text-card-foreground transition-colors hover:bg-card hover:no-underline">
-                        <span className="flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-primary/70" />
-                            {t('advanced')}
-                        </span>
-                    </AccordionTrigger>
-                    <AccordionContent className="pt-4">
+            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
+                <SectionHeader icon={Layers3} title={t('modelConfig')} />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                        <Switch
+                            checked={formData.auto_sync && formData.connection_config?.catalog.format !== 'manual'}
+                            disabled={formData.connection_config?.catalog.format === 'manual'}
+                            onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync: checked })}
+                        />
+                        <span className="text-sm text-card-foreground">{t('autoSync')}</span>
+                    </label>
+                    {/* 仅在自动同步开启时有意义：参照 request_rewrite 子项的 disabled 依赖处理方式。
+                        Hint 放在 label 外侧，避免在 label 内嵌可交互控件导致点击图标误触发开关 */}
+                    <div className="flex items-center gap-1">
+                        <label className={cn('flex items-center gap-2', formData.auto_sync ? 'cursor-pointer' : 'cursor-not-allowed')}>
+                            <Switch
+                                checked={formData.auto_sync_key_models}
+                                disabled={!formData.auto_sync || formData.connection_config?.catalog.format === 'manual'}
+                                onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync_key_models: checked })}
+                            />
+                            <span className={cn('text-sm text-card-foreground', !formData.auto_sync && 'text-muted-foreground/60')}>
+                                {t('autoSyncKeyModels')}
+                            </span>
+                        </label>
+                        <Hint text={t('autoSyncKeyModelsHint')} />
+                    </div>
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                    <MorphingDialog onOpen={handleRefreshModels}>
+                        <MorphingDialogTrigger
+                            ariaLabel={t('modelRefresh')}
+                            disabled={!canFetchConnectionModels(formData.connection_config, formData.base_urls) || !effectiveKey || isFetchingModels}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                        >
+                            <RefreshCw className={`size-4 ${isFetchingModels ? 'animate-spin' : ''}`} />
+                            {t('modelRefresh')}
+                        </MorphingDialogTrigger>
+                        <MorphingDialogContainer>
+                            <MorphingDialogContent className="h-[calc(100dvh-2rem)] w-[min(100vw-2rem,54rem)] max-w-full rounded-xl border border-border/35 bg-card p-0 md:h-[min(44rem,calc(100dvh-3rem))]">
+                                <ModelPickerDialogPanel
+                                    models={fetchedModels}
+                                    draftSelected={modelPickerDraft}
+                                    onDraftChange={setModelPickerDraft}
+                                    isLoading={isFetchingModels}
+                                    onApply={applyFetchedModelSelection}
+                                    perKeyResults={perKeyResults}
+                                    perKeyLoading={fetchModelsPerKey.isPending}
+                                    onFillPerKeyResult={canFillPerKeyModels ? handleFillPerKeyResult : undefined}
+                                    onFillAllPerKeyResults={canFillPerKeyModels ? handleFillAllPerKeyResults : undefined}
+                                />
+                            </MorphingDialogContent>
+                        </MorphingDialogContainer>
+                    </MorphingDialog>
+                </div>
+                <input type="hidden" value={formData.model} required />
+                <div className="flex min-w-0 items-center gap-2">
+                    <Input
+                        ref={inputRef}
+                        id={`${idPrefix}-model-custom`}
+                        type="text"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        onKeyDown={handleInputKeyDown}
+                        placeholder={t('modelCustomPlaceholder')}
+                        aria-label={t('modelCustomPlaceholder')}
+                        className="min-w-0 flex-1 rounded-lg"
+                    />
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => handleAddModel(inputValue)}
+                        disabled={!inputValue.trim() || customModels.includes(inputValue.trim()) || autoModels.includes(inputValue.trim())}
+                        className="size-11 shrink-0 rounded-lg"
+                        aria-label={t('modelAdd')}
+                        title={t('modelAdd')}
+                    >
+                        <Plus className="size-4" />
+                    </Button>
+                </div>
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <label className="text-xs font-medium">{t('modelSelected')} ({autoModels.length + customModels.length})</label>
+                        {(autoModels.length + customModels.length) > 0 && (
+                            <Button type="button" variant="ghost" size="sm" onClick={() => updateModels([], [])} className="h-9 px-2 text-xs">
+                                {t('modelClearAll')}
+                            </Button>
+                        )}
+                    </div>
+                    <div className="max-h-40 min-h-12 overflow-y-auto rounded-lg border border-border p-2.5">
+                        {(autoModels.length + customModels.length) > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                                {[...autoModels, ...customModels].map((model) => (
+                                    <Badge key={model} variant="secondary" className="max-w-full gap-1">
+                                        <span className="min-w-0 break-all whitespace-normal">{model}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => customModels.includes(model) ? handleRemoveCustomModel(model) : handleRemoveAutoModel(model)}
+                                            className="grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                            aria-label={`${t('remove')} ${model}`}
+                                            title={t('remove')}
+                                        ><X className="size-3.5" /></button>
+                                    </Badge>
+                                ))}
+                            </div>
+                        ) : <div className="py-2 text-center text-xs text-muted-foreground">{t('modelNoSelected')}</div>}
+                    </div>
+                </div>
+            </section>
+
+            <details className={cn('w-full min-w-0 rounded-lg border border-border/35 bg-card/70', isCreateLayout && 'md:col-span-2')}>
+                <summary className="cursor-pointer rounded-lg px-4 py-4 text-sm font-medium text-card-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <span className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-primary/70" />
+                        {t('advanced')}
+                    </span>
+                </summary>
+                <div className="px-4 pb-4">
                         <div className="space-y-4">
                         <div className="grid min-w-0 items-start gap-4 md:grid-cols-2">
                             <ProxySelector
@@ -1857,71 +1881,39 @@ export function ChannelForm({
                                 </div>
                             </div>
                         </div>
-                        </div>
-                    </AccordionContent>
-                </AccordionItem>
-            </Accordion>
-            <section className={cn(sectionClassName, 'flex flex-col gap-4', isCreateLayout && 'md:col-span-2')}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                    <Switch
-                        checked={formData.enabled}
-                        onCheckedChange={(checked) => onFormDataChange({ ...formData, enabled: checked })}
-                    />
-                    <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
-                </label>
-                <div className="grid grid-cols-1 items-start gap-4 border-t border-border/10 pt-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <Switch
-                            checked={formData.auto_sync && formData.connection_config?.catalog.format !== 'manual'}
-                            disabled={formData.connection_config?.catalog.format === 'manual'}
-                            onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync: checked })}
-                        />
-                        <span className="text-sm text-card-foreground">{t('autoSync')}</span>
-                    </label>
-                    {/* 仅在自动同步开启时有意义：参照 request_rewrite 子项的 disabled 依赖处理方式。
-                        Hint 放在 label 外侧，避免在 label 内嵌可交互控件导致点击图标误触发开关 */}
-                    <div className="flex items-center gap-1">
-                        <label className={cn('flex items-center gap-2', formData.auto_sync ? 'cursor-pointer' : 'cursor-not-allowed')}>
-                            <Switch
-                                checked={formData.auto_sync_key_models}
-                                disabled={!formData.auto_sync || formData.connection_config?.catalog.format === 'manual'}
-                                onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync_key_models: checked })}
-                            />
-                            <span className={cn('text-sm text-card-foreground', !formData.auto_sync && 'text-muted-foreground/60')}>
-                                {t('autoSyncKeyModels')}
-                            </span>
-                        </label>
-                        <Hint text={t('autoSyncKeyModelsHint')} />
-                    </div>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <Switch
-                            checked={formData.skip_model_test}
-                            onCheckedChange={(checked) => onFormDataChange({ ...formData, skip_model_test: checked })}
-                        />
-                        <span className="text-sm text-card-foreground">{t('skipModelTest')}</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <Switch
-                            checked={formData.disposable}
-                            onCheckedChange={(checked) => onFormDataChange({ ...formData, disposable: checked })}
-                        />
-                        <span className="text-sm text-card-foreground">{t('disposable')}</span>
-                    </label>
-                    {formData.disposable && (
-                        <div className="col-span-full grid min-w-0 gap-4 sm:grid-cols-2">
-                            <div className="min-w-0 space-y-2">
-                                <span className="text-sm text-card-foreground">{t('expireAt')}</span>
-                                <Input
-                                    type="datetime-local"
-                                    className="h-11 w-full min-w-0 rounded-lg"
-                                    value={formData.expire_at || ''}
-                                    onChange={(e) => onFormDataChange({ ...formData, expire_at: e.target.value })}
+                        <div className="grid grid-cols-1 gap-4 border-t border-border/20 pt-4 sm:grid-cols-2">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <Switch
+                                    checked={formData.skip_model_test}
+                                    onCheckedChange={(checked) => onFormDataChange({ ...formData, skip_model_test: checked })}
                                 />
-                            </div>
+                                <span className="text-sm text-card-foreground">{t('skipModelTest')}</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <Switch
+                                    checked={formData.disposable}
+                                    onCheckedChange={(checked) => onFormDataChange({ ...formData, disposable: checked })}
+                                />
+                                <span className="text-sm text-card-foreground">{t('disposable')}</span>
+                            </label>
+                            {formData.disposable && (
+                                <div className="col-span-full grid min-w-0 gap-4 sm:grid-cols-2">
+                                    <div className="min-w-0 space-y-2">
+                                        <label htmlFor={`${idPrefix}-expire-at`} className="text-sm text-card-foreground">{t('expireAt')}</label>
+                                        <Input
+                                            id={`${idPrefix}-expire-at`}
+                                            type="datetime-local"
+                                            className="h-11 w-full min-w-0 rounded-lg"
+                                            value={formData.expire_at || ''}
+                                            onChange={(e) => onFormDataChange({ ...formData, expire_at: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
-                    )}
+                        </div>
                 </div>
-            </section>
+            </details>
             </div>
 
             <div className={cn(

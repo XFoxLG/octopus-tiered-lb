@@ -23,7 +23,10 @@ test('channel dialog overrides default width and height constraints without nest
 });
 
 test('key strategy and proxy mode stay inside advanced settings', () => {
-  const advanced = form.slice(form.indexOf('<Accordion type="single"'), form.indexOf('</Accordion>'));
+  // 高级设置自 v2.8.x 起从 Accordion 换成原生 <details>（默认收起，键盘可达）。
+  const advancedStart = form.indexOf("{t('advanced')}");
+  assert.notEqual(advancedStart, -1, '高级设置折叠区应存在');
+  const advanced = form.slice(advancedStart, form.indexOf('</details>', advancedStart));
   assert.match(advanced, /t\('keySelectionStrategy'\)/);
   assert.match(advanced, /grid min-w-0 items-start gap-4 md:grid-cols-2/);
   assert.match(advanced, /<ProxySelector\s+layout="stacked"/);
