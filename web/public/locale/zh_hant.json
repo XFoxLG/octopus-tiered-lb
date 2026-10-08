@@ -2861,6 +2861,13 @@
         "not_applicable": "不適用"
       },
       "reportedIPHint": "來自 {source} 轉發標頭，僅作為來源線索展示；不保證是原始用戶端，也不用於 IP 白名單或登入限流。",
+      "ipSource": {
+        "cf": "CF",
+        "tru": "TRU",
+        "xff": "XFF"
+      },
+      "ipProxy": "代理 IP",
+      "ipProxyTooltip": "未取得真實來源轉發標頭，這裡顯示的是平台代理位址（原始記錄：{ip}）。",
       "channelKeyHint": "該次嘗試使用的上游渠道 Key（備註 / 脫敏 Key）",
       "channelKeyFallback": "Key #{id}",
       "issueSummary": {

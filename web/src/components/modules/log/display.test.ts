@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { RelayLog, RelayLogDetail } from '@/api/endpoints/log';
-import { formatJsonForCopy, resolveLogDisplayFields } from './display.ts';
+import { formatJsonForCopy, reportedIPSourceToken, resolveLogDisplayFields } from './display.ts';
 
 function buildLog(overrides: Partial<RelayLog> = {}): RelayLog {
     return {
@@ -323,4 +323,33 @@ test('resolveLogDisplayFields falls back to last non-empty adapter_type when no 
     });
     const result = resolveLogDisplayFields(log);
     assert.equal(result.outboundAdapterType, 'anthropic');
+});
+
+test('reportedIPSourceToken maps display-track headers to badge tokens', () => {
+    assert.equal(reportedIPSourceToken('cf-connecting-ip'), 'cf');
+    assert.equal(reportedIPSourceToken('true-client-ip'), 'tru');
+    assert.equal(reportedIPSourceToken('x-forwarded-for'), 'xff');
+    assert.equal(reportedIPSourceToken(' True-Client-IP '), 'tru');
+    assert.equal(reportedIPSourceToken('none'), '');
+    assert.equal(reportedIPSourceToken(''), '');
+    assert.equal(reportedIPSourceToken(undefined), '');
+    assert.equal(reportedIPSourceToken(null), '');
+});
+
+test('resolveLogDisplayFields separates a real client IP from the Render proxy fallback', () => {
+    const reported = resolveLogDisplayFields(buildLog({
+        client_ip: '10.0.0.5',
+        reported_client_ip: '198.51.100.20',
+        reported_client_ip_source: 'true-client-ip',
+    }));
+    assert.equal(reported.hasReportedClientIP, true);
+    assert.equal(reported.clientIP, '198.51.100.20');
+    assert.equal(reported.rawClientIP, '10.0.0.5');
+    assert.equal(reportedIPSourceToken(reported.reportedClientIPSource), 'tru');
+
+    const proxyFallback = resolveLogDisplayFields(buildLog({ client_ip: '10.0.0.5', reported_client_ip: '' }));
+    assert.equal(proxyFallback.hasReportedClientIP, false);
+    assert.equal(proxyFallback.clientIP, '10.0.0.5');
+    assert.equal(proxyFallback.rawClientIP, '10.0.0.5');
+    assert.equal(proxyFallback.reportedClientIPSource, '');
 });

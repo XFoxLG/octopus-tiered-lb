@@ -2905,6 +2905,13 @@
         "not_applicable": "Not applicable"
       },
       "reportedIPHint": "Reported by the {source} header for display only. It may identify a proxy rather than the original client and is not used for IP allowlists or login rate limits.",
+      "ipSource": {
+        "cf": "CF",
+        "tru": "TRU",
+        "xff": "XFF"
+      },
+      "ipProxy": "Proxy IP",
+      "ipProxyTooltip": "No forwarded source header was available; this is the platform proxy address (raw value: {ip}).",
       "channelKeyHint": "Upstream channel key used for this attempt (remark / masked key)",
       "channelKeyFallback": "Key #{id}",
       "issueSummary": {

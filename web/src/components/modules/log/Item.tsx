@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
-import { resolveLogDisplayFields } from './display';
+import { reportedIPSourceToken, resolveLogDisplayFields } from './display';
 import { BoundaryDetails } from './BoundaryDetails';
 import { logIssueSummary } from './body-preview';
 import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
@@ -235,11 +235,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
     const badgeColor = resolveBrandColor(brandColor, resolvedTheme === 'dark');
     const requestAPIKeyName = displayFields.requestAPIKeyName;
     const clientIP = displayFields.clientIP;
-    const reportedIPSourceLabel = useMemo(() => {
-        if (displayFields.reportedClientIPSource === 'cf-connecting-ip') return 'CF';
-        if (displayFields.reportedClientIPSource === 'x-forwarded-for') return 'XFF';
-        return '';
-    }, [displayFields.reportedClientIPSource]);
+    const ipSourceToken = reportedIPSourceToken(displayFields.reportedClientIPSource);
     const cacheReadTokens = displayFields.cacheReadTokens;
     const semanticCacheHit = displayFields.semanticCacheHit;
     const effectiveInputTokens = Math.max(0, log.input_tokens - cacheReadTokens);
@@ -404,13 +400,21 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                         </span>
                                     </div>
                                 )}
-                                {vis.clientIP && clientIP && (
+                                {vis.clientIP && (displayFields.hasReportedClientIP || displayFields.rawClientIP) && (
                                     <div className="flex items-center gap-1.5">
-                                        <Globe className="size-3.5 shrink-0 text-sky-500" />
-                                        <span className="truncate" title={clientIP}>{clientIP}</span>
-                                        {reportedIPSourceLabel && (
-                                            <span className="shrink-0 rounded-sm bg-sky-500/10 px-1 text-[10px] leading-4 text-sky-600 dark:text-sky-400" title={t('reportedIPHint', { source: displayFields.reportedClientIPSource })}>
-                                                {reportedIPSourceLabel}
+                                        <Globe className={cn('size-3.5 shrink-0', displayFields.hasReportedClientIP ? 'text-sky-500' : 'text-muted-foreground/60')} />
+                                        {displayFields.hasReportedClientIP ? <>
+                                            <span className="truncate" title={clientIP}>{clientIP}</span>
+                                            {ipSourceToken && (
+                                                <span className="shrink-0 rounded-sm bg-sky-500/10 px-1 text-[10px] leading-4 text-sky-600 dark:text-sky-400" title={t('reportedIPHint', { source: displayFields.reportedClientIPSource })}>
+                                                    {t(`ipSource.${ipSourceToken}`)}
+                                                </span>
+                                            )}
+                                        </> : (
+                                            // Render 等托管平台上取不到转发来源时，直连地址是平台代理 IP，
+                                            // 不能按真实客户端展示，只给灰色「代理 IP」并提示原始值。
+                                            <span className="truncate text-muted-foreground/70" title={t('ipProxyTooltip', { ip: displayFields.rawClientIP })}>
+                                                {t('ipProxy')}
                                             </span>
                                         )}
                                     </div>

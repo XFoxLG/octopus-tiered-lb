@@ -258,8 +258,9 @@ function assertGroupUiTranslations() {
         // 渠道测试入口合并后，标题与说明改用 testDialog；原 probeDialog 键随 ProbeDialog 一起删除。
         'channel.detail.testDialog.title',
         'channel.detail.testDialog.description',
-        // 日志卡片：错误摘要（t(`issueSummary.${kind}`)）是模板拼接键名，
-        // 字面量扫描看不到，必须显式枚举，否则漏键会静默显示原始 key。
+        // 日志卡片：来源徽标（t(`ipSource.${token}`)）与错误摘要（t(`issueSummary.${kind}`)）
+        // 都是模板拼接键名，字面量扫描看不到，必须显式枚举，否则漏键会静默显示原始 key。
+        ...['cf', 'tru', 'xff'].map((token) => `log.card.ipSource.${token}`),
         ...['blocked', 'limited', 'empty', 'timeout', 'failed'].map((kind) => `log.card.issueSummary.${kind}`),
     ]);
     for (const localeName of localeFiles) {
