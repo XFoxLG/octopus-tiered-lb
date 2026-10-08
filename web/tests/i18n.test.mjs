@@ -246,18 +246,18 @@ function assertGroupUiTranslations() {
             .flatMap((protocol) => [`channel.form.upstreamProtocol.${protocol}`, `channel.form.upstreamProtocolHint.${protocol}`]),
         // 探测弹窗：协议/能力项的键名通过模板拼接，同样必须显式枚举。
         ...[
-            'title', 'description', 'modelLabel', 'modelPlaceholder', 'modelHint', 'modelRequired',
+            'modelLabel', 'modelPlaceholder', 'modelHint', 'modelRequired',
             'skipModelTestWarning', 'skipModelTestConfirm', 'idleHint', 'running',
-            'sectionProtocol', 'sectionCapability', 'summary', 'start', 'rerun', 'close',
-            'apply', 'applied', 'applyHint', 'applyNoChange', 'applyAdded',
+            'sectionProtocol', 'sectionCapability', 'summary', 'close',
+            'apply', 'applied', 'applyNoChange', 'applyAdded', 'cancel', 'cancelled',
         ].map((key) => `channel.probe.${key}`),
         ...['protocol_chat', 'protocol_responses', 'protocol_messages', 'protocol_gemini',
             'models', 'text_generation', 'tool_calling', 'structured_output', 'web_search']
             .map((item) => `channel.probe.item.${item}`),
         ...['pass', 'fail', 'unsupported', 'unknown'].map((verdict) => `channel.probe.verdict.${verdict}`),
-        'channel.detail.testModel.probe',
-        'channel.detail.probeDialog.title',
-        'channel.detail.probeDialog.description',
+        // 渠道测试入口合并后，标题与说明改用 testDialog；原 probeDialog 键随 ProbeDialog 一起删除。
+        'channel.detail.testDialog.title',
+        'channel.detail.testDialog.description',
     ]);
     for (const localeName of localeFiles) {
         assertTranslatedPaths(localeName, readJson(path.join(localeDir, localeName)), paths);

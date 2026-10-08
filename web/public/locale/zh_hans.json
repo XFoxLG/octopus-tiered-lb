@@ -3095,8 +3095,7 @@
         "delete": "删除",
         "confirmDelete": "确认删除",
         "deleting": "删除中...",
-        "checkKeys": "检查全部 Key",
-        "checking": "检查中...",
+        "test": "测试",
         "checkAllPassed": "全部 Key 可用（{passed}/{total} 项通过）",
         "checkPartialPassed": "部分 Key 可用（{passed}/{total} 项通过）",
         "checkAllFailed": "全部 Key 均不可用，可删除该渠道",
@@ -3107,18 +3106,15 @@
       },
       "testModel": {
         "noModels": "该渠道暂无可测试的模型",
-        "selectPlaceholder": "选择要测试的模型",
-        "test": "测试模型",
-        "testing": "测试中...",
+        "entryHint": "原「测试模型」「测试连接」「检查全部 Key」已合并到这一个入口。",
         "passed": "测试通过",
         "failed": "测试失败",
         "attempts": "重试 {count} 次",
-        "skipped": "该渠道已设置跳过模型可用性测试（部分上游会因低字节探测请求扣额度/封禁），测试已禁用。",
-        "probe": "测试连接"
+        "skipped": "该渠道已设置跳过模型可用性测试（部分上游会因低字节探测请求扣额度/封禁），测试已禁用。"
       },
-      "probeDialog": {
-        "title": "测试连接",
-        "description": "逐项验证该渠道支持的协议与能力。探测只加不减，需要你点「应用」才会写回配置。"
+      "testDialog": {
+        "title": "测试渠道",
+        "description": "模型应答、协议与能力、逐 Key 检查合并在这一个弹窗里；每一段都需要手动点击运行。"
       }
     },
     "create": {
@@ -3415,11 +3411,29 @@
       "baseUrlProtocolAny": "通用地址",
       "baseUrlProtocolLabel": "该地址服务的上游协议"
     },
+    "test": {
+      "title": "测试渠道",
+      "description": "一个入口跑三类检查：模型应答、协议与能力、逐 Key 检查。全部手动触发；探测结果需要点「应用结果」才会写回配置。",
+      "resultsLabel": "测试结果",
+      "sections": {
+        "model": "模型应答",
+        "probe": "协议与能力",
+        "keys": "逐 Key 检查"
+      },
+      "runSection": "运行 {section}",
+      "rerunSection": "重新运行 {section}",
+      "modelIdle": "尚未运行模型应答检查。",
+      "keysIdle": "尚未运行逐 Key 检查。",
+      "modelCancelled": "已停止等待模型应答结果（上游请求可能仍在后台完成）。",
+      "keysCancelled": "已停止等待逐 Key 检查结果。",
+      "diagnosticOnly": "该渠道已使用新的接口配置，探测只用于诊断，不会写回配置。",
+      "noKeys": "该渠道没有可检查的 Key。",
+      "cancelWait": "停止等待",
+      "footerHint": "模型应答与逐 Key 检查会消耗渠道 Key 额度；协议与能力探测会向该模型发真实请求。全部只在手动点击时执行，没有后台定时。"
+    },
     "probe": {
       "cancel": "停止探测",
       "cancelled": "已停止本次探测；不会自动应用结果。",
-      "title": "测试连接",
-      "description": "依次验证该渠道支持哪些上游协议，再逐项验证模型能力。结果需要你点「应用」才会写回渠道配置；探测只加不减，不会删掉现有设置。",
       "modelLabel": "选择测试模型",
       "modelPlaceholder": "输入或选择模型名",
       "modelHint": "会向该模型发真实请求并消耗额度，所以只在手动点击时执行，不会后台定时跑。",
@@ -3431,12 +3445,9 @@
       "sectionProtocol": "协议层",
       "sectionCapability": "能力层",
       "summary": "整体结果：{summary}",
-      "start": "开始探测",
-      "rerun": "重新探测",
       "close": "关闭",
       "apply": "应用结果",
       "applied": "已应用",
-      "applyHint": "「应用结果」只把探测通过的协议加进渠道声明，不会删除任何现有项。",
       "applyNoChange": "没有新的可写入项（探测结果与当前配置一致，或结论不足以判定）",
       "applyAdded": "已加入协议：{protocols}",
       "item": {

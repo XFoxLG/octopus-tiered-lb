@@ -3139,8 +3139,7 @@
         "delete": "Delete",
         "confirmDelete": "Confirm Delete",
         "deleting": "Deleting...",
-        "checkKeys": "Check All Keys",
-        "checking": "Checking...",
+        "test": "Test",
         "checkAllPassed": "All keys available ({passed}/{total} passed)",
         "checkPartialPassed": "Some keys available ({passed}/{total} passed)",
         "checkAllFailed": "All keys are unavailable, you can delete this channel",
@@ -3151,18 +3150,15 @@
       },
       "testModel": {
         "noModels": "No models available to test for this channel",
-        "selectPlaceholder": "Select a model to test",
-        "test": "Test Model",
-        "testing": "Testing...",
+        "entryHint": "The former Test model / Test connection / Check all keys actions are merged into this entry.",
         "passed": "Test Passed",
         "failed": "Test Failed",
         "attempts": "Retried {count} times",
-        "skipped": "This channel is set to skip model availability tests (some upstream providers penalize low-byte probe requests). Testing is disabled.",
-        "probe": "Test connection"
+        "skipped": "This channel is set to skip model availability tests (some upstream providers penalize low-byte probe requests). Testing is disabled."
       },
-      "probeDialog": {
-        "title": "Test Connection",
-        "description": "Verifies the protocols and capabilities this channel supports. The probe only adds; results are written back only when you click Apply."
+      "testDialog": {
+        "title": "Test channel",
+        "description": "Model response, protocol capabilities and per-key checks are merged into this single dialog; each section runs only when you click it."
       }
     },
     "create": {
@@ -3459,11 +3455,29 @@
       "baseUrlProtocolAny": "Any protocol",
       "baseUrlProtocolLabel": "Upstream protocol served by this URL"
     },
+    "test": {
+      "title": "Test channel",
+      "description": "Three checks in one place: model response, protocol and capabilities, then per-key connectivity. Everything runs only when you click; probe results are written back only after you press Apply.",
+      "resultsLabel": "Test results",
+      "sections": {
+        "model": "Model response",
+        "probe": "Protocol & capabilities",
+        "keys": "Per-key checks"
+      },
+      "runSection": "Run {section}",
+      "rerunSection": "Re-run {section}",
+      "modelIdle": "Model response check has not run yet.",
+      "keysIdle": "Per-key check has not run yet.",
+      "modelCancelled": "Stopped waiting for the model response (the upstream request may still finish in the background).",
+      "keysCancelled": "Stopped waiting for the per-key check.",
+      "diagnosticOnly": "This channel already uses the new connection config, so the probe is diagnostic only and will not be written back.",
+      "noKeys": "This channel has no keys to check.",
+      "cancelWait": "Stop waiting",
+      "footerHint": "Model response and per-key checks consume the channel key quota; the probe sends real requests. Everything runs only on manual click, with no background schedule."
+    },
     "probe": {
       "cancel": "Stop probe",
       "cancelled": "Probe stopped. Results are not applied automatically.",
-      "title": "Test Connection",
-      "description": "Verifies which upstream protocols this channel supports, then checks each model capability. Results are only written back when you click Apply; the probe only adds, never removes existing settings.",
       "modelLabel": "Select a model to test",
       "modelPlaceholder": "Type or pick a model name",
       "modelHint": "This sends real requests to the model and consumes quota, so it only runs when you click it — never on a schedule.",
@@ -3475,12 +3489,9 @@
       "sectionProtocol": "Protocols",
       "sectionCapability": "Capabilities",
       "summary": "Overall: {summary}",
-      "start": "Start probe",
-      "rerun": "Probe again",
       "close": "Close",
       "apply": "Apply results",
       "applied": "Applied",
-      "applyHint": "Apply only adds protocols that passed; nothing existing is ever removed.",
       "applyNoChange": "Nothing new to write (results match the current config, or the evidence was inconclusive)",
       "applyAdded": "Added protocols: {protocols}",
       "item": {

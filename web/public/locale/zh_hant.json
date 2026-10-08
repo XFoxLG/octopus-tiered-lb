@@ -3095,8 +3095,7 @@
         "delete": "刪除",
         "confirmDelete": "確認刪除",
         "deleting": "刪除中...",
-        "checkKeys": "檢查全部 Key",
-        "checking": "檢查中...",
+        "test": "測試",
         "checkAllPassed": "全部 Key 可用（{passed}/{total} 項通過）",
         "checkPartialPassed": "部分 Key 可用（{passed}/{total} 項通過）",
         "checkAllFailed": "全部 Key 均不可用，可刪除該渠道",
@@ -3107,18 +3106,15 @@
       },
       "testModel": {
         "noModels": "該供應源暫無可測試的模型",
-        "selectPlaceholder": "選擇要測試的模型",
-        "test": "測試模型",
-        "testing": "測試中...",
+        "entryHint": "原「測試模型」「測試連線」「檢查全部 Key」已合併到這一個入口。",
         "passed": "測試通過",
         "failed": "測試失敗",
         "attempts": "重試 {count} 次",
-        "skipped": "該供應源已設定跳過模型可用性測試（部分上游會因低字節探測請求扣額度/封禁），測試已停用。",
-        "probe": "測試連線"
+        "skipped": "該供應源已設定跳過模型可用性測試（部分上游會因低字節探測請求扣額度/封禁），測試已停用。"
       },
-      "probeDialog": {
-        "title": "測試連線",
-        "description": "逐項驗證該渠道支援的協定與能力。探測只加不減，需要你點「套用」才會寫回設定。"
+      "testDialog": {
+        "title": "測試渠道",
+        "description": "模型回應、協定與能力、逐 Key 檢查合併在這一個彈窗裡；每一段都需要手動點擊執行。"
       }
     },
     "create": {
@@ -3415,11 +3411,29 @@
       "baseUrlProtocolAny": "通用位址",
       "baseUrlProtocolLabel": "該位址服務的上游協定"
     },
+    "test": {
+      "title": "測試渠道",
+      "description": "一個入口跑三類檢查：模型回應、協定與能力、逐 Key 檢查。全部手動觸發；探測結果需要點「套用結果」才會寫回設定。",
+      "resultsLabel": "測試結果",
+      "sections": {
+        "model": "模型回應",
+        "probe": "協定與能力",
+        "keys": "逐 Key 檢查"
+      },
+      "runSection": "執行 {section}",
+      "rerunSection": "重新執行 {section}",
+      "modelIdle": "尚未執行模型回應檢查。",
+      "keysIdle": "尚未執行逐 Key 檢查。",
+      "modelCancelled": "已停止等待模型回應結果（上游請求可能仍在背景完成）。",
+      "keysCancelled": "已停止等待逐 Key 檢查結果。",
+      "diagnosticOnly": "該供應源已使用新的介面設定，探測只用於診斷，不會寫回設定。",
+      "noKeys": "該供應源沒有可檢查的 Key。",
+      "cancelWait": "停止等待",
+      "footerHint": "模型回應與逐 Key 檢查會消耗供應源 Key 額度；協定與能力探測會向該模型發真實請求。全部只在手動點擊時執行，沒有背景定時。"
+    },
     "probe": {
       "cancel": "停止探測",
       "cancelled": "已停止本次探測；不會自動套用結果。",
-      "title": "測試連線",
-      "description": "依序驗證該渠道支援哪些上游協定，再逐項驗證模型能力。結果需要你點「套用」才會寫回渠道設定；探測只加不減，不會刪掉現有設定。",
       "modelLabel": "選擇測試模型",
       "modelPlaceholder": "輸入或選擇模型名稱",
       "modelHint": "會向該模型發真實請求並消耗額度，所以只在手動點擊時執行，不會背景定時跑。",
@@ -3431,12 +3445,9 @@
       "sectionProtocol": "協定層",
       "sectionCapability": "能力層",
       "summary": "整體結果：{summary}",
-      "start": "開始探測",
-      "rerun": "重新探測",
       "close": "關閉",
       "apply": "套用結果",
       "applied": "已套用",
-      "applyHint": "「套用結果」只把探測通過的協定加進渠道宣告，不會刪除任何現有項。",
       "applyNoChange": "沒有新的可寫入項（探測結果與目前設定一致，或結論不足以判定）",
       "applyAdded": "已加入協定：{protocols}",
       "item": {

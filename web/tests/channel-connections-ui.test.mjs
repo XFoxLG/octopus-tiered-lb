@@ -95,3 +95,106 @@ test('URL previews preserve custom prefixes and do not show query credentials', 
   assert.equal(helpers.connectionURLPreview(endpoint), endpoint.url);
   assert.equal(helpers.canFetchConnectionModels({ ...helpers.newConnectionConfig(), catalog: { format: 'manual' } }), false);
 });
+
+const CHANNEL_TYPES = { OpenAIEmbedding: 3 };
+
+function testDialogFixture({ locale = 'en', overrides = {} } = {}) {
+    const messages = JSON.parse(read(`../public/locale/${locale}.json`));
+    const translateFor = (namespace) => createTranslator({
+        locale: locale.replace('_', '-'),
+        messages,
+        namespace,
+        // 缺键会抛错：这样「界面显示原始 key」会直接变成测试失败。
+        onError: (error) => { throw error; },
+    });
+    const noopMutation = { isPending: false, mutate: () => {}, mutateAsync: async () => ({}) };
+    const { TestDialog } = load('../src/components/modules/channel/TestDialog.tsx', {
+        react: {
+            useState: (initial) => [initial, () => {}],
+            useEffect: (effect) => { effect(); },
+            useMemo: (factory) => factory(),
+            useRef: (initial) => ({ current: initial }),
+        },
+        'next-intl': { useTranslations: (namespace) => translateFor(namespace) },
+        'lucide-react': new Proxy({}, { get: () => 'span' }),
+        '@/api/endpoints/channel': {
+            ChannelType: CHANNEL_TYPES,
+            useTestChannelModel: () => noopMutation,
+            useChannelProbe: () => noopMutation,
+            useCheckChannelKeys: () => noopMutation,
+            useApplyChannelProbe: () => noopMutation,
+        },
+        '@/api/endpoints/group': { useGroupTestProgress: () => ({ data: undefined }) },
+        '@/components/ui/button': { Button: 'button' },
+        '@/components/ui/input': { Input: 'input' },
+        '@/components/common/Toast': { toast: { error: () => {}, success: () => {}, warning: () => {} } },
+        '@/lib/utils': { cn: (...values) => values.filter(Boolean).join(' ') },
+    });
+    const channel = {
+        id: 7,
+        type: 1,
+        model: 'gpt-4o-mini',
+        custom_model: '',
+        skip_model_test: false,
+        keys: [{ id: 1, enabled: true, channel_key: 'sk-test' }],
+        connection_config: undefined,
+        ...overrides,
+    };
+    const element = TestDialog({ channel, availableModels: ['gpt-4o-mini'], onClose: () => {}, onKeysUnavailable: () => {} });
+    return { element, markup: renderToStaticMarkup(element) };
+}
+
+for (const locale of ['en', 'zh_hans', 'zh_hant']) test(`${locale}: the merged test dialog renders three labelled sections with no raw keys`, () => {
+    const { element, markup } = testDialogFixture({ locale });
+    const messages = JSON.parse(read(`../public/locale/${locale}.json`));
+    for (const section of Object.values(messages.channel.test.sections)) {
+        // 分段标题必须是独立的标题元素（markup 里 & 会被转义，所以查元素树而不是字符串）。
+        const heading = all(element, (node) => node.type === 'p' && node.props.children === section);
+        assert.equal(heading.length, 1, `分段标题 ${section} 应恰好出现一次`);
+    }
+    assert.match(markup, /role="region"/);
+    assert.match(markup, /aria-busy="false"/);
+    assert.equal(markup.includes('channel.test.'), false);
+    assert.equal(markup.includes('channel.probe.'), false);
+    assert.equal(markup.includes('channel.detail.'), false);
+    const buttons = all(element, (node) => node.type === 'button');
+    assert.ok(buttons.length >= 3);
+    assert.ok(buttons.every((button) => button.props.type === 'button'), '每个按钮都必须是 type=button');
+    // 模型应答 / 协议与能力 / 逐 Key 三段各有一个运行按钮，且都没有被禁用。
+    for (const section of Object.values(messages.channel.test.sections)) {
+        const run = buttons.find((button) => Array.isArray(button.props.children)
+            && button.props.children.some((child) => typeof child === 'string' && child.includes(section)));
+        assert.ok(run, `缺少「${section}」的运行按钮`);
+        assert.equal(run.props.disabled, false);
+    }
+});
+
+test('legacy channels offer to apply probe results; migrated channels are diagnostic only', () => {
+    const messages = JSON.parse(read('../public/locale/en.json'));
+    const legacy = testDialogFixture();
+    assert.ok(legacy.markup.includes(messages.channel.probe.apply));
+    assert.equal(legacy.markup.includes(messages.channel.test.diagnosticOnly), false);
+
+    const migrated = testDialogFixture({ overrides: { connection_config: { selection: 'same_protocol', endpoints: [], catalog: { format: 'manual' } } } });
+    assert.equal(migrated.markup.includes(messages.channel.probe.apply), false);
+    assert.ok(migrated.markup.includes(messages.channel.test.diagnosticOnly));
+});
+
+test('a channel without keys explains the gap and disables the per-key run button', () => {
+    const messages = JSON.parse(read('../public/locale/en.json'));
+    const { element, markup } = testDialogFixture({ overrides: { keys: [] } });
+    assert.ok(markup.includes(messages.channel.test.noKeys));
+    const perKey = all(element, (node) => node.type === 'button'
+        && Array.isArray(node.props.children)
+        && node.props.children.some((child) => typeof child === 'string' && child.includes(messages.channel.test.sections.keys)));
+    assert.equal(perKey.length, 1);
+    assert.equal(perKey[0].props.disabled, true);
+});
+
+test('channel detail keeps a single test entry and drops the retired parallel buttons', () => {
+    const card = read('../src/components/modules/channel/CardContent.tsx');
+    assert.match(card, /<TestDialog/);
+    assert.doesNotMatch(card, /ProbeDialog/);
+    assert.doesNotMatch(card, /testModel\.probe|actions\.checkKeys/);
+    assert.equal(fs.existsSync(new URL('../src/components/modules/channel/ProbeDialog.tsx', import.meta.url)), false);
+});

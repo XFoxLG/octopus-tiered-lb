@@ -824,13 +824,14 @@ export function useTestChannel() {
  *
  * @example
  * const checkKeys = useCheckChannelKeys();
- * const summary = await checkKeys.mutateAsync(channelId);
+ * const summary = await checkKeys.mutateAsync({ id: channelId });
  * if (!summary.passed) { // 提示可删除该渠道 }
  */
 export function useCheckChannelKeys() {
     return useMutation({
-        mutationFn: async (id: number) => {
-            return apiClient.post<TestChannelSummary>(`/api/v1/channel/check-keys/${id}`);
+        // signal：关闭测试弹窗时中止在途检查（后端只读探测，可安全取消）。
+        mutationFn: async ({ id, signal }: { id: number; signal?: AbortSignal }) => {
+            return apiClient.post<TestChannelSummary>(`/api/v1/channel/check-keys/${id}`, undefined, undefined, true, signal);
         },
         onError: (error) => {
             logger.error('渠道 key 检查失败:', error);
