@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
-import { Bot, Clock3, KeyRound, Link2, Sparkles } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Bot, Clock3, KeyRound, Link2, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { API_BASE_URL } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import {
     Select,
     SelectContent,
@@ -20,9 +21,13 @@ import {
     buildOctopusAIRoutePreset,
     getAIRouteConfigurationIssues,
     getAIRouteModelAliases,
-    inspectAIRouteServices,
     type AIRouteConfiguration,
 } from './airoute-config';
+import {
+    parseServicesJSON,
+    serializeServicesRows,
+    type AIRouteServiceRow,
+} from './ai-route-services';
 
 const DEFAULT_CONFIGURATION: AIRouteConfiguration = {
     groupID: '0',
@@ -31,6 +36,7 @@ const DEFAULT_CONFIGURATION: AIRouteConfiguration = {
     model: '',
     timeoutSeconds: '180',
     parallelism: '3',
+    maxModels: '120',
     servicesJSON: '[]',
 };
 
@@ -41,6 +47,7 @@ const CONFIGURATION_SETTINGS = {
     model: SettingKey.AIRouteModel,
     timeoutSeconds: SettingKey.AIRouteTimeoutSeconds,
     parallelism: SettingKey.AIRouteParallelism,
+    maxModels: SettingKey.AIRouteMaxModelsPerRequest,
     servicesJSON: SettingKey.AIRouteServices,
 } satisfies Record<keyof AIRouteConfiguration, string>;
 
@@ -55,6 +62,11 @@ export function SettingAIRoute() {
     const [presetModel, setPresetModel] = useState('');
     const [presetError, setPresetError] = useState(false);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [serviceRows, setServiceRows] = useState<AIRouteServiceRow[]>([]);
+    const [servicesHydrated, setServicesHydrated] = useState(false);
+    const [servicesInvalid, setServicesInvalid] = useState(false);
+    const [servicesRawFallback, setServicesRawFallback] = useState('');
+    const baselineServicesJSON = useRef('[]');
 
     const savedConfiguration = { ...DEFAULT_CONFIGURATION };
     for (const field of CONFIGURATION_FIELDS) {
@@ -62,15 +74,35 @@ export function SettingAIRoute() {
         savedConfiguration[field] = storedValue || DEFAULT_CONFIGURATION[field];
     }
     const configuration = { ...savedConfiguration, ...draft };
-    const services = inspectAIRouteServices(configuration.servicesJSON);
-    const issues = getAIRouteConfigurationIssues(configuration);
+
+    // 服务池结构化编辑器水合：settings 首次到位时解析一次存量 JSON。
+    // 之后以本地 rows/原文为准，避免保存后的 refetch 覆盖正在编辑的内容。
+    useEffect(() => {
+        if (!settings || servicesHydrated) return;
+        const stored = settings.find((setting) => setting.key === SettingKey.AIRouteServices)?.value || '[]';
+        const { rows, invalid } = parseServicesJSON(stored);
+        if (invalid || !rows) {
+            setServicesInvalid(true);
+            setServicesRawFallback(stored);
+            baselineServicesJSON.current = stored.trim();
+        } else {
+            setServiceRows(rows);
+            baselineServicesJSON.current = serializeServicesRows(rows);
+        }
+        setServicesHydrated(true);
+    }, [settings, servicesHydrated]);
+
+    // 出站的服务池 JSON：结构化路径由 rows 序列化；降级路径使用原文（此时 issues 会拦截保存）。
+    const effectiveServicesJSON = servicesInvalid ? servicesRawFallback : serializeServicesRows(serviceRows);
+    const usesServicePool = servicesInvalid || serviceRows.length > 0;
+    const issues = getAIRouteConfigurationIssues({ ...configuration, servicesJSON: effectiveServicesJSON });
     const modelAliases = getAIRouteModelAliases(groups);
     const selectedPresetModel = modelAliases.includes(presetModel) ? presetModel : '';
     const isSaving = saveStatus === 'saving';
     const unavailable = settingsLoading || settingsError || !settings;
     const hasChanges = CONFIGURATION_FIELDS.some((field) => {
-        const nextValue = field === 'servicesJSON' ? services.normalizedJSON : configuration[field];
-        return nextValue !== savedConfiguration[field];
+        if (field === 'servicesJSON') return effectiveServicesJSON.trim() !== baselineServicesJSON.current;
+        return configuration[field] !== savedConfiguration[field];
     });
     const publicBaseURL = settings?.find((setting) => setting.key === SettingKey.PublicAPIBaseURL)?.value || '';
 
@@ -80,7 +112,7 @@ export function SettingAIRoute() {
     };
 
     const applyOctopusPreset = () => {
-        if (unavailable || isSaving || !selectedPresetModel || services.usesServicePool) return;
+        if (unavailable || isSaving || !selectedPresetModel || usesServicePool) return;
         const preset = buildOctopusAIRoutePreset({
             publicBaseURL,
             consoleAPIBaseURL: API_BASE_URL,
@@ -93,14 +125,46 @@ export function SettingAIRoute() {
         setSaveStatus('idle');
     };
 
+    const updateServiceRow = (index: number, patch: Partial<AIRouteServiceRow>) => {
+        setServiceRows((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+        setSaveStatus('idle');
+    };
+
+    const addServiceRow = () => {
+        setServiceRows((current) => [...current, { name: '', baseUrl: '', apiKey: '', model: '', enabled: true }]);
+        setSaveStatus('idle');
+    };
+
+    const removeServiceRow = (index: number) => {
+        setServiceRows((current) => current.filter((_, i) => i !== index));
+        setSaveStatus('idle');
+    };
+
+    // 降级路径手动修复：重新解析 textarea 原文，合法则切回结构化编辑器。
+    const retryParseServicesFallback = () => {
+        const raw = servicesRawFallback.trim() || '[]';
+        const { rows, invalid } = parseServicesJSON(raw);
+        if (invalid || !rows) {
+            toast.error(t('aiRoute.services.invalid'));
+            return;
+        }
+        setServiceRows(rows);
+        setServicesInvalid(false);
+        setServicesRawFallback('');
+        setSaveStatus('idle');
+    };
+
     const handleSave = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (unavailable || isSaving || issues.length > 0 || !hasChanges) return;
-        const nextConfiguration = { ...configuration, servicesJSON: services.normalizedJSON };
-        for (const field of ['baseURL', 'model', 'timeoutSeconds', 'parallelism'] as const) {
+        const nextConfiguration = { ...configuration, servicesJSON: effectiveServicesJSON.trim() };
+        for (const field of ['baseURL', 'model', 'timeoutSeconds', 'parallelism', 'maxModels'] as const) {
             if (field in draft) nextConfiguration[field] = nextConfiguration[field].trim();
         }
-        const changedFields = CONFIGURATION_FIELDS.filter((field) => nextConfiguration[field] !== savedConfiguration[field]);
+        const changedFields = CONFIGURATION_FIELDS.filter((field) => {
+            if (field === 'servicesJSON') return nextConfiguration.servicesJSON !== baselineServicesJSON.current;
+            return nextConfiguration[field] !== savedConfiguration[field];
+        });
         setSaveStatus('saving');
         try {
             // The existing setting endpoint saves one field at a time, not atomically.
@@ -109,6 +173,7 @@ export function SettingAIRoute() {
             }
             const refreshed = await refetch();
             if (refreshed.isError) throw new Error('settings-refresh-failed');
+            baselineServicesJSON.current = nextConfiguration.servicesJSON;
             setDraft({});
             setSaveStatus('saved');
             toast.success(t('saved'));
@@ -118,7 +183,7 @@ export function SettingAIRoute() {
         }
     };
 
-    const presetDisabledReason = services.usesServicePool
+    const presetDisabledReason = usesServicePool
         ? t('aiRoute.selfApi.poolActive')
         : groupsLoading
             ? t('aiRoute.status.loading')
@@ -195,7 +260,7 @@ export function SettingAIRoute() {
                         <Select
                             value={selectedPresetModel}
                             onValueChange={setPresetModel}
-                            disabled={unavailable || isSaving || groupsLoading || groupsError || modelAliases.length === 0 || services.usesServicePool}
+                            disabled={unavailable || isSaving || groupsLoading || groupsError || modelAliases.length === 0 || usesServicePool}
                         >
                             <SelectTrigger id="airoute-preset-model" className="w-full" aria-describedby="airoute-preset-help airoute-preset-status">
                                 <SelectValue placeholder={t('aiRoute.selfApi.selectModel')} />
@@ -212,8 +277,8 @@ export function SettingAIRoute() {
                         </p>
                     </div>
 
-                    <p className="text-sm font-medium">{t(services.usesServicePool ? 'aiRoute.services.active' : 'aiRoute.services.single')}</p>
-                    <fieldset disabled={services.usesServicePool} className="grid min-w-0 gap-4 xl:grid-cols-2">
+                    <p className="text-sm font-medium">{t(usesServicePool ? 'aiRoute.services.active' : 'aiRoute.services.single')}</p>
+                    <fieldset disabled={usesServicePool} className="grid min-w-0 gap-4 xl:grid-cols-2">
                         <div className="space-y-3 rounded-lg bg-card p-4 shadow-sm">
                             <label htmlFor="airoute-base-url" className="flex items-center gap-3 text-sm font-medium">
                                 <Link2 className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
@@ -225,7 +290,7 @@ export function SettingAIRoute() {
                                 value={configuration.baseURL}
                                 onChange={(event) => updateField('baseURL', event.target.value)}
                                 placeholder={t('aiRoute.baseUrl.placeholder')}
-                                required={!services.usesServicePool}
+                                required={!usesServicePool}
                                 aria-invalid={issues.includes('baseURL')}
                                 aria-describedby={`airoute-url-help${issues.includes('baseURL') ? ' airoute-error-baseURL' : ''}`}
                             />
@@ -241,7 +306,7 @@ export function SettingAIRoute() {
                                 value={configuration.model}
                                 onChange={(event) => updateField('model', event.target.value)}
                                 placeholder={t('aiRoute.model.placeholder')}
-                                required={!services.usesServicePool}
+                                required={!usesServicePool}
                                 aria-invalid={issues.includes('model')}
                                 aria-describedby={`airoute-model-help${issues.includes('model') ? ' airoute-error-model' : ''}`}
                             />
@@ -260,7 +325,7 @@ export function SettingAIRoute() {
                                 value={configuration.apiKey}
                                 onChange={(event) => updateField('apiKey', event.target.value)}
                                 placeholder={t('aiRoute.apiKey.placeholder')}
-                                required={!services.usesServicePool}
+                                required={!usesServicePool}
                                 aria-invalid={issues.includes('apiKey')}
                                 aria-describedby={`airoute-key-help${issues.includes('apiKey') ? ' airoute-error-apiKey' : ''}`}
                             />
@@ -270,7 +335,7 @@ export function SettingAIRoute() {
                     <p className="text-sm text-muted-foreground">{t('aiRoute.networkHint')}</p>
 
                     <div className="grid gap-4 xl:grid-cols-2">
-                        {(['timeoutSeconds', 'parallelism'] as const).map((field) => (
+                        {(['timeoutSeconds', 'parallelism', 'maxModels'] as const).map((field) => (
                             <div key={field} className="space-y-3 rounded-lg bg-card p-4 shadow-sm">
                                 <label htmlFor={`airoute-${field}`} className="flex items-center gap-3 text-sm font-medium">
                                     <Clock3 className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
@@ -292,24 +357,115 @@ export function SettingAIRoute() {
                         ))}
                     </div>
 
-                    <details className="rounded-lg border border-border/50 p-4">
+                    <details open={servicesInvalid || undefined} className="rounded-lg border border-border/50 p-4">
                         <summary className="cursor-pointer rounded text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
                             {t('aiRoute.services.advanced')}
                         </summary>
                         <div className="mt-4 space-y-3">
                             <p id="airoute-services-help" className="text-sm text-muted-foreground">{t('aiRoute.services.description')}</p>
-                            <label htmlFor="airoute-services" className="block text-sm font-medium">{t('aiRoute.services.label')}</label>
-                            <textarea
-                                id="airoute-services"
-                                value={configuration.servicesJSON}
-                                onChange={(event) => updateField('servicesJSON', event.target.value)}
-                                placeholder={t('aiRoute.services.placeholder')}
-                                autoComplete="off"
-                                spellCheck={false}
-                                aria-invalid={issues.includes('servicesJSON')}
-                                aria-describedby={`airoute-services-help${issues.includes('servicesJSON') ? ' airoute-error-servicesJSON' : ''}`}
-                                className="min-h-44 w-full rounded-lg border border-border/35 bg-card px-4 py-3 font-mono text-sm text-foreground shadow-inner outline-none focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20"
-                            />
+                            <p className="text-sm text-muted-foreground">{t('aiRoute.services.hint')}</p>
+                            <p className="text-sm font-medium">{t('aiRoute.services.label')}</p>
+                            {servicesInvalid ? (
+                                <div className="space-y-3">
+                                    <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive" role="alert">
+                                        {t('aiRoute.services.invalidStored')}
+                                    </p>
+                                    <textarea
+                                        id="airoute-services"
+                                        value={servicesRawFallback}
+                                        onChange={(event) => {
+                                            setServicesRawFallback(event.target.value);
+                                            setSaveStatus('idle');
+                                        }}
+                                        placeholder={t('aiRoute.services.placeholder')}
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        aria-invalid={issues.includes('servicesJSON')}
+                                        aria-describedby={`airoute-services-help${issues.includes('servicesJSON') ? ' airoute-error-servicesJSON' : ''}`}
+                                        className="min-h-44 w-full rounded-lg border border-border/35 bg-card px-4 py-3 font-mono text-sm text-foreground shadow-inner outline-none focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20"
+                                    />
+                                    <div className="flex items-center justify-end gap-2">
+                                        <Button type="button" variant="outline" size="sm" onClick={retryParseServicesFallback}>
+                                            {t('aiRoute.services.retryParse')}
+                                        </Button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {serviceRows.length === 0 && (
+                                        <p className="text-sm text-muted-foreground">{t('aiRoute.services.empty')}</p>
+                                    )}
+                                    {serviceRows.map((row, index) => (
+                                        <div key={index} className="space-y-2.5 rounded-lg border border-border/30 bg-card p-3.5 shadow-sm">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="text-xs font-medium text-muted-foreground">
+                                                    {t('aiRoute.services.serviceIndex', { index: index + 1 })}
+                                                    {row.enabled ? '' : ` · ${t('aiRoute.services.disabledTag')}`}
+                                                </span>
+                                                <div className="flex items-center gap-2">
+                                                    <Switch
+                                                        checked={row.enabled}
+                                                        onCheckedChange={(checked) => updateServiceRow(index, { enabled: checked })}
+                                                        aria-label={t('aiRoute.services.serviceIndex', { index: index + 1 })}
+                                                    />
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={() => removeServiceRow(index)}
+                                                        aria-label={t('aiRoute.services.removeService', { index: index + 1 })}
+                                                    >
+                                                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                            <div className="grid gap-2.5 sm:grid-cols-2">
+                                                <Input
+                                                    value={row.name}
+                                                    onChange={(event) => updateServiceRow(index, { name: event.target.value })}
+                                                    placeholder={t('aiRoute.services.namePlaceholder')}
+                                                    className="w-full rounded-lg"
+                                                />
+                                                <Input
+                                                    value={row.model}
+                                                    onChange={(event) => updateServiceRow(index, { model: event.target.value })}
+                                                    placeholder={t('aiRoute.services.modelPlaceholder')}
+                                                    className="w-full rounded-lg"
+                                                />
+                                                <Input
+                                                    value={row.baseUrl}
+                                                    onChange={(event) => updateServiceRow(index, { baseUrl: event.target.value })}
+                                                    placeholder={t('aiRoute.services.baseUrlPlaceholder')}
+                                                    className="w-full rounded-lg sm:col-span-2"
+                                                />
+                                                <Input
+                                                    type="password"
+                                                    autoComplete="new-password"
+                                                    spellCheck={false}
+                                                    value={row.apiKey}
+                                                    onChange={(event) => updateServiceRow(index, { apiKey: event.target.value })}
+                                                    placeholder={t('aiRoute.services.apiKeyPlaceholder')}
+                                                    className="w-full rounded-lg sm:col-span-2"
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                                        <Button type="button" variant="outline" size="sm" onClick={addServiceRow}>
+                                            <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                                            {t('aiRoute.services.add')}
+                                        </Button>
+                                        {serviceRows.length > 0 && (
+                                            <span className="text-xs text-muted-foreground">
+                                                {t('aiRoute.services.enabledCount', {
+                                                    enabled: serviceRows.filter((row) => row.enabled).length,
+                                                    total: serviceRows.length,
+                                                })}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </details>
                 </fieldset>

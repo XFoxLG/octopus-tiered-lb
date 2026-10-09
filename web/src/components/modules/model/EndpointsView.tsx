@@ -1,13 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useId, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, Search, Waypoints } from 'lucide-react';
-import { useModelCapabilities, type ModelCapability } from '@/api/endpoints/model';
+import { ChevronDown, Waypoints } from 'lucide-react';
+import { useModelCapabilities } from '@/api/endpoints/model';
+import { useNavStore } from '@/components/modules/navbar';
+import { useSearchStore } from '@/components/modules/toolbar';
 import { LoadingState } from '@/components/common/LoadingState';
 import { ErrorState } from '@/components/common/ErrorState';
-import { Input } from '@/components/ui/input';
 import { Hint } from '@/components/ui/hint';
 import { getModelIcon } from '@/lib/model-icons';
 import { cn } from '@/lib/utils';
@@ -17,14 +18,37 @@ import {
     type EndpointGroup,
 } from '@/components/modules/apikey/endpoint-grouping';
 
+// 单个分组默认渲染的模型芯片数上限；更多模型折叠进「展开更多」按钮，
+// 避免大模型集合一次性渲染数百个带图标的芯片拖慢展开与重排。
+const INITIAL_VISIBLE_MODELS = 24;
+
+// 端点名 -> group.form.endpointType.options 下的 i18n key。
+const ENDPOINT_LABEL_KEYS: Record<string, string> = {
+    chat: 'chat',
+    deepseek: 'deepseek',
+    mimo: 'mimo',
+    embeddings: 'embeddings',
+    rerank: 'rerank',
+    moderations: 'moderations',
+    image_generation: 'imageGeneration',
+    audio_speech: 'audioSpeech',
+    audio_transcription: 'audioTranscription',
+    video_generation: 'videoGeneration',
+    music_generation: 'musicGeneration',
+    search: 'search',
+};
+
 function ModelChip({ name }: { name: string }) {
     const { Avatar } = getModelIcon(name);
     return (
-        <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/40 bg-background/60 px-2 py-1 text-xs text-foreground">
+        <span
+            title={name}
+            className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-border/40 bg-background/60 px-2 py-1 text-xs text-foreground"
+        >
             <span className="grid size-4 shrink-0 place-items-center [&>svg]:!size-4">
                 <Avatar size={16} />
             </span>
-            <span className="truncate">{name}</span>
+            <span className="min-w-0 truncate">{name}</span>
         </span>
     );
 }
@@ -33,21 +57,37 @@ function EndpointCard({
     group,
     endpointLabel,
     defaultOpen,
+    searchActive,
 }: {
     group: EndpointGroup;
     endpointLabel: (endpoint: string) => string;
     defaultOpen: boolean;
+    searchActive: boolean;
 }) {
     const t = useTranslations('endpoints');
-    const [open, setOpen] = useState(defaultOpen);
+    const panelId = useId();
+    // null 表示跟随默认展开策略（默认展开前 3 组；搜索时强制展开，
+    // 修复搜索命中项落在默认折叠分组里不展示的问题）。
+    // 用户点击后以用户选择为准，搜索期间也允许手动收起单个分组。
+    const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
+    const open = expandedOverride ?? (defaultOpen || searchActive);
     const isAuto = group.endpoint === AUTO_ENDPOINT;
+    const totalModels = group.models.length;
+    const collapsible = totalModels > INITIAL_VISIBLE_MODELS;
+    const [showAllModels, setShowAllModels] = useState(false);
+    // 搜索命中的模型必须全部可见：若此时仍截断，「展开更多」会把命中项藏起来。
+    const visibleModels = searchActive || showAllModels || !collapsible
+        ? group.models
+        : group.models.slice(0, INITIAL_VISIBLE_MODELS);
+    const hiddenModelCount = totalModels - visibleModels.length;
 
     return (
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
             <button
                 type="button"
-                onClick={() => setOpen((prev) => !prev)}
+                onClick={() => setExpandedOverride(!open)}
                 aria-expanded={open}
+                aria-controls={panelId}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
             >
                 <span
@@ -68,7 +108,7 @@ function EndpointCard({
                         ) : null}
                     </div>
                     <div className="mt-0.5 text-[11px] text-muted-foreground">
-                        {t('modelCount', { count: group.models.length })}
+                        {t('modelCount', { count: totalModels })}
                     </div>
                 </div>
                 <ChevronDown
@@ -80,6 +120,7 @@ function EndpointCard({
                 {open ? (
                     <motion.div
                         key="body"
+                        id={panelId}
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
@@ -87,9 +128,21 @@ function EndpointCard({
                         className="overflow-hidden"
                     >
                         <div className="flex flex-wrap gap-1.5 border-t border-border/30 px-4 py-3">
-                            {group.models.map((model) => (
+                            {visibleModels.map((model) => (
                                 <ModelChip key={`${group.endpoint}-${model.name}`} name={model.name} />
                             ))}
+                            {collapsible && !searchActive ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAllModels((prev) => !prev)}
+                                    aria-expanded={showAllModels}
+                                    className="self-center rounded-lg border border-dashed border-border/60 px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+                                >
+                                    {showAllModels
+                                        ? t('showLessModels')
+                                        : t('showMoreModels', { count: hiddenModelCount })}
+                                </button>
+                            ) : null}
                         </div>
                     </motion.div>
                 ) : null}
@@ -101,37 +154,25 @@ function EndpointCard({
 export function EndpointsView() {
     const t = useTranslations('endpoints');
     const tCapability = useTranslations('group.form.endpointType.options');
-    const { data: capabilities, isLoading, error, refetch } = useModelCapabilities();
-    const [search, setSearch] = useState('');
+    // keep-alive 会把切走的页面留在挂载状态：模块非激活时暂停能力查询，避免后台空转轮询。
+    const moduleActive = useNavStore((s) => s.activeItem === 'model');
+    const { data: capabilities, isLoading, error, refetch } = useModelCapabilities(moduleActive);
+    // 与工具栏搜索框共用同一个 store（model 页搜索词），避免出现两个搜索入口。
+    const searchTerm = useSearchStore((s) => s.getSearchTerm('model'));
+    const searchActive = searchTerm.trim().length > 0;
 
-    const endpointLabel = useMemo(() => {
-        const labelMap: Record<string, string> = {
-            chat: tCapability('chat'),
-            deepseek: tCapability('deepseek'),
-            mimo: tCapability('mimo'),
-            embeddings: tCapability('embeddings'),
-            rerank: tCapability('rerank'),
-            moderations: tCapability('moderations'),
-            image_generation: tCapability('imageGeneration'),
-            audio_speech: tCapability('audioSpeech'),
-            audio_transcription: tCapability('audioTranscription'),
-            video_generation: tCapability('videoGeneration'),
-            music_generation: tCapability('musicGeneration'),
-            search: tCapability('search'),
-        };
-        return (endpoint: string) => {
-            if (endpoint === AUTO_ENDPOINT) return t('autoEndpoint');
-            return labelMap[endpoint] ?? endpoint;
-        };
-    }, [t, tCapability]);
+    const endpointLabel = (endpoint: string) => {
+        if (endpoint === AUTO_ENDPOINT) return t('autoEndpoint');
+        const labelKey = ENDPOINT_LABEL_KEYS[endpoint];
+        return labelKey ? tCapability(labelKey) : endpoint;
+    };
 
-    const groups = useMemo(() => buildEndpointGroups(capabilities), [capabilities]);
+    const groups = buildEndpointGroups(capabilities);
 
-    const filteredGroups = useMemo(() => {
-        const term = search.trim().toLowerCase();
-        if (!term) return groups;
-        return groups
+    const filteredGroups = searchActive
+        ? groups
             .map((group) => {
+                const term = searchTerm.trim().toLowerCase();
                 const endpointMatches =
                     group.endpoint.toLowerCase().includes(term) ||
                     endpointLabel(group.endpoint).toLowerCase().includes(term);
@@ -139,8 +180,8 @@ export function EndpointsView() {
                 const models = group.models.filter((m) => m.name.toLowerCase().includes(term));
                 return models.length > 0 ? { ...group, models } : null;
             })
-            .filter((group): group is EndpointGroup => group !== null);
-    }, [groups, search, endpointLabel]);
+            .filter((group): group is EndpointGroup => group !== null)
+        : groups;
 
     if (isLoading) {
         return (
@@ -150,7 +191,7 @@ export function EndpointsView() {
         );
     }
 
-    if (error) {
+    if (error && !capabilities) {
         return (
             <section className="rounded-2xl border border-border bg-card p-4">
                 <ErrorState message={error.message} onRetry={() => refetch()} />
@@ -161,27 +202,15 @@ export function EndpointsView() {
     return (
         <div className="space-y-3">
             <section className="rounded-2xl border border-border bg-card p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-2">
-                        <h2 className="flex items-center gap-2 text-lg font-bold text-card-foreground">
-                            <Waypoints className="size-5" />
-                            {t('title')}
-                            <Hint text={t('hint')} />
-                        </h2>
-                        <span className="rounded-full bg-muted/60 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-                            {t('endpointCount', { count: groups.length })}
-                        </span>
-                    </div>
-                    <div className="relative sm:w-64">
-                        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                            type="text"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            placeholder={t('searchPlaceholder')}
-                            className="h-9 rounded-xl pl-9 text-sm"
-                        />
-                    </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="flex items-center gap-2 text-lg font-bold text-card-foreground">
+                        <Waypoints className="size-5" />
+                        {t('title')}
+                        <Hint text={t('hint')} />
+                    </h2>
+                    <span className="rounded-full bg-muted/60 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                        {t('endpointCount', { count: groups.length })}
+                    </span>
                 </div>
             </section>
 
@@ -198,10 +227,11 @@ export function EndpointsView() {
                 <div className="space-y-2.5">
                     {filteredGroups.map((group, index) => (
                         <EndpointCard
-                            key={group.endpoint}
+                            key={`${group.endpoint}-${searchTerm.trim()}`}
                             group={group}
                             endpointLabel={endpointLabel}
                             defaultOpen={index < 3}
+                            searchActive={searchActive}
                         />
                     ))}
                 </div>

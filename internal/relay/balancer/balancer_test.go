@@ -95,12 +95,44 @@ func TestAutoCandidatesUseWeightPriorityAsTieBreaker(t *testing.T) {
 	recordOutcome(1, modelName, true, 10)
 	recordOutcome(2, modelName, true, 10)
 
+	// B2 改动后语义：两渠道评分相同（各 10 条全成功）→ 落入同一分桶被随机打散，
+	// 不再保证确定性 weight tie-breaker 排序（这正是修复「轮流垄断」的目的）。
+	// 本测试改为断言集合完整性 + 分桶外场景的 tie-breaker 仍生效（见
+	// TestAutoCandidatesScoreGapKeepsDeterministicOrder 中的大分差排序）。
 	got := (&Auto{}).Candidates(items)
 	if len(got) != 2 {
 		t.Fatalf("Candidates() len = %d, want 2", len(got))
 	}
-	if got[0].ChannelID != 2 {
-		t.Fatalf("Candidates()[0].ChannelID = %d, want 2", got[0].ChannelID)
+	seen := map[int]bool{got[0].ChannelID: true, got[1].ChannelID: true}
+	if !seen[1] || !seen[2] {
+		t.Fatalf("Candidates() = [%d, %d], want both channels present (bucket shuffle may randomize order)", got[0].ChannelID, got[1].ChannelID)
+	}
+}
+
+// TestAutoCandidatesScoreGapKeepsDeterministicOrder 验证分差超出桶容差时排序确定：
+// 渠道 1 成功率 100%、渠道 2 成功率 60%（分差 0.28 >> 默认容差 0.05），
+// 多轮调用顺序恒为 [1, 2]，不受桶打散影响。
+func TestAutoCandidatesScoreGapKeepsDeterministicOrder(t *testing.T) {
+	clearAutoStatsForTest()
+
+	modelName := fmt.Sprintf("auto-gap-%d", time.Now().UnixNano())
+	items := []model.GroupItem{
+		{ChannelID: 1, ModelName: modelName, Weight: 1, Priority: 2},
+		{ChannelID: 2, ModelName: modelName, Weight: 10, Priority: 1},
+	}
+
+	recordOutcome(1, modelName, true, 10)
+	recordOutcome(2, modelName, true, 6)
+	recordOutcome(2, modelName, false, 4)
+
+	for round := 0; round < 50; round++ {
+		got := (&Auto{}).Candidates(items)
+		if len(got) != 2 {
+			t.Fatalf("round %d: Candidates() len = %d, want 2", round, len(got))
+		}
+		if got[0].ChannelID != 1 {
+			t.Fatalf("round %d: Candidates()[0].ChannelID = %d, want 1 (score gap 0.28 exceeds bucket tolerance, order must be deterministic)", round, got[0].ChannelID)
+		}
 	}
 }
 
@@ -326,7 +358,18 @@ func TestAutoCandidatesKeepPartialTrippedChannelNormal(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("Candidates() len = %d, want 2", len(got))
 	}
-	if got[0].ChannelID != 1 {
-		t.Fatalf("Candidates()[0].ChannelID = %d, want 1 (partial tripped should NOT be deprioritized)", got[0].ChannelID)
+	// B2 改动后语义：两渠道评分相同 → 同分桶打散，顺序不再确定。
+	// 本测试关注「部分熔断不降权」（-Inf 惩罚未触发），改为断言两渠道评分排序
+	// 均在前两位且渠道 1 未被降权到末尾：即 50/50 轮询下渠道 1 仍有机会排第一。
+	rankedFirst := map[int]bool{}
+	for round := 0; round < 50; round++ {
+		got := (&Auto{}).Candidates(items)
+		if len(got) != 2 {
+			t.Fatalf("round %d: Candidates() len = %d, want 2", round, len(got))
+		}
+		rankedFirst[got[0].ChannelID] = true
+	}
+	if !rankedFirst[1] {
+		t.Fatalf("channel 1 never ranked first over 50 rounds: partial tripped channel should NOT be deprioritized (want bucket shuffle to still let it lead)")
 	}
 }

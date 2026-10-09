@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,6 +94,25 @@ func init() {
 				Handle(testChannelToolsProbe),
 		).
 		AddRoute(
+			router.NewRoute("/:id/probe", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(probeChannel),
+		).
+		AddRoute(
+			router.NewRoute("/:id/probe/apply", http.MethodPost).
+				Use(middleware.RequirePermission(auth.PermChannelsWrite)).
+				Handle(applyChannelProbe),
+		).
+		AddRoute(
+			router.NewRoute("/:id/probe/history", http.MethodGet).
+				Handle(listChannelProbeHistory),
+		).
+		AddRoute(
+			router.NewRoute("/:id/capabilities", http.MethodGet).
+				Handle(listChannelCapabilities),
+		).
+		AddRoute(router.NewRoute("/:id/connection-preview", http.MethodGet).Use(middleware.RequirePermission(auth.PermChannelsWrite)).Handle(previewChannelConnection)).
+		AddRoute(
 			router.NewRoute("/group/list", http.MethodGet).
 				Handle(listChannelGroup),
 		).
@@ -139,6 +159,7 @@ func listChannel(c *gin.Context) {
 	for i, channel := range channels {
 		if !canViewRawKeys {
 			channels[i].Keys = maskChannelKeys(channel.Keys)
+			channels[i].ConnectionConfig = maskConnectionConfig(channel.ConnectionConfig)
 		}
 		normalizeChannelListSlices(&channels[i])
 		stats := st.ChannelGet(channel.ID)
@@ -154,6 +175,10 @@ func createChannel(c *gin.Context) {
 		return
 	}
 	channel := req.toChannel()
+	if err := channel.ConnectionConfig.Validate(); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := ch.Create(&channel, c.Request.Context()); err != nil {
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
@@ -187,12 +212,22 @@ func updateChannel(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
+	if err := req.ConnectionConfig.Validate(); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	channel, err := ch.Update(&req, c.Request.Context())
 	if err != nil {
+		if strings.HasPrefix(err.Error(), "connection_config_conflict:") {
+			resp.Error(c, http.StatusConflict, err.Error())
+			return
+		}
 		if status, msg, ok := classifyChannelMutationError(err); ok {
 			resp.Error(c, status, msg)
 			return
 		}
+		// 未分类错误统一 500：必须把原始错误打进日志，否则排查只能靠猜（issue: 填充支持模型 500 无日志可查）
+		log.Errorf("update channel %d failed: %v", req.ID, err)
 		resp.InternalError(c)
 		return
 	}
@@ -213,6 +248,42 @@ func updateChannel(c *gin.Context) {
 		helper.ChannelAutoGroup(channel, ctx)
 	}(channel)
 	resp.Success(c, channel)
+}
+
+func previewChannelConnection(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		resp.Error(c, 400, "invalid channel id")
+		return
+	}
+	channel, err := ch.Get(id, c.Request.Context())
+	if err != nil {
+		resp.Error(c, 404, "channel not found")
+		return
+	}
+	type groupView struct {
+		Name           string `json:"name"`
+		OutboundFormat string `json:"outbound_format"`
+		EndpointType   string `json:"endpoint_type"`
+	}
+	groups := []groupView{}
+	preview := channel.PreviewConnectionMigration()
+	for _, group := range grp.GetCache().GetAll() {
+		for _, item := range group.Items {
+			if item.ChannelID == id {
+				if !model.IsConversationEndpointType(group.EndpointType) && group.EndpointType != model.EndpointTypeEmbeddings {
+					preview.Automatic = false
+					preview.Reason = "media_scope_requires_review"
+				}
+				groups = append(groups, groupView{group.Name, group.OutboundFormat, group.EndpointType})
+				break
+			}
+		}
+	}
+	resp.Success(c, struct {
+		model.ConnectionMigrationPreview
+		Groups []groupView `json:"groups"`
+	}{preview, groups})
 }
 
 func enableChannel(c *gin.Context) {
@@ -264,7 +335,6 @@ func deleteChannel(c *gin.Context) {
 		resp.InternalError(c)
 		return
 	}
-	st.OnChannelDeleted(idNum)
 	resp.Success(c, nil)
 }
 func fetchModel(c *gin.Context) {
@@ -276,7 +346,7 @@ func fetchModel(c *gin.Context) {
 	request := payload.toChannel()
 	models, err := helper.FetchModels(c.Request.Context(), request)
 	if err != nil {
-		resp.InternalError(c)
+		resp.Error(c, http.StatusBadGateway, err.Error())
 		return
 	}
 	resp.Success(c, models)
@@ -290,10 +360,13 @@ func fetchModelsPerKey(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
 		return
 	}
-	request := payload.toChannel()
+	// 用 toChannelWithKeyIDs：诊断端点需要 key.ID 把逐 key 结果回映射到具体 key
+	// （见 helper.KeyModelResult.KeyID）。本端点只读、不落库，所以透传客户端
+	// 提供的 key.ID 不会像创建/更新路径那样有“拿主键影响落库”的风险。
+	request := payload.toChannelWithKeyIDs()
 	result, err := helper.FetchModelsPerKey(c.Request.Context(), request)
 	if err != nil {
-		resp.InternalError(c)
+		resp.Error(c, http.StatusBadGateway, err.Error())
 		return
 	}
 	resp.Success(c, result)
@@ -472,28 +545,172 @@ func testChannelToolsProbe(c *gin.Context) {
 	resp.Success(c, result)
 }
 
+// probeChannel 手动触发一次渠道能力探测（协议层 + 能力层），同步阻塞返回。
+//
+// 只在前端点击时执行：没有后台定时任务，也没有自动重试。多数公益站禁止测活、
+// 部分还有测活关键词拦截，所以默认遵守渠道的 skip_model_test 开关，
+// 必须由调用方显式传 allow_skip_model_test 才越过。
+func probeChannel(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	var req model.ChannelProbeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	channel, err := ch.Get(channelID, c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, "channel not found")
+		return
+	}
+
+	run, err := helper.RunChannelCapabilityProbe(c.Request.Context(), channel, req)
+	if err != nil {
+		if errors.Is(err, helper.ErrModelTestSkipped()) {
+			// 用 409 而不是 400：这是"需要你确认后重试"的语义，
+			// 前端据此弹出"该渠道标记了禁止测活，是否仍然探测？"。
+			resp.Error(c, http.StatusConflict, err.Error())
+			return
+		}
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := ch.SaveProbeRun(c.Request.Context(), run); err != nil {
+		// 落库失败不影响本次结果展示：探测是只读行为，不能因为历史写不进去
+		// 就把用户等到的结果丢掉。
+		log.Warnf("failed to persist channel probe run (channel=%d): %v", channelID, err)
+	}
+	resp.Success(c, run)
+}
+
+// applyChannelProbe 把某次探测的结论应用到渠道配置（严格只加不减）。
+func applyChannelProbe(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	var req model.ChannelProbeApplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	channel, err := ch.Get(channelID, c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, "channel not found")
+		return
+	}
+	run, err := ch.GetProbeRun(c.Request.Context(), req.RunID)
+	if err != nil {
+		resp.Error(c, http.StatusNotFound, "probe run not found")
+		return
+	}
+	if run.ChannelID != channelID {
+		resp.Error(c, http.StatusBadRequest, "probe run does not belong to this channel")
+		return
+	}
+
+	applyResult, err := helper.ApplyChannelProbeRun(c.Request.Context(), channel, run)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	added, err := ch.ApplyProbeProtocols(c.Request.Context(), channelID, applyResult.AddedProtocols)
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	applyResult.AddedProtocols = added
+
+	// 能力结论落库：只写明确结论（pass / unsupported），Unknown 一律跳过。
+	verdicts := helper.CapabilityVerdicts(run)
+	for capability, supported := range verdicts {
+		record := model.ChannelModelCapability{
+			ChannelID:  channelID,
+			ModelName:  run.ModelName,
+			Capability: capability,
+			Supported:  supported,
+			Source:     "probe",
+			ProbeKeyID: run.KeyID,
+			ProbedAt:   time.Now(),
+		}
+		if err := ch.UpsertCapability(c.Request.Context(), record); err != nil {
+			log.Warnf("failed to persist capability %s (channel=%d model=%s): %v",
+				capability, channelID, run.ModelName, err)
+		}
+	}
+	if err := ch.MarkProbeRunApplied(c.Request.Context(), run.ID); err != nil {
+		log.Warnf("failed to mark probe run %d applied: %v", run.ID, err)
+	}
+	resp.Success(c, applyResult)
+}
+
+// listChannelProbeHistory 返回某渠道最近的探测历史（不含逐行结果）。
+func listChannelProbeHistory(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	runs, err := ch.ListProbeRuns(c.Request.Context(), channelID, limit)
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, runs)
+}
+
+// listChannelCapabilities 返回某渠道的能力结论（可按 model 过滤）。
+func listChannelCapabilities(c *gin.Context) {
+	channelID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelID <= 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid channel id")
+		return
+	}
+	capabilities, err := ch.ListCapabilities(c.Request.Context(), channelID, strings.TrimSpace(c.Query("model")))
+	if err != nil {
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(c, capabilities)
+}
+
 type channelRequestPayload struct {
-	ID                      int                         `json:"id"`
-	Name                    string                      `json:"name"`
-	GroupID                 int                         `json:"group_id"`
-	Type                    outbound.OutboundType       `json:"type"`
-	Enabled                 bool                        `json:"enabled"`
-	BaseUrls                []model.BaseUrl             `json:"base_urls"`
-	Keys                    []channelKeyRequestPayload  `json:"keys"`
-	Model                   string                      `json:"model"`
-	CustomModel             string                      `json:"custom_model"`
-	ProxyMode               model.ProxyUsageMode        `json:"proxy_mode"`
-	ProxyConfigID           *int                        `json:"proxy_config_id"`
-	Proxy                   bool                        `json:"proxy"`
-	AutoSync                bool                        `json:"auto_sync"`
-	AutoGroup               model.AutoGroupType         `json:"auto_group"`
-	SkipModelTest           bool                        `json:"skip_model_test"`
-	Disposable              bool                        `json:"disposable"`
-	ExpireAt                *time.Time                  `json:"expire_at,omitempty"`
-	KeySelectionStrategy    string                      `json:"key_selection_strategy"`
-	CustomHeader            []model.CustomHeader        `json:"custom_header"`
-	ParamOverride           *string                     `json:"param_override"`
-	OutboundFormatOverride  *string                     `json:"outbound_format_override"`
+	ID                     int                        `json:"id"`
+	Name                   string                     `json:"name"`
+	GroupID                int                        `json:"group_id"`
+	Type                   outbound.OutboundType      `json:"type"`
+	Enabled                bool                       `json:"enabled"`
+	BaseUrls               []model.BaseUrl            `json:"base_urls"`
+	Keys                   []channelKeyRequestPayload `json:"keys"`
+	Model                  string                     `json:"model"`
+	CustomModel            string                     `json:"custom_model"`
+	ProxyMode              model.ProxyUsageMode       `json:"proxy_mode"`
+	ProxyConfigID          *int                       `json:"proxy_config_id"`
+	Proxy                  bool                       `json:"proxy"`
+	AutoSync               bool                       `json:"auto_sync"`
+	AutoSyncKeyModels      bool                       `json:"auto_sync_key_models"`
+	AutoGroup              model.AutoGroupType        `json:"auto_group"`
+	SkipModelTest          bool                       `json:"skip_model_test"`
+	Disposable             bool                       `json:"disposable"`
+	ExpireAt               *time.Time                 `json:"expire_at,omitempty"`
+	KeySelectionStrategy   string                     `json:"key_selection_strategy"`
+	CustomHeader           []model.CustomHeader       `json:"custom_header"`
+	ParamOverride          *string                    `json:"param_override"`
+	OutboundFormatOverride *string                    `json:"outbound_format_override"`
+	UpstreamProtocols      []string                   `json:"upstream_protocols"`
+	ConnectionConfig       *model.ConnectionConfig    `json:"connection_config,omitempty"`
+	// 三个超时用指针：nil = 字段缺省（旧客户端/未配置）= 跟随分组（-1），
+	// 显式 0 才表示"关闭该看门狗"。若用值类型，缺省会退化成 0，
+	// 等于把所有存量渠道的看门狗静默关掉。
+	FirstTokenTimeOut       *int                        `json:"first_token_time_out"`
+	AttemptTimeOut          *int                        `json:"attempt_time_out"`
+	StreamIdleTimeout       *int                        `json:"stream_idle_timeout"`
+	ReasoningBufferStrategy string                      `json:"reasoning_buffer_strategy"`
 	ChannelProxy            *string                     `json:"channel_proxy"`
 	RequestRewrite          *model.RequestRewriteConfig `json:"request_rewrite"`
 	MatchRegex              *string                     `json:"match_regex"`
@@ -523,6 +740,10 @@ func (p channelRequestPayload) toChannel() model.Channel {
 	keys := make([]model.ChannelKey, 0, len(p.Keys))
 	for _, key := range p.Keys {
 		// 空 key 也允许保留（issue #157：支持无 key 渠道）
+		// 注意：有意**不**透传 key.ID / ChannelID / StatusCode 等运行时与主键字段
+		//（锁在 TestChannelPayloadToModelDropsReadonlyAndRuntimeFields）——不能拿请求
+		// 体里的主键去影响落库。需要 key.ID 的只读诊断端点走
+		// toChannelWithKeyIDs()。
 		keys = append(keys, model.ChannelKey{
 			Enabled:         key.Enabled,
 			ChannelKey:      key.ChannelKey,
@@ -543,7 +764,7 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		}
 	}
 
-	return model.Channel{
+	channel := model.Channel{
 		Name:                    p.Name,
 		GroupID:                 p.GroupID,
 		Type:                    p.Type,
@@ -556,6 +777,7 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		ProxyConfigID:           p.ProxyConfigID,
 		Proxy:                   p.Proxy,
 		AutoSync:                p.AutoSync,
+		AutoSyncKeyModels:       p.AutoSyncKeyModels,
 		SkipModelTest:           p.SkipModelTest,
 		Disposable:              p.Disposable,
 		ExpireAt:                p.ExpireAt,
@@ -564,6 +786,9 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		CustomHeader:            p.CustomHeader,
 		ParamOverride:           p.ParamOverride,
 		OutboundFormatOverride:  derefString(p.OutboundFormatOverride),
+		UpstreamProtocols:       p.UpstreamProtocols,
+		ConnectionConfig:        p.ConnectionConfig,
+		ReasoningBufferStrategy: p.ReasoningBufferStrategy,
 		ChannelProxy:            channelProxy,
 		RequestRewrite:          p.RequestRewrite,
 		MatchRegex:              p.MatchRegex,
@@ -574,6 +799,20 @@ func (p channelRequestPayload) toChannel() model.Channel {
 		NonRetryableStatusCodes: p.NonRetryableStatusCodes,
 		ErrorMessageTemplate:    p.ErrorMessageTemplate,
 	}
+	// 超时三项缺省 = 0（跟随分组）。显式传 -1 表示关闭看门狗，
+	// 不能被缺省值混淆，所以用指针判空后回填。
+	channel.FirstTokenTimeOut = defaultFollowGroup(p.FirstTokenTimeOut)
+	channel.AttemptTimeOut = defaultFollowGroup(p.AttemptTimeOut)
+	channel.StreamIdleTimeout = defaultFollowGroup(p.StreamIdleTimeout)
+	return channel
+}
+
+// defaultFollowGroup 把可空超时字段解引用成渠道语义值：nil = 0（跟随分组）。
+func defaultFollowGroup(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 // derefString 空指针安全解引用，nil 返回空串。
@@ -582,6 +821,26 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// toChannelWithKeyIDs 与 toChannel() 相同，但额外保留每个 key 的 ID。
+//
+// 为什么需要单独一个变体：toChannel() 有意丢弃请求体里的 key.ID（防止拿客户端
+// 提供的主键影响落库，锁在 TestChannelPayloadToModelDropsReadonlyAndRuntimeFields）。
+// 但只读诊断端点 POST /channel/fetch-models-per-key 不落库，它需要 key.ID 才能
+// 把逐 key 抓取结果回映射到具体 key（helper.KeyModelResult.KeyID）；否则前端
+// 收到的 key_id 恒为 0，无法按 key 精确匹配。
+//
+// toChannel() 逐个遍历 p.Keys 且不丢弃任何条目（空 key 也保留，issue #157），
+// 因此返回的 Keys 与 p.Keys 严格按索引对齐，可以直接按位置回填 ID。
+func (p channelRequestPayload) toChannelWithKeyIDs() model.Channel {
+	ch := p.toChannel()
+	for i := range ch.Keys {
+		if i < len(p.Keys) {
+			ch.Keys[i].ID = p.Keys[i].ID
+		}
+	}
+	return ch
 }
 
 func listChannelGroup(c *gin.Context) {

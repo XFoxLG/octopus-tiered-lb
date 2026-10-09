@@ -70,10 +70,27 @@ func NewRelayMetrics(apiKeyID int, requestModel string, requestedEndpointType st
 
 func (m *RelayMetrics) SetFirstTokenTime(t time.Time) {
 	m.FirstTokenTime = t
+	if m.RequestTrace != nil {
+		relaylog.UpdateLiveRequest(m.RequestTrace.id, func(entry *relaylog.LiveRequest) { entry.State = "streaming" })
+	}
 }
 
 func (m *RelayMetrics) SetRequestTrace(trace *relayRequestTrace) {
 	m.RequestTrace = trace
+	if trace != nil {
+		relaylog.UpdateLiveRequest(trace.id, func(entry *relaylog.LiveRequest) {
+			entry.State, entry.RequestModel, entry.APIKeyID = "waiting", m.RequestModel, m.APIKeyID
+		})
+	}
+}
+
+func (m *RelayMetrics) liveAttempt(channelID int, channelName, actualModel string, attempt int) {
+	if m.RequestTrace != nil {
+		relaylog.UpdateLiveRequest(m.RequestTrace.id, func(entry *relaylog.LiveRequest) {
+			entry.State, entry.ChannelID, entry.ChannelName = "attempt", channelID, channelName
+			entry.ActualModel, entry.Attempt = actualModel, attempt
+		})
+	}
 }
 
 func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMResponse, actualModel string) {
@@ -108,6 +125,9 @@ func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMRes
 }
 
 func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAttempt) {
+	if m.RequestTrace != nil {
+		relaylog.UpdateLiveRequest(m.RequestTrace.id, func(entry *relaylog.LiveRequest) { entry.State = "completed" })
+	}
 	ctx, cancel := newRelayPersistenceContext()
 	defer cancel()
 
@@ -397,6 +417,10 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 				}
 			}
 		}
+		relayLog.TerminationCause = string(termination.Cause)
+		relayLog.ProviderTerminationReason = termination.ProviderReason
+	}
+	if termination, ok := terminalCauseFromError(err); ok {
 		relayLog.TerminationCause = string(termination.Cause)
 		relayLog.ProviderTerminationReason = termination.ProviderReason
 	}

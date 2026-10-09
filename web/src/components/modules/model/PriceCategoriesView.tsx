@@ -5,12 +5,7 @@ import { useTranslations } from 'next-intl'
 import { Plus, Pencil, Trash2, RefreshCw, Tags } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Hint } from '@/components/ui/hint'
-import { PeakScheduleSection } from './PeakScheduleSection'
 import {
   Table,
   TableBody,
@@ -19,13 +14,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -41,22 +29,21 @@ import {
   useDeletePriceCategory,
   type ModelPriceCategory,
 } from '@/api/endpoints/model'
+import { useNavStore } from '@/components/modules/navbar'
+import { useModelViewStore } from './view-store'
+import { ConfirmDeleteDialog, EnabledBadge, PriceRuleFields } from './PriceRuleFields'
+import {
+  buildPriceRuleBasePayload,
+  formatPriceValue,
+  hasErrors,
+  isPriceRuleType,
+  validatePriceRuleBase,
+  type PriceRuleBaseErrors,
+  type PriceRuleFormBase,
+} from './price-form'
+import { PeakScheduleSection } from './PeakScheduleSection'
 
-type RuleType = 'exact' | 'prefix' | 'contains'
-
-interface FormState {
-  name: string
-  rule_type: RuleType
-  rule_value: string
-  input: string
-  output: string
-  cache_read: string
-  cache_write: string
-  sort_order: string
-  enabled: boolean
-}
-
-const EMPTY_FORM: FormState = {
+const EMPTY_FORM: PriceRuleFormBase = {
   name: '',
   rule_type: 'contains',
   rule_value: '',
@@ -68,29 +55,40 @@ const EMPTY_FORM: FormState = {
   enabled: true,
 }
 
-function formatPrice(v: number): string {
-  return String(v ?? 0)
-}
-
-function parsePrice(v: string): number {
-  const n = Number(v)
-  return Number.isFinite(n) ? n : 0
-}
+const NO_ERRORS: PriceRuleBaseErrors = {}
 
 export function PriceCategoriesView() {
   const t = useTranslations('model.priceCategory')
-  const { data: categories, isLoading } = usePriceCategoryList()
+  // 校验错误 / 加载失败 / 禁用徽标等新文案走共享命名空间（见 price-form.ts 头注）。
+  const tv = useTranslations('model.priceRule')
+  // keep-alive：路由级切换不卸载本组件，价格查询需按「模型广场 + 分类页签可见」门控，
+  // 避免停留在其他页面时持续轮询。
+  const activeItem = useNavStore((s) => s.activeItem)
+  const modelView = useModelViewStore((s) => s.modelView)
+  const queriesEnabled = activeItem === 'model' && modelView === 'categories'
+
+  const { data: categories, isLoading, isError, refetch } = usePriceCategoryList(queriesEnabled)
   const createMutation = useCreatePriceCategory()
   const updateMutation = useUpdatePriceCategory()
   const deleteMutation = useDeletePriceCategory()
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<ModelPriceCategory | null>(null)
-  const [form, setForm] = useState<FormState>(EMPTY_FORM)
+  const [form, setForm] = useState<PriceRuleFormBase>(EMPTY_FORM)
+  // 提交尝试后才展示校验错误；此后随输入实时重算（错误消失即通过）。
+  const [showErrors, setShowErrors] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ModelPriceCategory | null>(null)
+
+  // 门控关闭且尚无缓存数据时按加载中处理（此时面板不可见，仅避免闪现空态）。
+  const showLoading = queriesEnabled ? isLoading : !categories
+  const showError = isError && !categories
+  const errors = showErrors ? validatePriceRuleBase(form) : NO_ERRORS
+  const saving = createMutation.isPending || updateMutation.isPending
 
   const openCreate = () => {
     setEditing(null)
     setForm(EMPTY_FORM)
+    setShowErrors(false)
     setDialogOpen(true)
   }
 
@@ -98,58 +96,46 @@ export function PriceCategoriesView() {
     setEditing(cat)
     setForm({
       name: cat.name,
-      rule_type: cat.rule_type as RuleType,
+      rule_type: isPriceRuleType(cat.rule_type) ? cat.rule_type : 'contains',
       rule_value: cat.rule_value,
-      input: formatPrice(cat.input),
-      output: formatPrice(cat.output),
-      cache_read: formatPrice(cat.cache_read),
-      cache_write: formatPrice(cat.cache_write),
+      input: formatPriceValue(cat.input),
+      output: formatPriceValue(cat.output),
+      cache_read: formatPriceValue(cat.cache_read),
+      cache_write: formatPriceValue(cat.cache_write),
       sort_order: String(cat.sort_order ?? 0),
       enabled: cat.enabled,
     })
+    setShowErrors(false)
     setDialogOpen(true)
   }
 
-  const handleDelete = (id: number) => {
-    if (window.confirm(t('confirmDelete'))) {
-      deleteMutation.mutate(id, {
-        onSuccess: () => toast.success(t('toastDeleted')),
-        onError: (e: Error) => toast.error(e.message || t('toastError')),
-      })
-    }
+  const handleDelete = () => {
+    if (!deleteTarget || deleteMutation.isPending) return
+    deleteMutation.mutate(deleteTarget.id, {
+      onSuccess: () => {
+        setDeleteTarget(null)
+        toast.success(t('toastDeleted'))
+      },
+    })
   }
 
   const handleSubmit = () => {
-    const payload = {
-      name: form.name.trim(),
-      rule_type: form.rule_type,
-      rule_value: form.rule_value.trim(),
-      input: parsePrice(form.input),
-      output: parsePrice(form.output),
-      cache_read: parsePrice(form.cache_read),
-      cache_write: parsePrice(form.cache_write),
-      sort_order: Number.parseInt(form.sort_order || '0', 10),
-      enabled: form.enabled,
+    if (saving) return
+    if (hasErrors(validatePriceRuleBase(form))) {
+      setShowErrors(true)
+      return
+    }
+    const payload = buildPriceRuleBasePayload(form)
+    const options = {
+      onSuccess: () => {
+        toast.success(t('toastSaved'))
+        setDialogOpen(false)
+      },
     }
     if (editing) {
-      updateMutation.mutate(
-        { ...payload, id: editing.id },
-        {
-          onSuccess: () => {
-            toast.success(t('toastSaved'))
-            setDialogOpen(false)
-          },
-          onError: (e: Error) => toast.error(e.message || t('toastError')),
-        },
-      )
+      updateMutation.mutate({ ...payload, id: editing.id }, options)
     } else {
-      createMutation.mutate(payload, {
-        onSuccess: () => {
-          toast.success(t('toastSaved'))
-          setDialogOpen(false)
-        },
-        onError: (e: Error) => toast.error(e.message || t('toastError')),
-      })
+      createMutation.mutate(payload, options)
     }
   }
 
@@ -185,9 +171,18 @@ export function PriceCategoriesView() {
         <p className="mt-3 text-xs text-muted-foreground">{t('description')}</p>
       </section>
 
-      {isLoading ? (
+      {showLoading ? (
         <div className="flex h-32 items-center justify-center rounded-2xl border border-border bg-card">
           <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : showError ? (
+        <div className="flex h-40 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-destructive/40 text-sm text-muted-foreground">
+          <Tags className="size-8 opacity-40" />
+          <p>{tv('loadFailed')}</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <RefreshCw className="mr-1.5 size-4" />
+            {tv('retry')}
+          </Button>
         </div>
       ) : !categories || categories.length === 0 ? (
         <div className="flex h-40 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border text-sm text-muted-foreground">
@@ -205,9 +200,9 @@ export function PriceCategoriesView() {
                   <TableHead>{t('ruleValue')}</TableHead>
                   <TableHead className="text-right">{t('input')}</TableHead>
                   <TableHead className="text-right">{t('output')}</TableHead>
-                  <TableHead className="text-right">{t('cacheRead')}</TableHead>
-                  <TableHead className="text-right">{t('cacheWrite')}</TableHead>
-                  <TableHead className="text-right">{t('sortOrder')}</TableHead>
+                  <TableHead className="hidden text-right md:table-cell">{t('cacheRead')}</TableHead>
+                  <TableHead className="hidden text-right md:table-cell">{t('cacheWrite')}</TableHead>
+                  <TableHead className="hidden text-right lg:table-cell">{t('sortOrder')}</TableHead>
                   <TableHead>{t('enabled')}</TableHead>
                   <TableHead className="text-right">{t('actions')}</TableHead>
                 </TableRow>
@@ -215,20 +210,28 @@ export function PriceCategoriesView() {
               <TableBody>
                 {categories.map((cat) => (
                   <TableRow key={cat.id}>
-                    <TableCell className="font-medium">{cat.name}</TableCell>
+                    <TableCell className="max-w-40 truncate font-medium" title={cat.name}>
+                      {cat.name}
+                    </TableCell>
                     <TableCell>{ruleLabel(cat.rule_type)}</TableCell>
-                    <TableCell className="font-mono text-sm">{cat.rule_value}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{cat.input}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{cat.output}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{cat.cache_read}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{cat.cache_write}</TableCell>
-                    <TableCell className="text-right">{cat.sort_order}</TableCell>
+                    <TableCell className="max-w-40 truncate font-mono text-sm" title={cat.rule_value}>
+                      {cat.rule_value}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-mono text-sm">{cat.input}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-mono text-sm">{cat.output}</TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right font-mono text-sm md:table-cell">
+                      {cat.cache_read}
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right font-mono text-sm md:table-cell">
+                      {cat.cache_write}
+                    </TableCell>
+                    <TableCell className="hidden text-right lg:table-cell">{cat.sort_order}</TableCell>
                     <TableCell>
-                      {cat.enabled ? (
-                        <Badge variant="default">{t('enabled')}</Badge>
-                      ) : (
-                        <Badge variant="secondary">{t('missing')}</Badge>
-                      )}
+                      <EnabledBadge
+                        enabled={cat.enabled}
+                        enabledLabel={t('enabled')}
+                        disabledLabel={tv('disabled')}
+                      />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -243,7 +246,7 @@ export function PriceCategoriesView() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDelete(cat.id)}
+                          onClick={() => setDeleteTarget(cat)}
                           aria-label={t('delete')}
                         >
                           <Trash2 className="size-4 text-destructive" />
@@ -258,140 +261,63 @@ export function PriceCategoriesView() {
         </section>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!saving) setDialogOpen(open) }}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? t('edit') : t('add')}</DialogTitle>
             <DialogDescription>{t('description')}</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-2">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="pc-name">{t('name')} *</Label>
-                <Input
-                  id="pc-name"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder={t('namePlaceholder')}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="pc-sort">
-                  {t('sortOrder')}
-                  <Hint text={t('sortOrderHint')} />
-                </Label>
-                <Input
-                  id="pc-sort"
-                  type="number"
-                  value={form.sort_order}
-                  onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="pc-rule-type">{t('ruleType')} *</Label>
-                <Select
-                  value={form.rule_type}
-                  onValueChange={(v) => setForm({ ...form, rule_type: v as RuleType })}
-                >
-                  <SelectTrigger id="pc-rule-type" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="exact">{t('exact')}</SelectItem>
-                    <SelectItem value="prefix">{t('prefix')}</SelectItem>
-                    <SelectItem value="contains">{t('contains')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="pc-rule-value">{t('ruleValue')} *</Label>
-                <Input
-                  id="pc-rule-value"
-                  value={form.rule_value}
-                  onChange={(e) => setForm({ ...form, rule_value: e.target.value })}
-                  placeholder={t('ruleValuePlaceholder')}
-                  className="font-mono"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="grid gap-2">
-                <Label htmlFor="pc-input">
-                  {t('input')}
-                  <Hint text={t('priceHint')} />
-                </Label>
-                <Input
-                  id="pc-input"
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={form.input}
-                  onChange={(e) => setForm({ ...form, input: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="pc-output">{t('output')}</Label>
-                <Input
-                  id="pc-output"
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={form.output}
-                  onChange={(e) => setForm({ ...form, output: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="pc-cache-read">{t('cacheRead')}</Label>
-                <Input
-                  id="pc-cache-read"
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={form.cache_read}
-                  onChange={(e) => setForm({ ...form, cache_read: e.target.value })}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="pc-cache-write">{t('cacheWrite')}</Label>
-                <Input
-                  id="pc-cache-write"
-                  type="number"
-                  step="any"
-                  min="0"
-                  value={form.cache_write}
-                  onChange={(e) => setForm({ ...form, cache_write: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Switch
-                id="pc-enabled"
-                checked={form.enabled}
-                onCheckedChange={(checked) => setForm({ ...form, enabled: checked })}
-              />
-              <Label htmlFor="pc-enabled">{t('enabled')}</Label>
-            </div>
-          </div>
+          <fieldset disabled={saving} className="py-2">
+            <PriceRuleFields
+              idPrefix="pc"
+              base={form}
+              errors={errors}
+              showErrors={showErrors}
+              onChange={(patch) => setForm({ ...form, ...patch })}
+              labels={{
+                name: t('name'),
+                namePlaceholder: t('namePlaceholder'),
+                ruleType: t('ruleType'),
+                ruleValue: t('ruleValue'),
+                ruleValuePlaceholder: t('ruleValuePlaceholder'),
+                exact: t('exact'),
+                prefix: t('prefix'),
+                contains: t('contains'),
+                sortOrder: t('sortOrder'),
+                sortOrderHint: t('sortOrderHint'),
+                input: t('input'),
+                output: t('output'),
+                cacheRead: t('cacheRead'),
+                cacheWrite: t('cacheWrite'),
+                priceHint: t('priceHint'),
+                enabled: t('enabled'),
+              }}
+            />
+          </fieldset>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+            <Button variant="outline" disabled={saving} onClick={() => setDialogOpen(false)}>
               {t('cancel')}
             </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={createMutation.isPending || updateMutation.isPending}
-            >
-              {createMutation.isPending || updateMutation.isPending ? t('saving') : t('save')}
+            <Button onClick={handleSubmit} disabled={saving}>
+              {saving ? t('saving') : t('save')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+        title={t('confirmDeleteTitle')}
+        description={deleteTarget ? t('confirmDelete') : ''}
+        pending={deleteMutation.isPending}
+        onConfirm={handleDelete}
+        labels={{ cancel: t('cancel'), confirm: t('delete'), deleting: t('deleting') }}
+      />
 
       {/* 峰谷计费（DeepSeek 峰谷自定义入口） */}
       <PeakScheduleSection />

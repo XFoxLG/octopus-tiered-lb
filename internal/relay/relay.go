@@ -1,13 +1,13 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -122,6 +122,12 @@ func outboundAttemptTypes(channelType outbound.OutboundType, request *model.Inte
 	return outbound.ResolveAttemptTypesForChannel(channelType, request, outboundFormat, channelOverride)
 }
 
+// outboundAttemptTypesForChannel 是主转发路径使用的协议解析入口：在分组
+// outbound_format 与旧渠道 override 之上，再叠加渠道自己声明的协议列表。
+func outboundAttemptTypesForChannel(channelType outbound.OutboundType, request *model.InternalLLMRequest, groupOutboundFormat, channelOverride string, channelProtocols []string) []outbound.OutboundType {
+	return outbound.ResolveAttemptTypesForChannelDeclared(channelType, request, groupOutboundFormat, channelOverride, channelProtocols)
+}
+
 func shouldTryAdapterFallback(result attemptResult, adapterIndex, attemptCount int) bool {
 	if result.Success || result.Written || adapterIndex >= attemptCount-1 {
 		return false
@@ -141,55 +147,7 @@ func isZenCandidateChannelAllowed(requestModel string, channelType outbound.Outb
 	return ok
 }
 
-type perModelQuota struct {
-	RPM int `json:"rpm"`
-	TPM int `json:"tpm"`
-}
-
-func resolveAPIRateLimit(modelName string, c *gin.Context) (rpm int, tpm int) {
-	rpm = c.GetInt("rate_limit_rpm")
-	tpm = c.GetInt("rate_limit_tpm")
-
-	perModelJSON := c.GetString("per_model_quota_json")
-	if perModelJSON == "" {
-		return
-	}
-
-	var quotas map[string]perModelQuota
-	if err := jsonAPI.Unmarshal([]byte(perModelJSON), &quotas); err != nil {
-		return
-	}
-
-	if q, ok := quotas[modelName]; ok {
-		if q.RPM > 0 {
-			rpm = q.RPM
-		}
-		if q.TPM > 0 {
-			tpm = q.TPM
-		}
-	}
-	return
-}
-
-// consumeAPIRateLimitTokens 在请求成功后按真实 input+output token 数回扣 API Key
-// 级 TPM。门口 CheckRateLimit 只做「预占 1」的门槛检查(此时 usage 未知),
-// 真实用量在这里补扣;否则无论多长的请求都只扣 1 个 token,TPM 形同虚设。
-// 配额来自 context(effective_rate_limit_tpm);tpm<=0 或 token 数不可用时安全跳过。
-func consumeAPIRateLimitTokens(c *gin.Context, apiKeyID int, requestModel string, inputTokens, outputTokens int) {
-	if c == nil || apiKeyID <= 0 {
-		return
-	}
-	total := inputTokens + outputTokens
-	if total <= 0 {
-		return
-	}
-	tpm := c.GetInt("effective_rate_limit_tpm")
-	if tpm <= 0 {
-		return
-	}
-	rl.ConsumeTokens(apiKeyID, requestModel, tpm, total)
-}
-
+// Downstream rate limits are retired; channel admission remains per attempt.
 func resolveCandidateModelName(requestModel string, item dbmodel.GroupItem) string {
 	if upstreamModel, ok := resolveRequestedUpstreamModel(requestModel); ok {
 		if strings.TrimSpace(item.ModelName) == "" || strings.EqualFold(strings.TrimSpace(item.ModelName), "zen") {
@@ -243,28 +201,6 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 
 	requestModel := internalRequest.Model
 	apiKeyID := c.GetInt("api_key_id")
-	// API Key 级 TPM 的事后校准需要在成功路径拿到真实 token 数与配额,
-	// 先把它们存到 context(CheckRateLimit 只做「预占 1」的门槛检查)。
-	apiRateRPM, apiRateTPM := resolveAPIRateLimit(requestModel, c)
-	c.Set("effective_rate_limit_rpm", apiRateRPM)
-	c.Set("effective_rate_limit_tpm", apiRateTPM)
-
-	// Rate limiting: check RPM/TPM before forwarding
-	if rpm := c.GetInt("rate_limit_rpm"); rpm > 0 || c.GetInt("rate_limit_tpm") > 0 {
-		effectiveRPM, effectiveTPM := apiRateRPM, apiRateTPM
-		if effectiveRPM > 0 || effectiveTPM > 0 {
-			allowed, remaining, retryAfter := rl.CheckRateLimit(apiKeyID, requestModel, effectiveRPM, effectiveTPM, 0)
-			if !allowed {
-				c.Header("X-RateLimit-Remaining", "0")
-				c.Header("Retry-After", strconv.Itoa(retryAfter))
-				resp.Error(c, http.StatusTooManyRequests, "rate limit exceeded")
-				return
-			}
-			if effectiveRPM > 0 {
-				c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
-			}
-		}
-	}
 	var streamSession *relayStreamSession
 	var streamSessionOwned bool
 	var lastErr error
@@ -430,19 +366,24 @@ func (ra *relayAttempt) attempt() attemptResult {
 	span := ra.iter.StartAttempt(ra.channel.ID, ra.usedKey.ID, ra.channel.Name, ra.internalRequest.Model)
 	span.SetAdapterType(ra.adapterType.String())
 	ra.logAttemptNumber = span.AttemptNumber()
+	ra.metrics.liveAttempt(ra.channel.ID, ra.channel.Name, ra.internalRequest.Model, ra.logAttemptNumber)
 
 	// 转发请求
 	statusCode, fwdErr := ra.forward()
 
-	// Client disconnected — do not record failure stats, circuit-breaker
-	// counts, or retry hints. The client chose to stop, not the channel.
+	// Client disconnected —— 不记失败统计、不记熔断、不写 failure hint。
+	// 客户端是自己选择停止的，不是渠道出了问题。
+	// 契约的执行机制：Decision 上的 SkipFailureAccounting 标记。
+	// attempt() 本身不调 RecordFailure（熔断与 Auto 策略由调用方统一控制，
+	// 避免 adapter 降级场景误熔断），因此这里必须把「不该计数」随 Decision
+	// 一起传出去，由 executeRelay 的 shouldRecordChannelFailure 守卫落实。
 	if errors.Is(fwdErr, errClientDisconnected) {
 		span.End(dbmodel.AttemptFailed, statusCode, "client disconnected")
 		return attemptResult{
 			Success:  false,
 			Written:  ra.streamOutputWasCommitted(),
 			Err:      fwdErr,
-			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "client disconnected", Code: statusCode},
+			Decision: RetryDecision{Scope: ScopeAbortAll, Reason: "client disconnected", Code: statusCode, SkipFailureAccounting: true},
 		}
 	}
 
@@ -478,12 +419,13 @@ func (ra *relayAttempt) attempt() attemptResult {
 	//（如 context_length_exceeded、content_filter、refusal），对同一请求重发
 	//必然得到同一结果。直接终态，不进入默认分类，更不被自定义重试白名单覆盖。
 	if termination, ok := terminalCauseFromError(fwdErr); ok && customErrorIsDeterministicFailure(termination) {
+		ra.collectResponse()
 		span.End(dbmodel.AttemptFailed, statusCode, "deterministic provider failure, no retry")
 		return attemptResult{
 			Success:  false,
 			Written:  written,
 			Err:      fwdErr,
-			Decision: RetryDecision{Scope: ScopeNone, Reason: "deterministic provider failure, no retry", Code: statusCode, IsError: true},
+			Decision: RetryDecision{Scope: ScopeNone, Reason: "deterministic provider failure, no retry", Code: statusCode, IsError: true, SkipFailureAccounting: true},
 		}
 	}
 
@@ -498,7 +440,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 
 	// 记录按模型粒度的 key 冷却：某模型触发错误时，仅冷却该 (keyID, model) 组合，
 	// 不影响该 key 上其它模型的可用性（见 issue #94）。仅错误响应（≥400）才冷却。
-	if statusCode >= 400 {
+	if statusCode >= 400 && !(ra.protocolFallbackRemaining && !written && decision.Scope == ScopeNextChannel) {
 		balancer.RecordKeyCooldownWithRetryAfter(
 			ra.channel.ID,
 			ra.usedKey.ID,
@@ -536,12 +478,17 @@ func (ra *relayAttempt) attempt() attemptResult {
 		balancer.RecordAutoSuccess(ra.channel.ID, ra.internalRequest.Model)
 		// Auto策略：记录延迟（毫秒）
 		balancer.RecordAutoLatency(ra.channel.ID, ra.internalRequest.Model, span.Duration().Milliseconds())
+		// Auto策略：记录首 Token 延迟（TTFT，毫秒）。仅流式请求有 FirstTokenTime；
+		// 非流式请求无首 token 概念，IsZero()==true 时自然跳过不记录（issue #183）。
+		if !ra.metrics.FirstTokenTime.IsZero() {
+			balancer.RecordAutoTTFT(ra.channel.ID, ra.internalRequest.Model, ra.metrics.FirstTokenTime.Sub(span.StartedAt()).Milliseconds())
+		}
 		// 可用度：成功加分（上限 100），仅 availability 策略生效。
 		balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, true)
 		// 速度策略：记录 EMA 平滑 TPS（output_tokens / duration_seconds），仅 speed 策略生效。
 		balancer.RecordKeySpeed(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.metrics.Stats.OutputToken, span.Duration().Milliseconds())
 		// 会话保持：更新粘性记录
-		balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID)
+		balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 
 		return attemptResult{Success: true, Decision: decision}
 	}
@@ -653,13 +600,14 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 
 	// 构建出站请求
-	baseURL := ra.channel.GetNormalizedBaseUrl()
-	outboundRequest, err := ra.outAdapter.TransformRequest(
-		ctx,
-		requestForOutbound,
-		baseURL,
-		ra.usedKey.ChannelKey,
-	)
+	// 地址按本次尝试实际选中的 adapter 所属协议来挑选：多协议渠道可以把不同
+	// 协议绑到不同 base URL（如火山方舟的 OpenAI 兼容在 /api/v3、Anthropic
+	// 兼容在 /api/compatible）。未绑定协议或单地址渠道行为不变。
+	plan, err := ra.channel.ConnectionPlanFor(ra.adapterType)
+	if err != nil {
+		return 0, err
+	}
+	outboundRequest, err := ra.channel.BuildConnectionRequest(ctx, plan, ra.outAdapter, requestForOutbound, ra.usedKey.ChannelKey)
 	if err != nil {
 		log.Warnf("failed to create request: %v", err)
 		return 0, fmt.Errorf("failed to create request: %w", err)
@@ -667,6 +615,9 @@ func (ra *relayAttempt) forward() (int, error) {
 
 	// 复制请求头
 	ra.copyHeaders(outboundRequest, effectiveRewrite)
+	if plan.Endpoint != nil {
+		ra.channel.ApplyConnectionHeaders(outboundRequest, plan, ra.usedKey.ChannelKey)
+	}
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
 		trace.wrapUpstreamRequest(ra.logAttemptNumber, ra.adapterType.String(), outboundRequest)
 		trace.markUpstreamSendStarted(ra.logAttemptNumber)
@@ -762,6 +713,10 @@ func clientErrorType(statusCode int) string {
 //  4. 非 HTTP 错误 / 无效状态 → 回退 BadGateway。
 func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelType outbound.OutboundType, statusCode int, err error) {
 	if c == nil || c.Writer.Written() {
+		return
+	}
+	if termination, ok := terminalCauseFromError(err); ok && termination.Cause.IsProviderRefusal() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": termination.Detail, "type": "invalid_request_error", "code": "content_filter"}})
 		return
 	}
 	if statusCode < 400 {
@@ -922,6 +877,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 	if ct := response.Header.Get("Content-Type"); ct != "" && !strings.Contains(strings.ToLower(ct), "text/event-stream") {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
+		if isExplicitAnswerNotice(string(body)) {
+			return providerTerminalFailureError(answerNoticeTermination())
+		}
 		return fmt.Errorf("upstream returned non-SSE content-type %q for stream request: %s", ct, string(body))
 	}
 
@@ -945,7 +903,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 	firstVisibleOutputPending := true
 	hasVisibleContent := false // 是否已产生可见内容（issue #155 流式空输出检测）
-	strategy := getReasoningBufferStrategy(ra.group)
+	// sawDoneMarker 记录是否已收到上游的 SSE 终止标记 `data: [DONE]`。
+	// 不在收到标记的当场 return：[DONE] 本身仍需要走完正常的 chunk 处理，
+	// 因为入站适配器会把它渲染成客户端协议对应的终止帧（openai: `data: [DONE]\n\n`），
+	// 直接 return 会吞掉客户端期待的流终止帧。收尾由下一轮循环顶部的
+	// sawDoneMarker 分支完成。
+	sawDoneMarker := false
+	strategy := getReasoningBufferStrategy(ra.channel, ra.group)
 	shouldBuffer := (strategy == "buffer") // buffer=暂存; immediate=立即发送
 	var reasoningBuffer [][]byte           // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
 	var reasoningBufferBytes int           // reasoningBuffer 累计字节数，用于软上限判定（见 maxReasoningBufferBytes）
@@ -1096,8 +1060,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 
 	streamIdleTimeoutSeconds := 0
-	if ra.group != nil && ra.group.StreamIdleTimeout > 0 {
-		streamIdleTimeoutSeconds = ra.group.StreamIdleTimeout
+	groupStreamIdleTimeout := 0
+	if ra.group != nil {
+		groupStreamIdleTimeout = ra.group.StreamIdleTimeout
+	}
+	// 渠道级覆盖优先于分组：-1 跟随分组，0 显式关闭，>0 秒数。
+	if resolved := ra.channel.EffectiveStreamIdleTimeout(groupStreamIdleTimeout); resolved > 0 {
+		streamIdleTimeoutSeconds = resolved
 	}
 	var streamIdleTimer *time.Timer
 	var streamIdleC <-chan time.Time
@@ -1145,7 +1114,47 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		defer clientGoneTicker.Stop()
 	}
 
+	noticeBuffer := &answerNoticeBuffer{}
+	var noticeTimer *time.Timer
+	var noticeTimerC <-chan time.Time
+	defer func() {
+		if noticeTimer != nil {
+			noticeTimer.Stop()
+		}
+	}()
+	flushNotice := func() {
+		if noticeTimer != nil {
+			noticeTimer.Stop()
+		}
+		noticeTimerC = nil
+		if len(noticeBuffer.payloads) == 0 {
+			return
+		}
+		writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+		reasoningBuffer, reasoningBufferBytes = nil, 0
+		writeReasoningBuffer(ra, noticeBuffer.payloads, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+		noticeBuffer.payloads, noticeBuffer.bytes, noticeBuffer.released = nil, 0, true
+		hasVisibleContent = true
+		hasDownstreamOutput = ra.streamOutputWasCommitted()
+	}
+	blockNotice := func() error {
+		ra.streamTermination = answerNoticeTermination()
+		ra.streamTermination.ProviderReason = ra.streamFinishReason
+		blockedErr := providerTerminalFailureError(ra.streamTermination)
+		ra.collectResponse()
+		if ra.metrics.InternalResponse != nil {
+			ra.metrics.InternalResponse.Termination = ra.streamTermination
+		}
+		noticeBuffer.payloads = nil
+		reasoningBuffer = nil
+		emitStreamInterruption(blockedErr, false)
+		return blockedErr
+	}
 	finishAcceptedTerminal := func() error {
+		if noticeBuffer.blocked() {
+			return blockNotice()
+		}
+		flushNotice()
 		// A provider refusal, prompt block, pause_turn, or context exhaustion
 		// must be delivered as-is rather than retried with the identical
 		// request. Other empty buffered streams remain eligible for the
@@ -1154,7 +1163,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			(!ra.streamTermination.Cause.IsProviderFailure() &&
 				ra.streamTermination.Cause.AllowsIdenticalReplay() &&
 				!ra.streamTermination.Cause.IsProviderRefusal())
-		if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent && canReplayEmptyOutput {
+		if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent && canReplayEmptyOutput && !ra.inlineReasoningExtracted {
 			if ra.streamTermination.Cause == model.TerminationCauseTokenLimit || ra.streamFinishReason == "length" {
 				log.Infof("channel %s returned empty stream truncated by max_tokens, will retry", ra.channel.Name)
 			} else {
@@ -1189,6 +1198,18 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 
 	for {
+		// 上游已发出 [DONE] 且该标记已经过本轮正常 chunk 处理写入客户端：主动收尾，
+		// 不再阻塞等 EOF。
+		// 动机（对齐上游 23fbd527，补上实测等价性缺口）：部分上游（及中间代理）
+		// 发完 [DONE] 后并不关闭连接，继续等 EOF 会一直阻塞到客户端/中间层先超时
+		// 断开，被记成 client disconnected —— 把一个本来成功的响应变成失败日志，
+		// 并让请求 goroutine 与上游连接悬空。
+		// 与 EOF 收尾共用 finishAcceptedTerminal（见其定义处注释），两条路径语义一致：
+		// 空输出重试（issue #106/#155）、reasoningBuffer 释放、stream session Finish
+		// 都不因终止方式不同而产生分叉。
+		if sawDoneMarker {
+			return finishAcceptedTerminal()
+		}
 		var (
 			r                                 sseReadResult
 			ok                                bool
@@ -1196,6 +1217,12 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		)
 
 		select {
+		case <-noticeTimerC:
+			flushNotice()
+			if clientDisconnected && ra.streamSession == nil {
+				return errClientDisconnected
+			}
+			continue
 		case <-ctx.Done():
 			if ra.streamSession == nil && isClientDisconnected(ra.clientCtx) {
 				return errClientDisconnected
@@ -1347,6 +1374,14 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			emitStreamInterruption(transformErr, false)
 			return transformErr
 		}
+		// 上游流终止标记：记下但不在这里 return。[DONE] 仍要走完下方正常的
+		// chunk 写入（buffer flush / stream session AddPayload / Write+Flush），
+		// 收尾由下一轮循环顶部的 sawDoneMarker 分支完成。
+		// 故意放在 transformStreamData 的错误处理之后：[DONE] chunk 上的真实
+		// 转换错误仍应优先返回，不该被终止标记掩盖。
+		if isSSEDoneMarker(r.data) {
+			sawDoneMarker = true
+		}
 		if firstVisibleOutputDeadlineReached && (!chunkHasVisible || len(data) == 0) {
 			// A declared terminal response (for example, a prompt block) is a
 			// valid no-output outcome. Metadata without a terminal declaration is
@@ -1373,6 +1408,23 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			stopFirstVisibleOutputTimer()
 			startStreamIdleTimer()
 		}
+		shouldHoldNotice := noticeBuffer.observe(ra.streamAnswerText, ra.streamAnswerBypass)
+		if ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && noticeBuffer.blocked() {
+			return blockNotice()
+		}
+		if shouldHoldNotice && noticeBuffer.bytes+len(data) <= answerNoticeLimit {
+			noticeBuffer.payloads = append(noticeBuffer.payloads, data)
+			noticeBuffer.bytes += len(data)
+			if noticeTimer == nil {
+				noticeTimer = time.NewTimer(time.Second)
+				noticeTimerC = noticeTimer.C
+			}
+			continue
+		}
+		if noticeBuffer.bytes+len(data) > answerNoticeLimit {
+			noticeBuffer.released = true
+		}
+		flushNotice()
 
 		// issue #155：根据策略决定是否缓冲 reasoning chunks。
 		// buffer 策略：暂存到 buffer，待可见内容到达后统一 flush（安全重试但 CF 可能超时）
@@ -1497,6 +1549,7 @@ func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected 
 // transformStreamData 转换流式数据，返回转换后的 SSE 字节、该 chunk 是否包含可见内容、以及错误。
 // hasVisibleContent 用于流式空输出检测：仅含 reasoning 的 chunk 不算可见内容（issue #155）。
 func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([]byte, bool, error) {
+	ra.streamAnswerText, ra.streamAnswerBypass = "", false
 	internalStream, err := ra.outAdapter.TransformStream(ctx, []byte(data))
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform stream: %v", err)
@@ -1506,7 +1559,9 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		return nil, false, nil
 	}
 
+	ra.extractLeadingInlineReasoningStream(internalStream)
 	hasVisible := streamChunkHasVisibleContent(internalStream)
+	ra.streamAnswerText, ra.streamAnswerBypass = answerText(internalStream, true)
 
 	ra.recordStreamTermination(internalStream)
 
@@ -1516,6 +1571,10 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		return nil, false, err
 	}
 
+	if termination, blocked := responseContentBlock(internalStream); blocked {
+		ra.collectResponse()
+		return nil, false, providerTerminalFailureError(termination)
+	}
 	return inStream, hasVisible, nil
 }
 
@@ -1576,6 +1635,16 @@ func (ra *relayAttempt) hasUnfinishedObservedStreamChoices() bool {
 
 // handleResponse 处理非流式响应
 func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Response) error {
+	if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/plain") {
+		prefix, readErr := io.ReadAll(io.LimitReader(response.Body, answerNoticeLimit+1))
+		if readErr != nil {
+			return readErr
+		}
+		if isExplicitAnswerNotice(string(prefix)) {
+			return providerTerminalFailureError(answerNoticeTermination())
+		}
+		response.Body = &prefixResponseBody{Reader: io.MultiReader(bytes.NewReader(prefix), response.Body), Closer: response.Body}
+	}
 	internalResponse, err := ra.outAdapter.TransformResponse(ctx, response)
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform response: %v", err)
@@ -1583,10 +1652,26 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 	}
 
 	applyReasoningExhaustedHeader(ra.c, internalResponse)
+	inlineReasoningExtracted := extractLeadingInlineReasoning(internalResponse)
+	if termination, blocked := responseContentBlock(internalResponse); blocked {
+		ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
+		return providerTerminalFailureError(termination)
+	}
+	text, bypass := answerText(internalResponse, false)
+	if !bypass && isExplicitAnswerNotice(text) {
+		termination := answerNoticeTermination()
+		termination.ProviderReason = internalResponse.Termination.ProviderReason
+		if termination.ProviderReason == "" && len(internalResponse.Choices) > 0 {
+			termination.ProviderReason = terminationForChoice(internalResponse.Choices[0]).ProviderReason
+		}
+		internalResponse.Termination = termination
+		ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
+		return providerTerminalFailureError(internalResponse.Termination)
+	}
 
 	// 空输出检测（issue #106/#155）：上游返回 200 但无可见内容。
 	// 不依赖 CompletionTokens 判断——推理模型可能 CompletionTokens > 0 但无可见内容。
-	if isRetryEmptyOutputEnabled() && isEmptyOutputResponse(internalResponse) {
+	if isRetryEmptyOutputEnabled() && isEmptyOutputResponse(internalResponse) && !inlineReasoningExtracted {
 		log.Infof("channel %s returned empty output (no visible content), will retry", ra.channel.Name)
 		return errEmptyOutput
 	}
@@ -1792,20 +1877,24 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				continue
 			}
 
-			attemptTypes := outboundAttemptTypes(channel.Type, req.internalRequest, group.OutboundFormat, channel.OutboundFormatOverride)
+			plans := channel.ResolveConnectionPlans(req.internalRequest, group.OutboundFormat)
+			attemptTypes := make([]outbound.OutboundType, len(plans))
+			for i, plan := range plans {
+				attemptTypes[i] = plan.AdapterType
+			}
 			if len(attemptTypes) == 0 || outbound.Get(attemptTypes[0]) == nil {
 				routeIter.Skip(channel.ID, 0, channel.Name, fmt.Sprintf("unsupported channel type: %d", channel.Type))
 				continue
 			}
-			if req.internalRequest.IsEmbeddingRequest() && !outbound.IsEmbeddingChannelType(channel.Type) {
+			if channel.ConnectionConfig == nil && req.internalRequest.IsEmbeddingRequest() && !outbound.IsEmbeddingChannelType(channel.Type) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not compatible with embedding request")
 				continue
 			}
-			if req.internalRequest.IsChatRequest() && !outbound.IsChatChannelType(channel.Type) {
+			if channel.ConnectionConfig == nil && req.internalRequest.IsChatRequest() && !outbound.IsChatChannelType(channel.Type) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not compatible with chat request")
 				continue
 			}
-			if !isZenCandidateChannelAllowed(requestModel, channel.Type, req.internalRequest.IsEmbeddingRequest()) {
+			if channel.ConnectionConfig == nil && !isZenCandidateChannelAllowed(requestModel, channel.Type, req.internalRequest.IsEmbeddingRequest()) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not preferred for zen model prefix")
 				continue
 			}
@@ -1920,20 +2009,22 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						lastErr = err
 						goto exhausted
 					}
-					outAdapter := outbound.Get(attemptType)
+					plan := plans[adapterIndex]
+					outAdapter := plan.Adapter()
 					if outAdapter == nil {
 						continue
 					}
 					ra := &relayAttempt{
-						relayRequest:         req,
-						outAdapter:           outAdapter,
-						adapterType:          attemptType,
-						channel:              channel,
-						usedKey:              usedKey,
-						firstTokenTimeOutSec: group.FirstTokenTimeOut,
-						attemptTimeOutSec:    group.AttemptTimeOut,
-						tryIndex:             keyRound,
-						tryTotal:             maxKeyRetriesPerRoute,
+						relayRequest:              req,
+						outAdapter:                outAdapter,
+						adapterType:               attemptType,
+						channel:                   channel.WithConnectionPlan(plan),
+						usedKey:                   usedKey,
+						firstTokenTimeOutSec:      channel.EffectiveFirstTokenTimeOut(group.FirstTokenTimeOut),
+						attemptTimeOutSec:         channel.EffectiveAttemptTimeOut(group.AttemptTimeOut),
+						tryIndex:                  keyRound,
+						tryTotal:                  maxKeyRetriesPerRoute,
+						protocolFallbackRemaining: adapterIndex < len(attemptTypes)-1 && (maxTotalAttempts <= 0 || budget.forwardedBase+routeIter.ForwardedAttempts()+1 < maxTotalAttempts),
 					}
 
 					// 渠道并发上限（阶段1）attempt 级原子占用：真实转发前占名额，
@@ -1975,9 +2066,6 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
 					// 离群窗口：记录成功样本（与熔断器同级证据）。
 					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
-					// API Key 级 TPM:用真实 input+output token 回扣,替代门口
-					// 那次「预占 1」的假限额。ConsumeTokens 内部对 tpm<=0 直接返回。
-					consumeAPIRateLimitTokens(req.c, req.apiKeyID, requestModel, int(req.metrics.Stats.InputToken), int(req.metrics.Stats.OutputToken))
 					req.metrics.Save(true, nil, currentAttempts)
 					return nil
 				}
@@ -2014,7 +2102,11 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 				// 熔断器和 Auto 策略：在所有 adapter 类型（如 Responses→Chat）均失败后才记录，
 				// 避免 Response adapter 降级到 Chat 的过程中误触发熔断。
-				if result.Decision.Scope == ScopeNextChannel || result.Decision.Scope == ScopeAbortAll {
+				// 守卫统一交给 shouldRecordChannelFailure（type.go），它负责排除
+				// SkipFailureAccounting（客户端断连、内容拦截）——这些不是渠道故障。
+				// 历史上这里只看 Scope，而断连分支恰好产出 ScopeAbortAll，导致每次
+				// 转发中途的客户端断连都给熔断器 +1，阈值默认 5 次后健康渠道被误熔断。
+				if shouldRecordChannelFailure(result.Decision) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModelName)
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
 					// 离群窗口：记录失败样本（与熔断器同级，避免 adapter 降级误触发）。

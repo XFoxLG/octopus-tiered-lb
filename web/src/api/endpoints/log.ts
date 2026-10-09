@@ -5,6 +5,8 @@ import { HttpStatus, type ApiError } from '../types';
 import { logger } from '@/lib/logger';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuthStore } from './user';
+import { exactId, withExactId, compareExactIds } from '@/lib/exact-id';
+import { mergeLogPages, mergeLiveRequest } from '@/lib/log-stream-state';
 
 /**
  * 尝试状态
@@ -39,7 +41,8 @@ export interface ChannelAttempt {
  * 日志数据（列表条目，不含 request_content / response_content）
  */
 export interface RelayLog {
-    id: number;
+    id: string | number;
+    id_str?: string;
     trace_id?: string;
     time: number;                // 时间戳
     request_model_name: string;  // 请求模型名称
@@ -89,8 +92,10 @@ export type RelayLogContentState = 'pending' | 'ready' | 'expired' | 'unavailabl
 export type RelayLogBoundary = 'client_ingress' | 'upstream_request' | 'upstream_response' | 'client_egress';
 
 export interface RelayLogContentRef {
-    id: number;
-    relay_log_id: number;
+    id: string | number;
+    id_str?: string;
+    relay_log_id: string | number;
+    relay_log_id_str?: string;
     attempt_num: number;
     boundary: RelayLogBoundary;
     slot: number;
@@ -118,6 +123,23 @@ export interface LogDetailError {
     status?: number;
     reason: 'not_found' | 'request_failed';
     message?: string;
+}
+
+export interface LiveRequest {
+    endpoint_type?: string;
+    trace_id: string;
+    instance_id: string;
+    started_at: number;
+    updated_at: number;
+    state: 'received' | 'waiting' | 'attempt' | 'streaming' | 'completed' | 'recorded' | 'unavailable';
+    request_model: string;
+    actual_model: string;
+    channel_id: number;
+    channel_name: string;
+    api_key_id: number;
+    attempt: number;
+    http_status: number;
+    log_id?: string;
 }
 
 export interface RelayLogDetail extends RelayLog {
@@ -249,7 +271,7 @@ export function useDownloadRelayLogContent() {
             const token = useAuthStore.getState().token;
             if (!token) throw new Error('Not authenticated');
 
-            const response = await fetch(`${API_BASE_URL}/api/v1/log/content?ref_id=${content.id}`, {
+            const response = await fetch(`${API_BASE_URL}/api/v1/log/content?ref_id=${exactId(content.id, content.id_str)}`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             if (!response.ok) {
@@ -316,6 +338,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
     const token = useAuthStore((state) => state.token);
 
     const [isConnected, setIsConnected] = useState(false);
+	const [liveRequests, setLiveRequests] = useState<LiveRequest[]>([]);
     const [error, setError] = useState<Error | null>(null);
     const abortRef = useRef<AbortController | null>(null);
 
@@ -356,7 +379,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
             if (stableFilter.include_attempts != null) params.set('include_attempts', String(stableFilter.include_attempts));
             if (stableFilter.is_test != null) params.set('is_test', String(stableFilter.is_test));
             const result = await apiClient.get<RelayLog[] | null>(`/api/v1/log/list?${params.toString()}`);
-            return result ?? [];
+            return (result ?? []).map(withExactId);
         },
         getNextPageParam: (lastPage, allPages) => {
             if (!lastPage || lastPage.length < pageSize) return undefined;
@@ -379,7 +402,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
 
     const logs = useMemo(() => {
         const pages = logsQuery.data?.pages ?? [];
-        const seen = new Set<number>();
+        const seen = new Set<string | number>();
         const merged: RelayLog[] = [];
 
         for (const page of pages) {
@@ -390,7 +413,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
             }
         }
 
-        merged.sort((a, b) => b.time - a.time);
+        merged.sort((a, b) => b.time - a.time || compareExactIds(b.id, a.id));
         return merged;
     }, [logsQuery.data]);
 
@@ -409,6 +432,14 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
         let cancelled = false;
         let retryTimer: number | null = null;
         let retryAttempt = 0;
+		let refreshTimer: number | null = null;
+		const scheduleRefresh = () => {
+			if (cancelled || refreshTimer !== null) return;
+			refreshTimer = window.setTimeout(() => {
+				refreshTimer = null;
+				if (!cancelled) void queryClient.invalidateQueries({ queryKey: logsInfiniteQueryKey(pageSize, stableFilter) });
+			}, 500);
+		};
 
         const waitForRetry = (delayMs: number) =>
             new Promise<void>((resolve) => {
@@ -421,8 +452,8 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
         const hasActiveFilter = !!(stableFilter.model || (stableFilter.models && stableFilter.models.length > 0) || stableFilter.channel_id != null || stableFilter.api_key_id != null || stableFilter.endpoint_type || stableFilter.status || stableFilter.start_time != null || stableFilter.end_time != null || stableFilter.include_attempts != null || stableFilter.is_test != null);
 
         const mergeIncomingLog = (log: RelayLog) => {
-            // When a filter is active, skip merging SSE logs to avoid showing unfiltered results
-            if (hasActiveFilter) return;
+            // Let the server apply the full filter (including attempts and exclusions).
+            if (hasActiveFilter) { scheduleRefresh(); return; }
             queryClient.setQueryData(
                 logsInfiniteQueryKey(pageSize, stableFilter),
                 (old: InfiniteData<RelayLog[], number> | undefined) => {
@@ -430,11 +461,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
                         return { pages: [[log]], pageParams: [1] };
                     }
 
-                    const exists = old.pages.some((page) => page?.some((item) => item.id === log.id));
-                    if (exists) return old;
-
-                    const firstPage = old.pages[0] ?? [];
-                    return { ...old, pages: [[log, ...firstPage], ...old.pages.slice(1)] };
+                    return { ...old, pages: mergeLogPages(old.pages, log) };
                 }
             );
         };
@@ -451,7 +478,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
                     const controller = new AbortController();
                     abortRef.current = controller;
 
-                    const response = await fetch(`${API_BASE_URL}/api/v1/log/stream`, {
+                    const response = await fetch(`${API_BASE_URL}/api/v1/log/stream?version=2`, {
                         method: 'GET',
                         headers: {
                             Authorization: `Bearer ${token}`,
@@ -469,6 +496,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
                     retryAttempt = 0;
                     setIsConnected(true);
                     setError(null);
+					scheduleRefresh();
 
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
@@ -485,7 +513,20 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
                         if (dataLines.length === 0) return;
 
                         try {
-                            const log: RelayLog = JSON.parse(dataLines.join('\n'));
+                            const payload = JSON.parse(dataLines.join('\n'));
+                            const event = lines.find(line => line.startsWith('event:'))?.slice(6).trim();
+                            if (event === 'requests') {
+                                setLiveRequests((payload as LiveRequest[]).slice(0, 256));
+                                return;
+                            }
+                            if (event === 'request') {
+                                const incoming = payload as LiveRequest;
+                                setLiveRequests(previous => mergeLiveRequest(previous, incoming));
+                                if (incoming.state === 'recorded') scheduleRefresh();
+                                return;
+                            }
+                            const log = withExactId(payload as RelayLog);
+                            if (log.trace_id) setLiveRequests(previous => previous.filter(item => item.trace_id !== log.trace_id));
                             mergeIncomingLog(log);
                         } catch (e) {
                             logger.error('解析日志数据失败:', e);
@@ -537,11 +578,20 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
             if (retryTimer !== null) {
                 window.clearTimeout(retryTimer);
             }
+			if (refreshTimer !== null) window.clearTimeout(refreshTimer);
             abortRef.current?.abort();
             abortRef.current = null;
             setIsConnected(false);
         };
     }, [pageSize, stableFilter, queryClient, token]);
+
+	useEffect(() => {
+		if (isConnected || !token) return;
+		const timer = window.setInterval(() => {
+			if (document.visibilityState === 'visible') void queryClient.invalidateQueries({ queryKey: logsInfiniteQueryKey(pageSize, stableFilter) });
+		}, 15_000);
+		return () => window.clearInterval(timer);
+	}, [isConnected, token, pageSize, stableFilter, queryClient]);
 
     const clear = useCallback(() => {
         queryClient.removeQueries({ queryKey: logsInfiniteQueryKey(pageSize, stableFilter) });
@@ -549,6 +599,19 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
 
     return {
         logs,
+        liveRequests: liveRequests.filter(entry => {
+            if (logs.some(log => log.trace_id === entry.trace_id)) return false;
+            if (stableFilter.status || stableFilter.is_test === true) return false;
+            if (stableFilter.endpoint_type && stableFilter.endpoint_type !== entry.endpoint_type) return false;
+            if (stableFilter.channel_id != null && entry.channel_id !== stableFilter.channel_id) return false;
+            if (stableFilter.api_key_id != null && entry.api_key_id !== stableFilter.api_key_id) return false;
+            if (stableFilter.start_time != null && entry.started_at < stableFilter.start_time * 1000) return false;
+            if (stableFilter.end_time != null && entry.started_at > stableFilter.end_time * 1000) return false;
+            const names = [entry.request_model.toLowerCase(), entry.actual_model.toLowerCase()];
+            const fuzzy = stableFilter.model && names.some(name => name.includes(stableFilter.model!.toLowerCase()));
+            const exact = stableFilter.models?.some(model => names.includes(model.toLowerCase()));
+            return !(stableFilter.model || stableFilter.models?.length) || !!(fuzzy || exact);
+        }),
         isConnected,
         error,
         hasMore: !!logsQuery.hasNextPage,
@@ -599,12 +662,12 @@ export function useLogDetail() {
     // 「无法读取日志详情」，分不清「日志已被清理」和「请求真的失败」。
     const [error, setError] = useState<LogDetailError | null>(null);
 
-    const fetchDetail = useCallback(async (id: number) => {
+    const fetchDetail = useCallback(async (id: string | number) => {
         setIsLoading(true);
         setError(null);
         try {
-            const result = await apiClient.get<RelayLogDetail | null>(`/api/v1/log/detail?id=${id}`);
-            setDetail(result);
+            const result = await apiClient.get<RelayLogDetail | null>(`/api/v1/log/detail?id=${exactId(id)}`);
+            setDetail(result ? withExactId(result) : null);
         } catch (e) {
             logger.error('获取日志详情失败:', e);
             const status = typeof (e as ApiError | undefined)?.code === 'number' ? (e as ApiError).code : undefined;

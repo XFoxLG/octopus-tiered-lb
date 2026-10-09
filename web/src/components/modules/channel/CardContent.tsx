@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
     Trash2,
     CheckCircle2,
@@ -10,23 +10,15 @@ import {
     TrendingUp,
     Globe,
     Key,
-    ShieldCheck,
-    ShieldAlert,
-    Stethoscope,
     FlaskConical,
-    Loader2
 } from 'lucide-react';
 import {
     useUpdateChannel,
     useDeleteChannel,
-    useCheckChannelKeys,
-    useTestChannelModel,
-    ChannelType,
     type Channel,
     type UpdateChannelRequest,
     type TestChannelSummary,
 } from '@/api/endpoints/channel';
-import { useGroupTestProgress } from '@/api/endpoints/group';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
 import {
     MorphingDialogTitle,
@@ -38,13 +30,6 @@ import { Tabs, TabsContents, TabsContent } from '@/components/animate-ui/compone
 import { type StatsMetricsFormatted } from '@/api/endpoints/stats';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from '@/components/ui/select';
 import {
     ChannelForm,
     deriveChannelProxyMode,
@@ -66,22 +51,28 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import { TestDialog } from './TestDialog';
 import { toast } from '@/components/common/Toast';
 
 export function CardContent({ channel, stats }: { channel: Channel; stats: StatsMetricsFormatted }) {
     const { setIsOpen } = useMorphingDialog();
     const updateChannel = useUpdateChannel();
     const deleteChannel = useDeleteChannel();
-    const checkChannelKeys = useCheckChannelKeys();
     const { data: settings } = useSettingList();
     const [isEditing, setIsEditing] = useState(false);
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-    // 检查全部 Key 后的结果；当 passed === false 表示全部 Key 都不可用，
-    // 此时弹出确认对话框允许直接删除该渠道。
+    // 逐 Key 检查全部不可用时的结果；由测试弹窗回调写入，用于删除确认对话框的总数说明。
     const [checkResult, setCheckResult] = useState<TestChannelSummary | null>(null);
     const [showUnavailableDelete, setShowUnavailableDelete] = useState(false);
-
-    const testChannelModel = useTestChannelModel();
+    // 统一的测试弹窗（手动触发，无后台定时）。
+    const [isTestDialogOpen, setIsTestDialogOpen] = useState(false);
 
     // 可测试的模型列表：来自渠道自动同步的 model 与手动添加的 custom_model，去重。
     const availableModels = useMemo(() => {
@@ -93,42 +84,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         ]));
     }, [channel.model, channel.custom_model]);
 
-    const [selectedModel, setSelectedModel] = useState<string>(availableModels[0] ?? '');
-    const [currentTestId, setCurrentTestId] = useState<string | null>(null);
-    const testProgressQuery = useGroupTestProgress(currentTestId);
-    const testProgress = testProgressQuery.data;
-
-    // 切换渠道或模型列表变化时，重置选中模型与测试进度。
-    useEffect(() => {
-        setSelectedModel(availableModels[0] ?? '');
-        setCurrentTestId(null);
-    }, [channel.id, availableModels]);
-
-    const isTestingModel = testChannelModel.isPending
-        || (currentTestId !== null && testProgress !== undefined && !testProgress.done);
-
-    // 根据渠道类型推断探测的 endpoint_type：
-    // OpenAIEmbedding 渠道用 "embeddings"，其余聊天类渠道用 "*"（all）。
-    const inferEndpointType = (type: ChannelType): string =>
-        type === ChannelType.OpenAIEmbedding ? 'embeddings' : '*';
-
-    const handleTestModel = () => {
-        if (!selectedModel || isTestingModel) return;
-        setCurrentTestId(null);
-        testChannelModel.mutate({
-            channel_id: channel.id,
-            model_name: selectedModel,
-            endpoint_type: inferEndpointType(channel.type),
-        }, {
-            onSuccess: (progress) => {
-                setCurrentTestId(progress.id);
-            },
-        });
-    };
-
-    const testResult = testProgress?.results?.[0];
-
     const [formData, setFormData] = useState<ChannelFormData>({
+        connection_config: channel.connection_config,
         name: channel.name,
         group_id: channel.group_id,
         type: channel.type,
@@ -138,6 +95,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         channel_proxy: channel.channel_proxy ?? '',
         param_override: channel.param_override ?? '',
         outbound_format_override: channel.outbound_format_override ?? '',
+        upstream_protocols: channel.upstream_protocols ?? [],
+        first_token_time_out: channel.first_token_time_out ?? 0,
+        attempt_time_out: channel.attempt_time_out ?? 0,
+        stream_idle_timeout: channel.stream_idle_timeout ?? 0,
+        reasoning_buffer_strategy: channel.reasoning_buffer_strategy ?? '',
         request_rewrite: normalizeRequestRewriteFormData(channel.request_rewrite),
         relay_log_raw_sse_until: channel.relay_log_raw_sse_until ?? 0,
         keys: channel.keys.length > 0
@@ -158,6 +120,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         proxy_mode: deriveChannelProxyMode(channel),
         proxy_config_id: channel.proxy_config_id ?? null,
         auto_sync: channel.auto_sync,
+        auto_sync_key_models: channel.auto_sync_key_models ?? false,
         auto_group: channel.auto_group,
         skip_model_test: channel.skip_model_test,
         disposable: channel.disposable ?? false,
@@ -193,18 +156,23 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             return;
         }
         const req: UpdateChannelRequest = { id: channel.id };
-        const effectiveRequestRewrite = getEffectiveRequestRewriteFormData(formData.type, formData.request_rewrite);
+        if (formData.connection_config && JSON.stringify(formData.connection_config) !== JSON.stringify(channel.connection_config)) {
+            req.connection_config = formData.connection_config;
+        }
+        const effectiveRequestRewrite = getEffectiveRequestRewriteFormData(formData.type, formData.request_rewrite, formData.connection_config);
 
         // only send changed fields to avoid accidental clears
         if (formData.name !== channel.name) req.name = formData.name;
         if (formData.group_id !== channel.group_id) req.group_id = formData.group_id;
-        if (formData.type !== channel.type) req.type = formData.type;
+        if (!formData.connection_config && formData.type !== channel.type) req.type = formData.type;
         if (formData.enabled !== channel.enabled) req.enabled = formData.enabled;
-        if (!baseUrlsEqual(formData.base_urls, channel.base_urls)) {
+        if (!formData.connection_config && !baseUrlsEqual(formData.base_urls, channel.base_urls)) {
             req.base_urls = (formData.base_urls ?? []).filter((u) => u.url.trim()).map((u) => ({
                 url: u.url.trim(),
                 delay: Number(u.delay || 0),
                 suffix_mode: u.suffix_mode && u.suffix_mode !== 'auto' ? u.suffix_mode : undefined,
+                // 协议绑定必须原样带过去，否则多协议渠道会退回按延迟挑地址。
+                protocol: u.protocol || undefined,
             }));
         }
         if (formData.model !== channel.model) req.model = formData.model;
@@ -217,6 +185,9 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
             req.proxy_config_id = nextProxyConfigId;
         }
         if (formData.auto_sync !== channel.auto_sync) req.auto_sync = formData.auto_sync;
+        if (formData.auto_sync_key_models !== (channel.auto_sync_key_models ?? false)) {
+            req.auto_sync_key_models = formData.auto_sync_key_models;
+        }
         if (formData.skip_model_test !== channel.skip_model_test) req.skip_model_test = formData.skip_model_test;
         if (formData.disposable !== (channel.disposable ?? false)) req.disposable = formData.disposable;
         const curExpireAt = channel.expire_at ? channel.expire_at.slice(0, 16) : '';
@@ -250,9 +221,34 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
 
         const nextOutboundFormatOverride = formData.outbound_format_override.trim();
         const curOutboundFormatOverride = channel.outbound_format_override ?? '';
-        if (nextOutboundFormatOverride !== curOutboundFormatOverride) {
+        if (!formData.connection_config && nextOutboundFormatOverride !== curOutboundFormatOverride) {
             // Empty string means "follow group outbound_format" (patch semantics).
             req.outbound_format_override = nextOutboundFormatOverride;
+        }
+
+        // 协议声明按顺序比较：顺序本身就是优先级，重排必须触发保存。
+        const nextUpstreamProtocols = formData.upstream_protocols ?? [];
+        const curUpstreamProtocols = channel.upstream_protocols ?? [];
+        if (!formData.connection_config && nextUpstreamProtocols.join(',') !== curUpstreamProtocols.join(',')) {
+            req.upstream_protocols = nextUpstreamProtocols;
+        }
+
+        // 超时三项只在真正改动时才写，避免每次保存都覆盖渠道级设置。
+        const nextFirstTokenTimeout = formData.first_token_time_out ?? 0;
+        if (nextFirstTokenTimeout !== (channel.first_token_time_out ?? 0)) {
+            req.first_token_time_out = nextFirstTokenTimeout;
+        }
+        const nextAttemptTimeout = formData.attempt_time_out ?? 0;
+        if (nextAttemptTimeout !== (channel.attempt_time_out ?? 0)) {
+            req.attempt_time_out = nextAttemptTimeout;
+        }
+        const nextStreamIdleTimeout = formData.stream_idle_timeout ?? 0;
+        if (nextStreamIdleTimeout !== (channel.stream_idle_timeout ?? 0)) {
+            req.stream_idle_timeout = nextStreamIdleTimeout;
+        }
+        const nextReasoningBufferStrategy = formData.reasoning_buffer_strategy ?? '';
+        if (nextReasoningBufferStrategy !== (channel.reasoning_buffer_strategy ?? '')) {
+            req.reasoning_buffer_strategy = nextReasoningBufferStrategy;
         }
 
         if (!requestRewriteEqual(effectiveRequestRewrite, channel.request_rewrite)) {
@@ -344,29 +340,12 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         }, 300);
     };
 
-    const handleCheckKeys = async () => {
-        setCheckResult(null);
-        try {
-            const summary = await checkChannelKeys.mutateAsync(channel.id);
-            setCheckResult(summary);
-            const total = summary.results.length;
-            const passed = summary.results.filter((r) => r.passed).length;
-            if (total === 0) {
-                toast.error(t('actions.checkFailed'));
-                return;
-            }
-            if (!summary.passed) {
-                // 全部 Key 均不可用：提示并打开删除确认框。
-                toast.error(t('actions.checkAllFailed'));
-                setShowUnavailableDelete(true);
-            } else if (passed === total) {
-                toast.success(t('actions.checkAllPassed', { passed, total }));
-            } else {
-                toast.warning(t('actions.checkPartialPassed', { passed, total }));
-            }
-        } catch (error) {
-            toast.error(t('actions.checkFailed'), { description: (error as Error)?.message });
-        }
+    // 测试弹窗完成逐 Key 检查：全部不可用时关闭弹窗并沿用原来的删除确认流程。
+    const handleKeysUnavailable = (summary: TestChannelSummary) => {
+        setCheckResult(summary);
+        setIsTestDialogOpen(false);
+        toast.error(t('actions.checkAllFailed'));
+        setShowUnavailableDelete(true);
     };
 
     const handleConfirmDeleteUnavailable = () => {
@@ -377,22 +356,12 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         }, 300);
     };
 
-    const checkedTotal = checkResult?.results.length ?? 0;
-    const checkedPassed = checkResult?.results.filter((r) => r.passed).length ?? 0;
-    const checkSummaryMessage = !checkResult
-        ? ''
-        : !checkResult.passed
-            ? t('actions.checkAllFailed')
-            : checkedPassed === checkedTotal
-                ? t('actions.checkAllPassed', { passed: checkedPassed, total: checkedTotal })
-                : t('actions.checkPartialPassed', { passed: checkedPassed, total: checkedTotal });
-
     const sectionClassName = 'relative overflow-hidden rounded-lg border border-border/30 bg-card p-4';
     const itemClassName = 'rounded-lg border border-border/25 bg-card p-3';
 
     return (
         <>
-            <MorphingDialogTitle>
+            <MorphingDialogTitle className="shrink-0">
                 <header className="relative flex items-center justify-between gap-4 px-1 pb-4 pt-1">
                     <div className="space-y-3">
                         <div className="flex items-center gap-2">
@@ -418,11 +387,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                 </header>
             </MorphingDialogTitle>
 
-            <MorphingDialogDescription className="min-h-0 flex-1 overflow-y-auto px-1">
-                <Tabs value={currentView} className="flex min-h-full flex-col">
-                    <TabsContents>
-                        <TabsContent value="viewing" className="flex flex-col">
-                            <div className="space-y-4 pr-1 sm:space-y-5">
+            <MorphingDialogDescription disableLayoutAnimation className="flex min-h-0 flex-1 flex-col overflow-hidden px-1">
+                <Tabs value={currentView} className="flex min-h-0 flex-1 flex-col">
+                    <TabsContents className="flex min-h-0 flex-1 flex-col">
+                        <TabsContent value="viewing" className="flex flex-1 min-h-0 flex-col">
+                            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain space-y-4 pr-1 sm:space-y-5">
                                 <dl className="grid grid-cols-3 gap-2 sm:gap-3">
                                     <div className="rounded-lg border border-chart-1/18 bg-linear-to-br from-chart-1/10 via-background/42 to-chart-1/5 p-3.5 shadow-sm sm:p-4">
                                         <dt className="flex items-center gap-2 mb-2 text-xs font-medium text-muted-foreground">
@@ -554,7 +523,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                         {t('sections.baseUrls')}
                                     </h4>
                                     <div className="space-y-2">
-                                        {channel.base_urls?.map((url, i) => (
+                                        {channel.connection_config?.endpoints.map((endpoint) => <div key={endpoint.id} className="min-w-0 rounded-lg border border-border p-3"><span className="text-sm font-medium">{endpoint.protocol}</span><p className="break-all text-sm text-muted-foreground">{endpoint.url}</p></div>)}
+                                        {!channel.connection_config && channel.base_urls?.map((url, i) => (
                                             <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-border/25 bg-card p-3 shadow-sm">
                                                 <div className="flex flex-col gap-1 min-w-0">
                                                     <span className="font-mono text-sm truncate select-all">{url.url}</span>
@@ -574,7 +544,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                                 </Badge>
                                             </div>
                                         ))}
-                                        {(!channel.base_urls || channel.base_urls.length === 0) && (
+                                        {!channel.connection_config && (!channel.base_urls || channel.base_urls.length === 0) && (
                                             <div className="rounded-lg border border-dashed border-border/30 bg-card p-4 text-center text-sm text-muted-foreground">{t('noBaseUrls')}</div>
                                         )}
                                     </div>
@@ -661,81 +631,18 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                         </div>
                                     ) : (
                                         <div className="space-y-3">
-                                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                                <Select value={selectedModel} onValueChange={setSelectedModel}>
-                                                    <SelectTrigger className="w-full sm:flex-1 h-10">
-                                                        <SelectValue placeholder={t('testModel.selectPlaceholder')} />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {availableModels.map((model) => (
-                                                            <SelectItem key={model} value={model}>{model}</SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-                                                <Button
-                                                    onClick={handleTestModel}
-                                                    disabled={isTestingModel || !selectedModel}
-                                                    variant="outline"
-                                                    className="h-10 sm:w-auto"
-                                                >
-                                                    {isTestingModel
-                                                        ? <Loader2 className="size-4 animate-spin" />
-                                                        : <FlaskConical className="size-4" />}
-                                                    {isTestingModel ? t('testModel.testing') : t('testModel.test')}
-                                                </Button>
-                                            </div>
-
-                                            {isTestingModel && (
-                                                <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/8 px-3 py-2 text-sm text-primary">
-                                                    <Loader2 className="size-4 animate-spin" />
-                                                    <span>{t('testModel.testing')}</span>
-                                                </div>
-                                            )}
-
-                                            {testProgress?.done && testResult && (
-                                                <div
-                                                    className={cn(
-                                                        'flex items-start gap-2 rounded-lg border px-3 py-2 text-sm',
-                                                        testResult.passed
-                                                            ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300'
-                                                            : 'border-destructive/30 bg-destructive/8 text-destructive',
-                                                    )}
-                                                >
-                                                    {testResult.passed
-                                                        ? <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
-                                                        : <XCircle className="mt-0.5 size-4 shrink-0" />}
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                            <span className="font-medium">
-                                                                {testResult.passed
-                                                                    ? t('testModel.passed')
-                                                                    : t('testModel.failed')}
-                                                            </span>
-                                                            {testResult.status_code !== 0 && (
-                                                                <Badge
-                                                                    variant="secondary"
-                                                                    className={cn(
-                                                                        "h-5 px-1.5 text-[10px]",
-                                                                        testResult.status_code === 200
-                                                                            ? "bg-green-500/15 text-green-700 dark:text-green-400"
-                                                                            : "bg-red-500/15 text-red-700 dark:text-red-400"
-                                                                    )}
-                                                                >
-                                                                    {testResult.status_code}
-                                                                </Badge>
-                                                            )}
-                                                            {testResult.attempts > 1 && (
-                                                                <span className="text-xs text-muted-foreground">
-                                                                    {t('testModel.attempts', { count: testResult.attempts })}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        {testResult.message && testResult.message !== 'ok' && (
-                                                            <p className="mt-1 text-xs break-words opacity-80">{testResult.message}</p>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            )}
+                                            {/* 三段检查（模型应答 / 协议与能力 / 逐 Key）合并进同一个测试弹窗 */}
+                                            <Button
+                                                type="button"
+                                                onClick={() => setIsTestDialogOpen(true)}
+                                                disabled={channel.keys.length === 0 && availableModels.length === 0}
+                                                variant="outline"
+                                                className="h-10 w-full sm:w-auto"
+                                            >
+                                                <FlaskConical className="size-4" />
+                                                {t('actions.test')}
+                                            </Button>
+                                            <p className="text-xs leading-5 text-muted-foreground">{t('testModel.entryHint')}</p>
                                         </div>
                                     )}
                                 </section>
@@ -758,36 +665,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                 </dl>
                             </div>
 
-                            <div className="mt-4 shrink-0 space-y-3">
-                                <Button
-                                    onClick={handleCheckKeys}
-                                    disabled={checkChannelKeys.isPending || channel.keys.length === 0}
-                                    variant="outline"
-                                    className="h-11 w-full rounded-lg"
-                                >
-                                    {checkChannelKeys.isPending
-                                        ? <Loader2 className="size-4 animate-spin" />
-                                        : <Stethoscope className="size-4" />}
-                                    {checkChannelKeys.isPending ? t('actions.checking') : t('actions.checkKeys')}
-                                </Button>
-
-                                {checkResult ? (
-                                    <div
-                                        className={cn(
-                                            'flex items-start gap-2 rounded-lg border px-3 py-2 text-sm',
-                                            checkResult.passed
-                                                ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300'
-                                                : 'border-destructive/30 bg-destructive/8 text-destructive',
-                                        )}
-                                    >
-                                        {checkResult.passed
-                                            ? <ShieldCheck className="mt-0.5 size-4 shrink-0" />
-                                            : <ShieldAlert className="mt-0.5 size-4 shrink-0" />}
-                                        <span>{checkSummaryMessage}</span>
-                                    </div>
-                                ) : null}
-
-                                <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="grid shrink-0 gap-3 border-t border-border/30 pt-3 sm:grid-cols-2">
                                 <Button
                                     onClick={() => (isConfirmingDelete ? setIsConfirmingDelete(false) : setIsEditing(true))}
                                     variant={isConfirmingDelete ? 'secondary' : 'default'}
@@ -809,11 +687,11 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                             : t('actions.delete')}
                                 </Button>
                                 </div>
-                            </div>
                         </TabsContent>
 
-                        <TabsContent value="editing">
+                        <TabsContent value="editing" className="flex flex-1 min-h-0 flex-col">
                             <ChannelForm
+                                channelId={channel.id}
                                 formData={formData}
                                 onFormDataChange={setFormData}
                                 onSubmit={handleUpdate}
@@ -828,6 +706,26 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                     </TabsContents>
                 </Tabs>
             </MorphingDialogDescription>
+
+            {/*
+              统一测试弹窗。刻意挂在 AlertDialog 之外、用独立的 Dialog：
+              它内容较长（三段检查 + 逐行结果），且需要滚动查看，
+              与"确认删除"这类短确认弹窗的交互模型不同。
+            */}
+            <Dialog open={isTestDialogOpen} onOpenChange={setIsTestDialogOpen}>
+                <DialogContent className="max-h-[85vh] overflow-y-auto rounded-xl sm:max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>{t('testDialog.title')}</DialogTitle>
+                        <DialogDescription>{t('testDialog.description')}</DialogDescription>
+                    </DialogHeader>
+                    <TestDialog
+                        channel={channel}
+                        availableModels={availableModels}
+                        onClose={() => setIsTestDialogOpen(false)}
+                        onKeysUnavailable={handleKeysUnavailable}
+                    />
+                </DialogContent>
+            </Dialog>
 
             <AlertDialog open={showUnavailableDelete} onOpenChange={setShowUnavailableDelete}>
                 <AlertDialogContent className="rounded-xl">

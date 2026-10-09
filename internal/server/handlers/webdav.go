@@ -12,6 +12,7 @@ import (
 	"github.com/lingyuins/octopus/internal/server/middleware"
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/server/router"
+	"github.com/lingyuins/octopus/internal/task"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
@@ -103,6 +104,10 @@ func setWebDAVConfig(c *gin.Context) {
 		resp.InternalError(c)
 		return
 	}
+
+	// 配置已持久化。备份任务周期同步为尽力而为：失败只记日志，不向客户端返回
+	// 错误（那会误导为"配置未保存"）。interval 已在上方校验为 1..168。
+	task.Update(task.TaskWebDAVBackup, time.Duration(cfg.IntervalHours)*time.Hour)
 
 	resp.Success(c, true)
 }

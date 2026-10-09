@@ -1,8 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { MotionConfig, AnimatePresence, motion } from 'motion/react';
-import { ChevronDown } from 'lucide-react';
+import { Boxes, ChevronDown, RotateCcw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { LoadingState } from '@/components/common/LoadingState';
+import { ErrorState } from '@/components/common/ErrorState';
+import { useNavStore } from '@/components/modules/navbar';
 import { useModelMarket } from '@/api/endpoints/model';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
 import { useTranslations } from 'next-intl';
@@ -14,7 +18,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useSearchStore, useToolbarViewOptionsStore } from '@/components/modules/toolbar';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { sortModelMarketItems } from './sort';
-import { useModelFilters, MODEL_CAPABILITY_OPTIONS, type ModelCapabilityFilter } from './useModelFilters';
+import { useModelFilters, MODEL_CAPABILITY_OPTIONS } from './useModelFilters';
 import { useModelViewStore } from './view-store';
 import { useNormalizeRulesSync } from './useNormalizeRulesSync';
 import { cn } from '@/lib/utils';
@@ -42,12 +46,15 @@ function persistFilterCollapsed(collapsed: boolean) {
 export function Model() {
     const t = useTranslations('model');
     const tFilter = useTranslations('modelFilter');
-    const { data: market } = useModelMarket();
+    const activeItem = useNavStore((s) => s.activeItem);
+    const view = useModelViewStore((s) => s.modelView);
+    const marketActive = activeItem === 'model' && view === 'market';
+    const { data: market, isLoading, error, refetch } = useModelMarket(marketActive);
+    const filterBodyId = useId();
     const { data: settings } = useSettingList();
     // 归一化去重依赖运行时规则（来自 DB Setting），需在筛选前注入。
     useNormalizeRulesSync();
     const isMobile = useIsMobile();
-    const view = useModelViewStore((s) => s.modelView);
     const pageKey = 'model' as const;
     const searchTerm = useSearchStore((s) => s.getSearchTerm(pageKey));
     const layout = useToolbarViewOptionsStore((s) => s.getLayout(pageKey));
@@ -55,52 +62,36 @@ export function Model() {
     const modelSortMode = useToolbarViewOptionsStore((s) => s.modelSortMode);
     const modelLatencyUnit = useToolbarViewOptionsStore((s) => s.modelLatencyUnit);
 
-    // 多维筛选本地状态：能力 / 厂商 / 归一化去重。
-    const [capability, setCapability] = useState<ModelCapabilityFilter>('all');
-    const [provider, setProvider] = useState<string>('');
-    const [dedupe, setDedupe] = useState(false);
-    // 首次拿到 setting 时，用「模型广场默认开启归一化去重」初始化 dedupe，
-    // 之后用户手动切换不再被覆盖（用 ref 保证只同步一次）。
-    const dedupeInitializedRef = useRef(false);
+    const { capability, provider, dedupe, setCapability, setProvider, setDedupe, initializeDedupe, resetFilters } = useModelViewStore();
+    const setPricingFilter = useToolbarViewOptionsStore((s) => s.setModelFilter);
+    const setSearchTerm = useSearchStore((s) => s.setSearchTerm);
     useEffect(() => {
-        if (dedupeInitializedRef.current || !settings) return;
-        dedupeInitializedRef.current = true;
-        const raw = settings.find((s) => s.key === SettingKey.ModelNormalizeMarketDedupeDefault)?.value;
-        if (raw === 'true') setDedupe(true);
-    }, [settings]);
+        if (!settings) return;
+        initializeDedupe(settings.find((s) => s.key === SettingKey.ModelNormalizeMarketDedupeDefault)?.value === 'true');
+    }, [settings, initializeDedupe]);
     // 筛选条折叠状态（默认展开，随内容滚动上滑，可手动收起腾出空间）。
     const [filterCollapsed, setFilterCollapsed] = useState<boolean>(readFilterCollapsed);
 
-    const sortedModels = useMemo(() => {
-        const items = market?.items ?? [];
-        return sortModelMarketItems(items, modelSortMode);
-    }, [market, modelSortMode]);
-
-    const pricedFiltered = useMemo(() => {
-        const hasPricing = (model: (typeof sortedModels)[number]) =>
-            model.input + model.output + model.cache_read + model.cache_write > 0;
-        if (filter === 'priced') return sortedModels.filter(hasPricing);
-        if (filter === 'free') return sortedModels.filter((m) => !hasPricing(m));
-        return sortedModels;
-    }, [sortedModels, filter]);
-
-    const { visible: visibleModels, providers } = useModelFilters({
-        items: pricedFiltered,
+    const sortedModels = sortModelMarketItems(market?.items ?? [], modelSortMode);
+    const { visible: visibleModels, providers, capabilityQuery } = useModelFilters({
+        items: sortedModels,
         searchTerm,
         capability,
         provider,
         dedupe,
+        pricing: filter,
+        enabled: marketActive,
     });
     const hasAnyModel = (market?.items.length ?? 0) > 0;
 
-    // 折叠条上展示的已激活筛选数量摘要。
-    const activeFilterCount = useMemo(() => {
-        let count = 0;
-        if (capability !== 'all') count += 1;
-        if (provider !== '') count += 1;
-        if (dedupe) count += 1;
-        return count;
-    }, [capability, provider, dedupe]);
+    const activeFilterCount = [capability !== 'all', provider !== '', dedupe, filter !== 'all', searchTerm.trim() !== ''].filter(Boolean).length;
+    const clearFilters = () => {
+        resetFilters();
+        setPricingFilter('all');
+        setSearchTerm(pageKey, '');
+    };
+    const waitingForCapabilities = capability !== 'all' && capabilityQuery.isLoading;
+    const loadError = !market ? error : capability !== 'all' && !capabilityQuery.data ? capabilityQuery.error : null;
 
     const toggleFilterCollapsed = () => {
         setFilterCollapsed((prev) => {
@@ -113,15 +104,18 @@ export function Model() {
     // 筛选条作为 VirtualizedGrid 的 header，与列表共享同一个滚动容器，
     // 下滑时随卡片一起向上滚走（同 hub 总览），同时列表保持虚拟化。
     const filterHeader: ReactNode = (
-        <div className="mb-3 flex flex-col rounded-xl border border-border/35 bg-card text-card-foreground sm:mb-4 md:p-4">
+        <div className="mb-3 overflow-hidden rounded-xl border border-border/50 bg-card text-card-foreground sm:mb-4">
+            <div className="flex items-center gap-2 pr-3 md:pr-4">
             <button
                 type="button"
                 onClick={toggleFilterCollapsed}
                 aria-expanded={!filterCollapsed}
+                aria-controls={filterBodyId}
                 aria-label={filterCollapsed ? tFilter('filterExpand') : tFilter('filterCollapse')}
-                className="flex items-center gap-2 p-3 text-left transition-colors hover:bg-muted/40 md:p-4"
+                className="flex min-w-0 flex-1 flex-wrap items-center gap-2 p-3 text-left transition-colors hover:bg-muted/40 md:p-4"
             >
                 <span className="text-xs font-semibold text-foreground sm:text-sm">{tFilter('filterTitle')}</span>
+                <span className="text-xs tabular-nums text-muted-foreground" role="status" aria-live="polite">{tFilter('resultCount', { visible: visibleModels.length, total: sortedModels.length })}</span>
                 {activeFilterCount > 0 ? (
                     <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
                         {tFilter('filterSummary', { count: activeFilterCount })}
@@ -134,11 +128,14 @@ export function Model() {
                     )}
                 />
             </button>
+            {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters} className="shrink-0 gap-1.5 text-xs"><RotateCcw className="size-3.5" /><span className="hidden sm:inline">{tFilter('reset')}</span><span className="sr-only sm:hidden">{tFilter('reset')}</span></Button>}
+            </div>
 
             <AnimatePresence initial={false}>
                 {!filterCollapsed ? (
                     <motion.div
                         key="filter-body"
+                        id={filterBodyId}
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
@@ -209,7 +206,7 @@ export function Model() {
                             <div className="flex items-center gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => setDedupe((v) => !v)}
+                                    onClick={() => setDedupe(!dedupe)}
                                     aria-pressed={dedupe}
                                     className={cn(
                                         'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
@@ -230,7 +227,7 @@ export function Model() {
     );
 
     return (
-        <section className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-t-xl" aria-label={pageKey}>
+        <section className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-t-xl" aria-label={t('marketTitle')}>
             {view === 'endpoints' ? (
                 <div className="flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain rounded-t-xl pb-3 md:pb-4">
                     <EndpointsView />
@@ -240,17 +237,21 @@ export function Model() {
                     <PriceCategoriesView />
                 </div>
             ) : (
-                visibleModels.length > 0 ? (
+                isLoading || waitingForCapabilities ? (
+                    <LoadingState message={t('loading')} />
+                ) : loadError ? (
+                    <ErrorState message={loadError.message} onRetry={() => { void refetch(); void capabilityQuery.refetch(); }} />
+                ) : visibleModels.length > 0 ? (
                     <MotionConfig transition={{ layout: { duration: 0 } }}>
                         <VirtualizedGrid
                             items={visibleModels}
                             layout={isMobile ? 'list' : layout}
                             columns={isMobile ? { default: 1 } : { default: 1, sm: 2, md: 2, lg: 3 }}
-                            estimateItemHeight={isMobile ? 132 : 228}
-                            getItemKey={(model) => (isMobile ? `m-model-${model.name}` : `model-${model.name}`)}
+                            estimateItemHeight={isMobile || layout === 'compact' ? 88 : 300}
+                            getItemKey={(model) => model.name}
                             header={filterHeader}
                             renderItem={(model) =>
-                                isMobile ? (
+                                isMobile || layout === 'compact' ? (
                                     <MobileModelItem model={model} latencyUnit={modelLatencyUnit} />
                                 ) : (
                                     <ModelItem model={model} layout={layout} latencyUnit={modelLatencyUnit} />
@@ -265,14 +266,11 @@ export function Model() {
                         <section className="rounded-xl border border-border/35 bg-card p-3 text-card-foreground md:p-4">
                             <div className="relative flex min-h-[18rem] items-center justify-center overflow-hidden rounded-xl border border-dashed border-border/35 bg-card py-6">
                                 <div className="relative flex flex-col items-center gap-4 px-6 text-center">
-                                    <div className="flex items-end gap-3">
-                                        <span className="h-24 w-16 rounded-lg border border-border/30 bg-card" />
-                                        <span className="h-28 w-20 rounded-xl border border-primary/18 bg-card" />
-                                        <span className="h-20 w-14 rounded-lg border border-border/30 bg-card" />
-                                    </div>
+                                    <div className="grid size-14 place-items-center rounded-2xl bg-muted/50"><Boxes className="size-6 text-muted-foreground" /></div>
                                     <p className="text-sm text-muted-foreground">
                                         {hasAnyModel ? t('empty') : t('emptyAll')}
                                     </p>
+                                    {activeFilterCount > 0 && <Button variant="outline" size="sm" onClick={clearFilters}>{tFilter('reset')}</Button>}
                                 </div>
                             </div>
                         </section>

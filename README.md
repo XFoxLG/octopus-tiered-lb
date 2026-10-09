@@ -28,7 +28,7 @@
 - 🚨 **Alerts & Notification Center** - Unified notification center aggregating system events, alert firings, and plan notifications with SSE streaming; alert rules for error rate (with scope + sliding window), cost threshold, quota exceeded, and channel down, delivered via webhook, Gotify, email, Telegram, Feishu, DingTalk, WeCom, and ntfy
 - 📦 **Plan Provider Monitoring** - Track upstream subscription quota/usage (Codex, MiMo, StepFun, SenseNova, and balance-type providers like DeepSeek / Kimi / OpenRouter) and auto-create dedicated forwarding channels under the "Plan" channel group
 - 📅 **Usage Reports** - Schedule daily / weekly / monthly usage reports delivered through notification channels
-- 💎 **Model Market** - Unified model catalog with pricing, channel coverage, enabled key counts, latency, and success metrics, plus create / edit / delete / refresh price workflows
+- 💎 **Model Market** - Unified model catalog with pricing, channel coverage, enabled key counts, latency, and success metrics, multi-dimension filtering with normalized dedupe, available-endpoint and price-category views, plus create / edit / delete / refresh price workflows
 - 🔃 **Model Sync** - Automatic synchronization of available model lists with channels
 - 📊 **Analytics & Evaluation** - Overview, provider / model / API key utilization, route health, latency distribution, provider prompt-cache analytics, and live entry points for group testing / AI routing
 - 🛠️ **Ops & Audit** - Telemetry, quota, health, system, and audit dashboards for daily operations, plus a management-write audit trail
@@ -57,7 +57,7 @@ docker run -d --name octopus \
   -p 8080:8080 \
   -v octopus-data:/app/data \
   -e OCTOPUS_AUTH_JWT_SECRET="replace-with-a-long-random-secret" \
-  lingyuins/octopus:latest
+  ghcr.io/xfoxlg/octopus-tiered-lb:latest
 ```
 
 Recommended on Windows Docker Desktop:
@@ -68,7 +68,7 @@ docker run -d --name octopus `
   -p 8080:8080 `
   -v octopus-data:/app/data `
   -e OCTOPUS_AUTH_JWT_SECRET="replace-with-a-long-random-secret" `
-  lingyuins/octopus:latest
+  ghcr.io/xfoxlg/octopus-tiered-lb:latest
 ```
 
 Or use docker compose:
@@ -76,7 +76,7 @@ Or use docker compose:
 ```yaml
 services:
   octopus:
-    image: lingyuins/octopus:latest
+    image: ghcr.io/xfoxlg/octopus-tiered-lb:latest
     container_name: octopus
     restart: unless-stopped
     ports:
@@ -390,7 +390,7 @@ The embedded management UI currently ships with these top-level modules:
 | Hub | Upstream relay platform management with 5 tabs: Sites (multi-account cards with inline balance / sync / check-in status, archive/restore, batch edit, and bulk import from AllAPIHub / MetAPI), Site Channels (projected channel bindings), Automation (auto-sync and auto-checkin intervals), Balance (plan balance charts), and TokenPlan (token plan monitoring) |
 | Channel | Upstream provider configuration, keys, headers, sync, latency probing, proxy mode, and request rewrite profiles |
 | Group | Model routing, load-balancing strategies, sticky sessions, group test, AI route generation, endpoint provider, zashboard-style collapsible group list, and CC Switch deep link |
-| Model Market | Model catalog, custom pricing, channel coverage, enabled key counts, latency, success metrics, and capabilities dual-view |
+| Model Market | Model catalog with market / available endpoints / price categories views, custom pricing, channel coverage, enabled key counts, latency, success metrics, multi-dimension filters with normalized dedupe, and fallback pricing plus peak/off-peak billing rules |
 | Analytics | Channel × Model (default), Usage Breakdown, Route Health, Latency distribution, Evaluation, Cache (semantic + provider prompt cache), and share snapshot |
 | Log | Relay request history, error details, token usage, and cost records |
 | Notification | Unified notification center with 4 groups: Messages (inbox / archived), Alerts (rules / history), Delivery (channels / policies / preferences), and Reports (schedules / history). Alert rules, notification channels (webhook, Gotify, email, Telegram, Feishu, DingTalk, WeCom, ntfy), and usage report scheduling all live here |
@@ -641,26 +641,56 @@ The group toolbar includes a CC Switch deep link generator that creates provider
 
 ### 💎 Model Market & Pricing
 
-The `Model` route is a model market view with a dual-tab interface: **Market** (pricing and coverage) and **Capabilities** (endpoint support declarations).
+The `Model` route (Model Market) provides three switchable toolbar views: **Market** (pricing and coverage cards), **Available Endpoints** (endpoint → model grouping), and **Price Categories** (fallback pricing rules plus peak/off-peak billing).
 
-**Market tab data merged on each card:**
+**Market view data merged on each card:**
 
-- Custom or synced pricing from the LLM price catalog
+- Custom or synced pricing from the LLM price catalog (input / output / cache read / cache write)
 - Channel coverage and enabled key counts from channel-model relationships
-- Average latency and success / failure counts from recorded model stats
+- Average latency, success rate, and success / failure request counts from recorded model stats
+- A peak-billing badge when the model is covered by a peak/off-peak billing schedule (directory price is the peak price; the idle price is discounted)
+
+**Multi-dimension filtering (Market view):**
+
+- Name search shared with the toolbar search box
+- Capability chips (chat, embeddings, rerank, …) — conversation-style endpoints count toward the chat capability
+- Vendor chips inferred from the model name
+- Pricing filter: all / priced / free
+- Normalized-name dedupe: merges naming variants of the same base model (e.g. `kimi-k2.5`, `moonshotai/kimi-k2.5`, `dmxapi-kimi-k2.5-cc`). Rules come from the Settings `Normalize` card (router prefixes, functional suffixes, explicit variant→canonical mappings), and dedupe can be turned on by default via a dedicated setting
+- The collapsible filter bar shows the live result count (visible / total), the number of active filters, and a one-click reset that clears search, capability, provider, pricing, and dedupe
 
 **Summary metrics:**
 
+The toolbar summary strip shows four metrics plus the last price-update time and a refresh-prices button. The numbers come from the market endpoint's summary over the **full** dataset — they do **not** change with search or filters (only the card list is filtered). When the default-dedupe setting is on, the market endpoint itself aggregates naming variants server-side, so cards and summary counts already show merged entries:
+
 | Metric | Meaning |
 |--------|---------|
-| Models | Number of currently visible model cards |
-| Coverage | Total channel-to-model coverage count in the current result set |
-| Unique Channels | Distinct channels represented by the visible cards |
-| Average Latency | Weighted average latency derived from model request stats |
+| Models | Total models aggregated in the market |
+| Channel Coverage | Total channel-to-model coverage entries across the market |
+| Unique Channels | Distinct channels across all models |
+| Average Latency | Request-weighted average latency across the market |
 
-**Capabilities tab:**
+**Cards and dialogs:**
 
-The Capabilities panel shows per-model endpoint support declarations, conversation flag, availability status, and auto-endpoint detection indicators. Models can be searched and filtered by name with status badges (Active, Down, Non-conversation).
+- Responsive virtualized cards (grid / list / compact layouts on desktop, single-column list on mobile), sorted by success rate or request count
+- Expand a card for price pairs (input / cache-read and output / cache-write, with optional CNY conversion), runtime metrics, and per-channel rows (enabled state and enabled key count); channel tags fold into a `+N` chip when there are too many
+- Standard edit dialog with strict price validation (non-negative decimals; invalid fields are highlighted inline instead of being silently zeroed) and a delete confirmation dialog
+
+**Available Endpoints view:**
+
+Aggregated from valid route groups and inverted into endpoint → model groups. Conversation-family endpoints (chat / deepseek / mimo / responses / messages / auto) are merged into a single "Chat" group shown first; models with no declared endpoint fall under the auto (`*`) group. This view shares the toolbar search box with the market view — a search matches endpoint names/labels or model names, forces all groups expanded, and reveals every matched chip. Each group card is collapsible with a model count, vendor-icon chips, and a "show more" control for large model sets.
+
+**Price Categories view:**
+
+- Fallback pricing by rule for models without an exact price; rules are matched in sort order and the first hit wins
+- Rule table: name, rule type (exact / prefix / contains), rule value, the four prices, sort order, and an enabled badge
+- Create / edit dialog with validation: name and rule value required, prices must be finite non-negative numbers, sort order must be an integer. Errors appear after the first submit attempt and clear as the input is fixed
+- Peak/Off-peak Billing section (currently for DeepSeek): off-peak multiplier, weekend off-peak switch, and two Beijing-time windows (an empty window is closed; both windows closed means all-day off-peak; overlapping windows are allowed with a hint)
+- Rule changes invalidate the market price cache; this view has no search box
+
+**Query gating:**
+
+Views stay mounted when you switch pages (keep-alive), so every query is gated: the market and capabilities queries only run while the Model module is active and the matching view is selected, and switching views stops the query for the view you left.
 
 **Data Sources:**
 
@@ -682,8 +712,8 @@ The Capabilities panel shows per-model endpoint support declarations, conversati
 - Create a custom model price record
 - Edit input / output / cache prices for an existing model
 - Delete a custom model entry
-- Refresh upstream pricing from the page header
-- Keep the scheduled price refresh policy in the Settings `LLM Price` card
+- Refresh upstream pricing from the toolbar summary strip
+- Keep the scheduled price refresh policy in the Settings `LLM Sync` card
 
 ---
 

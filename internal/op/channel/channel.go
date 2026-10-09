@@ -23,6 +23,10 @@ var keyCacheNeedUpdate = make(map[int]struct{})
 var keyCacheNeedUpdateLock sync.Mutex
 var runtimeUpdateLock sync.Mutex
 
+// OnDeleted is injected by op to clean up dependent caches and runtime state
+// (group items cache, stats, balancer hooks) after a channel deletion commits.
+var OnDeleted func(channelID int)
+
 // GetCache returns the internal channel cache (for backward compatibility).
 func GetCache() cache.Cache[int, model.Channel] { return chCache }
 
@@ -111,13 +115,16 @@ func decryptChannelKeysInPlace(keys []model.ChannelKey) {
 
 func Create(ch *model.Channel, ctx context.Context) error {
 	if ch != nil {
+		if err := ch.ConnectionConfig.Validate(); err != nil {
+			return err
+		}
 		if ch.RelayLogRawSSEUntil < 0 {
 			return fmt.Errorf("relay log raw SSE expiry must be greater than or equal to 0")
 		}
 		if ch.MaxConcurrency < 0 || ch.RPMLimit < 0 {
 			return fmt.Errorf("max concurrency and rpm limit must be greater than or equal to 0")
 		}
-		if err := ch.RequestRewrite.Validate(ch.Type); err != nil {
+		if err := ch.RequestRewrite.Validate(ch.RequestRewriteType()); err != nil {
 			return err
 		}
 		normalizedOverride, err := model.NormalizeOutboundFormatOverride(ch.OutboundFormatOverride)
@@ -125,6 +132,9 @@ func Create(ch *model.Channel, ctx context.Context) error {
 			return err
 		}
 		ch.OutboundFormatOverride = normalizedOverride
+		if err := normalizeChannelProtocolFields(ch); err != nil {
+			return err
+		}
 		if err := normalizeChannelProxyFields(ch); err != nil {
 			return err
 		}
@@ -162,6 +172,52 @@ func Create(ch *model.Channel, ctx context.Context) error {
 // 统一成可持久化的一致状态：
 // - ProxyMode 为空时从旧字段推导
 // - pool 模式必须带 ProxyConfigID 或 ChannelProxy
+// normalizeChannelProtocolFields 校验并规范化渠道级协议、超时与缓冲策略字段。
+// 非法值直接报错而不是静默丢弃：静默丢弃会让用户在界面看到"设置了"、
+// 实际运行时却不生效（历史上渠道 override 就有过这类困惑）。
+func normalizeChannelProtocolFields(ch *model.Channel) error {
+	if ch == nil {
+		return nil
+	}
+	normalizedProtocols, err := model.NormalizeUpstreamProtocols(ch.UpstreamProtocols)
+	if err != nil {
+		return err
+	}
+	ch.UpstreamProtocols = normalizedProtocols
+
+	for _, item := range []struct {
+		name  string
+		value int
+	}{
+		{"first_token_time_out", ch.FirstTokenTimeOut},
+		{"attempt_time_out", ch.AttemptTimeOut},
+		{"stream_idle_timeout", ch.StreamIdleTimeout},
+	} {
+		if item.value < -1 {
+			return fmt.Errorf("%s must be 0 (follow group), -1 (disabled), or a positive number of seconds", item.name)
+		}
+	}
+
+	normalizedStrategy, err := normalizeReasoningBufferStrategy(ch.ReasoningBufferStrategy)
+	if err != nil {
+		return err
+	}
+	ch.ReasoningBufferStrategy = normalizedStrategy
+	return nil
+}
+
+// normalizeReasoningBufferStrategy 校验渠道级推理缓冲策略：空串 = 跟随分组，
+// buffer / immediate = 显式指定，其它值报错。
+func normalizeReasoningBufferStrategy(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "", "buffer", "immediate":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("unsupported reasoning buffer strategy: %s (allowed: buffer, immediate)", value)
+	}
+}
+
 // - 非 pool 模式清空 ProxyConfigID
 // - Proxy 布尔值与 ProxyMode 同步
 func normalizeChannelProxyFields(ch *model.Channel) error {
@@ -348,10 +404,23 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 	if !ok {
 		return nil, fmt.Errorf("channel not found")
 	}
+	if (current.ConnectionConfig != nil || req.ConnectionConfig != nil) && (req.Type != nil || req.BaseUrls != nil || req.UpstreamProtocols != nil || req.OutboundFormatOverride != nil) {
+		return nil, fmt.Errorf("connection_config_conflict: update endpoints instead of legacy connection fields")
+	}
+	if err := req.ConnectionConfig.Validate(); err != nil {
+		return nil, err
+	}
 
 	effectiveType := current.Type
 	if req.Type != nil {
 		effectiveType = *req.Type
+	}
+	connectionChannel := current
+	if req.ConnectionConfig != nil {
+		connectionChannel.ConnectionConfig = req.ConnectionConfig
+	}
+	if connectionChannel.ConnectionConfig != nil {
+		effectiveType = connectionChannel.RequestRewriteType()
 	}
 
 	effectiveRewrite := current.RequestRewrite
@@ -385,6 +454,10 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 
 	var selectFields []string
 	updates := model.Channel{ID: req.ID}
+	if req.ConnectionConfig != nil {
+		selectFields = append(selectFields, "connection_config")
+		updates.ConnectionConfig = req.ConnectionConfig
+	}
 
 	if req.Name != nil {
 		selectFields = append(selectFields, "name")
@@ -466,6 +539,10 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		selectFields = append(selectFields, "auto_sync")
 		updates.AutoSync = *req.AutoSync
 	}
+	if req.AutoSyncKeyModels != nil {
+		selectFields = append(selectFields, "auto_sync_key_models")
+		updates.AutoSyncKeyModels = *req.AutoSyncKeyModels
+	}
 	if req.SkipModelTest != nil {
 		selectFields = append(selectFields, "skip_model_test")
 		updates.SkipModelTest = *req.SkipModelTest
@@ -502,6 +579,54 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		}
 		selectFields = append(selectFields, "outbound_format_override")
 		updates.OutboundFormatOverride = normalizedOverride
+	}
+	if req.UpstreamProtocols != nil {
+		normalizedProtocols, err := model.NormalizeUpstreamProtocols(*req.UpstreamProtocols)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		selectFields = append(selectFields, "upstream_protocols")
+		// nil（未声明）与空切片在 GORM 的 serializer:json 下写法不同：
+		// 显式置空必须写入空值，避免"想清除协议声明"时被当成未修改。
+		if len(normalizedProtocols) == 0 {
+			updates.UpstreamProtocols = []string{}
+		} else {
+			updates.UpstreamProtocols = normalizedProtocols
+		}
+	}
+	if req.FirstTokenTimeOut != nil {
+		if *req.FirstTokenTimeOut < -1 {
+			tx.Rollback()
+			return nil, fmt.Errorf("first token timeout must be 0 (follow group), -1 (disabled), or a positive number of seconds")
+		}
+		selectFields = append(selectFields, "first_token_time_out")
+		updates.FirstTokenTimeOut = *req.FirstTokenTimeOut
+	}
+	if req.AttemptTimeOut != nil {
+		if *req.AttemptTimeOut < -1 {
+			tx.Rollback()
+			return nil, fmt.Errorf("attempt timeout must be 0 (follow group), -1 (disabled), or a positive number of seconds")
+		}
+		selectFields = append(selectFields, "attempt_time_out")
+		updates.AttemptTimeOut = *req.AttemptTimeOut
+	}
+	if req.StreamIdleTimeout != nil {
+		if *req.StreamIdleTimeout < -1 {
+			tx.Rollback()
+			return nil, fmt.Errorf("stream idle timeout must be 0 (follow group), -1 (disabled), or a positive number of seconds")
+		}
+		selectFields = append(selectFields, "stream_idle_timeout")
+		updates.StreamIdleTimeout = *req.StreamIdleTimeout
+	}
+	if req.ReasoningBufferStrategy != nil {
+		normalizedStrategy, err := normalizeReasoningBufferStrategy(*req.ReasoningBufferStrategy)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		selectFields = append(selectFields, "reasoning_buffer_strategy")
+		updates.ReasoningBufferStrategy = normalizedStrategy
 	}
 	if req.RequestRewrite != nil {
 		selectFields = append(selectFields, "request_rewrite")
@@ -775,13 +900,6 @@ func RefreshCacheByID(id int, ctx context.Context) error {
 	runtimeUpdateLock.Lock()
 	defer runtimeUpdateLock.Unlock()
 
-	if old, ok := chCache.Get(id); ok {
-		for _, k := range old.Keys {
-			if k.ID != 0 {
-				keyCache.Del(k.ID)
-			}
-		}
-	}
 	var ch model.Channel
 	if err := db.GetDB().WithContext(ctx).
 		Preload("Keys").
@@ -791,6 +909,14 @@ func RefreshCacheByID(id int, ctx context.Context) error {
 	}
 	// 渠道 Key 解密回明文供运行时使用（存量明文原样通过）。
 	decryptChannelKeysInPlace(ch.Keys)
+	// Keep the existing channel and keys usable if the database read fails.
+	if old, ok := chCache.Get(id); ok {
+		for _, k := range old.Keys {
+			if k.ID != 0 {
+				keyCache.Del(k.ID)
+			}
+		}
+	}
 	chCache.Set(ch.ID, ch)
 	for _, k := range ch.Keys {
 		if k.ID != 0 {
@@ -853,6 +979,9 @@ func Delete(id int, ctx context.Context) error {
 	// 带 TTL 会自过期，这里主动清理；内存侧靠清理任务兜底，这里直接删干净。
 	ratelimitstore.RemoveChannelBuckets(id)
 
+	if OnDeleted != nil {
+		OnDeleted(id)
+	}
 	return nil
 }
 

@@ -8,6 +8,26 @@ import (
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 )
 
+func TestLocationAccessFailureSwitchesChannel(t *testing.T) {
+	message := `400: {"error":{"message":"User location is not supported for the API use.","type":"upstream_error","code":400}}`
+	def := ClassifyRelayError(http.StatusBadRequest, errors.New(message), false)
+	got := applyErrorPolicy(def, &dbmodel.Channel{}, http.StatusBadRequest, message)
+	if got.Scope != ScopeNextChannel || !got.IsError {
+		t.Fatalf("location rejection must skip the channel, got %+v", got)
+	}
+	t.Run("committed output", func(t *testing.T) {
+		decision := RetryDecision{Scope: ScopeAbortAll, IsError: true, Code: 400}
+		if got := applyErrorPolicy(decision, &dbmodel.Channel{}, 400, message); got.Scope != ScopeAbortAll {
+			t.Fatalf("must not replay committed output: %+v", got)
+		}
+	})
+	t.Run("explicit policy", func(t *testing.T) {
+		if got := applyErrorPolicy(def, &dbmodel.Channel{NonRetryableStatusCodes: "400"}, 400, message); got.Scope != ScopeNone {
+			t.Fatalf("explicit no-retry policy must be preserved: %+v", got)
+		}
+	})
+}
+
 // 渠道级可重试码:命中即换渠道,即使默认分类判定为不重试(400)。
 func TestApplyErrorPolicyChannelRetryableCodeOverridesDefault(t *testing.T) {
 	def := ClassifyRelayError(http.StatusBadRequest, errors.New("400: upstream rejected"), false)

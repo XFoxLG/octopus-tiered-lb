@@ -1,11 +1,12 @@
 package relaylog
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"cmp"
 	"errors"
+	"fmt"
 	"github.com/lingyuins/octopus/internal/utils/json"
 	"runtime"
 	"slices"
@@ -408,6 +409,14 @@ func relayLogFlushToDB(ctx context.Context) error {
 		relayLogLastPersistenceError.Store(err.Error())
 		return err
 	}
+	for _, record := range batch {
+		record.PersistenceState = model.RelayLogPersistenceReady
+		select {
+		case notifyCh <- record.ToListItem():
+		default:
+			relayLogDroppedNotifications.Add(1)
+		}
+	}
 
 	// 尽快丢弃 batch 对大字段的引用，帮助 GC。
 	for i := range batch {
@@ -450,7 +459,15 @@ func relayLogFlushToDB(ctx context.Context) error {
 	return nil
 }
 
-func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (int64, error) {
+func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (logID int64, addErr error) {
+	defer func() {
+		UpdateLiveRequest(relayLog.TraceID, func(entry *LiveRequest) {
+			entry.State = "unavailable"
+			if addErr == nil {
+				entry.State, entry.LogID = "recorded", fmt.Sprintf("%d", logID)
+			}
+		})
+	}()
 	enabled, err := setting.GetBool(model.SettingKeyRelayLogKeepEnabled)
 	if err != nil {
 		return 0, err
@@ -1309,10 +1326,12 @@ func RelayLogGetByID(ctx context.Context, id int64) (*model.RelayLog, error) {
 		return nil, nil
 	}
 
+	if cached, err := lookupCache(); err != nil || cached != nil {
+		return cached, err
+	}
 	conn := db.GetLogDB()
 	if conn == nil {
-		// 日志库已断开（如关闭后台日志）：只查内存缓存。
-		return lookupCache()
+		return nil, nil
 	}
 
 	var relayLog model.RelayLog

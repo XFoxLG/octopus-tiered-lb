@@ -237,6 +237,7 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 			if contentState == model.RelayLogContentStatePending {
 				contentState = model.RelayLogContentStateReady
 			}
+			relayLog.ContentState = contentState
 			if err := transaction.Model(&model.RelayLog{}).
 				Where("id = ?", relayLog.ID).
 				Updates(map[string]any{

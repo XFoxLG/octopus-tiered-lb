@@ -236,7 +236,6 @@ function TagInput({
     );
 }
 
-const PER_MODEL_QUOTA_PLACEHOLDER = '{"gpt-4o":{"rpm":5,"tpm":50000}}';
 
 export interface APIKeyFormProps {
     apiKey?: APIKey;
@@ -269,9 +268,6 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
         max_tokens: apiKey?.max_tokens,
         supported_models: apiKey?.supported_models,
         allowed_group_categories: apiKey?.allowed_group_categories,
-        rate_limit_rpm: apiKey?.rate_limit_rpm ?? 0,
-        rate_limit_tpm: apiKey?.rate_limit_tpm ?? 0,
-        per_model_quota_json: apiKey?.per_model_quota_json ?? '',
         allowed_ips: apiKey?.allowed_ips ?? '',
         excluded_channels: apiKey?.excluded_channels,
         tags: apiKey?.tags ?? '',
@@ -493,46 +489,6 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
                         {t('apiKey.form.unlimited')}
                     </button>
                 </div>
-            </div>
-
-            <div className="grid gap-1 text-xs text-muted-foreground">
-                {t('apiKey.form.rateLimitRpm.label')}
-                <div className="flex items-center gap-2">
-                    <Input
-                        type="number"
-                        placeholder={t('apiKey.form.rateLimitRpm.placeholder')}
-                        value={form.rate_limit_rpm ?? 0}
-                        onChange={(e) => updateForm({ rate_limit_rpm: Number(e.target.value) })}
-                        className="h-9 text-sm rounded-xl"
-                        disabled={isPending}
-                    />
-                </div>
-            </div>
-
-            <div className="grid gap-1 text-xs text-muted-foreground">
-                {t('apiKey.form.rateLimitTpm.label')}
-                <div className="flex items-center gap-2">
-                    <Input
-                        type="number"
-                        placeholder={t('apiKey.form.rateLimitTpm.placeholder')}
-                        value={form.rate_limit_tpm ?? 0}
-                        onChange={(e) => updateForm({ rate_limit_tpm: Number(e.target.value) })}
-                        className="h-9 text-sm rounded-xl"
-                        disabled={isPending}
-                    />
-                </div>
-            </div>
-
-            <div className="grid gap-1 text-xs text-muted-foreground @lg:col-span-2">
-                {t('apiKey.form.perModelQuota.label')}
-                <Input
-                    type="text"
-                    placeholder={PER_MODEL_QUOTA_PLACEHOLDER}
-                    value={form.per_model_quota_json ?? ''}
-                    onChange={(e) => updateForm({ per_model_quota_json: e.target.value })}
-                    className="h-9 text-sm rounded-xl font-mono"
-                    disabled={isPending}
-                />
             </div>
 
             <div className="grid gap-1 text-xs text-muted-foreground @lg:col-span-2">

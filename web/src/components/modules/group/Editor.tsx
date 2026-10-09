@@ -10,7 +10,7 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Accordion, AccordionContent, AccordionItem } from '@/components/ui/accordion';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 import { getModelIcon } from '@/lib/model-icons';
 import { GroupMode } from '@/api/endpoints/group';
@@ -106,7 +106,7 @@ function ModelPickerSection({
     }, [channels, normalizedSearch]);
 
     return (
-        <div className="flex min-h-[22rem] flex-col rounded-lg border border-border/30 bg-card shadow-sm lg:min-h-0">
+        <div className="flex min-h-[22rem] flex-col rounded-lg border border-border/30 bg-card shadow-sm 2xl:min-h-0">
             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/20 px-4 py-3">
                     <div className="min-w-0">
                     <div className="inline-flex items-center gap-2 rounded-full border border-border/25 bg-card px-2.5 py-1 text-[0.68rem] font-semibold text-muted-foreground">
@@ -144,7 +144,7 @@ function ModelPickerSection({
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto p-3 max-md:max-h-[28rem]">
+            <div className="flex-1 min-h-0 max-h-[28rem] overflow-y-auto p-3 2xl:max-h-none">
                 <Accordion type="multiple" className="w-full space-y-2">
                     {filteredChannels.map((channel) => {
                         const total = channel.models.length;
@@ -231,7 +231,7 @@ function SortSection({
     const t = useTranslations('group');
 
     return (
-        <div className="flex min-h-[28rem] flex-col rounded-lg border border-border/30 bg-card lg:min-h-0">
+        <div className="flex min-h-[28rem] flex-col rounded-lg border border-border/30 bg-card 2xl:min-h-0">
             <div className="flex items-center justify-between border-b border-border/20 px-4 py-3">
                 <span className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
                     <FlaskConical className="size-4 text-primary" />
@@ -304,6 +304,7 @@ export function GroupEditor({
     );
 
     const [groupName, setGroupName] = useState(initial?.name ?? '');
+    const [groupNameTouched, setGroupNameTouched] = useState(false);
     const [category, setCategory] = useState(initial?.category ?? '');
     const [endpointType, setEndpointType] = useState(normalizeEndpointType(initial?.endpoint_type));
     const [endpointProvider, setEndpointProvider] = useState(normalizeEndpointProvider(initial?.endpoint_provider));
@@ -322,7 +323,7 @@ export function GroupEditor({
     const [condition, setCondition] = useState(initial?.condition ?? '');
     const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>(dedupeSelectedMembers(initial?.members ?? []));
     const [removingIds, setRemovingIds] = useState<Set<string>>(new Set());
-
+    const [showValidation, setShowValidation] = useState(false);
     const groupKey = normalizeKey(groupName);
     const regexKey = matchRegex.trim();
 
@@ -402,6 +403,8 @@ export function GroupEditor({
 
     const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        setGroupNameTouched(true);
+        setShowValidation(true);
         if (!isValid) return;
         onSubmit({
             name: groupName,
@@ -427,10 +430,10 @@ export function GroupEditor({
 
 
     return (
-        <form onSubmit={handleSubmit} className={cn("flex h-full min-h-0 flex-col overflow-hidden", className)}>
+        <form onSubmit={handleSubmit} className={cn("flex h-full min-h-0 flex-col overflow-hidden 2xl:h-auto", className)}>
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-                <FieldGroup className="flex min-h-full flex-col gap-4 lg:h-full">
-                    <div className="grid min-h-full gap-4 2xl:grid-cols-[minmax(21rem,0.9fr)_minmax(0,1.55fr)] 2xl:items-stretch">
+                <FieldGroup className="flex flex-col gap-4">
+                    <div className="grid gap-4 2xl:grid-cols-[minmax(21rem,0.9fr)_minmax(0,1.55fr)] 2xl:items-stretch">
                         <section className="@container/group-settings flex min-w-0 flex-col gap-3 rounded-xl border border-border/30 bg-card p-3 md:gap-4 md:p-5">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="space-y-2">
@@ -452,9 +455,16 @@ export function GroupEditor({
                                     <Input
                                         id="group-name"
                                         value={groupName}
-                                        onChange={(e) => setGroupName(e.target.value)}
-                                        className="h-10 rounded-lg text-sm md:h-11"
+                                        onChange={(e) => { setGroupName(e.target.value); if (!groupNameTouched) setGroupNameTouched(true); }}
+                                        className={cn(
+                                            "h-10 rounded-lg text-sm md:h-11",
+                                            showValidation && !groupKey && "border-destructive focus-visible:ring-destructive/20"
+                                        )}
+                                        aria-invalid={showValidation && !groupKey ? true : undefined}
                                     />
+                                    {showValidation && !groupKey && (
+                                        <p className="mt-1 text-xs text-destructive">{t('form.nameRequired')}</p>
+                                    )}
                                 </Field>
                                 <Field>
                                     <FieldLabel htmlFor="group-category">
@@ -545,6 +555,9 @@ export function GroupEditor({
                                                 </option>
                                             ))}
                                         </select>
+                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                            {t('form.outboundFormat.channelOverrideNotice')}
+                                        </p>
                                     </Field>
                                 ) : null}
                                 {endpointType === 'video_generation' ? (
@@ -607,6 +620,19 @@ export function GroupEditor({
                                         </select>
                                     </Field>
                                 ) : null}
+                            </div>
+
+                            {/* ── 高级配置（低频字段折叠） ── */}
+                            <Accordion type="single" collapsible className="w-full">
+                                <AccordionItem value="advanced" className="border-none">
+                                    <AccordionTrigger className="py-2 text-xs text-muted-foreground hover:text-foreground hover:no-underline">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <SlidersHorizontal className="size-3.5" />
+                                            {t('form.advancedSettings')}
+                                        </span>
+                                    </AccordionTrigger>
+                                    <AccordionContent className="pb-0">
+                                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
                                 <Field className="col-span-full">
                                     <FieldLabel htmlFor="group-match-regex">{t('form.matchRegex')}</FieldLabel>
                                     <Input
@@ -703,6 +729,9 @@ export function GroupEditor({
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />
                                 </Field>
+                                <p className="col-span-full text-xs leading-5 text-muted-foreground">
+                                    {t('form.channelOverrideNotice')}
+                                </p>
                                 <Field>
                                     <FieldLabel htmlFor="group-session-keep-time">
                                         {t('form.sessionKeepTime')}
@@ -864,7 +893,10 @@ export function GroupEditor({
                                         placeholder={conditionPlaceholder}
                                     />
                                 </Field>
-                            </div>
+                                        </div>
+                                    </AccordionContent>
+                                </AccordionItem>
+                            </Accordion>
 
                             <div className="space-y-2">
                                 <div className="inline-flex items-center gap-1.5 rounded-md border border-border/25 bg-card px-2 py-0.5 text-[0.64rem] font-semibold text-muted-foreground md:gap-2 md:rounded-full md:px-3 md:py-1 md:text-[0.68rem]">
@@ -891,7 +923,7 @@ export function GroupEditor({
                             </div>
                         </section>
 
-                        <section className="flex min-h-[34rem] min-w-0 flex-col gap-3 rounded-xl border border-border/30 bg-card p-3 md:gap-4 md:p-5 xl:min-h-0">
+                        <section className="flex min-h-[34rem] min-w-0 flex-col gap-3 rounded-xl border border-border/30 bg-card p-3 md:gap-4 md:p-5 2xl:min-h-0">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div className="space-y-1.5 md:space-y-2">
                                     <div className="inline-flex items-center gap-1.5 rounded-md border border-primary/12 bg-card px-2 py-0.5 text-[0.64rem] font-semibold text-primary md:gap-2 md:rounded-full md:px-3 md:py-1 md:text-[0.68rem]">
@@ -904,8 +936,11 @@ export function GroupEditor({
                                     {selectedMembers.length}
                                 </div>
                             </div>
+                            {showValidation && selectedMembers.length === 0 && (
+                                <p className="text-xs text-destructive">{t('form.membersRequired')}</p>
+                            )}
 
-                            <div className="grid min-w-0 grid-cols-1 gap-3 xl:flex-1 xl:min-h-0 2xl:grid-cols-[minmax(18rem,0.92fr)_minmax(20rem,1.18fr)] 2xl:gap-4">
+                            <div className="grid min-w-0 grid-cols-1 gap-3 2xl:min-h-0 2xl:flex-1 2xl:[contain:size] 2xl:grid-cols-[minmax(18rem,0.92fr)_minmax(20rem,1.18fr)] 2xl:gap-4">
                                 <ModelPickerSection
                                     modelChannels={enabledModelChannels}
                                     selectedMembers={selectedMembers}
@@ -930,7 +965,7 @@ export function GroupEditor({
                 </FieldGroup>
             </div>
 
-            <div className="mt-auto shrink-0 px-1 pt-4 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
+            <div className="shrink-0 pr-1 pt-4 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
                 <div className="flex gap-2">
                     {onCancel && (
                         <Button type="button" variant="secondary" className="h-11 flex-1 rounded-lg" onClick={onCancel}>

@@ -2,13 +2,12 @@ package apikey
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/apikeyhash"
 	"github.com/lingyuins/octopus/internal/utils/cache"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
 )
@@ -26,11 +25,11 @@ func GetCache() cache.Cache[int, model.APIKey] { return keyCache }
 // GetIDMap returns the internal key ID map (for backward compatibility).
 func GetIDMap() cache.Cache[string, int] { return keyIDMap }
 
-// hashAPIKey 计算 API Key 的 SHA-256 哈希（hex），用于确定性查找列 api_key_hash。
+// HashAPIKey 计算 API Key 明文的 SHA-256 哈希（hex），用于确定性查找列 api_key_hash。
 // 加密密文因 AES-GCM nonce 随机而不可直接用于 WHERE 查询，故另存确定性哈希列定位。
-func hashAPIKey(raw string) string {
-	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:])
+// 实现位于 utils/apikeyhash，供 backup 导入侧与 db/migrate 回填复用，避免哈希逻辑多份漂移。
+func HashAPIKey(raw string) string {
+	return apikeyhash.Sum(raw)
 }
 
 // isLegacyHashedAPIKey 判断列值是否为哈希化时期（commit e6cbcde15）写入的存量哈希。
@@ -51,7 +50,7 @@ func Create(key *model.APIKey, ctx context.Context) error {
 	}
 	// 落库存加密密文 + 确定性哈希；成功后恢复明文供响应与内存缓存使用。
 	key.APIKey = encrypted
-	key.APIKeyHash = hashAPIKey(raw)
+	key.APIKeyHash = HashAPIKey(raw)
 	if err := db.GetDB().WithContext(ctx).Create(key).Error; err != nil {
 		key.APIKey = raw
 		key.APIKeyHash = ""
@@ -80,7 +79,7 @@ func Update(key *model.APIKey, ctx context.Context) error {
 		}
 		// 加密后落库；恢复明文供缓存使用。
 		key.APIKey = encrypted
-		key.APIKeyHash = hashAPIKey(newKeyValue)
+		key.APIKeyHash = HashAPIKey(newKeyValue)
 		if err := db.GetDB().WithContext(ctx).Save(key).Error; err != nil {
 			key.APIKey = newKeyValue
 			key.APIKeyHash = ""
@@ -128,7 +127,7 @@ func GetByKey(apiKey string, ctx context.Context) (model.APIKey, error) {
 	if !ok {
 		// 明文映射未命中（如重启后）：按确定性哈希列回查 DB 并解密重建映射。
 		var key model.APIKey
-		hash := hashAPIKey(apiKey)
+		hash := HashAPIKey(apiKey)
 		if err := db.GetDB().WithContext(ctx).Where("api_key_hash = ?", hash).First(&key).Error; err != nil {
 			return model.APIKey{}, fmt.Errorf("API key not found")
 		}
@@ -236,7 +235,7 @@ func RefreshCache(ctx context.Context) error {
 			encrypted, err := crypto.Encrypt(raw)
 			if err == nil {
 				if hash == "" {
-					hash = hashAPIKey(raw)
+					hash = HashAPIKey(raw)
 				}
 				_ = db.GetDB().WithContext(ctx).Model(&model.APIKey{}).
 					Where("id = ?", apiKeys[i].ID).

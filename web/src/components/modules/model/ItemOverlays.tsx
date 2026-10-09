@@ -1,174 +1,189 @@
 'use client';
 
-import { Check, Loader, Trash2, X } from 'lucide-react';
-import { motion } from 'motion/react';
+import { Check, Loader, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { cn } from '@/lib/utils';
+import { PRICE_FIELDS, PRICE_FIELD_LABEL_KEYS, type PriceDraft, type PriceField } from './pricing';
 
-type EditValues = {
-    input: string;
-    output: string;
-    cache_read: string;
-    cache_write: string;
-};
-
-type ModelDeleteOverlayProps = {
-    layoutId: string;
-    isPending: boolean;
-    onCancel: () => void;
-    onConfirm: () => void;
-};
-
-export function ModelDeleteOverlay({
-    layoutId,
-    isPending,
-    onCancel,
-    onConfirm,
-}: ModelDeleteOverlayProps) {
-    const t = useTranslations('model.overlay');
-    return (
-        <motion.div
-            layoutId={layoutId}
-            className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-lg border border-destructive/20 bg-destructive p-3 sm:flex-row sm:gap-3 sm:p-4"
-            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-        >
-            <button
-                type="button"
-                onClick={onCancel}
-                className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-destructive-foreground/16 px-3 text-sm font-medium text-destructive-foreground transition-all hover:bg-destructive-foreground/24 active:scale-[0.98] sm:h-10 sm:w-auto sm:px-4"
-            >
-                <X className="size-4" />
-                {t('cancel')}
-            </button>
-            <button
-                type="button"
-                onClick={onConfirm}
-                disabled={isPending}
-                className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-destructive-foreground px-3 text-sm font-medium text-destructive transition-all hover:bg-destructive-foreground/92 active:scale-[0.98] sm:h-10 sm:w-auto sm:px-4 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-                {isPending ? (
-                    <Loader className="size-4 animate-spin" />
-                ) : (
-                    <Trash2 className="size-4" />
-                )}
-                {isPending ? t('deleting') : t('confirmDelete')}
-            </button>
-        </motion.div>
-    );
-}
-
-type ModelEditOverlayProps = {
-    layoutId: string;
+type ModelEditDialogProps = {
     modelName: string;
     brandColor: string;
-    editValues: EditValues;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    editValues: PriceDraft;
+    /** 校验失败的字段列表；非空时输入框标 aria-invalid 并内联提示。 */
+    invalidFields: readonly PriceField[];
     isPending: boolean;
-    onChange: (next: EditValues) => void;
-    onCancel: () => void;
+    onChange: (next: PriceDraft) => void;
     onSave: () => void;
     // peakBilling 为 true 时在价格输入上方显示 DeepSeek 峰谷计费说明
     // （目录价为高峰价，空闲减半）。可选，默认不显示。
     peakBilling?: boolean;
 };
 
-export function ModelEditOverlay({
-    layoutId,
+export function ModelEditDialog({
     modelName,
     brandColor,
+    open,
+    onOpenChange,
     editValues,
+    invalidFields,
     isPending,
     onChange,
-    onCancel,
     onSave,
     peakBilling = false,
-}: ModelEditOverlayProps) {
+}: ModelEditDialogProps) {
     const t = useTranslations('model.overlay');
-    return (
-        <motion.div
-            layoutId={layoutId}
-            className="absolute inset-x-0 top-0 z-20 flex flex-col overflow-hidden rounded-xl border border-border/35 bg-card p-3 text-card-foreground sm:p-5"
-            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-        >
-            <div className="relative">
-                <div className="mb-2 inline-flex items-center rounded-full border border-primary/12 bg-card px-2.5 py-0.5 text-[0.62rem] font-semibold text-primary sm:mb-3 sm:px-3 sm:py-1 sm:text-[0.68rem]">
-                    {t('save')}
-                </div>
-                <h3 className="mb-3 line-clamp-1 text-sm font-semibold text-card-foreground sm:mb-4 sm:text-base">
-                    {modelName}
-                </h3>
+    const hasInvalidFields = invalidFields.length > 0;
 
-                <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
+    // 提交进行中禁止 Escape / 点遮罩关闭，避免请求返回后状态弹窗错位。
+    const handleOpenChange = (next: boolean) => {
+        if (!next && isPending) return;
+        onOpenChange(next);
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={handleOpenChange}>
+            <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto">
+                <DialogHeader>
+                    <DialogTitle className="break-all text-left text-base leading-tight sm:text-lg">{modelName}</DialogTitle>
+                    <DialogDescription className="text-left">{t('priceHint')}</DialogDescription>
+                </DialogHeader>
+                <form
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        if (isPending) return;
+                        onSave();
+                    }}
+                    className="grid gap-3"
+                >
                     {peakBilling && (
-                        <p className="col-span-2 mb-1 text-[0.62rem] leading-relaxed text-amber-600 dark:text-amber-400 sm:text-[0.68rem]">
+                        <p className="text-[0.68rem] leading-relaxed text-amber-600 dark:text-amber-400 sm:text-xs">
                             {t('peakBillingHint')}
                         </p>
                     )}
-                    <label className="grid gap-1 text-[0.68rem] text-muted-foreground sm:gap-1.5 sm:text-xs">
-                        {t('input')}
-                        <Input
-                            type="number"
-                            step="any"
-                            value={editValues.input}
-                            onChange={(e) => onChange({ ...editValues, input: e.target.value })}
-                            className="h-9 rounded-lg border-border/25 bg-card text-xs sm:h-10 sm:text-sm"
-                        />
-                    </label>
-                    <label className="grid gap-1 text-[0.68rem] text-muted-foreground sm:gap-1.5 sm:text-xs">
-                        {t('output')}
-                        <Input
-                            type="number"
-                            step="any"
-                            value={editValues.output}
-                            onChange={(e) => onChange({ ...editValues, output: e.target.value })}
-                            className="h-9 rounded-lg border-border/25 bg-card text-xs sm:h-10 sm:text-sm"
-                        />
-                    </label>
-                    <label className="grid gap-1 text-[0.68rem] text-muted-foreground sm:gap-1.5 sm:text-xs">
-                        {t('cacheRead')}
-                        <Input
-                            type="number"
-                            step="any"
-                            value={editValues.cache_read}
-                            onChange={(e) => onChange({ ...editValues, cache_read: e.target.value })}
-                            className="h-9 rounded-lg border-border/25 bg-card text-xs sm:h-10 sm:text-sm"
-                        />
-                    </label>
-                    <label className="grid gap-1 text-[0.68rem] text-muted-foreground sm:gap-1.5 sm:text-xs">
-                        {t('cacheWrite')}
-                        <Input
-                            type="number"
-                            step="any"
-                            value={editValues.cache_write}
-                            onChange={(e) => onChange({ ...editValues, cache_write: e.target.value })}
-                            className="h-9 rounded-lg border-border/25 bg-card text-xs sm:h-10 sm:text-sm"
-                        />
-                    </label>
-                </div>
+                    <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                        {PRICE_FIELDS.map((field) => {
+                            const invalid = invalidFields.includes(field);
+                            return (
+                                <label key={field} className="grid gap-1 text-[0.68rem] text-muted-foreground sm:gap-1.5 sm:text-xs">
+                                    {t(PRICE_FIELD_LABEL_KEYS[field])}
+                                    <Input
+                                        type="number"
+                                        step="any"
+                                        min="0"
+                                        value={editValues[field]}
+                                        onChange={(event) => onChange({ ...editValues, [field]: event.target.value })}
+                                        aria-invalid={invalid || undefined}
+                                        disabled={isPending}
+                                        className="h-9 rounded-lg border-border/25 bg-card text-xs sm:h-10 sm:text-sm"
+                                    />
+                                </label>
+                            );
+                        })}
+                    </div>
 
-                <p className="mt-1.5 text-[0.62rem] text-muted-foreground/70 sm:text-[0.65rem]">{t("priceHint")}</p>
+                    {hasInvalidFields && (
+                        <p className="text-xs text-destructive" role="alert">
+                            {t('priceInvalid')}
+                        </p>
+                    )}
 
-                <div className="mt-3 flex gap-2 sm:mt-4">
-                    <button
-                        type="button"
-                        onClick={onCancel}
+                    <DialogFooter className="mt-1 gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => onOpenChange(false)}
+                            disabled={isPending}
+                            className="flex-1 sm:flex-1"
+                        >
+                            {t('cancel')}
+                        </Button>
+                        <Button
+                            type="submit"
+                            disabled={isPending}
+                            className="flex-1 text-white sm:flex-1"
+                            style={brandColor ? { backgroundColor: brandColor } : undefined}
+                        >
+                            {isPending ? <Loader className="size-4 animate-spin" /> : <Check className="size-4" />}
+                            {t('save')}
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+type ModelDeleteDialogProps = {
+    modelName: string;
+    open: boolean;
+    isPending: boolean;
+    onOpenChange: (open: boolean) => void;
+    onConfirm: () => void;
+};
+
+export function ModelDeleteDialog({
+    modelName,
+    open,
+    isPending,
+    onOpenChange,
+    onConfirm,
+}: ModelDeleteDialogProps) {
+    const t = useTranslations('model.overlay');
+
+    return (
+        <AlertDialog
+            open={open}
+            onOpenChange={(next) => {
+                if (!next && isPending) return;
+                onOpenChange(next);
+            }}
+        >
+            <AlertDialogContent size="sm">
+                <AlertDialogHeader>
+                    <AlertDialogTitle>{t('deleteTitle')}</AlertDialogTitle>
+                    <AlertDialogDescription>{t('deleteDescription', { name: modelName })}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isPending}>{t('cancel')}</AlertDialogCancel>
+                    <AlertDialogAction
+                        variant="destructive"
                         disabled={isPending}
-                        className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border/25 bg-card text-xs font-medium text-muted-foreground transition-all hover:bg-card active:scale-[0.98] sm:h-10 sm:text-sm disabled:opacity-50"
+                        className={cn('gap-1.5', isPending && 'cursor-not-allowed opacity-50')}
+                        // 阻止 AlertDialogAction 的默认关闭：成功与否由 hook 在回调里收口，
+                        // 失败时弹窗保持打开，用户可直接重试。
+                        onClick={(event) => {
+                            event.preventDefault();
+                            if (isPending) return;
+                            onConfirm();
+                        }}
                     >
-                        <X className="size-3.5 sm:size-4" />
-                        {t('cancel')}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onSave}
-                        disabled={isPending}
-                        className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg text-xs font-medium transition-all active:scale-[0.98] sm:h-10 sm:text-sm disabled:opacity-50"
-                        style={{ backgroundColor: brandColor, color: '#fff' }}
-                    >
-                        {isPending ? <Loader className="size-3.5 animate-spin sm:size-4" /> : <Check className="size-3.5 sm:size-4" />}
-                        {t('save')}
-                    </button>
-                </div>
-            </div>
-        </motion.div>
+                        {isPending ? <Loader className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                        {isPending ? t('deleting') : t('confirmDelete')}
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     );
 }

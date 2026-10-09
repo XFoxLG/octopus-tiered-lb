@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 // Cloud Code Assist（Gemini CLI 使用的后端）与官方 Generative Language API
@@ -115,7 +117,7 @@ func DiscoverProject(ctx context.Context, httpClient *http.Client, accessToken, 
 		return "", fmt.Errorf("geminicli: access token is required")
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: codeAssistHTTPTimeout}
+		httpClient = &http.Client{Timeout: codeAssistHTTPTimeout, Transport: httpx.WithUserAgent(nil)}
 	}
 	base := strings.TrimSuffix(strings.TrimSpace(endpoint), "/")
 	if base == "" {

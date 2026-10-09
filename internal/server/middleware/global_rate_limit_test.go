@@ -11,8 +11,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/setting"
 )
 
-// GlobalRelayRateLimit 作用域测试:两个设置默认为 0(关闭)时必须完全放行,
-// 开启并发上限后超出的请求立即 429,且名额在请求结束后释放。
+// Legacy settings must not restore retired downstream rate limits.
 func TestGlobalRelayRateLimit_DisabledPassesThrough(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	restore := stubGlobalRateLimitSettings(t, "0", "0")
@@ -32,44 +31,31 @@ func TestGlobalRelayRateLimit_DisabledPassesThrough(t *testing.T) {
 	}
 }
 
-func TestGlobalRelayRateLimit_ConcurrencyRejectsAndReleases(t *testing.T) {
+func TestGlobalRelayRateLimit_LegacyNonzeroLimitsAreIgnored(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	restore := stubGlobalRateLimitSettings(t, "1", "1")
+	defer restore()
 	ratelimitstore.PurgeGlobalState()
 	t.Cleanup(ratelimitstore.PurgeGlobalState)
-	restore := stubGlobalRateLimitSettings(t, "0", "1")
-	defer restore()
-
-	release := make(chan struct{})
-	entered := make(chan struct{}, 1)
+	// Occupy the former global slot and exhaust the former RPM bucket.
+	if !ratelimitstore.AcquireGlobalSlot(1) {
+		t.Fatal("could not seed global slot")
+	}
+	ratelimitstore.CheckGlobalRPM(1)
 	engine := gin.New()
 	engine.Use(GlobalRelayRateLimit())
-	engine.GET("/hold", func(c *gin.Context) {
-		entered <- struct{}{}
-		<-release
-		c.String(http.StatusOK, "ok")
-	})
-
-	firstDone := make(chan struct{})
-	go func() {
-		defer close(firstDone)
-		recorder := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/hold", nil)
-		engine.ServeHTTP(recorder, req)
-	}()
-
-	<-entered
-	// 第二个请求在名额被占用时立即被拒。
-	recorder := httptest.NewRecorder()
-	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/hold", nil))
-	if recorder.Code != http.StatusTooManyRequests {
-		t.Fatalf("over-limit code = %d, want 429", recorder.Code)
-	}
-
-	close(release)
-	<-firstDone
-	// 名额释放后同一路由重新可进入。
-	if inFlight := ratelimitstore.InFlightGlobal(); inFlight != 0 {
-		t.Fatalf("in-flight after request finished = %d, want 0", inFlight)
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/embeddings"} {
+		engine.POST(path, func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+		for range 3 {
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("%s: got %d", path, recorder.Code)
+			}
+			if recorder.Header().Get("Retry-After") != "" {
+				t.Fatal("retired limiter returned retry header")
+			}
+		}
 	}
 }
 

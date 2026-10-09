@@ -23,6 +23,7 @@ const configuredService: AIRouteConfiguration = {
     model: 'external-analysis-model',
     timeoutSeconds: '180',
     parallelism: '3',
+    maxModels: '120',
     servicesJSON: '[]',
 };
 
@@ -140,6 +141,6 @@ test('incomplete or all-disabled service pools cannot appear ready', () => {
 test('completeness requires an HTTP address and positive whole-number limits, but no default target', () => {
     assert.deepEqual(getAIRouteConfigurationIssues(configuredService), []);
     assert.deepEqual(getAIRouteConfigurationIssues({
-        ...configuredService, baseURL: '/v1', timeoutSeconds: '0', parallelism: '1.5',
-    }), ['baseURL', 'timeoutSeconds', 'parallelism']);
+        ...configuredService, baseURL: '/v1', timeoutSeconds: '0', parallelism: '1.5', maxModels: '0',
+    }), ['baseURL', 'timeoutSeconds', 'parallelism', 'maxModels']);
 });

@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { TOOLBAR_TEXT_ACTION_CLASS } from '../toolbar/action-styles';
 
 type MaintenanceAction = 'purge' | 'delete-all' | null;
 
@@ -77,7 +78,7 @@ export function MaintenanceButton({ variant = 'ghost', className }: MaintenanceB
         buttonVariants({
             variant: 'ghost',
             size: 'default',
-            className: 'rounded-lg border border-border/25 bg-card px-3 text-muted-foreground transition-[transform,border-color,background-color] duration-300 hover:-translate-y-0.5 hover:bg-card hover:text-foreground',
+            className: TOOLBAR_TEXT_ACTION_CLASS,
         }),
         className,
     );

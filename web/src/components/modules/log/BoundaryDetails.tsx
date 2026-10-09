@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { resolveClientName } from './ua';
 import { AlertTriangle, Download, Loader2 } from 'lucide-react';
@@ -14,6 +14,7 @@ import {
     useDownloadRelayLogContent,
 } from '@/api/endpoints/log';
 import { cn } from '@/lib/utils';
+import { readableLogBody } from './body-preview';
 
 interface BoundaryDetailsProps {
     detail: RelayLogDetail | null;
@@ -58,7 +59,7 @@ function ContentRecord({ content }: { content: RelayLogContentRef }) {
     const t = useTranslations('log.card.forensics');
     const downloadContent = useDownloadRelayLogContent();
     const displayText = useMemo(() => formatContentText(content), [content]);
-    const canDownload = content.state === 'ready' && content.id > 0;
+    const canDownload = content.state === 'ready' && (content.id_str ?? String(content.id)) !== '0';
 
     return (
         <div className="space-y-2 rounded-xl border border-border/50 bg-card/70 p-3">
@@ -138,9 +139,10 @@ function StatusAxis({ label, value }: { label: string; value?: string }) {
 
 export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsProps) {
     const t = useTranslations('log.card.forensics');
+    const [showDiagnostics, setShowDiagnostics] = useState(false);
     if (isLoading) {
         return (
-            <div className="flex min-h-48 flex-1 items-center justify-center">
+            <div className="flex min-h-48 flex-1 items-center justify-center" role="status" aria-label={t('loading')}>
                 <Loader2 className="size-5 animate-spin text-muted-foreground" />
             </div>
         );
@@ -190,7 +192,25 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
     const hasBoundaryRecords = contents.length > 0;
 
     return (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden pb-1">
+        <div className="min-h-0 space-y-4 pb-1">
+            <p className="text-xs text-muted-foreground">{t('previewHint')}</p>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {(['client_ingress', 'client_egress'] as const).map(boundary => {
+                    const record = recordsFor(boundary).find(item => item.kind === 'body');
+                    const raw = record?.text || (boundary === 'client_ingress' ? detail.request_content : detail.response_content);
+                    return (
+                        <section key={boundary} className="min-w-0 space-y-2">
+                            <h3 className="text-sm font-semibold">{t(boundary === 'client_ingress' ? 'requestPreview' : 'responsePreview')}</h3>
+                            {raw ? <pre tabIndex={0} aria-label={t(boundary === 'client_ingress' ? 'requestPreview' : 'responsePreview')} className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/30 p-3 font-sans text-sm leading-6 focus-visible:outline-2 focus-visible:outline-ring">{readableLogBody(raw)}</pre>
+                                : <p className="text-sm text-muted-foreground">{record ? t(`states.${record.state}`) : t('boundaryMissing')}</p>}
+                            {record && !record.complete ? <p className="text-xs text-muted-foreground">{t('partial')}</p> : null}
+                        </section>
+                    );
+                })}
+            </div>
+            <details onToggle={event => setShowDiagnostics(event.currentTarget.open)} className="rounded-lg border border-border/50 p-3">
+                <summary className="cursor-pointer rounded text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">{t('diagnostics')}</summary>
+                {showDiagnostics && <div className="mt-3 space-y-3">
             <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-5">
                 <StatusAxis label={t('axes.generation')} value={detail.generation_outcome} />
                 <StatusAxis label={t('axes.upstream')} value={detail.upstream_outcome} />
@@ -225,7 +245,7 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                 </p>
             ) : null}
 
-            <div className="min-h-0 flex-1 space-y-3 overflow-auto pr-1">
+            <div className="space-y-3">
                 {hasBoundaryRecords ? (
                     <>
                         <BoundarySection
@@ -317,6 +337,8 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                     </div>
                 ) : null}
             </div>
+                </div>}
+            </details>
         </div>
     );
 }

@@ -14,12 +14,19 @@ import {
     useTestChannel,
     type TestChannelSummary,
     type ChannelProxyMode,
+    type UpstreamProtocol,
+    type ChannelReasoningBufferStrategy,
 } from '@/api/endpoints/channel';
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
-import { channelTemplates } from './templates';
-import { CHANNEL_TYPE_OPTIONS } from './type-options';
-import { isOpenAICompatBaseUrlSuffixMode } from './base-url-suffix';
+import { ConnectionEditor } from './ConnectionEditor';
+import { canFetchConnectionModels, hasConnectionAddress } from './connection-config';
+import { normalizeFetchedModels, toggleModelSelection } from './model-picker';
+import {
+    applyPerKeyModelFill,
+    planPerKeyModelFill,
+    type PerKeyFillMatch,
+} from './key-model-fill';
 import {
     Select,
     SelectContent,
@@ -44,10 +51,9 @@ import {
 } from '@/components/ui/morphing-dialog';
 import { toast } from '@/components/common/Toast';
 import { cn } from '@/lib/utils';
-import { useIsMobile } from '@/hooks/use-mobile';
 import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Cable, Search, Check, ListFilter, ChevronRight } from 'lucide-react';
+import { RefreshCw, X, Plus, FlaskConical, CheckCircle2, AlertTriangle, Trash2, Sparkles, Orbit, Layers3, KeyRound, Search, Check, ListFilter, ChevronDown, ChevronRight } from 'lucide-react';
 import { getModelIcon } from '@/lib/model-icons';
 
 export interface ChannelKeyFormItem {
@@ -63,6 +69,7 @@ export interface ChannelKeyFormItem {
 }
 
 export interface ChannelFormData {
+    connection_config?: Channel['connection_config'];
     name: string;
     group_id: number;
     type: ChannelType;
@@ -71,6 +78,14 @@ export interface ChannelFormData {
     channel_proxy: string;
     param_override: string;
     outbound_format_override: string;
+    /** 渠道声明的上游协议（有序）。空数组 = 沿用分组 outbound_format。 */
+    upstream_protocols: UpstreamProtocol[];
+    /** 渠道级超时覆盖（秒）：0 = 跟随分组，-1 = 关闭，>0 = 秒数。 */
+    first_token_time_out: number;
+    attempt_time_out: number;
+    stream_idle_timeout: number;
+    /** 渠道级推理缓冲策略；空串 = 跟随分组。 */
+    reasoning_buffer_strategy: ChannelReasoningBufferStrategy;
     request_rewrite: RequestRewriteConfig;
     relay_log_raw_sse_until: number;
     keys: ChannelKeyFormItem[];
@@ -80,6 +95,7 @@ export interface ChannelFormData {
     proxy_mode: ChannelProxyMode;
     proxy_config_id: number | null;
     auto_sync: boolean;
+    auto_sync_key_models: boolean;
     auto_group: AutoGroupType;
     skip_model_test: boolean;
     disposable: boolean;
@@ -130,9 +146,9 @@ export function isRequestRewriteSupportedChannelType(channelType: ChannelType): 
     return channelType === ChannelType.OpenAIChat || channelType === ChannelType.MiMoChat || channelType === ChannelType.OpenAIResponse;
 }
 
-export function getEffectiveRequestRewriteFormData(channelType: ChannelType, config?: RequestRewriteConfig | null): RequestRewriteConfig {
+export function getEffectiveRequestRewriteFormData(channelType: ChannelType, config?: RequestRewriteConfig | null, connection?: Channel['connection_config']): RequestRewriteConfig {
     const normalized = normalizeRequestRewriteFormData(config);
-    if (isRequestRewriteSupportedChannelType(channelType)) {
+    if (connection ? connection.endpoints.some((e) => e.protocol === 'chat' || e.protocol === 'responses') : isRequestRewriteSupportedChannelType(channelType)) {
         return normalized;
     }
 
@@ -142,9 +158,55 @@ export function getEffectiveRequestRewriteFormData(channelType: ChannelType, con
     };
 }
 
-function hasManualVersionSuffix(rawUrl: string): boolean {
-    const normalized = rawUrl.trim().split(/[?#]/)[0].replace(/\/+$/, '').toLowerCase();
-    return /\/(v\d+(?:beta)?|api\/v\d+)$/.test(normalized);
+
+/**
+ * 切换一个协议的勾选状态，保持「勾选顺序 = 优先级顺序」。
+ *
+ * 新勾选的协议追加到末尾（不插队），取消勾选直接移除。后端 NormalizeUpstreamProtocols
+ * 同样保留顺序，所以前端不需要额外排序。
+ */
+export function toggleUpstreamProtocol(
+    protocols: UpstreamProtocol[],
+    protocol: UpstreamProtocol,
+    checked: boolean,
+): UpstreamProtocol[] {
+    if (checked) {
+        if (protocols.includes(protocol)) return protocols;
+        return [...protocols, protocol];
+    }
+    return protocols.filter((item) => item !== protocol);
+}
+
+/**
+ * 判断某个协议与已选集合是否冲突（用于把冲突项标成不可选并给出原因）。
+ *
+ * 与后端 NormalizeUpstreamProtocols 的互斥规则保持一致：
+ * - passthrough / raw 是整体透传，不能与任何其它协议共存；
+ * - chat_only / responses_only / messages_only 与同协议的宽松模式互相矛盾。
+ */
+
+/** 上报当前选择里是否存在会被后端拒绝的互斥组合。 */
+export function upstreamProtocolConflict(protocols: UpstreamProtocol[]): boolean {
+    if (protocols.length <= 1) return false;
+    if (protocols.includes('passthrough') || protocols.includes('raw')) return true;
+    const exclusivePairs: Array<[UpstreamProtocol, UpstreamProtocol]> = [
+        ['chat_only', 'chat'],
+        ['responses_only', 'responses'],
+        ['messages_only', 'messages'],
+    ];
+    return exclusivePairs.some(([strict, loose]) => protocols.includes(strict) && protocols.includes(loose));
+}
+
+/**
+ * 把超时输入框的字符串转成数字。空串与非法输入都当作 0（= 跟随分组），
+ * 保持后端 -1 / 0 / >0 三态语义中的「未覆盖」值。
+ */
+export function normalizeTimeoutInputValue(raw: string): number {
+    const trimmed = raw.trim();
+    if (trimmed === '') return 0;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.trunc(parsed);
 }
 
 export interface ChannelFormProps {
@@ -157,16 +219,9 @@ export interface ChannelFormProps {
     onCancel?: () => void;
     cancelText?: string;
     idPrefix?: string;
-    showTemplatePicker?: boolean;
-    onShowTemplatePicker?: () => void;
+    channelId?: number;
+    layout?: 'default' | 'create';
 }
-
-import {
-    Accordion,
-    AccordionContent,
-    AccordionItem,
-    AccordionTrigger,
-} from "@/components/ui/accordion";
 
 function SectionHeader({
     icon: Icon,
@@ -178,15 +233,11 @@ function SectionHeader({
     hint?: string;
 }) {
     return (
-        <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-2">
-                <div className="inline-flex items-center gap-2 rounded-full border border-primary/12 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
-                    <Icon className="size-3.5" />
-                    {title}
-                    {hint ? <Hint text={hint} /> : null}
-                </div>
-            </div>
-        </div>
+        <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+            <Icon className="size-4 shrink-0 text-muted-foreground" />
+            <span>{title}</span>
+            {hint ? <Hint text={hint} /> : null}
+        </h3>
     );
 }
 
@@ -198,6 +249,10 @@ interface ModelPickerDialogPanelProps {
     onApply: () => void;
     perKeyResults?: KeyModelResult[] | null;
     perKeyLoading?: boolean;
+    /** 把单个 key 的抓取结果回填到对应表单 key 的 supported_models */
+    onFillPerKeyResult?: (result: KeyModelResult, resultIndex: number) => void;
+    /** 把所有 passed 的抓取结果批量回填 */
+    onFillAllPerKeyResults?: () => void;
 }
 
 interface ModelProviderGroup {
@@ -228,7 +283,7 @@ function groupModelsByProvider(models: string[]): ModelProviderGroup[] {
     });
 }
 
-function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoading, onApply, perKeyResults, perKeyLoading }: ModelPickerDialogPanelProps) {
+function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoading, onApply, perKeyResults, perKeyLoading, onFillPerKeyResult, onFillAllPerKeyResults }: ModelPickerDialogPanelProps) {
     const t = useTranslations('channel.form.modelPicker');
     const { setIsOpen } = useMorphingDialog();
     const [searchTerm, setSearchTerm] = useState('');
@@ -236,6 +291,9 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
     const [viewMode, setViewMode] = useState<'all' | 'perKey'>('all');
     const hasPerKeyData = perKeyResults && perKeyResults.length > 0;
     const showPerKey = perKeyLoading || hasPerKeyData;
+    const canFillAllPerKey =
+        typeof onFillAllPerKeyResults === 'function' &&
+        !!perKeyResults?.some((result) => result.passed && (result.models?.length ?? 0) > 0);
 
     const normalizedSearch = searchTerm.trim().toLowerCase();
     const isSearching = normalizedSearch.length > 0;
@@ -269,14 +327,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
     };
 
     const toggleGroupSelection = (groupModels: string[]) => {
-        const currentSet = new Set(draftSelected);
-        const allSelected = groupModels.every((m) => currentSet.has(m));
-        if (allSelected) {
-            const removeSet = new Set(groupModels);
-            onDraftChange(draftSelected.filter((m) => !removeSet.has(m)));
-        } else {
-            onDraftChange(Array.from(new Set([...draftSelected, ...groupModels])));
-        }
+        onDraftChange(toggleModelSelection(draftSelected, groupModels));
     };
 
     const toggleGroupCollapsed = (label: string) => {
@@ -284,13 +335,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
     };
 
     const handleSelectFiltered = () => {
-        if (filteredModels.length === 0) return;
-        const currentSet = new Set(draftSelected);
-        if (filteredModels.every((model) => currentSet.has(model))) {
-            onDraftChange(draftSelected.filter((model) => !filteredModels.includes(model)));
-        } else {
-            onDraftChange(Array.from(new Set([...draftSelected, ...filteredModels])));
-        }
+        onDraftChange(toggleModelSelection(draftSelected, filteredModels));
     };
 
     const handleApply = () => {
@@ -468,6 +513,25 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                     </>
                 )}
                 {viewMode === 'perKey' && (
+                    <>
+                    {hasPerKeyData && onFillAllPerKeyResults && (
+                        <div className="flex shrink-0 items-center justify-between gap-2">
+                            <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">
+                                {t('perKeyHint')}
+                            </p>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={onFillAllPerKeyResults}
+                                disabled={!canFillAllPerKey}
+                                className="h-8 shrink-0 rounded-lg px-2 text-xs"
+                            >
+                                <Sparkles className="size-3.5" />
+                                {t('fillAll')}
+                            </Button>
+                        </div>
+                    )}
                     <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border/25 bg-card p-2 shadow-sm">
                         {perKeyLoading ? (
                             <div className="flex h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -478,10 +542,10 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                             <div className="flex flex-col gap-3">
                                 {perKeyResults!.map((result, idx) => (
                                     <div
-                                        key={result.key_masked ?? idx}
+                                        key={`${result.key_id ?? 0}-${result.key_masked ?? ''}-${idx}`}
                                         className={`rounded-lg border p-3 ${result.passed ? 'border-border/25 bg-background/40' : 'border-red-500/20 bg-red-500/5'}`}
                                     >
-                                        <div className="mb-2 flex items-center gap-2">
+                                        <div className="mb-2 flex flex-wrap items-center gap-2">
                                             {result.passed ? (
                                                 <CheckCircle2 className="size-4 shrink-0 text-green-500" />
                                             ) : (
@@ -494,6 +558,34 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                                                 <Badge variant="secondary" className="h-4 rounded-full px-1.5 text-[0.625rem]">
                                                     {result.key_remark}
                                                 </Badge>
+                                            )}
+                                            {result.passed && result.models.length > 0 && (
+                                                <Button
+                                                    type="button"
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    onClick={() => toggleGroupSelection(result.models)}
+                                                    className="ml-auto h-7 shrink-0 rounded-md px-2 text-xs"
+                                                >
+                                                    <ListFilter className="size-3" />
+                                                    {result.models.every((model) => selectedSet.has(model))
+                                                        ? t('unselectKeyModels')
+                                                        : t('selectKeyModels')}
+                                                </Button>
+                                            )}
+                                            {onFillPerKeyResult && (
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => onFillPerKeyResult(result, idx)}
+                                                    disabled={!result.passed || (result.models?.length ?? 0) === 0}
+                                                    aria-label={t('fillOne')}
+                                                    className="h-7 shrink-0 rounded-md px-2 text-xs text-muted-foreground/70 hover:bg-transparent hover:text-foreground disabled:opacity-40"
+                                                >
+                                                    <Check className="size-3" />
+                                                    {t('fillOne')}
+                                                </Button>
                                             )}
                                         </div>
                                         {result.passed && result.models.length > 0 ? (
@@ -535,6 +627,7 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
                             </div>
                         )}
                     </div>
+                    </>
                 )}
 
                 <div className="flex shrink-0 flex-col gap-2 border-t border-border/20 pt-4 sm:flex-row">
@@ -559,71 +652,6 @@ function ModelPickerDialogPanel({ models, draftSelected, onDraftChange, isLoadin
     );
 }
 
-export function TemplatePickerGrid({
-    onApplyTemplate,
-}: {
-    onApplyTemplate: (templateKey: string) => void;
-}) {
-    const t = useTranslations('channel.form');
-
-    return (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {channelTemplates.map((template) => (
-                <Button
-                    key={template.key}
-                    type="button"
-                    variant="outline"
-                    onClick={() => onApplyTemplate(template.key)}
-                    className="h-auto min-h-20 flex-col items-start gap-1 rounded-lg border-border/30 bg-card px-3.5 py-3 text-left whitespace-normal hover:bg-card md:min-h-24 md:rounded-lg md:px-4"
-                >
-                    <span className="text-sm font-semibold">{template.name}</span>
-                    <span className="text-xs text-muted-foreground">{t(template.descriptionKey)}</span>
-                </Button>
-            ))}
-        </div>
-    );
-}
-
-/**
- * 移动端高密度版模板选择器：下拉 Select 替代卡片网格，
- * 选择即应用，触发区显示当前已选模板名。
- */
-export function TemplatePickerSelect({
-    onApplyTemplate,
-}: {
-    onApplyTemplate: (templateKey: string) => void;
-}) {
-    const t = useTranslations('channel.form');
-    const [selected, setSelected] = useState('');
-
-    return (
-        <Select
-            value={selected}
-            onValueChange={(value) => {
-                setSelected(value);
-                onApplyTemplate(value);
-            }}
-        >
-            <SelectTrigger
-                id="channel-template-select"
-                className="w-full rounded-lg border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-                <SelectValue placeholder={t('template.selectPlaceholder')} />
-            </SelectTrigger>
-            <SelectContent className="max-h-80 min-w-0 rounded-lg" style={{ width: 'var(--radix-select-trigger-width)' }}>
-                {channelTemplates.map((template) => (
-                    <SelectItem key={template.key} className="rounded-xl py-2.5" value={template.key}>
-                        <span className="flex min-w-0 items-center gap-2">
-                            <span className="shrink-0 font-medium">{template.name}</span>
-                            <span className="truncate text-xs text-muted-foreground">{t(template.descriptionKey)}</span>
-                        </span>
-                    </SelectItem>
-                ))}
-            </SelectContent>
-        </Select>
-    );
-}
-
 export function ChannelForm({
     formData,
     onFormDataChange,
@@ -634,19 +662,19 @@ export function ChannelForm({
     onCancel,
     cancelText,
     idPrefix = 'channel',
-    showTemplatePicker = true,
-    onShowTemplatePicker,
+    channelId,
+    layout = 'default',
 }: ChannelFormProps) {
     const t = useTranslations('channel.form');
-    const isMobile = useIsMobile();
     const { data: settings } = useSettingList();
     const { data: channelGroups = [] } = useChannelGroupList();
     const [formOpenedAt] = useState(() => Math.floor(Date.now() / 1000));
-    const requestRewriteSupported = isRequestRewriteSupportedChannelType(formData.type);
-    // 出站格式覆盖仅对 OpenAI Chat / Response 类型生效（后端只在这两种渠道类型上分支），
-    // 其他类型不渲染该控件，避免"设置了但不生效"的误导。
-    const outboundFormatOverrideSupported = formData.type === ChannelType.OpenAIChat || formData.type === ChannelType.OpenAIResponse;
-    const sectionClassName = 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
+    const requestRewriteSupported = formData.connection_config ? formData.connection_config.endpoints.some((e) => e.protocol === 'chat' || e.protocol === 'responses') : isRequestRewriteSupportedChannelType(formData.type);
+
+    const isCreateLayout = layout === 'create';
+    const sectionClassName = isCreateLayout
+        ? 'min-w-0 space-y-3 border-b border-border pb-5'
+        : 'space-y-4 rounded-lg bg-card/70 p-4 md:p-5';
     const labelClassName = 'text-sm font-medium text-card-foreground';
     const fieldGroupClassName = 'space-y-2';
 
@@ -664,6 +692,9 @@ export function ChannelForm({
             relay_log_raw_sse_until: durationSeconds > 0 ? Math.floor(Date.now() / 1000) + durationSeconds : 0,
         });
     };
+    // 本仓没有号池（pool）渠道概念，表单里始终可以编辑 key，
+    // 因此“回填到该 key / 全部填充”恒可用（与上游 canFillPerKeyModels 语义对齐）。
+    const canFillPerKeyModels = true;
 
     // Ensure the form always shows at least 1 row for base_urls / keys / custom_header.
     // This avoids "empty list" UI and also keeps URL + APIKEY layout consistent.
@@ -704,6 +735,7 @@ export function ChannelForm({
 
     const fetchModel = useFetchModel();
     const fetchModelsPerKey = useFetchModelsPerKey();
+    const isFetchingModels = fetchModel.isPending || fetchModelsPerKey.isPending;
     const testChannel = useTestChannel();
     const [testSummary, setTestSummary] = useState<TestChannelSummary | null>(null);
     const [modelPickerDraft, setModelPickerDraft] = useState<string[]>([]);
@@ -726,26 +758,105 @@ export function ChannelForm({
         toast.success(t('modelPicker.applySuccess', { count: nextAutoModels.length }));
     };
 
-    const normalizeFetchedModels = (data: unknown): string[] => {
-        if (!Array.isArray(data)) return [];
+    /**
+     * 描述一个按 key 抓取结果（用于 toast 文案）：优先备注，其次脱敏 key，最后回退到序号。
+     */
+    const describePerKeyResult = (result: KeyModelResult, index: number) =>
+        result.key_remark?.trim() || result.key_masked?.trim() || t('modelPicker.fillKeyFallback', { index: index + 1 });
 
-        return Array.from(new Set(
-            data
-                .map((item) => {
-                    if (typeof item === 'string') return item.trim();
-                    if (!item || typeof item !== 'object') return '';
+    /**
+     * 将回填计划落到表单 keys 状态（只改状态，不调后端），
+     * 并把“成功 / 抓取失败跳过 / 上游返回空列表跳过 / 匹配不上”汇总成一条 toast。
+     */
+    const applyPerKeyFillPlan = (results: KeyModelResult[]) => {
+        const plan = planPerKeyModelFill(results, formData.keys);
 
-                    const candidate =
-                        ('id' in item && typeof item.id === 'string' && item.id) ||
-                        ('name' in item && typeof item.name === 'string' && item.name) ||
-                        ('display_name' in item && typeof item.display_name === 'string' && item.display_name) ||
-                        ('displayName' in item && typeof item.displayName === 'string' && item.displayName) ||
-                        '';
+        if (plan.fills.length > 0) {
+            onFormDataChange({
+                ...formData,
+                keys: applyPerKeyModelFill(formData.keys, plan.fills),
+            });
+        }
 
-                    return candidate.trim();
-                })
-                .filter(Boolean)
-        ));
+        const skippedLabels = plan.skippedFailed.map((match: PerKeyFillMatch) =>
+            describePerKeyResult(match.result, match.resultIndex),
+        );
+        const emptyLabels = plan.skippedEmpty.map((match: PerKeyFillMatch) =>
+            describePerKeyResult(match.result, match.resultIndex),
+        );
+        const unmatchedLabels = plan.unmatched.map((match: PerKeyFillMatch) =>
+            describePerKeyResult(match.result, match.resultIndex),
+        );
+
+        // sonner 的 description 默认不保留换行，用分隔符拼接保证多段提示都能完整渲染
+        const description = [
+            skippedLabels.length > 0 ? t('modelPicker.fillSkippedFailed', { count: skippedLabels.length, keys: skippedLabels.join(', ') }) : '',
+            emptyLabels.length > 0 ? t('modelPicker.fillSkippedEmpty', { count: emptyLabels.length, keys: emptyLabels.join(', ') }) : '',
+            unmatchedLabels.length > 0 ? t('modelPicker.fillUnmatched', { count: unmatchedLabels.length, keys: unmatchedLabels.join(', ') }) : '',
+        ].filter(Boolean).join(' · ');
+
+        if (plan.fills.length === 0) {
+            toast.warning(description || t('modelPicker.fillNothing'));
+            return;
+        }
+
+        toast.success(t('modelPicker.fillAllSuccess', { count: plan.fills.length }), description ? { description } : undefined);
+    };
+
+    const handleFillAllPerKeyResults = () => {
+        if (!perKeyResults || perKeyResults.length === 0) {
+            toast.warning(t('modelPicker.fillNothing'));
+            return;
+        }
+        applyPerKeyFillPlan(perKeyResults);
+    };
+
+    const handleFillPerKeyResult = (result: KeyModelResult, resultIndex: number) => {
+        const plan = planPerKeyModelFill([result], formData.keys);
+
+        if (plan.unmatched.length > 0) {
+            toast.warning(t('modelPicker.fillUnmatched', {
+                count: 1,
+                keys: describePerKeyResult(result, resultIndex),
+            }));
+            return;
+        }
+
+        if (plan.fills.length === 0) {
+            // 按钮对 passed=false / models 为空的结果已禁用，这里是防御分支：
+            // 优先把“为何没填”的具体原因告知用户，而不是一句笼统的“无可填充”。
+            const failedMatch = plan.skippedFailed[0];
+            if (failedMatch) {
+                toast.warning(t('modelPicker.fillSkippedFailed', {
+                    count: 1,
+                    keys: describePerKeyResult(failedMatch.result, failedMatch.resultIndex),
+                }));
+                return;
+            }
+
+            const emptyMatch = plan.skippedEmpty[0];
+            if (emptyMatch) {
+                toast.warning(t('modelPicker.fillSkippedEmpty', {
+                    count: 1,
+                    keys: describePerKeyResult(emptyMatch.result, emptyMatch.resultIndex),
+                }));
+                return;
+            }
+
+            toast.warning(t('modelPicker.fillNothing'));
+            return;
+        }
+
+        onFormDataChange({
+            ...formData,
+            keys: applyPerKeyModelFill(formData.keys, plan.fills),
+        });
+        // 计数以“实际写入的非空模型数”为准，而不是原始 result.models.length（后者可能含空白项）
+        const filledCount = plan.fills[0].supportedModels ? plan.fills[0].supportedModels.split(',').filter(Boolean).length : 0;
+        toast.success(t('modelPicker.fillOneSuccess', {
+            count: filledCount,
+            key: describePerKeyResult(result, resultIndex),
+        }));
     };
 
     const normalizedHeaders = useMemo(() =>
@@ -756,6 +867,8 @@ export function ChannelForm({
     );
 
     const buildTestPayload = () => ({
+        connection_config: formData.connection_config,
+        skip_model_test: formData.skip_model_test,
         type: formData.type,
         base_urls: (formData.base_urls ?? []).filter((u) => u.url.trim()).map((u) => ({
             url: u.url.trim(),
@@ -823,12 +936,13 @@ export function ChannelForm({
     };
 
     const handleRefreshModels = async () => {
-        if (!formData.base_urls?.[0]?.url || !effectiveKey) return;
+        if (!canFetchConnectionModels(formData.connection_config, formData.base_urls) || !effectiveKey) return;
         setModelPickerDraft(autoModels);
         setFetchedModels([]);
         setPerKeyResults(null);
 
         const payload = {
+            connection_config: formData.connection_config,
             type: formData.type,
             base_urls: formData.base_urls,
             keys: formData.keys
@@ -842,46 +956,58 @@ export function ChannelForm({
             custom_header: normalizedHeaders,
         };
 
-        // 主模型列表（单 key）
-        fetchModel.mutate(
-            payload,
-            {
-                onSuccess: (data) => {
-                    const normalizedModels = normalizeFetchedModels(data);
-                    if (normalizedModels.length > 0) {
-                        setFetchedModels(normalizedModels);
-                        toast.success(t('modelRefreshSuccess', { count: normalizedModels.length }));
-                    } else {
-                        setFetchedModels([]);
-                        toast.warning(t('modelRefreshEmpty'));
-                    }
-                },
-                onError: (error) => {
-                    setFetchedModels([]);
-                    const errorMessage = error instanceof Error ? error.message : String(error);
-                    toast.error(t('modelRefreshFailed'), { description: errorMessage });
-                },
+        const handleModels = (data: unknown) => {
+            const models = normalizeFetchedModels(data);
+            setFetchedModels(models);
+            if (models.length > 0) {
+                toast.success(t('modelRefreshSuccess', { count: models.length }));
+            } else {
+                toast.warning(t('modelRefreshEmpty'));
             }
-        );
+        };
+        const handleError = (error: unknown) => {
+            setFetchedModels([]);
+            setPerKeyResults(null);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            toast.error(t('modelRefreshFailed'), { description: errorMessage });
+        };
 
-        // 如果有多个 key，同时拉取每个 key 的模型列表
         const enabledKeys = formData.keys.filter((k) => k.enabled && k.channel_key.trim());
         if (enabledKeys.length > 1) {
             fetchModelsPerKey.mutate(
                 {
                     ...payload,
-                    keys: enabledKeys.map((k) => ({ enabled: true, channel_key: k.channel_key.trim() })),
+                    // 保留 id / remark，供逐 key 回填精确定位。
+                    keys: enabledKeys.map((k) => ({
+                        id: k.id,
+                        enabled: true,
+                        channel_key: k.channel_key.trim(),
+                        remark: k.remark ?? '',
+                    })),
                 },
                 {
                     onSuccess: (data) => {
-                        setPerKeyResults(data.results);
+                        setPerKeyResults(data.results.map((result) => ({
+                            ...result,
+                            models: normalizeFetchedModels(result.models),
+                        })));
+                        if (!data.results.some((result) => result.passed)) {
+                            setFetchedModels([]);
+                            toast.error(t('modelRefreshFailed'));
+                            return;
+                        }
+                        handleModels(data.all_models);
                     },
-                    onError: () => {
-                        setPerKeyResults(null);
-                    },
+                    onError: handleError,
                 }
             );
+            return;
         }
+
+        fetchModel.mutate(payload, {
+            onSuccess: handleModels,
+            onError: handleError,
+        });
     };
 
     const handleAddModel = (model: string) => {
@@ -926,24 +1052,6 @@ export function ChannelForm({
         onFormDataChange({ ...formData, keys: next });
     };
 
-    const handleAddBaseUrl = () => {
-        onFormDataChange({
-            ...formData,
-            base_urls: [...(formData.base_urls ?? []), { url: '', delay: 0, suffix_mode: 'openai_compat' }],
-        });
-    };
-
-    const handleUpdateBaseUrl = (idx: number, patch: Partial<Channel['base_urls'][number]>) => {
-        const next = (formData.base_urls ?? []).map((u, i) => (i === idx ? { ...u, ...patch } : u));
-        onFormDataChange({ ...formData, base_urls: next });
-    };
-
-    const handleRemoveBaseUrl = (idx: number) => {
-        const curr = formData.base_urls ?? [];
-        if (curr.length <= 1) return;
-        onFormDataChange({ ...formData, base_urls: curr.filter((_, i) => i !== idx) });
-    };
-
     const handleAddHeader = () => {
         onFormDataChange({
             ...formData,
@@ -962,43 +1070,18 @@ export function ChannelForm({
         onFormDataChange({ ...formData, custom_header: curr.filter((_, i) => i !== idx) });
     };
 
-    const handleApplyTemplate = (templateKey: string) => {
-        const template = channelTemplates.find((item) => item.key === templateKey);
-        if (!template) return;
-        onFormDataChange(template.apply(formData));
-        setTestSummary(null);
-    };
 
     return (
         <form onSubmit={onSubmit} className="flex h-full min-h-0 flex-col">
-            <div className="flex-1 min-h-0 space-y-4 overflow-y-auto pb-2">
-            {showTemplatePicker ? (
-                <section className={sectionClassName}>
-                    <SectionHeader icon={Sparkles} title={t('template.label')} hint={t('template.hint')} />
-                    {isMobile ? (
-                        <TemplatePickerSelect onApplyTemplate={handleApplyTemplate} />
-                    ) : (
-                        <TemplatePickerGrid onApplyTemplate={handleApplyTemplate} />
-                    )}
-                </section>
-            ) : (
-                <div className="flex justify-end">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={onShowTemplatePicker}
-                        className="h-8 rounded-lg text-xs transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-100 ease-out active:scale-[0.98]"
-                    >
-                        <Sparkles className="size-3.5" />
-                        {t('template.open')}
-                    </Button>
-                </div>
-            )}
-
-            <section className={sectionClassName}>
+            <div className={cn(
+                'min-h-0 flex-1 overflow-y-auto overscroll-contain',
+                isCreateLayout
+                    ? 'grid content-start gap-5 px-4 py-5 sm:px-6 md:grid-cols-2 md:gap-x-6 [&_input]:h-11 [&_[data-slot=select-trigger]]:h-11 [&_[data-slot=select-trigger]]:min-w-0'
+                    : 'space-y-4 pb-2',
+            )}>
+<section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <SectionHeader icon={Orbit} title={t('basicInfo')} />
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className={fieldGroupClassName}>
                         <label htmlFor={`${idPrefix}-name`} className={labelClassName}>
                         {t('name')}
@@ -1013,24 +1096,7 @@ export function ChannelForm({
                         />
                     </div>
 
-                    <div className={fieldGroupClassName}>
-                        <label htmlFor={`${idPrefix}-type`} className={labelClassName}>
-                        {t('type')}
-                        </label>
-                        <Select
-                            value={String(formData.type)}
-                            onValueChange={(value) => onFormDataChange({ ...formData, type: Number(value) as ChannelType })}
-                        >
-                            <SelectTrigger id={`${idPrefix}-type`} className="w-full rounded-lg border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="rounded-lg">
-                                {CHANNEL_TYPE_OPTIONS.map(option => (
-                                    <SelectItem key={option.value} className="rounded-xl" value={String(option.value)}>{t(option.labelKey)}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
+
 
                     <div className={fieldGroupClassName}>
                         <label htmlFor={`${idPrefix}-group`} className={labelClassName}>
@@ -1058,83 +1124,21 @@ export function ChannelForm({
                             </SelectContent>
                         </Select>
                     </div>
+                    <label className="flex items-center gap-2 cursor-pointer sm:col-span-2">
+                        <Switch
+                            checked={formData.enabled}
+                            onCheckedChange={(checked) => onFormDataChange({ ...formData, enabled: checked })}
+                        />
+                        <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
+                    </label>
                 </div>
             </section>
 
-            <section className={sectionClassName}>
-                <SectionHeader icon={Cable} title={t('baseUrlConfig')} hint={t('baseUrlHint')} />
-                <div className="flex items-center justify-end gap-2">
-                    <Badge variant="secondary" className="rounded-full">
-                        {formData.base_urls.length}
-                    </Badge>
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleAddBaseUrl}
-                        className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
-                    >
-                        <Plus className="h-3 w-3 mr-1" />
-                        {t('add')}
-                    </Button>
-                </div>
-                <div className="space-y-2">
-                    {(formData.base_urls ?? []).map((u, idx) => (
-                        <div key={`baseurl-${idx}`} className="space-y-1.5 rounded-lg border border-border/25 bg-card p-2">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                                <Input
-                                    id={`${idPrefix}-base-${idx}`}
-                                    type="url"
-                                    value={u.url}
-                                    onChange={(e) => handleUpdateBaseUrl(idx, { url: e.target.value })}
-                                    placeholder={t('baseUrlUrl')}
-                                    required={idx === 0}
-                                    className="w-full flex-1 rounded-lg"
-                                />
-                                <div className="flex items-center gap-2 sm:shrink-0">
-                                    <Select
-                                        value={isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) ? 'openai_compat' : 'custom'}
-                                        onValueChange={(value) => handleUpdateBaseUrl(idx, { suffix_mode: value as Channel['base_urls'][number]['suffix_mode'] })}
-                                    >
-                                        <SelectTrigger className="h-10 min-w-0 flex-1 rounded-lg sm:w-36 lg:w-44 sm:flex-none">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent className="rounded-lg">
-                                            <SelectItem className="rounded-xl" value="openai_compat">{t('baseUrlSuffixOpenAI')}</SelectItem>
-                                            <SelectItem className="rounded-xl" value="custom">{t('baseUrlSuffixCustom')}</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleRemoveBaseUrl(idx)}
-                                        disabled={(formData.base_urls ?? []).length <= 1}
-                                        className="h-8 w-8 shrink-0 rounded-xl p-0 text-muted-foreground hover:bg-transparent hover:text-destructive disabled:opacity-40"
-                                        title={t('remove')}
-                                    >
-                                        <X className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-                            {isOpenAICompatBaseUrlSuffixMode(u.suffix_mode) && hasManualVersionSuffix(u.url) ? (
-                                <p className="px-1 text-xs leading-5 text-destructive">{t('baseUrlOpenAIWarning')}</p>
-                            ) : (
-                                <Hint
-                                    className="sm:shrink-0"
-                                    text={
-                                        isOpenAICompatBaseUrlSuffixMode(u.suffix_mode)
-                                            ? t('baseUrlOpenAIHint')
-                                            : t('baseUrlCustomHint')
-                                    }
-                                />
-                            )}
-                        </div>
-                    ))}
-                </div>
+            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
+                <ConnectionEditor value={formData.connection_config} onChange={(connection_config) => onFormDataChange({ ...formData, connection_config, ...(connection_config.catalog.format === 'manual' ? { auto_sync: false, auto_sync_key_models: false } : {}) })} channelId={channelId} idPrefix={idPrefix} />
             </section>
 
-            <section className={sectionClassName}>
+            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <SectionHeader icon={KeyRound} title={t('apiKeyConfig')} />
                 <div className="flex items-center justify-end gap-2">
                     <Badge variant="secondary" className="rounded-full">
@@ -1145,8 +1149,8 @@ export function ChannelForm({
                         variant="ghost"
                         size="sm"
                         onClick={handleTestChannel}
-                        disabled={testChannel.isPending || !(formData.base_urls?.some((u) => u.url.trim()) && formData.keys?.some((k) => k.channel_key.trim()))}
-                        className="h-6 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground hover:bg-transparent"
+                        disabled={testChannel.isPending || formData.skip_model_test || !hasConnectionAddress(formData.connection_config, formData.base_urls) || !formData.keys?.some((k) => k.channel_key.trim())}
+                        className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                         {testChannel.isPending ? (
                             <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
@@ -1160,7 +1164,7 @@ export function ChannelForm({
                         variant="ghost"
                         size="sm"
                         onClick={handleAddKey}
-                        className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
+                        className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                     >
                         <Plus className="h-3 w-3 mr-1" />
                         {t('add')}
@@ -1170,16 +1174,17 @@ export function ChannelForm({
                     {(formData.keys ?? []).map((k, idx) => (
                         <div key={k.id ?? `new-${idx}`} className="rounded-lg border border-border/25 bg-card p-2 space-y-2">
                         <div className={cn(
-                            "grid gap-2 lg:items-center",
-                            showPriorityInput ? "lg:grid-cols-[minmax(0,1fr)_7rem_10rem_auto_auto]" : "lg:grid-cols-[minmax(0,1fr)_10rem_auto_auto]"
+                            "grid grid-cols-[minmax(0,1fr)_auto] gap-2 lg:items-center",
+                            showPriorityInput ? "lg:grid-cols-[minmax(0,1fr)_6rem_8rem_6.5rem_2.75rem]" : "lg:grid-cols-[minmax(0,1fr)_8rem_6.5rem_2.75rem]"
                         )}>
                             <Input
                                 type="text"
                                 value={k.channel_key}
                                 onChange={(e) => handleUpdateKey(idx, { channel_key: e.target.value })}
                                 placeholder={t('apiKey')}
+                                aria-label={`${t('apiKey')} ${idx + 1}`}
                                 required={idx === 0}
-                                className="rounded-lg"
+                                className="col-span-2 rounded-lg lg:col-span-1"
                             />
                             {showPriorityInput && (
                                 <Hint text={t('priorityHint')} side="top">
@@ -1197,7 +1202,7 @@ export function ChannelForm({
                                 value={k.remark ?? ''}
                                 onChange={(e) => handleUpdateKey(idx, { remark: e.target.value })}
                                 placeholder={t('remark')}
-                                className="rounded-lg md:w-40"
+                                className="col-span-2 min-w-0 rounded-lg lg:col-span-1"
                             />
                             <label className="flex items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground">
                                 <Switch
@@ -1212,7 +1217,7 @@ export function ChannelForm({
                                 size="sm"
                                 onClick={() => handleRemoveKey(idx)}
                                 disabled={(formData.keys ?? []).length <= 1}
-                                className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-destructive hover:bg-transparent disabled:opacity-40"
+                                className="size-11 shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
                                 title={t('remove')}
                             >
                                 <X className="h-4 w-4" />
@@ -1283,15 +1288,41 @@ export function ChannelForm({
                 )}
             </section>
 
-            <section className={sectionClassName}>
+            <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <SectionHeader icon={Layers3} title={t('modelConfig')} />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                        <Switch
+                            checked={formData.auto_sync && formData.connection_config?.catalog.format !== 'manual'}
+                            disabled={formData.connection_config?.catalog.format === 'manual'}
+                            onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync: checked })}
+                        />
+                        <span className="text-sm text-card-foreground">{t('autoSync')}</span>
+                    </label>
+                    {/* 仅在自动同步开启时有意义：参照 request_rewrite 子项的 disabled 依赖处理方式。
+                        Hint 放在 label 外侧，避免在 label 内嵌可交互控件导致点击图标误触发开关 */}
+                    <div className="flex items-center gap-1">
+                        <label className={cn('flex items-center gap-2', formData.auto_sync ? 'cursor-pointer' : 'cursor-not-allowed')}>
+                            <Switch
+                                checked={formData.auto_sync_key_models}
+                                disabled={!formData.auto_sync || formData.connection_config?.catalog.format === 'manual'}
+                                onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync_key_models: checked })}
+                            />
+                            <span className={cn('text-sm text-card-foreground', !formData.auto_sync && 'text-muted-foreground/60')}>
+                                {t('autoSyncKeyModels')}
+                            </span>
+                        </label>
+                        <Hint text={t('autoSyncKeyModelsHint')} />
+                    </div>
+                </div>
                 <div className="flex items-center justify-end gap-2">
                     <MorphingDialog onOpen={handleRefreshModels}>
                         <MorphingDialogTrigger
-                            disabled={!formData.base_urls?.[0]?.url || !effectiveKey || fetchModel.isPending}
-                            className="inline-flex h-6 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground/50 transition-colors hover:bg-transparent hover:text-muted-foreground"
+                            ariaLabel={t('modelRefresh')}
+                            disabled={!canFetchConnectionModels(formData.connection_config, formData.base_urls) || !effectiveKey || isFetchingModels}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                         >
-                            <RefreshCw className={`h-3 w-3 ${fetchModel.isPending ? 'animate-spin' : ''}`} />
+                            <RefreshCw className={`size-4 ${isFetchingModels ? 'animate-spin' : ''}`} />
                             {t('modelRefresh')}
                         </MorphingDialogTrigger>
                         <MorphingDialogContainer>
@@ -1300,18 +1331,19 @@ export function ChannelForm({
                                     models={fetchedModels}
                                     draftSelected={modelPickerDraft}
                                     onDraftChange={setModelPickerDraft}
-                                    isLoading={fetchModel.isPending}
+                                    isLoading={isFetchingModels}
                                     onApply={applyFetchedModelSelection}
                                     perKeyResults={perKeyResults}
                                     perKeyLoading={fetchModelsPerKey.isPending}
+                                    onFillPerKeyResult={canFillPerKeyModels ? handleFillPerKeyResult : undefined}
+                                    onFillAllPerKeyResults={canFillPerKeyModels ? handleFillAllPerKeyResults : undefined}
                                 />
                             </MorphingDialogContent>
                         </MorphingDialogContainer>
                     </MorphingDialog>
                 </div>
                 <input type="hidden" value={formData.model} required />
-
-                <div className="relative">
+                <div className="flex min-w-0 items-center gap-2">
                     <Input
                         ref={inputRef}
                         id={`${idPrefix}-model-custom`}
@@ -1320,96 +1352,93 @@ export function ChannelForm({
                         onChange={(e) => setInputValue(e.target.value)}
                         onKeyDown={handleInputKeyDown}
                         placeholder={t('modelCustomPlaceholder')}
-                        className="rounded-lg pr-10"
+                        aria-label={t('modelCustomPlaceholder')}
+                        className="min-w-0 flex-1 rounded-lg"
                     />
-                    {inputValue.trim() && !customModels.includes(inputValue.trim()) && !autoModels.includes(inputValue.trim()) && (
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleAddModel(inputValue)}
-                            className="absolute rounded-lg right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                            title={t('modelAdd')}
-                        >
-                            <Plus className="size-4" />
-                        </Button>
-                    )}
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => handleAddModel(inputValue)}
+                        disabled={!inputValue.trim() || customModels.includes(inputValue.trim()) || autoModels.includes(inputValue.trim())}
+                        className="size-11 shrink-0 rounded-lg"
+                        aria-label={t('modelAdd')}
+                        title={t('modelAdd')}
+                    >
+                        <Plus className="size-4" />
+                    </Button>
                 </div>
-
                 <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                        <label className="text-xs font-medium text-card-foreground">
-                            {t('modelSelected')} {(autoModels.length + customModels.length) > 0 && `(${autoModels.length + customModels.length})`}
-                        </label>
+                    <div className="flex items-center justify-between gap-2">
+                        <label className="text-xs font-medium">{t('modelSelected')} ({autoModels.length + customModels.length})</label>
                         {(autoModels.length + customModels.length) > 0 && (
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                    updateModels([], []);
-                                }}
-                                className="h-6 px-2 text-xs text-muted-foreground/50 hover:text-muted-foreground hover:bg-transparent"
-                            >
+                            <Button type="button" variant="ghost" size="sm" onClick={() => updateModels([], [])} className="h-9 px-2 text-xs">
                                 {t('modelClearAll')}
                             </Button>
                         )}
                     </div>
-                    <div className="max-h-40 min-h-12 overflow-y-auto rounded-lg border border-border/25 bg-card p-2.5 shadow-sm">
+                    <div className="max-h-40 min-h-12 overflow-y-auto rounded-lg border border-border p-2.5">
                         {(autoModels.length + customModels.length) > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                                {autoModels.map((model) => (
-                                    <Badge key={model} variant="secondary" className="bg-muted hover:bg-muted/80">
-                                        {model}
+                            <div className="flex flex-wrap gap-2">
+                                {[...autoModels, ...customModels].map((model) => (
+                                    <Badge key={model} variant="secondary" className="max-w-full gap-1">
+                                        <span className="min-w-0 break-all whitespace-normal">{model}</span>
                                         <button
                                             type="button"
-                                            onClick={() => handleRemoveAutoModel(model)}
-                                            className="ml-1 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring"
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
-                                    </Badge>
-                                ))}
-                                {customModels.map((model) => (
-                                    <Badge key={model} className="bg-primary hover:bg-primary/90">
-                                        {model}
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveCustomModel(model)}
-                                            className="ml-1 rounded-sm opacity-70 hover:opacity-100 focus:outline-none focus:ring-1 focus:ring-ring"
-                                        >
-                                            <X className="h-3 w-3" />
-                                        </button>
+                                            onClick={() => customModels.includes(model) ? handleRemoveCustomModel(model) : handleRemoveAutoModel(model)}
+                                            className="grid size-7 shrink-0 place-items-center rounded-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                            aria-label={`${t('remove')} ${model}`}
+                                            title={t('remove')}
+                                        ><X className="size-3.5" /></button>
                                     </Badge>
                                 ))}
                             </div>
-                        ) : (
-                            <div className="flex items-center justify-center h-8 text-xs text-muted-foreground">
-                                {t('modelNoSelected')}
-                            </div>
-                        )}
+                        ) : <div className="py-2 text-center text-xs text-muted-foreground">{t('modelNoSelected')}</div>}
                     </div>
                 </div>
             </section>
 
-            <Accordion type="single" collapsible className="w-full">
-                <AccordionItem value="advanced" className="border-none">
-                    <AccordionTrigger className="rounded-lg bg-card/70 px-4 py-4 text-sm font-medium text-card-foreground transition-colors hover:bg-card hover:no-underline">
+            <details className={cn('group w-full min-w-0 rounded-lg border border-border/35 bg-card/70', isCreateLayout && 'md:col-span-2')}>
+                <summary className="flex min-h-14 cursor-pointer list-none content-center items-center rounded-lg px-4 py-4 text-sm font-medium text-card-foreground transition-colors hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                    <span className="flex flex-1 items-center justify-between gap-2">
                         <span className="flex items-center gap-2">
                             <span className="h-2 w-2 rounded-full bg-primary/70" />
                             {t('advanced')}
                         </span>
-                    </AccordionTrigger>
-                    <AccordionContent className="pt-4">
+                        <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
+                    </span>
+                </summary>
+                <div className="px-4 pb-4">
                         <div className="space-y-4">
-                        <ProxySelector
-                            value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
-                            onChange={(next) => onFormDataChange({
-                                ...formData,
-                                proxy_mode: next.proxy_mode as ChannelProxyMode,
-                                proxy_config_id: next.proxy_config_id ?? null,
-                            })}
-                        />
+                        <div className="grid min-w-0 items-start gap-4 md:grid-cols-2">
+                            <ProxySelector
+                                layout="stacked"
+                                value={{ proxy_mode: formData.proxy_mode, proxy_config_id: formData.proxy_config_id }}
+                                onChange={(next) => onFormDataChange({
+                                    ...formData,
+                                    proxy_mode: next.proxy_mode as ChannelProxyMode,
+                                    proxy_config_id: next.proxy_config_id ?? null,
+                                })}
+                            />
+                            <div className={fieldGroupClassName}>
+                                <label htmlFor={`${idPrefix}-key-strategy`} className={labelClassName}>{t('keySelectionStrategy')}</label>
+                                <Select
+                                    value={formData.key_selection_strategy || '__inherit__'}
+                                    onValueChange={(value) => onFormDataChange({ ...formData, key_selection_strategy: value === '__inherit__' ? '' : value })}
+                                >
+                                    <SelectTrigger id={`${idPrefix}-key-strategy`} className="h-11 w-full rounded-lg">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent className="rounded-lg">
+                                        <SelectItem className="rounded-xl" value="__inherit__">{t('keySelectionStrategyInherit')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="cost">{t('keySelectionStrategyCost')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="availability">{t('keySelectionStrategyAvailability')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="speed">{t('keySelectionStrategySpeed')}</SelectItem>
+                                        <SelectItem className="rounded-xl" value="priority">{t('keySelectionStrategyPriority')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className={fieldGroupClassName}>
                                 <label htmlFor={`${idPrefix}-auto-group`} className={labelClassName}>
@@ -1456,7 +1485,7 @@ export function ChannelForm({
                                     variant="ghost"
                                     size="sm"
                                     onClick={handleAddHeader}
-                                    className="h-6 px-2 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-transparent"
+                                    className="h-10 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
                                 >
                                     <Plus className="h-3 w-3 mr-1" />
                                     {t('customHeaderAdd')}
@@ -1485,7 +1514,7 @@ export function ChannelForm({
                                             size="sm"
                                             onClick={() => handleRemoveHeader(idx)}
                                             disabled={(formData.custom_header ?? []).length <= 1}
-                                            className="h-8 w-8 p-0 rounded-xl text-muted-foreground hover:text-destructive hover:bg-transparent disabled:opacity-40"
+                                            className="size-11 shrink-0 rounded-lg p-0 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
                                             title={t('remove')}
                                         >
                                             <X className="h-4 w-4" />
@@ -1614,30 +1643,93 @@ export function ChannelForm({
                             />
                         </div>
 
-                        {outboundFormatOverrideSupported ? (
-                            <div className={fieldGroupClassName}>
-                                <label htmlFor={`${idPrefix}-outbound-format-override`} className={labelClassName}>
-                                    {t('outboundFormatOverride')}
-                                    <Hint text={t('outboundFormatOverrideHint')} />
-                                </label>
-                                <Select
-                                    value={formData.outbound_format_override || 'inherit'}
-                                    onValueChange={(value) => onFormDataChange({
-                                        ...formData,
-                                        outbound_format_override: value === 'inherit' ? '' : value,
-                                    })}
-                                >
-                                    <SelectTrigger id={`${idPrefix}-outbound-format-override`} className="min-w-0 w-full max-w-full rounded-lg">
-                                        <SelectValue placeholder={t('outboundFormatOverrideFollowGroup')} />
-                                    </SelectTrigger>
-                                    <SelectContent className="min-w-0" style={{ width: 'var(--radix-select-trigger-width)' }}>
-                                        <SelectItem value="inherit">{t('outboundFormatOverrideFollowGroup')}</SelectItem>
-                                        <SelectItem value="chat_only">{t('outboundFormatOverrideChatOnly')}</SelectItem>
-                                        <SelectItem value="responses_only">{t('outboundFormatOverrideResponsesOnly')}</SelectItem>
-                                    </SelectContent>
-                                </Select>
+
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-first-token-timeout`} className={labelClassName}>
+                                {t('channelTimeouts')}
+                                <Hint text={t('channelTimeoutsHint')} />
+                            </label>
+                            <div className="grid gap-2 sm:grid-cols-3">
+                                <div className="space-y-1">
+                                    <label htmlFor={`${idPrefix}-first-token-timeout`} className="text-xs text-muted-foreground">
+                                        {t('channelFirstTokenTimeout')}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-first-token-timeout`}
+                                        type="number"
+                                        min={-1}
+                                        value={formData.first_token_time_out}
+                                        onChange={(e) => onFormDataChange({
+                                            ...formData,
+                                            first_token_time_out: normalizeTimeoutInputValue(e.target.value),
+                                        })}
+                                        className="rounded-lg"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label htmlFor={`${idPrefix}-attempt-timeout`} className="text-xs text-muted-foreground">
+                                        {t('channelAttemptTimeout')}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-attempt-timeout`}
+                                        type="number"
+                                        min={-1}
+                                        value={formData.attempt_time_out}
+                                        onChange={(e) => onFormDataChange({
+                                            ...formData,
+                                            attempt_time_out: normalizeTimeoutInputValue(e.target.value),
+                                        })}
+                                        className="rounded-lg"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label htmlFor={`${idPrefix}-stream-idle-timeout`} className="text-xs text-muted-foreground">
+                                        {t('channelStreamIdleTimeout')}
+                                    </label>
+                                    <Input
+                                        id={`${idPrefix}-stream-idle-timeout`}
+                                        type="number"
+                                        min={-1}
+                                        value={formData.stream_idle_timeout}
+                                        onChange={(e) => onFormDataChange({
+                                            ...formData,
+                                            stream_idle_timeout: normalizeTimeoutInputValue(e.target.value),
+                                        })}
+                                        className="rounded-lg"
+                                    />
+                                </div>
                             </div>
-                        ) : null}
+                            <p className="px-1 text-xs leading-5 text-muted-foreground">{t('channelTimeoutsValueHint')}</p>
+                        </div>
+
+                        <div className={fieldGroupClassName}>
+                            <label htmlFor={`${idPrefix}-reasoning-buffer-strategy`} className={labelClassName}>
+                                {t('channelReasoningBufferStrategy')}
+                                <Hint text={t('channelReasoningBufferStrategyHint')} />
+                            </label>
+                            <Select
+                                value={formData.reasoning_buffer_strategy || 'inherit'}
+                                onValueChange={(value) => onFormDataChange({
+                                    ...formData,
+                                    reasoning_buffer_strategy: value === 'inherit'
+                                        ? ''
+                                        : (value as ChannelReasoningBufferStrategy),
+                                })}
+                            >
+                                <SelectTrigger
+                                    id={`${idPrefix}-reasoning-buffer-strategy`}
+                                    className="min-w-0 w-full max-w-full rounded-lg"
+                                >
+                                    <SelectValue placeholder={t('channelReasoningBufferStrategyInherit')} />
+                                </SelectTrigger>
+                                <SelectContent className="min-w-0" style={{ width: 'var(--radix-select-trigger-width)' }}>
+                                    <SelectItem value="inherit">{t('channelReasoningBufferStrategyInherit')}</SelectItem>
+                                    <SelectItem value="buffer">{t('channelReasoningBufferStrategyBuffer')}</SelectItem>
+                                    <SelectItem value="immediate">{t('channelReasoningBufferStrategyImmediate')}</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
 
                         <div className={`${fieldGroupClassName} rounded-lg border border-amber-500/20 bg-amber-500/5 p-3`}>
                             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1792,82 +1884,54 @@ export function ChannelForm({
                                 </div>
                             </div>
                         </div>
-                        </div>
-                    </AccordionContent>
-                </AccordionItem>
-            </Accordion>
-            <section className={`${sectionClassName} flex flex-col gap-4`}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                    <Switch
-                        checked={formData.enabled}
-                        onCheckedChange={(checked) => onFormDataChange({ ...formData, enabled: checked })}
-                    />
-                    <span className="text-sm font-medium text-card-foreground">{t('enabled')}</span>
-                </label>
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-border/10 pt-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <Switch
-                            checked={formData.auto_sync}
-                            onCheckedChange={(checked) => onFormDataChange({ ...formData, auto_sync: checked })}
-                        />
-                        <span className="text-sm text-card-foreground">{t('autoSync')}</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <Switch
-                            checked={formData.skip_model_test}
-                            onCheckedChange={(checked) => onFormDataChange({ ...formData, skip_model_test: checked })}
-                        />
-                        <span className="text-sm text-card-foreground">{t('skipModelTest')}</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                        <Switch
-                            checked={formData.disposable}
-                            onCheckedChange={(checked) => onFormDataChange({ ...formData, disposable: checked })}
-                        />
-                        <span className="text-sm text-card-foreground">{t('disposable')}</span>
-                    </label>
-                    {formData.disposable && (
-                        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm text-card-foreground whitespace-nowrap">{t('expireAt')}</span>
-                                <Input
-                                    type="datetime-local"
-                                    className="h-8 w-48 rounded-lg"
-                                    value={formData.expire_at || ''}
-                                    onChange={(e) => onFormDataChange({ ...formData, expire_at: e.target.value })}
+                        <div className="grid grid-cols-1 gap-4 border-t border-border/20 pt-4 sm:grid-cols-2">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <Switch
+                                    checked={formData.skip_model_test}
+                                    onCheckedChange={(checked) => onFormDataChange({ ...formData, skip_model_test: checked })}
                                 />
-                            </div>
+                                <span className="text-sm text-card-foreground">{t('skipModelTest')}</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <Switch
+                                    checked={formData.disposable}
+                                    onCheckedChange={(checked) => onFormDataChange({ ...formData, disposable: checked })}
+                                />
+                                <span className="text-sm text-card-foreground">{t('disposable')}</span>
+                            </label>
+                            {formData.disposable && (
+                                <div className="col-span-full grid min-w-0 gap-4 sm:grid-cols-2">
+                                    <div className="min-w-0 space-y-2">
+                                        <label htmlFor={`${idPrefix}-expire-at`} className="text-sm text-card-foreground">{t('expireAt')}</label>
+                                        <Input
+                                            id={`${idPrefix}-expire-at`}
+                                            type="datetime-local"
+                                            className="h-11 w-full min-w-0 rounded-lg"
+                                            value={formData.expire_at || ''}
+                                            onChange={(e) => onFormDataChange({ ...formData, expire_at: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm text-card-foreground whitespace-nowrap">{t('keySelectionStrategy')}</span>
-                        <Select
-                            value={formData.key_selection_strategy || '__inherit__'}
-                            onValueChange={(value) => onFormDataChange({ ...formData, key_selection_strategy: value === '__inherit__' ? '' : value })}
-                        >
-                            <SelectTrigger className="h-8 w-36 rounded-lg">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="rounded-lg">
-                                <SelectItem className="rounded-xl" value="__inherit__">{t('keySelectionStrategyInherit')}</SelectItem>
-                                <SelectItem className="rounded-xl" value="cost">{t('keySelectionStrategyCost')}</SelectItem>
-                                <SelectItem className="rounded-xl" value="availability">{t('keySelectionStrategyAvailability')}</SelectItem>
-                                <SelectItem className="rounded-xl" value="speed">{t('keySelectionStrategySpeed')}</SelectItem>
-                                <SelectItem className="rounded-xl" value="priority">{t('keySelectionStrategyPriority')}</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
+                        </div>
                 </div>
-            </section>
+            </details>
             </div>
 
-            <div className={`shrink-0 flex flex-col gap-3 pt-4 ${onCancel ? 'sm:flex-row' : ''}`}>
+            <div className={cn(
+                'flex shrink-0 gap-3',
+                isCreateLayout
+                    ? 'justify-end border-t border-border bg-card px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6'
+                    : `flex-col pt-4 ${onCancel ? 'sm:flex-row' : ''}`,
+            )}>
                 {onCancel && cancelText && (
                     <Button
                         type="button"
                         variant="secondary"
                         onClick={onCancel}
-                        className="h-12 w-full rounded-lg sm:flex-1"
+                        disabled={isPending}
+                        className={cn('h-11 rounded-lg', isCreateLayout ? 'flex-1 sm:w-auto sm:flex-none sm:min-w-28' : 'w-full sm:flex-1')}
                     >
                         {cancelText}
                     </Button>
@@ -1875,7 +1939,7 @@ export function ChannelForm({
                 <Button
                     type="submit"
                     disabled={isPending}
-                    className="h-12 w-full rounded-lg sm:flex-1"
+                    className={cn('h-11 rounded-lg', isCreateLayout ? 'flex-1 sm:w-auto sm:flex-none sm:min-w-28' : 'w-full sm:flex-1')}
                 >
                     {isPending ? pendingText : submitText}
                 </Button>

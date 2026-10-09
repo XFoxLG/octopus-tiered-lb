@@ -7,9 +7,10 @@ import { useLogs, type LogFilter } from '@/api/endpoints/log';
 import { useModelList } from '@/api/endpoints/model';
 import { LogCard } from './Item';
 import { ErrorLogView } from './ErrorLogView';
+import { LiveRequests } from './LiveRequests';
 import { Loader2, X, Columns3, Check, ChevronsUpDown, Search } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
-import { useLogFieldVisibilityStore, useLogModelSearchStore, useLogAutoRefreshStore, type LogFieldName } from './ui-store';
+import { useLogFieldVisibility, useLogFieldVisibilityStore, useLogModelSearchStore, useLogAutoRefreshStore, type LogFieldName } from './ui-store';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
@@ -22,6 +23,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { ENDPOINT_TYPE_OPTIONS } from '@/components/modules/group/utils';
+import { maskChannelKeySecret } from '@/components/modules/channel/key-model-fill';
 
 const EMPTY_FILTER: LogFilter = {};
 
@@ -41,7 +43,8 @@ function LogFilterBar({
     const { data: channels = [] } = useChannelList();
     const { data: apiKeys = [] } = useAPIKeyList();
     const { data: models = [] } = useModelList();
-    const visibility = useLogFieldVisibilityStore((s) => s.visibility);
+    const visibility = useLogFieldVisibility();
+    const compact = useLogFieldVisibilityStore((s) => s.compact);
 
     const hasFilter = !!(
         filter.channel_id != null ||
@@ -294,12 +297,17 @@ function LogFilterBar({
                         type="button"
                         className="flex items-center gap-1 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                         title={tView('title')}
+                        aria-label={tView('title')}
                     >
                         <Columns3 className="size-3.5" />
                     </button>
                 </PopoverTrigger>
                 <PopoverContent align="end" className="w-52 p-3">
                     <p className="text-xs font-medium text-muted-foreground mb-2">{tView('title')}</p>
+                    <label className="mb-2 flex items-center gap-2 text-sm">
+                        <input type="checkbox" checked={compact} onChange={() => useLogFieldVisibilityStore.getState().toggleCompact()} />
+                        {tView('compact')}
+                    </label>
                     <div className="flex flex-col gap-1">
                         {(['endpointType', 'channelName', 'actualModel', 'apiKeyName', 'clientIP', 'cost', 'tps', 'cacheHitRate', 'reasoningEffort', 'reasoningTokens'] as LogFieldName[]).map((field) => (
                             <label key={field} className="flex items-center gap-2 cursor-pointer rounded px-1.5 py-1 text-xs hover:bg-muted transition-colors">
@@ -343,7 +351,7 @@ export function Log() {
         () => (modelSearch ? { ...filter, model: modelSearch } : filter),
         [filter, modelSearch],
     );
-    const { logs, hasMore, isLoading, isLoadingMore, loadMore, refresh } = useLogs({ filter: combinedFilter });
+    const { logs, liveRequests, isConnected, hasMore, isLoading, isLoadingMore, loadMore, refresh } = useLogs({ filter: combinedFilter });
     const { data: channels = [] } = useChannelList();
 
     // 自动刷新：按用户在设置中选择的间隔轮询日志列表（0 = 关闭）。
@@ -374,6 +382,22 @@ export function Log() {
         const map = new Map<number, string>();
         for (const item of channels) {
             map.set(item.raw.id, item.raw.name);
+        }
+        return map;
+    }, [channels]);
+
+    // 日志详情里的 channel_key_id → 「备注 / 脱敏 Key」。只用已加载的渠道列表建索引，
+    // 不新增后端字段；映射不到时由 Item 回退显示 Key #id。
+    const channelKeyLabelById = useMemo(() => {
+        const map = new Map<number, string>();
+        for (const item of channels) {
+            for (const key of item.raw.keys ?? []) {
+                if (typeof key.id !== 'number' || key.id <= 0) continue;
+                const masked = maskChannelKeySecret(key.channel_key);
+                const remark = key.remark?.trim();
+                const label = remark && masked ? `${remark} / ${masked}` : (remark || masked);
+                if (label) map.set(key.id, label);
+            }
         }
         return map;
     }, [channels]);
@@ -414,6 +438,7 @@ export function Log() {
                         key={v}
                         type="button"
                         onClick={() => setView(v)}
+                        aria-pressed={view === v}
                         className={cn(
                             'rounded-md px-3 py-1 text-xs transition-colors',
                             view === v
@@ -430,6 +455,7 @@ export function Log() {
             ) : (
                 <>
                     <LogFilterBar filter={filter} onChange={setFilter} />
+                    <LiveRequests requests={liveRequests} connected={isConnected} />
                     {isLoading && logs.length === 0 ? (
                         <div className="flex min-h-[18rem] items-center justify-center rounded-xl border border-border/35 bg-card">
                             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -447,7 +473,7 @@ export function Log() {
                                 estimateItemHeight={180}
                                 overscan={8}
                                 getItemKey={(log) => `log-${log.id}`}
-                                renderItem={(log) => <LogCard log={log} channelNameById={channelNameById} />}
+                                renderItem={(log) => <LogCard log={log} channelNameById={channelNameById} channelKeyLabelById={channelKeyLabelById} />}
                                 footer={footer}
                                 onReachEnd={handleReachEnd}
                                 reachEndEnabled={canLoadMore}

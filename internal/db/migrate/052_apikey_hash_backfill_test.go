@@ -6,6 +6,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/utils/apikeyhash"
 	"github.com/lingyuins/octopus/internal/utils/crypto"
 	"gorm.io/gorm"
 )
@@ -56,7 +57,7 @@ func TestMigrateAPIKeyHashBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
 	}
-	legacyHash := sha256Hex(keyLegacy) // 64hex 旧哈希
+	legacyHash := apikeyhash.Sum(keyLegacy) // 64hex 旧哈希
 
 	rows := []model.APIKey{
 		{Name: "encrypted-key", APIKey: encrypted},
@@ -83,9 +84,9 @@ func TestMigrateAPIKeyHashBackfill(t *testing.T) {
 
 	// 验证三行 hash 都已回填且等于各自的预期值
 	wantHashes := []string{
-		sha256Hex(keyEnc),    // encrypted -> decrypt -> sha256(plaintext)
-		sha256Hex(keyLegacy), // legacy hash -> hash itself (== sha256(plaintext))
-		sha256Hex(keyPlain),  // plaintext -> sha256(plaintext)
+		apikeyhash.Sum(keyEnc),    // encrypted -> decrypt -> sha256(plaintext)
+		apikeyhash.Sum(keyLegacy), // legacy hash -> hash itself (== sha256(plaintext))
+		apikeyhash.Sum(keyPlain),  // plaintext -> sha256(plaintext)
 	}
 	var got []model.APIKey
 	if err := gormDB.Order("id").Find(&got).Error; err != nil {
@@ -119,7 +120,7 @@ func TestComputeAPIKeyHash(t *testing.T) {
 	crypto.Init("test-encryption-key-052-compute")
 
 	plaintext := "sk-secret"
-	want := sha256Hex(plaintext)
+	want := apikeyhash.Sum(plaintext)
 
 	// enc: 加密密文
 	enc, _ := crypto.Encrypt(plaintext)

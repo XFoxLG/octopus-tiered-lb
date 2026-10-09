@@ -72,6 +72,7 @@ function MorphingDialogProvider({
       onOpen?.();
     } else if (event === 'closed') {
       onClose?.();
+      triggerRef.current?.focus();
     }
     pendingLifecycleEventRef.current = null;
   }, [isOpen, onOpen, onClose]);
@@ -323,7 +324,6 @@ function MorphingDialogContent({
       role='dialog'
       aria-modal='true'
       aria-labelledby={`motion-ui-morphing-dialog-title-${uniqueId}`}
-      aria-describedby={`motion-ui-morphing-dialog-description-${uniqueId}`}
     >
       {children}
     </motion.div>
@@ -334,9 +334,11 @@ export type MorphingDialogContainerProps = {
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
+  /** Long forms must close immediately even if shared-layout exit is interrupted. */
+  unmountOnClose?: boolean;
 };
 
-function MorphingDialogContainer({ children }: MorphingDialogContainerProps) {
+function MorphingDialogContainer({ children, unmountOnClose = false }: MorphingDialogContainerProps) {
   const { isOpen, uniqueId } = useMorphingDialog();
   const [mounted, setMounted] = useState(false);
 
@@ -349,7 +351,7 @@ function MorphingDialogContainer({ children }: MorphingDialogContainerProps) {
     };
   }, []);
 
-  if (!mounted) return null;
+  if (!mounted || (unmountOnClose && !isOpen)) return null;
 
   return createPortal(
     <AnimatePresence initial={false} mode='sync'>
@@ -389,14 +391,15 @@ function MorphingDialogTitle({
   className,
   style,
 }: MorphingDialogTitleProps) {
-  const { uniqueId } = useMorphingDialog();
+  const { uniqueId, disableSharedLayout } = useMorphingDialog();
 
   return (
     <motion.div
-      layoutId={`dialog-title-container-${uniqueId}`}
+      layoutId={disableSharedLayout ? undefined : `dialog-title-container-${uniqueId}`}
+      id={`motion-ui-morphing-dialog-title-${uniqueId}`}
       className={className}
       style={style}
-      layout
+      layout={!disableSharedLayout}
     >
       {children}
     </motion.div>

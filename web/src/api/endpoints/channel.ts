@@ -67,12 +67,86 @@ export type BaseUrl = {
     url: string;
     delay: number;
     suffix_mode?: 'auto' | 'openai_compat' | 'anthropic' | 'gemini' | 'volcengine' | 'custom' | '';
+    /**
+     * 这条地址服务于哪种上游协议。多协议渠道可把不同协议绑到不同地址
+     * （如火山方舟：OpenAI 兼容在 /api/v3、Anthropic 兼容在 /api/compatible）。
+     * 留空 = 通用地址，兼容单地址渠道。
+     */
+    protocol?: UpstreamProtocol | '';
 };
+
+/**
+ * 渠道级上游协议。与后端 model.UpstreamProtocol 保持同一套词汇。
+ * 顺序即优先级，由用户在渠道表单里拖拽决定。
+ */
+export type UpstreamProtocol =
+    | 'chat'
+    | 'responses'
+    | 'messages'
+    | 'chat_only'
+    | 'responses_only'
+    | 'messages_only'
+    | 'passthrough'
+    | 'raw';
+
+/** 协议下拉/拖拽的展示顺序，与后端 upstreamProtocolOrder 对齐。 */
+export const UPSTREAM_PROTOCOL_OPTIONS: readonly UpstreamProtocol[] = [
+    'chat',
+    'responses',
+    'messages',
+    'chat_only',
+    'responses_only',
+    'messages_only',
+    'passthrough',
+    'raw',
+] as const;
+
+/** 渠道级推理缓冲策略；空串 = 跟随分组。 */
+export type ChannelReasoningBufferStrategy = '' | 'buffer' | 'immediate';
 
 export type CustomHeader = {
     header_key: string;
     header_value: string;
 };
+
+export type EndpointProtocol = 'chat' | 'responses' | 'messages' | 'gemini' | 'embeddings' | 'cloudflare' | 'volcengine' | 'codex';
+export type ChannelEndpoint = {
+    id: string;
+    protocol: EndpointProtocol;
+    url: string;
+    url_mode: 'base' | 'full';
+    auth: 'default' | 'bearer' | 'api_key' | 'x_api_key' | 'google' | 'none' | 'legacy';
+    compatibility?: '' | 'legacy' | 'mimo' | 'legacy_mimo';
+    forward_mode?: '' | 'convert' | 'passthrough' | 'raw';
+    headers?: CustomHeader[];
+};
+export type ConnectionConfig = {
+    version: 1;
+    selection: 'same_protocol' | 'configured';
+    endpoints: ChannelEndpoint[];
+    catalog: { endpoint_id?: string; format: 'manual' | 'openai' | 'anthropic' | 'gemini' | 'cloudflare'; url?: string };
+};
+export type ConnectionMigrationPreview = {
+    config?: ConnectionConfig;
+    automatic: boolean;
+    reason?: string;
+    groups?: { name: string; outbound_format: string; endpoint_type: string }[];
+};
+export function useChannelConnectionPreview(id?: number) {
+    return useQuery({
+        queryKey: ['channel', 'connection-preview', id],
+        enabled: !!id,
+        staleTime: 0,
+        retry: false,
+        meta: { skipGlobalErrorHandler: true },
+        queryFn: ({ signal }) => {
+            // 预览只是打开编辑表单时的只读辅助，不能拖住表单，也不能重复弹全局错误。
+            const timeoutSignal = AbortSignal.timeout(10_000);
+            const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+            return apiClient.get<ConnectionMigrationPreview>(`/api/v1/channel/${id}/connection-preview`, undefined, true, requestSignal);
+        },
+    });
+}
 
 export type ChannelKey = {
     id: number;
@@ -104,6 +178,7 @@ export type ChannelBatchGroupResult = {
  * 渠道完整数据（与后端 model.Channel 对齐；数组字段在前端保证为 []）
  */
 export type Channel = {
+    connection_config?: ConnectionConfig;
     id: number;
     name: string;
     group_id: number;
@@ -117,6 +192,8 @@ export type Channel = {
     proxy_config_id?: number | null;
     proxy: boolean;
     auto_sync: boolean;
+    /** 开启后，模型自动同步会逐 key 抓取其支持的模型并回填到每个 key 的 supported_models */
+    auto_sync_key_models?: boolean;
     auto_group: AutoGroupType;
     skip_model_test: boolean;
     disposable: boolean;
@@ -125,6 +202,17 @@ export type Channel = {
     custom_header: CustomHeader[];
     param_override?: string | null;
     outbound_format_override?: string;
+    /** 渠道声明的上游协议（有序）。空数组 = 沿用分组 outbound_format。 */
+    upstream_protocols?: UpstreamProtocol[];
+    /**
+     * 渠道级超时覆盖（秒）。0 = 跟随分组（默认，也是 Go 零值）；
+     * -1 = 显式关闭该看门狗；>0 = 秒数。
+     */
+    first_token_time_out?: number;
+    attempt_time_out?: number;
+    stream_idle_timeout?: number;
+    /** 渠道级推理缓冲策略；空串 = 跟随分组。 */
+    reasoning_buffer_strategy?: ChannelReasoningBufferStrategy;
     channel_proxy?: string | null;
     request_rewrite?: RequestRewriteConfig | null;
     relay_log_raw_sse_until?: number;
@@ -152,6 +240,7 @@ type ChannelServer = Omit<Channel, 'base_urls' | 'custom_header' | 'keys'> & {
  * 创建渠道请求：必填字段 + 可选字段
  */
 export type CreateChannelRequest = {
+    connection_config?: ConnectionConfig;
     name: string;
     group_id?: number;
     type: ChannelType;
@@ -164,6 +253,7 @@ export type CreateChannelRequest = {
     proxy_config_id?: number | null;
     proxy?: boolean;
     auto_sync?: boolean;
+    auto_sync_key_models?: boolean;
     skip_model_test?: boolean;
     disposable?: boolean;
     expire_at?: string | null;
@@ -173,6 +263,11 @@ export type CreateChannelRequest = {
     channel_proxy?: string | null;
     param_override?: string | null;
     outbound_format_override?: string;
+    upstream_protocols?: UpstreamProtocol[];
+    first_token_time_out?: number;
+    attempt_time_out?: number;
+    stream_idle_timeout?: number;
+    reasoning_buffer_strategy?: ChannelReasoningBufferStrategy;
     request_rewrite?: RequestRewriteConfig;
     relay_log_raw_sse_until?: number;
     match_regex?: string | null;
@@ -188,6 +283,7 @@ export type CreateChannelRequest = {
  * 更新渠道请求：id + 可选字段 + keys diff
  */
 export type UpdateChannelRequest = {
+    connection_config?: ConnectionConfig;
     id: number;
     name?: string;
     group_id?: number;
@@ -200,6 +296,7 @@ export type UpdateChannelRequest = {
     proxy_config_id?: number | null;
     proxy?: boolean;
     auto_sync?: boolean;
+    auto_sync_key_models?: boolean;
     key_selection_strategy?: string;
     skip_model_test?: boolean;
     disposable?: boolean;
@@ -209,6 +306,11 @@ export type UpdateChannelRequest = {
     channel_proxy?: string | null;
     param_override?: string | null;
     outbound_format_override?: string;
+    upstream_protocols?: UpstreamProtocol[];
+    first_token_time_out?: number;
+    attempt_time_out?: number;
+    stream_idle_timeout?: number;
+    reasoning_buffer_strategy?: ChannelReasoningBufferStrategy;
     request_rewrite?: RequestRewriteConfig;
     relay_log_raw_sse_until?: number;
     match_regex?: string | null;
@@ -225,9 +327,12 @@ export type UpdateChannelRequest = {
 };
 
 export type FetchModelRequest = {
+    connection_config?: ConnectionConfig;
     type: ChannelType;
     base_urls: BaseUrl[];
-    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key'>>;
+    // id / remark 为可选：按 key 抓取时一并上传，后端在结果的 key_id / key_remark 里原样回传，
+    // 供前端把抓取结果精确回填到对应表单 key（参见 key-model-fill.ts）。
+    keys: Array<Pick<ChannelKey, 'enabled' | 'channel_key'> & { id?: number; remark?: string }>;
     proxy_mode?: ChannelProxyMode;
     proxy_config_id?: number | null;
     proxy?: boolean;
@@ -237,6 +342,7 @@ export type FetchModelRequest = {
 };
 
 export type TestChannelResult = {
+    endpoint_id?: string;
     base_url: string;
     key_remark?: string;
     key_masked?: string;
@@ -253,6 +359,8 @@ export type TestChannelSummary = {
 };
 
 export type KeyModelResult = {
+    /** 对应 channel_keys.id；未保存的新 key 可能为 0 或缺省 */
+    key_id?: number;
     key_remark?: string;
     key_masked?: string;
     models: string[];
@@ -579,6 +687,129 @@ export function useFetchModelsPerKey() {
     });
 }
 
+/**
+ * 渠道能力探测（手动触发，无后台定时）。
+ *
+ * 后端路由：
+ *   POST /api/v1/channel/:id/probe           跑一次探测（协议层 + 能力层）
+ *   POST /api/v1/channel/:id/probe/apply     把某次结果应用回渠道（只加不减）
+ *   GET  /api/v1/channel/:id/probe/history   探测历史
+ *   GET  /api/v1/channel/:id/capabilities    渠道×模型能力结论
+ */
+
+/** 单项探测判定。只有 pass / unsupported 会被允许写入配置。 */
+export type ProbeVerdict = 'pass' | 'fail' | 'unsupported' | 'unknown';
+
+export type ProbeKind = 'protocol' | 'capability';
+
+export type ChannelProbeResult = {
+    endpoint_id?: string;
+    id: number;
+    run_id: number;
+    channel_id: number;
+    model_name: string;
+    kind: ProbeKind;
+    item: string;
+    verdict: ProbeVerdict;
+    status_code?: number;
+    latency_ms?: number;
+    summary?: string;
+    /** 已脱敏的上游回显片段；绝不包含密钥。 */
+    detail?: string;
+    created_at?: string;
+};
+
+export type ChannelProbeRun = {
+    id: number;
+    channel_id: number;
+    model_name: string;
+    key_id: number;
+    started_at: string;
+    ended_at: string;
+    summary?: string;
+    applied: boolean;
+    applied_at?: string;
+    created_at?: string;
+    results?: ChannelProbeResult[];
+};
+
+export type ChannelProbeApplyResult = {
+    added_protocols: string[];
+    capabilities: number;
+};
+
+export type ChannelModelCapability = {
+    id: number;
+    channel_id: number;
+    model_name: string;
+    capability: 'tool_calling' | 'structured_output' | 'web_search' | 'streaming';
+    supported: boolean;
+    source: string;
+    probe_key_id: number;
+    probed_at: string;
+    updated_at: string;
+};
+
+export type StartChannelProbeRequest = {
+    model_name: string;
+    /** 指定用哪个 Key（下标）；负值或省略 = 由后端挑一个可用 Key。 */
+    key_index?: number;
+    /** 显式确认"即使渠道标记了禁止测活也要探测"。 */
+    allow_skip_model_test?: boolean;
+};
+
+export function useChannelProbe() {
+    return useMutation({
+        mutationFn: async ({ channelId, request, signal }: { channelId: number; request: StartChannelProbeRequest; signal?: AbortSignal }) => {
+            return apiClient.post<ChannelProbeRun>(`/api/v1/channel/${channelId}/probe`, request, undefined, true, signal);
+        },
+        onError: (error) => {
+            logger.error('渠道能力探测失败:', error);
+        },
+    });
+}
+
+export function useApplyChannelProbe() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ channelId, runId }: { channelId: number; runId: number }) => {
+            return apiClient.post<ChannelProbeApplyResult>(`/api/v1/channel/${channelId}/probe/apply`, { run_id: runId });
+        },
+        onSuccess: () => {
+            // 应用会改写渠道协议声明与能力表，两处缓存都要失效，
+            // 否则界面会继续显示旧配置，用户以为没生效。
+            queryClient.invalidateQueries({ queryKey: ['channels', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['channel'] });
+        },
+        onError: (error) => {
+            logger.error('应用探测结果失败:', error);
+        },
+    });
+}
+
+export function useChannelProbeHistory(channelId: number | undefined, enabled = true) {
+    return useQuery({
+        queryKey: ['channel', channelId, 'probe-history'],
+        queryFn: async () => {
+            if (!channelId) return [] as ChannelProbeRun[];
+            return apiClient.get<ChannelProbeRun[]>(`/api/v1/channel/${channelId}/probe/history`);
+        },
+        enabled: enabled && Boolean(channelId),
+    });
+}
+
+export function useChannelCapabilities(channelId: number | undefined, modelName?: string, enabled = true) {
+    return useQuery({
+        queryKey: ['channel', channelId, 'capabilities', modelName ?? ''],
+        queryFn: async () => {
+            if (!channelId) return [] as ChannelModelCapability[];
+            const suffix = modelName ? `?model=${encodeURIComponent(modelName)}` : '';
+            return apiClient.get<ChannelModelCapability[]>(`/api/v1/channel/${channelId}/capabilities${suffix}`);
+        },
+        enabled: enabled && Boolean(channelId),
+    });
+}
+
 export function useTestChannel() {
     return useMutation({
         mutationFn: async (data: CreateChannelRequest | UpdateChannelRequest | FetchModelRequest) => {
@@ -600,13 +831,14 @@ export function useTestChannel() {
  *
  * @example
  * const checkKeys = useCheckChannelKeys();
- * const summary = await checkKeys.mutateAsync(channelId);
+ * const summary = await checkKeys.mutateAsync({ id: channelId });
  * if (!summary.passed) { // 提示可删除该渠道 }
  */
 export function useCheckChannelKeys() {
     return useMutation({
-        mutationFn: async (id: number) => {
-            return apiClient.post<TestChannelSummary>(`/api/v1/channel/check-keys/${id}`);
+        // signal：关闭测试弹窗时中止在途检查（后端只读探测，可安全取消）。
+        mutationFn: async ({ id, signal }: { id: number; signal?: AbortSignal }) => {
+            return apiClient.post<TestChannelSummary>(`/api/v1/channel/check-keys/${id}`, undefined, undefined, true, signal);
         },
         onError: (error) => {
             logger.error('渠道 key 检查失败:', error);

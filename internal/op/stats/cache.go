@@ -20,7 +20,7 @@ func RefreshCache(ctx context.Context) error {
 	var loadedDaily model.StatsDaily
 	result := dbConn.Last(&loadedDaily)
 	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("failed to get daily stats: %v", result.Error)
+		return fmt.Errorf("failed to get daily stats: %w", result.Error)
 	}
 	if result.RowsAffected == 0 || loadedDaily.Date != todayDate {
 		loadedDaily = model.StatsDaily{Date: todayDate}
@@ -29,7 +29,7 @@ func RefreshCache(ctx context.Context) error {
 	var loadedTotal model.StatsTotal
 	result = dbConn.First(&loadedTotal)
 	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("failed to get total stats: %v", result.Error)
+		return fmt.Errorf("failed to get total stats: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		loadedTotal = model.StatsTotal{ID: 1}
@@ -40,19 +40,26 @@ func RefreshCache(ctx context.Context) error {
 	var loadedChannels []model.StatsChannel
 	result = dbConn.Find(&loadedChannels)
 	if result.Error != nil {
-		return fmt.Errorf("failed to get channels: %v", result.Error)
+		return fmt.Errorf("failed to get channels: %w", result.Error)
 	}
 
 	var loadedModels []model.StatsModel
 	result = dbConn.Find(&loadedModels)
 	if result.Error != nil {
-		return fmt.Errorf("failed to get model stats: %v", result.Error)
+		return fmt.Errorf("failed to get model stats: %w", result.Error)
 	}
 
 	var loadedHourly []model.StatsHourly
 	result = dbConn.Where("date = ?", todayDate).Find(&loadedHourly)
 	if result.Error != nil {
-		return fmt.Errorf("failed to get hourly stats: %v", result.Error)
+		return fmt.Errorf("failed to get hourly stats: %w", result.Error)
+	}
+	// Read the entire snapshot before publishing any cache. API-key totals are
+	// also authorization inputs, so a failed load must never publish zero totals.
+	var loadedAPIKeys []model.StatsAPIKey
+	result = dbConn.Find(&loadedAPIKeys)
+	if result.Error != nil {
+		return fmt.Errorf("failed to get api key stats: %w", result.Error)
 	}
 
 	dailyCacheLock.Lock()
@@ -81,12 +88,6 @@ func RefreshCache(ctx context.Context) error {
 	for _, v := range loadedModels {
 		modelCache.Set(v.ID, v)
 		touchModelActivity(v.ID)
-	}
-
-	var loadedAPIKeys []model.StatsAPIKey
-	result = dbConn.Find(&loadedAPIKeys)
-	if result.Error != nil {
-		return fmt.Errorf("failed to get api key stats: %v", result.Error)
 	}
 
 	apiKeyCache.Clear()

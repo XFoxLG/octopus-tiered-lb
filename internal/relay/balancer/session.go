@@ -8,9 +8,10 @@ import (
 
 // SessionEntry 会话保持条目
 type SessionEntry struct {
-	ChannelID    int
-	ChannelKeyID int
-	Timestamp    time.Time
+	ChannelID     int
+	ChannelKeyID  int
+	ResolvedModel string
+	Timestamp     time.Time
 }
 
 // 全局会话存储
@@ -21,8 +22,42 @@ func sessionKey(apiKeyID int, requestModel string) string {
 	return buildKey2(apiKeyID, requestModel)
 }
 
+// stickyEvictSuccessThreshold is the success-rate floor for a sticky channel.
+// When a sticky channel's Auto-strategy success rate (computed over the sliding
+// window with at least getMinSamples() samples) drops below this threshold, the
+// sticky entry is evicted so the iterator falls back to normal strategy order
+// (issue #183): stickiness must not keep pinning traffic to a channel whose
+// score has collapsed, otherwise the session keeps serving failures until TTL.
+const stickyEvictSuccessThreshold = 0.3
+
+// ShouldEvictSticky reports whether the sticky channel should be evicted from
+// the session because its recent success rate has collapsed below the floor.
+// It consults the Auto-strategy stats for (channelID, requestModel): eviction
+// requires at least getMinSamples() valid samples in the time window AND
+// successRate < stickyEvictSuccessThreshold. Fewer samples, no stats entry, or
+// a healthy channel all return false (keep the session sticky).
+func ShouldEvictSticky(apiKeyID int, requestModel string, channelID int) bool {
+	stats := getOrCreateStats(channelID, requestModel)
+	successRate, samples := stats.GetStats(getTimeWindow())
+	if samples < getMinSamples() {
+		return false
+	}
+	return successRate < stickyEvictSuccessThreshold
+}
+
+// RemoveSticky deletes the sticky session entry for (apiKeyID, requestModel).
+// No-op when no entry exists. Called by GetSticky when the sticky channel's
+// success rate has collapsed, so the eviction is durable across the TTL window
+// (the next request re-selects via the normal strategy order and, on success,
+// writes a fresh sticky entry).
+func RemoveSticky(apiKeyID int, requestModel string) {
+	globalSession.Delete(sessionKey(apiKeyID, requestModel))
+}
+
 // GetSticky 获取粘性通道（ttl 内有效）
-// ttl 由 Group.SessionKeepTime 决定，返回 nil 表示无有效会话
+// ttl 由 Group.SessionKeepTime 决定，返回 nil 表示无有效会话。
+// 逃生逻辑：粘性渠道的 Auto 策略成功率已崩（样本足够且低于阈值）时，
+// 删除粘性记录并返回 nil，让 iterator 走正常策略排序重新选路。
 func GetSticky(apiKeyID int, requestModel string, ttl time.Duration) *SessionEntry {
 	key := sessionKey(apiKeyID, requestModel)
 	v, ok := globalSession.Load(key)
@@ -40,16 +75,31 @@ func GetSticky(apiKeyID int, requestModel string, ttl time.Duration) *SessionEnt
 		return nil
 	}
 
+	// 评分逃生：粘性渠道近窗成功率崩塌时放弃粘性（见 ShouldEvictSticky）。
+	statsModel := entry.ResolvedModel
+	if statsModel == "" {
+		statsModel = requestModel
+	}
+	if ShouldEvictSticky(apiKeyID, statsModel, entry.ChannelID) {
+		globalSession.Delete(key)
+		return nil
+	}
+
 	return entry
 }
 
 // SetSticky 写入/更新粘性记录
-func SetSticky(apiKeyID int, requestModel string, channelID, keyID int) {
+func SetSticky(apiKeyID int, requestModel string, channelID, keyID int, resolvedModel ...string) {
 	key := sessionKey(apiKeyID, requestModel)
+	statsModel := requestModel
+	if len(resolvedModel) > 0 && resolvedModel[0] != "" {
+		statsModel = resolvedModel[0]
+	}
 	globalSession.Store(key, &SessionEntry{
-		ChannelID:    channelID,
-		ChannelKeyID: keyID,
-		Timestamp:    time.Now(),
+		ChannelID:     channelID,
+		ChannelKeyID:  keyID,
+		ResolvedModel: statsModel,
+		Timestamp:     time.Now(),
 	})
 }
 

@@ -314,8 +314,8 @@ func setDefaults() {
 	viper.SetDefault("relay.max_json_body_bytes", int64(64<<20))
 	viper.SetDefault("relay.max_multipart_body_bytes", int64(64<<20))
 	viper.SetDefault("external.llm_price_url", "https://models.dev/api.json")
-	viper.SetDefault("external.update_url", "https://github.com/lingyuins/octopus/releases/latest/download")
-	viper.SetDefault("external.update_api_url", "https://api.github.com/repos/lingyuins/octopus/releases/latest")
+	viper.SetDefault("external.update_url", "https://github.com/XFoxLG/octopus-tiered-lb/releases/latest/download")
+	viper.SetDefault("external.update_api_url", "https://api.github.com/repos/XFoxLG/octopus-tiered-lb/releases/latest")
 	viper.SetDefault("security.encryption_key", "")
 	setCacheDefaults(viper.GetViper())
 }

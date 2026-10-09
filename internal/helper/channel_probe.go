@@ -16,6 +16,7 @@ import (
 )
 
 type ChannelTestResult struct {
+	EndpointID   string `json:"endpoint_id,omitempty"`
 	BaseURL      string `json:"base_url"`
 	KeyRemark    string `json:"key_remark,omitempty"`
 	KeyMasked    string `json:"key_masked,omitempty"`
@@ -32,6 +33,9 @@ type ChannelTestSummary struct {
 }
 
 func TestChannel(ctx context.Context, request appmodel.Channel) (*ChannelTestSummary, error) {
+	if request.ConnectionConfig != nil {
+		return testConfiguredChannel(ctx, request)
+	}
 	if conf.IsDevMockSuccess() {
 		baseURL := "dev-mock://local"
 		if len(request.BaseUrls) > 0 && strings.TrimSpace(request.BaseUrls[0].URL) != "" {
@@ -247,14 +251,14 @@ func performChannelModelFallback(ctx context.Context, channel *appmodel.Channel,
 	// 与 group probe 一致，对 OpenAI 类型渠道走 adapter 回退（issue #187）：
 	// 先尝试 Chat Completions，失败再回退 Responses API。
 	probeReqForResolve, _ := buildGroupProbeRequest(appmodel.EndpointTypeAll, modelName)
-	adapterTypes := outbound.ResolveAttemptTypesForChannel(channel.Type, probeReqForResolve, "", channel.OutboundFormatOverride)
+	adapterTypes := outbound.ResolveAttemptTypesForChannelDeclared(channel.Type, probeReqForResolve, "", channel.OutboundFormatOverride, channel.UpstreamProtocols)
 	var lastErr error
 	for _, adapterType := range adapterTypes {
 		adapter := outbound.Get(adapterType)
 		if adapter == nil {
 			continue
 		}
-		statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, adapter, &cloned, apiKey, appmodel.EndpointTypeAll, modelName)
+		statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, adapter, adapterType, &cloned, apiKey, appmodel.EndpointTypeAll, modelName)
 		if err == nil {
 			return statusCode, responseText, internalResp, nil
 		}

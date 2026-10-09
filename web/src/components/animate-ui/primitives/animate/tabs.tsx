@@ -233,7 +233,7 @@ function TabsContent({
       role="tabpanel"
       data-slot="tabs-content"
       inert={!isActive}
-      style={{ overflow: 'hidden', ...style }}
+      style={style}
       {...props}
     />
   );

@@ -450,7 +450,7 @@ export function SettingNormalize() {
     const handleCopyPrompt = async () => {
         setCopyingPrompt(true);
         try {
-            await writeClipboardText(t('normalize.workflow.prompt'));
+            await writeClipboardText(t.raw('normalize.workflow.prompt'));
             toast.success(t('normalize.workflow.promptCopied'));
         } catch (e) {
             toast.error(e instanceof Error ? e.message : t('normalize.workflow.promptCopyFailed'));

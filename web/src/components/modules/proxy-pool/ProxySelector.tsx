@@ -20,9 +20,10 @@ type ProxySelectorProps = {
     allowInherit?: boolean;
     disabled?: boolean;
     className?: string;
+    layout?: 'inline' | 'stacked';
 };
 
-export function ProxySelector({ value, onChange, allowInherit = false, disabled = false, className }: ProxySelectorProps) {
+export function ProxySelector({ value, onChange, allowInherit = false, disabled = false, className, layout = 'inline' }: ProxySelectorProps) {
     const t = useTranslations('proxyPool');
     const { data: proxies = [], isLoading } = useProxyConfigurationList();
     const openProxyPool = useProxyPoolDialogStore((state) => state.open);
@@ -35,8 +36,8 @@ export function ProxySelector({ value, onChange, allowInherit = false, disabled 
         : ['direct', 'system', 'pool'];
     return (
         <div className={className}>
-            <div className="grid gap-2 md:grid-cols-8">
-                <div className={allowInherit ? 'space-y-2 md:col-span-3' : 'space-y-2 md:col-span-2'}>
+            <div className={layout === 'stacked' ? 'grid min-w-0 gap-3' : 'grid gap-2 md:grid-cols-8'}>
+                <div className={layout === 'stacked' ? 'min-w-0 space-y-2' : allowInherit ? 'space-y-2 md:col-span-3' : 'space-y-2 md:col-span-2'}>
                     <label className="text-sm font-medium text-card-foreground">{t('mode.label')}</label>
                     <Select
                         value={mode}
@@ -49,7 +50,7 @@ export function ProxySelector({ value, onChange, allowInherit = false, disabled 
                             });
                         }}
                     >
-                        <SelectTrigger className="w-full rounded-xl">
+                        <SelectTrigger aria-label={t('mode.label')} className={layout === 'stacked' ? 'h-11 w-full rounded-lg' : 'w-full rounded-xl'}>
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="rounded-xl">
@@ -63,7 +64,7 @@ export function ProxySelector({ value, onChange, allowInherit = false, disabled 
                 </div>
 
                 {mode === 'pool' ? (
-                    <div className={allowInherit ? 'space-y-2 md:col-span-5' : 'space-y-2 md:col-span-6'}>
+                    <div className={layout === 'stacked' ? 'min-w-0 space-y-2' : allowInherit ? 'space-y-2 md:col-span-5' : 'space-y-2 md:col-span-6'}>
                         <label className="text-sm font-medium text-card-foreground">{t('name')}</label>
                         <div className="flex items-center gap-2">
                             {enabledProxies.length > 0 ? (

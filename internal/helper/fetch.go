@@ -43,13 +43,17 @@ func FetchModelsShortTimeout(ctx context.Context, request model.Channel) ([]stri
 func fetchModelsWithClient(client *http.Client, ctx context.Context, request model.Channel) ([]string, error) {
 	fetchModel := make([]string, 0)
 	var err error
-	switch request.Type {
-	case outbound.OutboundTypeAnthropic:
-		fetchModel, err = fetchAnthropicModels(client, ctx, request)
-	case outbound.OutboundTypeGemini:
-		fetchModel, err = fetchGeminiModels(client, ctx, request)
-	default:
-		fetchModel, err = fetchOpenAIModels(client, ctx, request)
+	if request.ConnectionConfig != nil {
+		fetchModel, err = fetchConnectionModels(client, ctx, request)
+	} else {
+		switch request.Type {
+		case outbound.OutboundTypeAnthropic:
+			fetchModel, err = fetchAnthropicModels(client, ctx, request)
+		case outbound.OutboundTypeGemini:
+			fetchModel, err = fetchGeminiModels(client, ctx, request)
+		default:
+			fetchModel, err = fetchOpenAIModels(client, ctx, request)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -285,6 +289,9 @@ func fetchAnthropicModels(client *http.Client, ctx context.Context, request mode
 
 // KeyModelResult 单个 key 拉取模型的结果
 type KeyModelResult struct {
+	// KeyID 对应 channel_keys.id。逐 key 回填 SupportedModels 时必须靠它定位行；
+	// 诊断端点也用它把结果映射回具体 key（新增字段，向后兼容）。
+	KeyID      int      `json:"key_id"`
 	KeyRemark  string   `json:"key_remark,omitempty"`
 	KeyMasked  string   `json:"key_masked,omitempty"`
 	Models     []string `json:"models"`
@@ -299,8 +306,10 @@ type FetchModelsPerKeyResult struct {
 	AllModels []string         `json:"all_models"`
 }
 
-// FetchModelsPerKey 逐个 key 拉取模型列表，返回每个 key 的模型列表和并集
-// 用于诊断同一个 channel 内不同 key 是否拥有不同的模型访问权限
+// FetchModelsPerKey 逐个 key 拉取模型列表，返回每个 key 的模型列表和并集。
+// 用于诊断同一个 channel 内不同 key 是否拥有不同的模型访问权限。
+// 使用常规（长超时）HTTP 客户端：这是用户在前端主动触发的诊断操作，
+// 宁可等久一点也要拿到结果。
 func FetchModelsPerKey(ctx context.Context, request model.Channel) (*FetchModelsPerKeyResult, error) {
 	if conf.IsDevMockSuccess() {
 		models, _ := filterDevMockModels(request)
@@ -311,7 +320,31 @@ func FetchModelsPerKey(ctx context.Context, request model.Channel) (*FetchModels
 	if err != nil {
 		return nil, err
 	}
+	return fetchModelsPerKeyWithClient(ctx, client, request)
+}
 
+// FetchModelsPerKeyShortTimeout 与 FetchModelsPerKey 相同，但使用短超时(30s)
+// HTTP 客户端。供后台的模型自动同步任务（task.SyncModelsTask）使用：与
+// FetchModelsShortTimeout 的超时策略一致，避免不可达 endpoint 长时间占用连接、
+// 让 goroutine 堆积。
+func FetchModelsPerKeyShortTimeout(ctx context.Context, request model.Channel) (*FetchModelsPerKeyResult, error) {
+	if conf.IsDevMockSuccess() {
+		models, _ := filterDevMockModels(request)
+		return mockFetchModelsPerKey(request, models), nil
+	}
+
+	client, err := ChannelShortTimeoutHttpClient(&request)
+	if err != nil {
+		return nil, err
+	}
+	return fetchModelsPerKeyWithClient(ctx, client, request)
+}
+
+// fetchModelsPerKeyWithClient 是逐 key 抓取的共同实现：对每个启用且非空的 key
+// 构造只含该 key 的临时 channel 副本单独请求，因此结果里的 KeyID 与入参
+// request.Keys 的 ID 一一对应。单个 key 抓取失败不中断整体，只在结果里标
+// Passed=false + Message（调用方据此决定是否跳过回填）。
+func fetchModelsPerKeyWithClient(ctx context.Context, client *http.Client, request model.Channel) (*FetchModelsPerKeyResult, error) {
 	// 只取启用的非空 key
 	enabledKeys := make([]model.ChannelKey, 0)
 	for _, k := range request.Keys {
@@ -330,6 +363,7 @@ func FetchModelsPerKey(ctx context.Context, request model.Channel) (*FetchModels
 
 		fetchModel, err := fetchModelsWithClient(client, ctx, ch)
 		result := KeyModelResult{
+			KeyID:     key.ID,
 			KeyRemark: key.Remark,
 			KeyMasked: maskSecret(key.ChannelKey),
 		}
@@ -370,6 +404,7 @@ func mockFetchModelsPerKey(request model.Channel, models []string) *FetchModelsP
 	results := make([]KeyModelResult, 0, len(enabledKeys))
 	for _, key := range enabledKeys {
 		results = append(results, KeyModelResult{
+			KeyID:     key.ID,
 			KeyRemark: key.Remark,
 			KeyMasked: maskSecret(key.ChannelKey),
 			Models:    models,

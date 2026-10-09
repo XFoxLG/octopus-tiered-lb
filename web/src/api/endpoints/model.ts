@@ -124,9 +124,10 @@ export function useModelChannelList() {
     });
 }
 
-export function useModelMarket() {
+export function useModelMarket(enabled = true) {
     return useQuery({
         queryKey: ['models', 'market'],
+        enabled,
         queryFn: async () => {
             const response = await apiClient.get<ModelMarketResponse>('/api/v1/model/market');
             return normalizeModelMarketResponse(response);
@@ -243,6 +244,7 @@ export function useUpdateModelPrice() {
         onSuccess: () => {
             logger.log('模型价格更新成功');
             queryClient.invalidateQueries({ queryKey: ['models', 'last-update-time'] });
+            queryClient.invalidateQueries({ queryKey: ['models', 'list'] });
             queryClient.invalidateQueries({ queryKey: ['models', 'market'] });
         },
         onError: (error) => {
@@ -294,13 +296,14 @@ export interface ModelCapability {
  *     console.log(cap.name, cap.endpoints, cap.conversation);
  * });
  */
-export function useModelCapabilities() {
+export function useModelCapabilities(enabled = true) {
     return useQuery({
         queryKey: ['models', 'capabilities'],
+        enabled,
         queryFn: async () => {
             return apiClient.get<ModelCapability[]>('/api/v1/model/capabilities');
         },
-        refetchInterval: 60_000,
+        refetchInterval: REFETCH_INTERVAL_CONFIG,
     });
 }
 
@@ -321,9 +324,10 @@ export interface ModelPriceCategory extends LLMPrice {
 /**
  * 获取价格分类列表 Hook
  */
-export function usePriceCategoryList() {
+export function usePriceCategoryList(enabled = true) {
     return useQuery({
         queryKey: ['models', 'price-category', 'list'],
+        enabled,
         queryFn: async () => {
             return apiClient.get<ModelPriceCategory[]>('/api/v1/model/price-category/list');
         },
@@ -405,9 +409,10 @@ export interface ModelPriceSchedule extends LLMPrice {
 /**
  * 获取峰谷计费规则列表 Hook
  */
-export function usePriceScheduleList() {
+export function usePriceScheduleList(enabled = true) {
     return useQuery({
         queryKey: ['models', 'price-schedule', 'list'],
+        enabled,
         queryFn: async () => {
             return apiClient.get<ModelPriceSchedule[]>('/api/v1/model/price-schedule/list');
         },

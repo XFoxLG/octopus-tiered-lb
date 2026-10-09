@@ -39,6 +39,21 @@ function firstNonZero(...values: Array<number | null | undefined>) {
     return 0;
 }
 
+export type ReportedIPSourceToken = 'cf' | 'tru' | 'xff' | '';
+
+/**
+ * 把展示轨来源头映射成前端徽标 token。
+ * cf-connecting-ip → cf；true-client-ip → tru；x-forwarded-for → xff；
+ * none、未知值或空值 → ''（外层按「代理 IP」呈现，不标注来源）。
+ */
+export function reportedIPSourceToken(source: string | null | undefined): ReportedIPSourceToken {
+    const normalized = source?.trim().toLowerCase();
+    if (normalized === 'cf-connecting-ip') return 'cf';
+    if (normalized === 'true-client-ip') return 'tru';
+    if (normalized === 'x-forwarded-for') return 'xff';
+    return '';
+}
+
 function lastAttemptChannelId(attempts: ChannelAttempt[] | undefined) {
     if (!attempts?.length) return 0;
     for (let index = attempts.length - 1; index >= 0; index -= 1) {
@@ -154,10 +169,14 @@ export function resolveLogDisplayFields(
     // Keep a reported address paired with the header that supplied it.
     const reportedIPRecord = detail?.reported_client_ip?.trim() ? detail : log;
     const reportedClientIP = firstNonEmpty(reportedIPRecord.reported_client_ip);
+    const rawClientIP = firstNonEmpty(detail?.client_ip, log.client_ip);
 
     return {
         requestAPIKeyName: firstNonEmpty(detail?.request_api_key_name, log.request_api_key_name),
-        clientIP: firstNonEmpty(reportedClientIP, detail?.client_ip, log.client_ip),
+        clientIP: firstNonEmpty(reportedClientIP, rawClientIP),
+        // reported 为空时 clientIP 会回退到平台代理地址，用它区分「真实来源」与「代理 IP」。
+        hasReportedClientIP: Boolean(reportedClientIP),
+        rawClientIP,
         reportedClientIPSource: reportedClientIP ? firstNonEmpty(reportedIPRecord.reported_client_ip_source) : '',
         requestModelName,
         actualModelName,
@@ -182,6 +201,5 @@ export function formatJsonForCopy(content: string | undefined | null): string {
         return content;
     }
 }
-
 
 

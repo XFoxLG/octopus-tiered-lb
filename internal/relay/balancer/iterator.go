@@ -304,6 +304,8 @@ func (s *AttemptSpan) AttemptNumber() int {
 }
 
 // Duration 返回从开始到现在的耗时
+func (s *AttemptSpan) StartedAt() time.Time { return s.startTime }
+
 func (s *AttemptSpan) Duration() time.Duration {
 	return time.Since(s.startTime)
 }

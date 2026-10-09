@@ -11,9 +11,10 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
-import { resolveLogDisplayFields } from './display';
+import { reportedIPSourceToken, resolveLogDisplayFields } from './display';
 import { BoundaryDetails } from './BoundaryDetails';
-import { useLogFieldVisibility } from './ui-store';
+import { logIssueSummary } from './body-preview';
+import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
 import { useSettingStore } from '@/stores/setting';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import {
@@ -199,7 +200,12 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts, channelNameB
     );
 }
 
-export const LogCard = memo(function LogCard({ log, channelNameById }: { log: RelayLog; channelNameById?: ReadonlyMap<number, string> }) {
+export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyLabelById }: {
+    log: RelayLog;
+    channelNameById?: ReadonlyMap<number, string>;
+    // 上游渠道 Key 标识：channel_key_id → 「备注 / 脱敏 Key」；本地只读取已加载的渠道列表，不新增后端字段。
+    channelKeyLabelById?: ReadonlyMap<number, string>;
+}) {
     const t = useTranslations('log.card');
     const tCommon = useTranslations('common');
     const tGroup = useTranslations('group');
@@ -217,6 +223,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);
     const displayFields = useMemo(() => resolveLogDisplayFields(log, detail, channelNameById), [channelNameById, detail, log]);
     const vis = useLogFieldVisibility();
+    const compact = useLogFieldVisibilityStore(s => s.compact);
     const chinaMode = useSettingStore((s) => s.chinaMode);
     const { Avatar: ModelAvatar, color: brandColor } = useMemo(
         () => getModelIcon(displayFields.actualModelName),
@@ -228,11 +235,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
     const badgeColor = resolveBrandColor(brandColor, resolvedTheme === 'dark');
     const requestAPIKeyName = displayFields.requestAPIKeyName;
     const clientIP = displayFields.clientIP;
-    const reportedIPSourceLabel = useMemo(() => {
-        if (displayFields.reportedClientIPSource === 'cf-connecting-ip') return 'CF';
-        if (displayFields.reportedClientIPSource === 'x-forwarded-for') return 'XFF';
-        return '';
-    }, [displayFields.reportedClientIPSource]);
+    const ipSourceToken = reportedIPSourceToken(displayFields.reportedClientIPSource);
     const cacheReadTokens = displayFields.cacheReadTokens;
     const semanticCacheHit = displayFields.semanticCacheHit;
     const effectiveInputTokens = Math.max(0, log.input_tokens - cacheReadTokens);
@@ -340,7 +343,6 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         {t('testLog')}
                                     </Badge>
                                 )}
-                                <ArrowRight className="size-3.5 shrink-0 text-muted-foreground/50" />
                                 {vis.endpointType && displayEndpointType && (
                                     <Badge
                                         variant="secondary"
@@ -373,7 +375,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         )}
                                     </>
                                 )}
-                                {vis.actualModel && (
+                                {vis.actualModel && (!compact || displayActualModelName !== displayRequestModelName) && (
                                     <span className="min-w-0 text-muted-foreground truncate md:flex-1" title={displayActualModelName}>
                                         {displayActualModelName}
                                     </span>
@@ -382,7 +384,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     <Pin className="size-3.5 shrink-0 text-amber-500" />
                                 )}
                             </div>
-                            <div className="grid grid-cols-2 md:grid-cols-7 gap-x-4 gap-y-1.5 text-xs tabular-nums text-muted-foreground">
+                            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs tabular-nums text-muted-foreground">
                                 <div className="flex items-center gap-1.5">
                                     <Clock className="size-3.5 shrink-0" style={{ color: badgeColor }} />
                                     <span>{formatTime(log.time)}</span>
@@ -395,13 +397,21 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                         </span>
                                     </div>
                                 )}
-                                {vis.clientIP && clientIP && (
+                                {vis.clientIP && (displayFields.hasReportedClientIP || displayFields.rawClientIP) && (
                                     <div className="flex items-center gap-1.5">
-                                        <Globe className="size-3.5 shrink-0 text-sky-500" />
-                                        <span className="truncate" title={clientIP}>{clientIP}</span>
-                                        {reportedIPSourceLabel && (
-                                            <span className="shrink-0 rounded-sm bg-sky-500/10 px-1 text-[10px] leading-4 text-sky-600 dark:text-sky-400" title={t('reportedIPHint', { source: displayFields.reportedClientIPSource })}>
-                                                {reportedIPSourceLabel}
+                                        <Globe className={cn('size-3.5 shrink-0', displayFields.hasReportedClientIP ? 'text-sky-500' : 'text-muted-foreground/60')} />
+                                        {displayFields.hasReportedClientIP ? <>
+                                            <span className="truncate" title={clientIP}>{clientIP}</span>
+                                            {ipSourceToken && (
+                                                <span className="shrink-0 rounded-sm bg-sky-500/10 px-1 text-[10px] leading-4 text-sky-600 dark:text-sky-400" title={t('reportedIPHint', { source: displayFields.reportedClientIPSource })}>
+                                                    {t(`ipSource.${ipSourceToken}`)}
+                                                </span>
+                                            )}
+                                        </> : (
+                                            // Render 等托管平台上取不到转发来源时，直连地址是平台代理 IP，
+                                            // 不能按真实客户端展示，只给灰色「代理 IP」并提示原始值。
+                                            <span className="truncate text-muted-foreground/70" title={t('ipProxyTooltip', { ip: displayFields.rawClientIP })}>
+                                                {t('ipProxy')}
                                             </span>
                                         )}
                                     </div>
@@ -504,7 +514,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                     title={clientDisconnected ? t('clientDisconnectedHint') : undefined}
                                 >
                                     <p className={cn("text-xs line-clamp-2", clientDisconnected ? "text-muted-foreground" : "text-destructive")}>
-                                        {clientDisconnected ? t('clientDisconnected') : log.error}
+                                        {clientDisconnected ? t('clientDisconnected') : compact ? t(`issueSummary.${logIssueSummary(log.error || '')}`) : log.error}
                                     </p>
                                 </div>
                             )}
@@ -569,10 +579,10 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                         </MorphingDialogTitle>
 
                         <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
-                            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+                            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
                                 {(hasError || hasMultipleAttempts) && (
                                     <div className={cn(
-                                        "flex-initial min-h-0 flex flex-col rounded-2xl border overflow-hidden max-h-[40%]",
+                                        "flex flex-col rounded-xl border",
                                         hasError
                                             ? "bg-destructive/5 border-destructive/20"
                                             : "bg-secondary/30 border-border/50"
@@ -691,6 +701,11 @@ export const LogCard = memo(function LogCard({ log, channelNameById }: { log: Re
                                                                             {attempt.adapter_type && (
                                                                                 <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
                                                                                     {attempt.adapter_type}
+                                                                                </span>
+                                                                            )}
+                                                                            {typeof attempt.channel_key_id === 'number' && attempt.channel_key_id > 0 && (
+                                                                                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-muted/70 text-muted-foreground" title={t('channelKeyHint')}>
+                                                                                    {channelKeyLabelById?.get(attempt.channel_key_id) ?? t('channelKeyFallback', { id: attempt.channel_key_id })}
                                                                                 </span>
                                                                             )}
                                                                             <span className="ml-auto text-muted-foreground tabular-nums font-mono">

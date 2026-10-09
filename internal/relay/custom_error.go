@@ -19,7 +19,8 @@ import (
 // 自定义状态码与透传行为。
 //
 // 示例：
-//   {"channel_type":"response","keyword":"context_length_exceeded","custom_status":400,"passthrough_message":true}
+//
+//	{"channel_type":"response","keyword":"context_length_exceeded","custom_status":400,"passthrough_message":true}
 type CustomErrorRule struct {
 	// ChannelType 是渠道类型字符串（见 outbound.OutboundType.String，如
 	// "chat"/"response"/"anthropic"/"gemini"）。空串表示匹配所有渠道类型。
@@ -77,6 +78,7 @@ var builtinCredentialRetryKeywords = []string{
 // 刻意不含泛化的 "not supported" —— 那会误伤「Requests ending with a model
 // turn are not supported」这类真正的请求方错误。
 var builtinChannelRetryKeywords = []string{
+	"user location is not supported for the api use",
 	"model not found",
 	"model_not_found",
 	"no such model",
@@ -84,6 +86,7 @@ var builtinChannelRetryKeywords = []string{
 	"unsupported model",
 	"model is not supported",
 	"model not supported",
+	"is an internal development checkpoint and not directly accessible",
 	"not have access to model",
 	"model does not exist",
 	"the model does not exist",
@@ -155,6 +158,18 @@ func applyErrorPolicy(decision RetryDecision, ch *dbmodel.Channel, statusCode in
 			Reason:  fmt.Sprintf("channel retryable rule matched (status %d)", statusCode),
 			Code:    statusCode,
 			IsError: true,
+		}
+	}
+
+	// A supported reasoning option may be incompatible with this particular
+	// model or gateway. Preserve the request and try another candidate; this
+	// request-specific rejection is not evidence of an unhealthy channel.
+	if (statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity) &&
+		(decision.Scope == ScopeNone || decision.Scope == ScopeNextChannel) &&
+		isReasoningCompatibilityError(upstreamText) {
+		return RetryDecision{
+			Scope: ScopeNextChannel, Reason: "upstream reasoning option incompatible, try next candidate",
+			Code: statusCode, IsError: true, SkipFailureAccounting: true,
 		}
 	}
 
@@ -264,6 +279,9 @@ func classifyErrorForClient(statusCode int, upstreamText string) ErrorClass {
 		if strings.Contains(lowered, marker) {
 			return ErrorClassRequest
 		}
+	}
+	if strings.Contains(lowered, "user location is not supported for the api use") {
+		return ErrorClassUpstream
 	}
 	switch statusCode {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusRequestEntityTooLarge,

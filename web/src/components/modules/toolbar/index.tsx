@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { ArrowUpAZ, Boxes, Clock3, Layers3, LayoutGrid, List, Plus, RadioTower, RefreshCw, Rows3, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowUpAZ, Clock3, Layers3, LayoutGrid, List, Plus, Rows3, Search, SlidersHorizontal, X } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
+import { toast } from 'sonner';
 import {
     MorphingDialog,
     MorphingDialogTrigger,
@@ -12,8 +13,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { buttonVariants } from '@/components/ui/button';
 import { useModelMarket, useUpdateModelPrice } from '@/api/endpoints/model';
-import { formatAverageLatency } from '@/components/modules/model/latency-format';
-import { formatDateTime } from '@/lib/time';
+import { ModelMarketSummaryContent } from '@/components/modules/model/MarketSummary';
 import { cn } from '@/lib/utils';
 import { useNavStore, type NavItem } from '@/components/modules/navbar';
 import { CreateDialogContent as ChannelCreateContent } from '@/components/modules/channel/Create';
@@ -26,6 +26,7 @@ import { useModelViewStore } from '@/components/modules/model/view-store';
 import { useTranslations } from 'next-intl';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useSearchStore } from './search-store';
+import { TOOLBAR_ACTION_CLASS, TOOLBAR_ICON_ACTION_CLASS, TOOLBAR_TEXT_ACTION_CLASS, TOOLBAR_PRIMARY_ACTION_CLASS } from './action-styles';
 import {
     useToolbarViewOptionsStore,
     TOOLBAR_PAGES,
@@ -59,9 +60,6 @@ const COMBINED_SORT_OPTIONS: readonly CombinedSortOption[] = [
     { value: 'created-desc', field: 'created', order: 'desc', labelKey: 'popover.createdDesc' },
 ] as const;
 
-const COMMAND_CELL_CLASS = 'rounded-lg border border-border bg-card transition-[color,background-color,border-color] duration-150 hover:border-border/80 hover:bg-muted/50 active:scale-[0.98]';
-const COMMAND_ICON_BUTTON_CLASS = `${COMMAND_CELL_CLASS} h-11 w-11 text-muted-foreground hover:text-foreground`;
-const COMMAND_TEXT_BUTTON_CLASS = `${COMMAND_CELL_CLASS} min-h-11 px-3.5 text-sm font-medium text-muted-foreground hover:text-foreground`;
 const OPTION_BUTTON_CLASS = 'min-h-9 sm:h-9 rounded-md border px-3 text-xs font-medium transition-[color,background-color,border-color] duration-150 active:scale-[0.98] py-2 sm:py-0';
 const ACTIVE_OPTION_CLASS = 'border-primary/30 bg-primary text-primary-foreground';
 const INACTIVE_OPTION_CLASS = 'border-border bg-card text-foreground hover:border-primary/20 hover:bg-muted/50';
@@ -83,11 +81,11 @@ function CreateDialogContent({ activeItem }: { activeItem: ToolbarPage }) {
 
 function getCreateDialogContentClassName(activeItem: ToolbarPage) {
     if (activeItem === 'group') {
-        return 'h-[calc(100dvh-1rem)] w-[min(100vw-1rem,92rem)] max-w-none rounded-xl border border-border bg-card px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] text-card-foreground shadow-lg flex flex-col overflow-hidden sm:max-w-none md:h-[calc(100dvh-2rem)] md:w-[min(100vw-2rem,92rem)] md:rounded-xl md:px-4 md:py-4';
+        return 'h-[calc(100dvh-1rem)] w-[min(100vw-1rem,92rem)] max-w-none rounded-xl border border-border bg-card px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] text-card-foreground shadow-lg flex flex-col overflow-hidden sm:max-w-none md:h-[calc(100dvh-2rem)] md:w-[min(100vw-2rem,92rem)] md:rounded-xl md:px-4 md:py-4 2xl:h-auto';
     }
 
     if (activeItem === 'channel') {
-        return 'h-[calc(100dvh-1rem)] w-[min(100vw-1rem,64rem)] max-w-full rounded-xl border border-border bg-card px-2 py-2 text-card-foreground shadow-lg flex flex-col overflow-hidden md:h-[calc(100dvh-3rem)] md:w-[min(100vw-3rem,64rem)] md:rounded-xl md:px-4 md:py-4';
+        return 'flex h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-none flex-col overflow-hidden rounded-lg border border-border bg-card p-0 text-card-foreground shadow-lg sm:max-h-[calc(100dvh-3rem)] sm:max-w-none md:h-[min(52rem,calc(100dvh-3rem))] md:w-[min(100vw-3rem,64rem)]';
     }
 
     return 'w-[min(100vw-1rem,34rem)] max-w-full bg-card text-card-foreground px-4 py-4 rounded-xl max-h-[calc(100dvh-1rem)] flex flex-col overflow-hidden md:px-6 md:max-h-[calc(100dvh-2rem)]';
@@ -129,20 +127,31 @@ export function Toolbar() {
     const setModelLatencyUnit = useToolbarViewOptionsStore((s) => s.setModelLatencyUnit);
     const [expandedSearchItem, setExpandedSearchItem] = useState<ToolbarPage | null>(null);
     const searchExpanded = expandedSearchItem === toolbarItem;
-    const { data: modelMarket } = useModelMarket();
+    // 市场数据只在「模型页 · 模型广场」视图激活时拉取，其余视图/页面不产生请求。
+    const isModelMarketView = toolbarItem === 'model' && modelView === 'market';
+    const { data: modelMarket } = useModelMarket(isModelMarketView);
     const updateModelPrice = useUpdateModelPrice();
-    const modelSummary = modelMarket?.summary ?? {
-        model_count: 0,
-        coverage_count: 0,
-        unique_channel_count: 0,
-        average_latency_ms: 0,
-        last_update_time: '',
+    // 真实请求总数：由 market items 的成功/失败请求汇总而来，供平均延迟指标判断口径。
+    const marketRequestCount = (modelMarket?.items ?? []).reduce(
+        (total, item) => total + item.request_success + item.request_failed,
+        0,
+    );
+    const handleRefreshModelPrice = () => {
+        updateModelPrice.mutate(undefined, {
+            onSuccess: () => {
+                toast.success(modelT('summary.refreshSuccess'));
+            },
+        });
     };
 
     if (!toolbarItem) return null;
     const showLayoutOptions = toolbarItem !== 'group';
     const showCombinedSortOptions = toolbarItem === 'channel' || toolbarItem === 'group';
     const showSortOptions = toolbarItem !== 'model';
+    // 分类视图下搜索与市场筛选/布局均无效，不在工具栏展示，避免出现无效功能入口。
+    const showSearch = !(toolbarItem === 'model' && modelView === 'categories');
+    // 筛选弹层（市场摘要/布局/模型筛选）只服务模型广场视图；端点/分类视图一律隐藏。
+    const showFilterPopover = toolbarItem !== 'model' || isModelMarketView;
 
     const channelFilterLabelKeys: Record<ChannelFilter, string> = {
         all: 'popover.filter.channel.all',
@@ -236,64 +245,65 @@ export function Toolbar() {
                 animate={lightweightMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
                 exit={lightweightMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9 }}
                 transition={{ duration: lightweightMotion ? 0.12 : 0.2 }}
-                className="flex max-w-full items-center gap-1 rounded-xl border border-border bg-card p-1 sm:gap-2 sm:p-1.5"
+                className="flex max-w-full items-center gap-1 sm:gap-2 [&_.header-action-icon]:max-[380px]:!block [&_.header-action-icon]:max-[380px]:!size-4"
             >
-                {/* 搜索按钮/展开框 */}
-                <div
-                    className={cn(
-                        'relative h-9 transition-[width] duration-300 ease-out sm:h-11',
-                        searchExpanded
-                            ? 'w-[min(13rem,calc(100vw-5rem))] sm:w-[min(18rem,calc(100vw-3rem))]'
-                            : 'w-9 sm:w-11'
-                    )}
-                >
-                    {!searchExpanded ? (
-                        <motion.button
-                            layoutId="search-box"
-                            type="button"
-                            aria-label={searchAriaLabel}
-                            onClick={() => setExpandedSearchItem(toolbarItem)}
-                            className={cn(
-                                buttonVariants({ variant: "ghost", size: "icon" }),
-                                "absolute inset-0 rounded-lg transition-none",
-                                COMMAND_ICON_BUTTON_CLASS,
-                                "h-9 w-9 sm:h-11 sm:w-11"
-                            )}
-                        >
-                            <motion.span layout="position"><Search className="header-action-icon size-4 transition-colors duration-300" /></motion.span>
-                        </motion.button>
-                    ) : (
-                        <motion.div
-                            layoutId="search-box"
-                            className={cn(
-                                "absolute inset-0 flex items-center gap-2 px-3.5",
-                                COMMAND_CELL_CLASS
-                            )}
-                            transition={lightweightMotion ? { duration: 0.12 } : { type: 'spring', stiffness: 400, damping: 30 }}
-                        >
-                            <motion.span layout="position"><Search className="header-action-icon size-4 text-muted-foreground shrink-0" /></motion.span>
-                            <input
-                                type="text"
-                                aria-label={searchAriaLabel}
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(toolbarItem, e.target.value)}
-                                autoFocus
-                                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                            />
-                            <button
+                {/* 搜索按钮/展开框：市场与可用端点视图共用 model 页搜索词；分类视图下搜索无效，隐藏 */}
+                {showSearch && (
+                    <div
+                        className={cn(
+                            'relative h-9 shrink-0 transition-[width] duration-300 ease-out sm:h-11',
+                            searchExpanded
+                                ? 'w-[min(13rem,calc(100vw-12rem))] sm:w-44 lg:w-60'
+                                : 'w-9 sm:w-11'
+                        )}
+                    >
+                        {!searchExpanded ? (
+                            <motion.button
+                                layoutId="search-box"
                                 type="button"
-                                aria-label={clearSearchAriaLabel}
-                                onClick={() => {
-                                    setSearchTerm(toolbarItem, '');
-                                    setExpandedSearchItem(null);
-                                }}
-                                className="grid size-7 shrink-0 place-items-center rounded-full border border-border/30 bg-card text-muted-foreground transition-colors hover:text-foreground sm:size-7 [-webkit-tap-highlight-color:transparent] before:absolute before:grid before:size-11 before:place-items-center before:rounded-full sm:before:size-7 relative"
+                                aria-label={searchAriaLabel}
+                                onClick={() => setExpandedSearchItem(toolbarItem)}
+                                className={cn(
+                                    buttonVariants({ variant: "ghost", size: "icon" }),
+                                    "absolute inset-0",
+                                    TOOLBAR_ICON_ACTION_CLASS
+                                )}
                             >
-                                <X className="size-3.5" />
-                            </button>
-                        </motion.div>
-                    )}
-                </div>
+                                <motion.span layout="position"><Search className="header-action-icon size-4 transition-colors duration-300" /></motion.span>
+                            </motion.button>
+                        ) : (
+                            <motion.div
+                                layoutId="search-box"
+                                className={cn(
+                                    "absolute inset-0 flex items-center gap-2 px-3.5",
+                                    TOOLBAR_ACTION_CLASS
+                                )}
+                                transition={lightweightMotion ? { duration: 0.12 } : { type: 'spring', stiffness: 400, damping: 30 }}
+                            >
+                                <motion.span layout="position"><Search className="header-action-icon size-4 text-muted-foreground shrink-0" /></motion.span>
+                                <input
+                                    type="text"
+                                    aria-label={searchAriaLabel}
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(toolbarItem, e.target.value)}
+                                    autoFocus
+                                    className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                                />
+                                <button
+                                    type="button"
+                                    aria-label={clearSearchAriaLabel}
+                                    onClick={() => {
+                                        setSearchTerm(toolbarItem, '');
+                                        setExpandedSearchItem(null);
+                                    }}
+                                    className="grid size-7 shrink-0 place-items-center rounded-full border border-border/30 bg-card text-muted-foreground transition-colors hover:text-foreground sm:size-7 [-webkit-tap-highlight-color:transparent] before:absolute before:grid before:size-11 before:place-items-center before:rounded-full sm:before:size-7 relative"
+                                >
+                                    <X className="size-3.5" />
+                                </button>
+                            </motion.div>
+                        )}
+                    </div>
+                )}
 
                 {toolbarItem === 'group' && (
                     <MaintenanceButton className="hidden sm:inline-flex" />
@@ -301,7 +311,9 @@ export function Toolbar() {
                 {toolbarItem === 'group' && (
                     <CCSwitchLinkButton className="hidden sm:inline-flex" />
                 )}
-                <div className="flex h-9 min-w-0 items-center gap-0.5 rounded-xl border border-border bg-muted/30 p-0.5 sm:h-11 sm:gap-1 sm:p-1">
+                {/* 筛选弹层：市场摘要/布局/模型筛选仅服务模型广场视图，端点与分类视图隐藏 */}
+                {showFilterPopover && (
+                <div className="flex shrink-0 items-center">
                     <Popover>
                         <PopoverTrigger asChild>
                             <button
@@ -309,11 +321,12 @@ export function Toolbar() {
                                 aria-label={t('popover.ariaLabel')}
                                 className={cn(
                                     buttonVariants({ variant: 'ghost', size: 'default' }),
-                                    "h-8 min-h-8 rounded-md border border-transparent bg-transparent px-1.5 text-muted-foreground shadow-none transition-[color,background-color,border-color] duration-150 hover:border-border hover:bg-muted hover:text-foreground hover:shadow-none sm:h-9 sm:min-h-9 sm:px-3"
+                                    TOOLBAR_TEXT_ACTION_CLASS,
+                                    "w-9 px-0 sm:w-auto sm:px-3.5"
                                 )}
                             >
                                 <SlidersHorizontal className="header-action-icon size-4 transition-colors duration-300" />
-                                <span className="hidden text-xs font-semibold sm:inline">{t('popover.filter.title')}</span>
+                                <span className="hidden sm:inline">{t('popover.filter.title')}</span>
                             </button>
                         </PopoverTrigger>
                         <PopoverContent
@@ -326,57 +339,15 @@ export function Toolbar() {
                             )}
                         >
                             <div className="grid gap-3">
-                                {toolbarItem === 'model' && (() => {
-                                    const lastUpdateRaw = modelSummary.last_update_time;
-                                    const formatted = lastUpdateRaw ? formatDateTime(lastUpdateRaw) : '-';
-                                    const lastUpdateLabel = formatted !== '-' && lastUpdateRaw && new Date(lastUpdateRaw).getFullYear() > 1
-                                        ? formatted
-                                        : modelT('summary.neverUpdated');
-                                    const hasData = modelSummary.model_count > 0;
-                                    const summaryMetrics = [
-                                        { key: 'models', icon: Boxes, label: modelT('summary.modelCount'), value: modelSummary.model_count.toLocaleString() },
-                                        { key: 'coverage', icon: Rows3, label: modelT('summary.coverage'), value: modelSummary.coverage_count.toLocaleString() },
-                                        { key: 'unique', icon: RadioTower, label: modelT('summary.uniqueChannels'), value: modelSummary.unique_channel_count.toLocaleString() },
-                                        { key: 'latency', icon: Clock3, label: modelT('summary.averageLatency'), value: formatAverageLatency(modelSummary.average_latency_ms, hasData ? 1 : 0, 'auto') },
-                                    ];
-                                    return (
-                                        <div className="grid gap-2 rounded-lg border border-border bg-muted/20 p-2.5">
-                                            <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
-                                                <div className="min-w-0">
-                                                    <div className="text-xs font-semibold text-foreground sm:text-sm">{modelT('summary.title')}</div>
-                                                    <div className="text-[0.65rem] text-muted-foreground sm:text-[11px]">{modelT('summary.description')}</div>
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => updateModelPrice.mutate()}
-                                                    disabled={updateModelPrice.isPending}
-                                                    className={cn(
-                                                        OPTION_BUTTON_CLASS,
-                                                        'inline-flex items-center gap-1.5 border-border/30 bg-card text-foreground hover:border-border hover:bg-muted',
-                                                    )}
-                                                >
-                                                    <RefreshCw className={cn('size-3.5', updateModelPrice.isPending && 'animate-spin')} />
-                                                    {updateModelPrice.isPending ? modelT('summary.refreshing') : modelT('summary.refresh')}
-                                                </button>
-                                            </div>
-                                            <div className="flex items-center gap-1.5 rounded-lg border border-border/30 bg-card px-2.5 py-1.5 text-[0.65rem] text-muted-foreground sm:gap-2 sm:px-3 sm:py-2 sm:text-[11px]">
-                                                <Clock3 className="size-3.5 shrink-0 text-primary sm:size-4" />
-                                                <span className="min-w-0 truncate">{modelT('summary.lastUpdate')}: {lastUpdateLabel}</span>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-1.5 sm:gap-2 lg:grid-cols-4">
-                                                {summaryMetrics.map((m) => (
-                                                    <div key={m.key} className="min-w-0 overflow-hidden rounded-lg border border-border/30 bg-card px-2 py-1.5 sm:px-2.5 sm:py-2">
-                                                        <div className="flex min-w-0 items-center gap-1 text-[0.6rem] text-muted-foreground sm:gap-1.5 sm:text-[10px]">
-                                                            <m.icon className="size-3 shrink-0 text-primary sm:size-3.5" />
-                                                            <span className="min-w-0 truncate leading-tight">{m.label}</span>
-                                                        </div>
-                                                        <div className="mt-0.5 min-w-0 truncate text-[1.15rem] font-semibold leading-none tracking-tight sm:mt-1 sm:text-[1.45rem]">{m.value}</div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    );
-                                })()}
+                                {toolbarItem === 'model' && (
+                                    <ModelMarketSummaryContent
+                                        summary={modelMarket?.summary}
+                                        requestCount={marketRequestCount}
+                                        latencyUnit={modelLatencyUnit}
+                                        onRefresh={handleRefreshModelPrice}
+                                        isRefreshing={updateModelPrice.isPending}
+                                    />
+                                )}
 
                                 {showLayoutOptions && (
                                     <div className="grid gap-2 rounded-lg border border-border bg-muted/20 p-2.5">
@@ -566,12 +537,13 @@ export function Toolbar() {
                         </PopoverContent>
                     </Popover>
                 </div>
+                )}
 
                 <div className="flex items-center gap-1 sm:gap-1.5">
                     {toolbarItem === 'channel' ? (
                         <ChannelGroupManagerDialog className={cn(
                             buttonVariants({ variant: "ghost", size: "default" }),
-                            COMMAND_TEXT_BUTTON_CLASS,
+                            TOOLBAR_TEXT_ACTION_CLASS,
                             "hidden sm:flex"
                         )} />
                     ) : null}
@@ -622,19 +594,18 @@ export function Toolbar() {
                     ) : null}
 
                     {/* 创建按钮 */}
-                    <MorphingDialog>
+                    <MorphingDialog disableSharedLayout={toolbarItem === 'channel'}>
                         <MorphingDialogTrigger
                             ariaLabel={createAriaLabel}
                             className={cn(
-                                buttonVariants({ variant: "ghost", size: "default" }),
-                                COMMAND_TEXT_BUTTON_CLASS,
-                                "h-9 min-h-9 bg-primary px-2.5 text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground sm:h-11 sm:min-h-11 sm:px-3.5"
+                                buttonVariants({ variant: "default", size: "icon" }),
+                                TOOLBAR_PRIMARY_ACTION_CLASS
                             )}
                         >
                             <Plus className="header-action-icon size-4 transition-colors duration-300" />
                         </MorphingDialogTrigger>
 
-                        <MorphingDialogContainer>
+                        <MorphingDialogContainer unmountOnClose={toolbarItem === 'channel'}>
                             <MorphingDialogContent
                                 className={getCreateDialogContentClassName(toolbarItem)}
                                 dismissOnOverlayClick={toolbarItem !== 'channel'}

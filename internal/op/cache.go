@@ -2,9 +2,13 @@ package op
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"net"
 	"time"
 
+	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/modelmapping"
 	"github.com/lingyuins/octopus/internal/op/setting"
@@ -43,7 +47,7 @@ func RegisterCacheSave(fn CacheSaveFunc) {
 // wall-clock time close to the slowest single cache rather than the sum of all
 // of them, and avoids one large table blocking the shared init timeout.
 func InitCache() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	if len(cacheInitFuncs) == 0 {
@@ -51,7 +55,7 @@ func InitCache() error {
 	}
 
 	// Stage 1: setting cache (gates log level and is read by later caches).
-	if err := cacheInitFuncs[0](ctx); err != nil {
+	if err := runCacheInitStage(ctx, 0, cacheInitFuncs[0]); err != nil {
 		return err
 	}
 
@@ -61,25 +65,104 @@ func InitCache() error {
 		return nil
 	}
 	g, gctx := errgroup.WithContext(ctx)
-	for _, fn := range rest {
+	parallelism := 2
+	if conn := db.GetDB(); conn != nil {
+		if sqlDB, err := conn.DB(); err == nil {
+			if limit := sqlDB.Stats().MaxOpenConnections; limit > 0 && limit < parallelism {
+				parallelism = limit
+			}
+		}
+	}
+	g.SetLimit(parallelism)
+	for index, fn := range rest {
 		fn := fn
+		index := index
 		g.Go(func() error {
-			return fn(gctx)
+			return runCacheInitStage(gctx, index+1, fn)
 		})
 	}
 	return g.Wait()
+}
+
+func runCacheInitStage(ctx context.Context, stage int, fn CacheInitFunc) error {
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		stageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		started := time.Now()
+		before := cacheConnectionStats()
+		err := fn(stageCtx)
+		cancel()
+		after := cacheConnectionStats()
+		classification := "success"
+		if err != nil {
+			classification = "permanent"
+			if cacheInitRetryable(err) {
+				classification = "transient"
+			}
+			if ctx.Err() != nil {
+				classification = "budget_exhausted"
+			}
+		}
+		log.Infof("cache init stage=%d attempt=%d duration=%s result=%s connection_waits=%d connection_wait=%s", stage, attempt, time.Since(started), classification, after.WaitCount-before.WaitCount, after.WaitDuration-before.WaitDuration)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if attempt == 3 || !cacheInitRetryable(err) {
+			return err
+		}
+		log.Warnf("cache init retry: stage=%d attempt=%d duration=%s error=%v", stage, attempt, time.Since(started), err)
+		timer := time.NewTimer(time.Duration(attempt) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
+}
+
+func cacheConnectionStats() sql.DBStats {
+	if connection := db.GetDB(); connection != nil {
+		if pool, err := connection.DB(); err == nil {
+			return pool.Stats()
+		}
+	}
+	return sql.DBStats{}
+}
+
+func cacheInitRetryable(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return true
+	}
+	var sqlError interface{ SQLState() string }
+	if errors.As(err, &sqlError) {
+		code := sqlError.SQLState()
+		return len(code) >= 2 && code[:2] == "08" || code == "53300" || code == "57P03"
+	}
+	return false
 }
 
 // SaveCache persists all registered sub-package caches.
 func SaveCache() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	var errs []error
 	for _, fn := range cacheSaveFuncs {
 		if err := fn(ctx); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // init registers cache init and save functions in explicit dependency order.
@@ -88,7 +171,7 @@ func init() {
 	// ── Cache init order: setting → channelGroup → channel → group → apikey → llm → stats ──
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := settingRefreshCache(ctx); err != nil {
-			return fmt.Errorf("setting refresh cache error: %v", err)
+			return fmt.Errorf("setting refresh cache error: %w", err)
 		}
 		// 设置加载后应用日志级别
 		if level, err := setting.GetString(model.SettingKeyLogLevel); err == nil {
@@ -98,49 +181,49 @@ func init() {
 	})
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := channelGroupRefreshCache(ctx); err != nil {
-			return fmt.Errorf("channel group refresh cache error: %v", err)
+			return fmt.Errorf("channel group refresh cache error: %w", err)
 		}
 		return nil
 	})
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := channelRefreshCache(ctx); err != nil {
-			return fmt.Errorf("channel refresh cache error: %v", err)
+			return fmt.Errorf("channel refresh cache error: %w", err)
 		}
 		return nil
 	})
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := groupRefreshCache(ctx); err != nil {
-			return fmt.Errorf("group refresh cache error: %v", err)
+			return fmt.Errorf("group refresh cache error: %w", err)
 		}
 		return nil
 	})
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := apiKeyRefreshCache(ctx); err != nil {
-			return fmt.Errorf("api key refresh cache error: %v", err)
+			return fmt.Errorf("api key refresh cache error: %w", err)
 		}
 		return nil
 	})
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := llmRefreshCache(ctx); err != nil {
-			return fmt.Errorf("llm refresh cache error: %v", err)
+			return fmt.Errorf("llm refresh cache error: %w", err)
 		}
 		return nil
 	})
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := statsRefreshCache(ctx); err != nil {
-			return fmt.Errorf("stats refresh cache error: %v", err)
+			return fmt.Errorf("stats refresh cache error: %w", err)
 		}
 		return nil
 	})
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := modelmapping.InitCache(ctx); err != nil {
-			return fmt.Errorf("model mapping init cache error: %v", err)
+			return fmt.Errorf("model mapping init cache error: %w", err)
 		}
 		return nil
 	})
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := proxyConfigurationRefreshCache(ctx); err != nil {
-			return fmt.Errorf("proxy configuration refresh cache error: %v", err)
+			return fmt.Errorf("proxy configuration refresh cache error: %w", err)
 		}
 		return nil
 	})

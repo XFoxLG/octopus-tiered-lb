@@ -11,7 +11,18 @@ import { toast } from '@/components/common/Toast';
 import { CopyIconButton } from '@/components/common/CopyButton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { Hint } from '@/components/ui/hint';
-import type { MemberAvailabilityMeta, SelectedMember } from './ItemList';
+import { Button } from '@/components/ui/button';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
 import { GroupEditor, type GroupEditorValues } from './Editor';
 import { AIRouteButton } from './AIRouteButton';
@@ -28,6 +39,7 @@ import {
     MorphingDialogTrigger,
     useMorphingDialog,
 } from '@/components/ui/morphing-dialog';
+import { AvailabilityResultsPanel } from './AvailabilityResultsPanel';
 import { Progress } from '@/components/ui/progress';
 
 interface EditDialogContentProps {
@@ -38,12 +50,10 @@ interface EditDialogContentProps {
     onTestAvailability: () => void;
     onRemoveFailedModels: () => void;
     isTestingAvailability: boolean;
-    canRemoveFailedModels: boolean;
     testProgressCompleted: number;
     testProgressTotal: number;
     testProgressValue: number;
     testResults: GroupTestResult[];
-    availabilityByMemberId: Record<string, MemberAvailabilityMeta>;
     availabilitySummary?: {
         unavailableCount: number;
         availableCount: number;
@@ -60,58 +70,55 @@ function EditDialogContent({
     onTestAvailability,
     onRemoveFailedModels,
     isTestingAvailability,
-    canRemoveFailedModels,
     testProgressCompleted,
     testProgressTotal,
     testProgressValue,
     testResults,
-    availabilityByMemberId,
     availabilitySummary,
 }: EditDialogContentProps) {
     const { setIsOpen } = useMorphingDialog();
     const t = useTranslations('group');
+    const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
     return (
-        <div className="relative flex h-full min-h-0 w-full max-w-full flex-col">
+        <div className="relative flex h-full min-h-0 w-full max-w-full flex-1 flex-col 2xl:h-auto">
             <MorphingDialogTitle className="shrink-0">
-                <header className="relative mb-4 flex items-start justify-between gap-4">
-                    <div className="space-y-3">
+                <header className="relative mb-4 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+                    <div className="min-w-0 space-y-3">
                         <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
                             <Waves className="size-3.5" />
                             {t('detail.actions.edit')}
                         </div>
                         <div className="space-y-1">
-                            <h2 className="text-2xl font-bold text-card-foreground">
-                                {t('detail.actions.edit')}
-                            </h2>
-                            <p className="text-sm text-muted-foreground">{group.name}</p>
+                            <h2 className="truncate text-2xl font-bold text-card-foreground" title={group.name}>{group.name}</h2>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 empty:hidden sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:justify-end">
                         {group.id && supportsGroupTest(group.endpoint_type) ? (
                             <AIRouteButton
                                 scope="group"
                                 groupId={group.id}
-                                variant="default"
-                                className="h-10 rounded-lg px-3"
+                                variant="ghost"
+                                className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate"
                                 onSuccess={() => setIsOpen(false)}
                             />
                         ) : null}
                         {group.id && supportsGroupTest(group.endpoint_type) && !isTestingAvailability && !availabilitySummary ? (
-                            <button
+                            <Button
                                 type="button"
+                                variant="ghost"
                                 onClick={onTestAvailability}
-                                className="inline-flex h-10 items-center gap-2 rounded-lg border border-primary/20 bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:opacity-90"
+                                className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate"
                             >
                                 <TestTubeDiagonal className="size-4" />
-                                {t('detail.availability.testAll')}
-                            </button>
+                                <span>{t('detail.availability.testAll')}</span>
+                            </Button>
                         ) : null}
-                        <MorphingDialogClose className="relative right-0 top-0" />
                     </div>
+                    <MorphingDialogClose className="relative col-start-2 row-start-1 right-auto top-auto size-11 shrink-0 rounded-lg border-transparent bg-transparent p-2 text-muted-foreground hover:bg-muted sm:col-start-3 sm:right-auto sm:top-auto sm:size-9 sm:p-2 [&>svg]:size-4" />
                 </header>
             </MorphingDialogTitle>
-            <MorphingDialogDescription className="flex flex-1 min-h-0 flex-col gap-4 overflow-x-hidden pr-1 2xl:flex-row">
-                <div className="flex-1 min-h-0 min-w-0">
+            <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
+                <div className={cn('min-h-0 min-w-0 flex-1', group.id && (isTestingAvailability || availabilitySummary) ? 'hidden' : 'flex')}>
                     <GroupEditor
                         key={`edit-group-${group.id}`}
                         className="flex-1 min-h-0"
@@ -142,110 +149,39 @@ function EditDialogContent({
                     />
                 </div>
                 {group.id && (isTestingAvailability || availabilitySummary) ? (
-                    <section className="w-full max-h-[40vh] overflow-y-auto rounded-lg border border-border/25 bg-card p-4 2xl:max-h-none 2xl:w-80 2xl:shrink-0">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="space-y-1">
-                                <h3 className="text-sm font-semibold text-foreground">{t('detail.availability.title')}</h3>
-                                <p className="text-xs text-muted-foreground">{t('detail.availability.description')}</p>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                                {canRemoveFailedModels ? (
-                                    <button
-                                        type="button"
-                                        onClick={onRemoveFailedModels}
-                                        className="inline-flex h-9 items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/8 px-3 text-sm font-medium text-destructive transition-colors hover:bg-destructive/12"
-                                    >
-                                        <Trash2 className="size-4" />
-                                        {t('detail.actions.removeFailedModels')}
-                                    </button>
-                                ) : null}
-                                <button
-                                    type="button"
-                                    onClick={onTestAvailability}
-                                    disabled={isTestingAvailability || !group.id}
-                                    className={cn(
-                                        'inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors',
-                                        isTestingAvailability
-                                            ? 'cursor-not-allowed border-border/25 bg-muted text-muted-foreground'
-                                            : 'border-primary/20 bg-primary text-primary-foreground hover:opacity-90'
-                                    )}
-                                >
-                                    {isTestingAvailability ? <Loader2 className="size-4 animate-spin" /> : <TestTubeDiagonal className="size-4" />}
-                                    {t('detail.availability.testAll')}
-                                </button>
-                            </div>
-                        </div>
-                        <div className="mt-4 space-y-3 pr-1">
-                            <Progress value={testProgressValue} className="h-2" />
-                            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                                <span>{t('card.testProgressCount', { completed: testProgressCompleted, total: testProgressTotal || editMembers.length })}</span>
-                                {availabilitySummary?.fullyMatched ? (
-                                    <span className={cn(
-                                        'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                                        availabilitySummary.allAvailable
-                                            ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600'
-                                            : 'border-destructive/20 bg-destructive/10 text-destructive'
-                                    )}>
-                                        {availabilitySummary.allAvailable ? t('toast.testAllPassed') : t('toast.testPartialFailed')}
-                                    </span>
-                                ) : null}
-                                {availabilitySummary?.fullyMatched ? (
-                                    <span className="text-destructive">
-                                        {t('detail.availability.unavailableCount', { count: availabilitySummary.unavailableCount })}
-                                    </span>
-                                ) : null}
-                            </div>
-                            <div className="rounded-lg border border-border/20 bg-background/40">
-                                <MemberList
-                                    members={editMembers}
-                                    onReorder={() => undefined}
-                                    onRemove={() => undefined}
-                                    autoScrollOnAdd={false}
-                                    showConfirmDelete={false}
-                                    showWeight={(MODE_LABELS[group.mode] ? group.mode : GroupMode.Auto) === GroupMode.Weighted || (MODE_LABELS[group.mode] ? group.mode : GroupMode.Auto) === GroupMode.Auto}
-                                    availabilityById={availabilityByMemberId}
-                                />
-                            </div>
-                            {testResults.length > 0 ? (
-                                <div className="rounded-lg border border-border/20 bg-background/50 p-3">
-                                    <div className="mb-2 text-xs font-medium text-foreground">{t('detail.availability.resultTitle')}</div>
-                                    <div className="space-y-2">
-                                        {testResults.map((result) => (
-                                            <div
-                                                key={result.client_id || `${result.item_id}-${result.channel_id}-${result.model_name}`}
-                                                className={cn(
-                                                    'rounded-md border px-3 py-2 text-xs',
-                                                    result.passed
-                                                        ? 'border-emerald-500/15 bg-emerald-500/5'
-                                                        : 'border-destructive/15 bg-destructive/5'
-                                                )}
-                                            >
-                                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                                    <span className="font-medium text-foreground">{result.model_name}</span>
-                                                    <span className="text-muted-foreground">@ {result.channel_name}</span>
-                                                    <span className={cn(result.passed ? 'text-emerald-600' : 'text-destructive')}>
-                                                        {result.passed ? t('detail.availability.resultPassed') : t('detail.availability.resultFailed')}
-                                                    </span>
-                                                    {result.status_code > 0 ? (
-                                                        <span className="text-muted-foreground">HTTP {result.status_code}</span>
-                                                    ) : null}
-                                                    <span className="text-muted-foreground">{t('detail.availability.resultAttempts', { count: result.attempts })}</span>
-                                                </div>
-                                                {result.message ? (
-                                                    <div className="mt-1 break-all text-muted-foreground">{result.message}</div>
-                                                ) : null}
-                                                {!result.passed && result.response_text ? (
-                                                    <div className="mt-1 break-all text-muted-foreground/90">{result.response_text}</div>
-                                                ) : null}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            ) : null}
-                        </div>
-                    </section>
+                    <AvailabilityResultsPanel
+                        isTesting={isTestingAvailability}
+                        members={editMembers}
+                        completed={testProgressCompleted}
+                        total={testProgressTotal || editMembers.length}
+                        progressValue={testProgressValue}
+                        results={testResults}
+                        summary={availabilitySummary}
+                    />
                 ) : null}
             </MorphingDialogDescription>
+
+            <AlertDialog open={showRemoveConfirm} onOpenChange={setShowRemoveConfirm}>
+                <AlertDialogContent className="rounded-xl">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>{t('detail.actions.removeFailedModels')}</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {t('detail.availability.removeFailedConfirm')}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>{t('detail.actions.cancel')}</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={() => {
+                                onRemoveFailedModels();
+                                setShowRemoveConfirm(false);
+                            }}
+                        >
+                            {t('detail.actions.confirmRemove')}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }
@@ -636,35 +572,6 @@ export function GroupCard({ group }: { group: Group }) {
     const completedCount = testProgress?.completed ?? 0;
     const totalCount = testProgress?.total ?? group.items?.length ?? 0;
     const progressValue = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
-    const availabilityByMemberId = useMemo(() => {
-        const map: Record<string, MemberAvailabilityMeta> = {};
-        const activeResults = testProgress?.results ?? [];
-        const resultByClientId = new Map<string, GroupTestResult>();
-        const resultByFallbackKey = new Map<string, GroupTestResult>();
-
-        activeResults.forEach((result) => {
-            if (result.client_id) {
-                resultByClientId.set(result.client_id, result);
-            }
-            resultByFallbackKey.set(modelChannelKey(result.channel_id, result.model_name), result);
-        });
-
-        members.forEach((member) => {
-            const matched = resultByClientId.get(member.id) ?? resultByFallbackKey.get(member.id);
-            if (matched) {
-                map[member.id] = {
-                    status: matched.passed ? 'available' : 'unavailable',
-                    message: matched.message || matched.response_text || undefined,
-                };
-                return;
-            }
-            map[member.id] = { status: isTesting ? 'testing' : 'idle' };
-        });
-
-        return map;
-    }, [isTesting, members, testProgress?.results]);
-
-
     const availabilitySummary = useMemo(() => {
         if (!testProgress?.done) {
             return undefined;
@@ -724,7 +631,7 @@ export function GroupCard({ group }: { group: Group }) {
                         </MorphingDialogTrigger>
 
                         <MorphingDialogContainer>
-                            <MorphingDialogContent className="max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-3rem)] lg:max-h-[calc(100dvh-1.5rem)] max-w-full sm:max-w-[92rem] lg:max-w-full h-[calc(100dvh-6rem)] w-[min(100vw-2rem,92rem)] lg:w-full lg:h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] text-card-foreground md:h-[calc(100dvh-3rem)] md:px-6 md:py-5">
+                            <MorphingDialogContent className="max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-3rem)] lg:max-h-[calc(100dvh-1.5rem)] max-w-full sm:max-w-[92rem] lg:max-w-full h-[calc(100dvh-6rem)] w-[min(100vw-2rem,92rem)] lg:w-full lg:h-[calc(100dvh-1.5rem)] 2xl:h-auto flex-col overflow-hidden rounded-xl border border-border bg-card px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] text-card-foreground md:h-[calc(100dvh-3rem)] md:px-6 md:py-5">
                                 <EditDialogContent
                                     group={group}
                                     editMembers={members}
@@ -733,12 +640,10 @@ export function GroupCard({ group }: { group: Group }) {
                                     onTestAvailability={handleTestDraftGroup}
                                     onRemoveFailedModels={handleRemoveFailedMembers}
                                     isTestingAvailability={isTesting}
-                                    canRemoveFailedModels={canRemoveFailedModels}
                                     testProgressCompleted={completedCount}
                                     testProgressTotal={totalCount}
                                     testProgressValue={progressValue}
                                     testResults={testProgress?.results ?? []}
-                                    availabilityByMemberId={availabilityByMemberId}
                                     availabilitySummary={availabilitySummary}
                                 />
                             </MorphingDialogContent>

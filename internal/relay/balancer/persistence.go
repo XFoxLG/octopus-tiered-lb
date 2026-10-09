@@ -262,6 +262,14 @@ func newChannelStatsWithCapacity(capacity int) *ChannelStats {
 	}
 }
 
+// snapshotRecords serializes the sliding-window request records for persistence.
+// TTFT EMA is intentionally NOT persisted (issue #183): AutoStrategyRecord lives
+// in the model package (out of this change's scope) and adding a parallel TTFT
+// field there plus restore logic would persist a scalar that the EMA can rebuild
+// from scratch within ~8 samples after restart (alpha=0.3). The trade-off is a
+// short cold-start window where the TTFT input to the Auto score is 0 ("no
+// evidence"), during which the scorer falls back to total latency — acceptable
+// for a heuristic score, and it keeps the persisted schema unchanged.
 func (cs *ChannelStats) snapshotRecords(now time.Time, timeWindow time.Duration, sampleThreshold int) []model.AutoStrategyRecord {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()

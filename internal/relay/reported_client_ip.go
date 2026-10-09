@@ -24,6 +24,7 @@ type ReportedClientIPSource string
 
 const (
 	ReportedClientIPSourceCFConnectingIP ReportedClientIPSource = "cf-connecting-ip"
+	ReportedClientIPSourceTrueClientIP   ReportedClientIPSource = "true-client-ip"
 	ReportedClientIPSourceXForwardedFor  ReportedClientIPSource = "x-forwarded-for"
 	ReportedClientIPSourceNone           ReportedClientIPSource = "none"
 )
@@ -34,7 +35,7 @@ type reportedClientIP struct {
 }
 
 // resolveReportedClientIP 依次尝试各来源头，返回第一个可用的公网地址。
-// 优先级：CF-Connecting-IP > X-Forwarded-For（右起首个公网）。
+// 优先级：CF-Connecting-IP > True-Client-IP > X-Forwarded-For（右起首个公网）。
 // X-Real-IP 不在展示回退范围内；以上来源也未经可信代理校验。
 func resolveReportedClientIP(headerGet func(string) string) reportedClientIP {
 	if headerGet == nil {
@@ -42,6 +43,9 @@ func resolveReportedClientIP(headerGet func(string) string) reportedClientIP {
 	}
 	if ip := firstPublicIP(headerGet("CF-Connecting-IP")); ip != "" {
 		return reportedClientIP{IP: ip, Source: ReportedClientIPSourceCFConnectingIP}
+	}
+	if ip := firstPublicIP(headerGet("True-Client-IP")); ip != "" {
+		return reportedClientIP{IP: ip, Source: ReportedClientIPSourceTrueClientIP}
 	}
 	if ip := rightmostPublicForwardedIP(headerGet("X-Forwarded-For")); ip != "" {
 		return reportedClientIP{IP: ip, Source: ReportedClientIPSourceXForwardedFor}

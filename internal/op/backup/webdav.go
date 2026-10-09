@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/lingyuins/octopus/internal/utils/httpx"
 )
 
 // WebDAVClient WebDAV 客户端
@@ -40,7 +42,8 @@ func NewWebDAVClient(baseURL, username, password string) *WebDAVClient {
 		username: username,
 		password: password,
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
+			Transport: httpx.WithUserAgent(nil),
 		},
 	}
 }
@@ -50,7 +53,7 @@ func NewWebDAVClient(baseURL, username, password string) *WebDAVClient {
 // 默认 30 秒客户端超时杀掉，同时不会出现「无任何超时」的客户端（异常挂起时
 // 至多 10 分钟即可恢复）。
 func (c *WebDAVClient) longClient() *http.Client {
-	return &http.Client{Timeout: 10 * time.Minute}
+	return &http.Client{Timeout: 10 * time.Minute, Transport: httpx.WithUserAgent(nil)}
 }
 
 // Test 测试 WebDAV 连接

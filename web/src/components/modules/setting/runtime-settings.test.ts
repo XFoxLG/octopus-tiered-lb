@@ -54,3 +54,23 @@ test('auto strategy fields expose latency weight with bounded range', () => {
     assert.equal(latencyWeight.min, '0');
     assert.equal(latencyWeight.max, '100');
 });
+
+test('auto strategy exposes ttft, price, explore rate and bucket tolerance with 0-100 range', () => {
+    const expectedKeys = [
+        'auto_strategy_ttft_weight',
+        'auto_strategy_price_weight',
+        'auto_strategy_explore_rate',
+        'auto_strategy_bucket_tolerance',
+    ];
+
+    for (const key of expectedKeys) {
+        const field = AUTO_STRATEGY_FIELDS.find((item) => item.key === key);
+
+        assert.ok(field, `${key} should be exposed as an auto strategy field`);
+        assert.equal(field.min, '0', `${key} min should be 0`);
+        assert.equal(field.max, '100', `${key} max should be 100`);
+        assert.ok(field.hintKey, `${key} should carry a hint key`);
+        assert.ok(field.labelKey, `${key} should carry a label key`);
+        assert.ok(field.placeholderKey, `${key} should carry a placeholder key`);
+    }
+});

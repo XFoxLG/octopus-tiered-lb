@@ -81,7 +81,11 @@ function assertTranslatedPaths(localeName, messages, paths) {
         if (!messagePath.endsWith('.placeholder') && !messagePath.endsWith('.example')) {
             const translated = translate(messagePath, {
                 count: 2, completed: 1, total: 2, ms: 25, value: 'Chat', id: 1,
+                index: 1, enabled: 1,
                 backend: 'Redis / Valkey', health: 'Healthy', tls: 'TLS', error: 'Connection refused',
+                order: 'Chat Completions → Responses API',
+                summary: 'passed=3 failed=0 unsupported=2 unknown=0',
+                protocols: 'chat_only, responses_only',
             });
             assert.notEqual(translated, messagePath, `${localeName} renders a raw key at ${messagePath}`);
         }
@@ -218,8 +222,46 @@ function assertGroupUiTranslations() {
         ...collectLiteralTranslationPaths('src/components/modules/group/GroupListItem.tsx', 'group'),
         ...['running', 'success', 'partial', 'failed'].map((status) => `group.card.healthProbeStatus.${status}`),
         ...['label', 'hint', 'buffer', 'immediate'].map((key) => `setting.retry.reasoningBufferStrategy.${key}`),
-        ...['outboundFormatOverride', 'outboundFormatOverrideHint', 'outboundFormatOverrideFollowGroup', 'outboundFormatOverrideChatOnly', 'outboundFormatOverrideResponsesOnly']
-            .map((key) => `channel.form.${key}`),
+        ...[
+            'upstreamProtocols',
+            'upstreamProtocolsHint',
+            'upstreamProtocolsFollowGroup',
+            'upstreamProtocolsOrder',
+            'upstreamProtocolsConflict',
+            'channelTimeouts',
+            'channelTimeoutsHint',
+            'channelTimeoutsValueHint',
+            'channelFirstTokenTimeout',
+            'channelAttemptTimeout',
+            'channelStreamIdleTimeout',
+            'channelReasoningBufferStrategy',
+            'channelReasoningBufferStrategyHint',
+            'channelReasoningBufferStrategyInherit',
+            'channelReasoningBufferStrategyBuffer',
+            'channelReasoningBufferStrategyImmediate',
+        ].map((key) => `channel.form.${key}`),
+        // 协议名与协议说明通过模板键（t(`upstreamProtocol.${protocol}`)）动态取，
+        // 字面量扫描看不到，必须显式枚举，否则漏键会静默显示原始 key。
+        ...['chat', 'responses', 'messages', 'chat_only', 'responses_only', 'messages_only', 'passthrough', 'raw']
+            .flatMap((protocol) => [`channel.form.upstreamProtocol.${protocol}`, `channel.form.upstreamProtocolHint.${protocol}`]),
+        // 探测弹窗：协议/能力项的键名通过模板拼接，同样必须显式枚举。
+        ...[
+            'modelLabel', 'modelPlaceholder', 'modelHint', 'modelRequired',
+            'skipModelTestWarning', 'skipModelTestConfirm', 'idleHint', 'running',
+            'sectionProtocol', 'sectionCapability', 'summary', 'close',
+            'apply', 'applied', 'applyNoChange', 'applyAdded', 'cancel', 'cancelled',
+        ].map((key) => `channel.probe.${key}`),
+        ...['protocol_chat', 'protocol_responses', 'protocol_messages', 'protocol_gemini',
+            'models', 'text_generation', 'tool_calling', 'structured_output', 'web_search']
+            .map((item) => `channel.probe.item.${item}`),
+        ...['pass', 'fail', 'unsupported', 'unknown'].map((verdict) => `channel.probe.verdict.${verdict}`),
+        // 渠道测试入口合并后，标题与说明改用 testDialog；原 probeDialog 键随 ProbeDialog 一起删除。
+        'channel.detail.testDialog.title',
+        'channel.detail.testDialog.description',
+        // 日志卡片：来源徽标（t(`ipSource.${token}`)）与错误摘要（t(`issueSummary.${kind}`)）
+        // 都是模板拼接键名，字面量扫描看不到，必须显式枚举，否则漏键会静默显示原始 key。
+        ...['cf', 'tru', 'xff'].map((token) => `log.card.ipSource.${token}`),
+        ...['blocked', 'limited', 'empty', 'timeout', 'failed'].map((kind) => `log.card.issueSummary.${kind}`),
     ]);
     for (const localeName of localeFiles) {
         assertTranslatedPaths(localeName, readJson(path.join(localeDir, localeName)), paths);

@@ -27,6 +27,10 @@ import (
 
 var errModelTestSkipped = errors.New("channel skipped model test (issue #98)")
 
+// ErrModelTestSkipped 暴露给上层 handler：把"渠道禁止测活、需要用户确认"
+// 与普通参数错误区分开，前端据此弹确认框而不是报错。
+func ErrModelTestSkipped() error { return errModelTestSkipped }
+
 type GroupModelTestRequest struct {
 	GroupID int `json:"group_id" binding:"required"`
 }
@@ -405,7 +409,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 		return result
 	}
 
-	usedKey := channel.GetChannelKey()
+	usedKey := channel.GetChannelKeyWithCooldown(item.ModelName, 300)
 	if strings.TrimSpace(usedKey.ChannelKey) == "" {
 		result.Message = "no available key"
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
@@ -418,7 +422,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 		return result
 	}
 
-	if err := validateGroupProbeChannelType(endpointType, channel.Type); err != nil {
+	if err := validateGroupProbeChannelType(endpointType, channel.Type); err != nil && channel.ConnectionConfig == nil {
 		result.Message = err.Error()
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
 		return result
@@ -436,7 +440,7 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 	// (/v1/responses)。这与 relay 主流程的 outboundAttemptTypes 一致，
 	// 避免 type=1 渠道在只支持 chat completions 的上游上探测失败（issue #187）。
 	// 渠道级协议覆盖与主流程同规则：覆盖非空时禁用回退，探测与转发一致。
-	adapterTypes := outbound.ResolveAttemptTypesForChannel(channel.Type, probeRequest, "", channel.OutboundFormatOverride)
+	plans := channel.ResolveConnectionPlans(probeRequest, "")
 
 	startTime := time.Now()
 	var logAttempts []appmodel.ChannelAttempt
@@ -444,8 +448,9 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 
 	attemptNum := 0
 probeAdapters:
-	for _, adapterType := range adapterTypes {
-		outAdapter := outbound.Get(adapterType)
+	for _, plan := range plans {
+		adapterType := plan.AdapterType
+		outAdapter := plan.Adapter()
 		if outAdapter == nil {
 			continue
 		}
@@ -457,7 +462,7 @@ probeAdapters:
 				break probeAdapters
 			}
 			attemptStart := time.Now()
-			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, &channel, usedKey.ChannelKey, endpointType, item.ModelName)
+			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, adapterType, channel.WithConnectionPlan(plan), usedKey.ChannelKey, endpointType, item.ModelName)
 			attemptDuration := int(time.Since(attemptStart).Milliseconds())
 
 			result.StatusCode = statusCode
@@ -664,7 +669,10 @@ func cloneGroupModelProgress(progress *GroupModelTestProgress) GroupModelTestPro
 	return cloned
 }
 
-func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, channel *appmodel.Channel, key, endpointType, modelName string) (int, string, *transmodel.InternalLLMResponse, error) {
+// sendGroupProbeRequest 用给定 adapter 发一次探测请求。adapterType 只用于挑选
+// base URL：多协议渠道可以把不同协议绑到不同地址，探测必须与真实转发用同一套
+// 地址选择规则，否则会出现「探测失败但转发正常」的假阴性。
+func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, adapterType outbound.OutboundType, channel *appmodel.Channel, key, endpointType, modelName string) (int, string, *transmodel.InternalLLMResponse, error) {
 	if channel == nil {
 		return 0, "", nil, fmt.Errorf("channel is nil")
 	}
@@ -682,16 +690,25 @@ func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, 
 		return 0, "", nil, err
 	}
 
-	req, err := outAdapter.TransformRequest(ctx, probeRequest, channel.GetNormalizedBaseUrl(), key)
+	// 地址按本次探测实际使用的 adapter 协议挑选：多协议渠道可以把不同协议
+	// 绑到不同 base URL，探测与真实转发保持同一套地址选择规则。
+	plan, err := channel.ConnectionPlanFor(adapterType)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	if plan.Endpoint != nil {
+		outAdapter = plan.Adapter()
+	}
+	probeRequest, err = prepareConnectionProbeRequest(ctx, channel, plan, probeRequest, key)
+	if err != nil {
+		return 0, "", nil, err
+	}
+	req, err := channel.BuildConnectionRequest(ctx, plan, outAdapter, probeRequest, key)
 	if err != nil {
 		return 0, "", nil, err
 	}
 
-	for _, header := range channel.CustomHeader {
-		if strings.TrimSpace(header.HeaderKey) != "" {
-			req.Header.Set(header.HeaderKey, header.HeaderValue)
-		}
-	}
+	channel.ApplyConnectionHeaders(req, plan, key)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
