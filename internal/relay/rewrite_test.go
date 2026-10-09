@@ -66,6 +66,33 @@ func TestPrepareInternalRequestForOutbound_IsScopedPerChannelAttempt(t *testing.
 	}
 }
 
+func TestAttachRelayGroupEndpointMetadata_PrefersProvider(t *testing.T) {
+	request := &transmodel.InternalLLMRequest{}
+	attachRelayGroupEndpointMetadata(request, appmodel.EndpointTypeChat, &appmodel.Group{
+		EndpointType:     appmodel.EndpointTypeChat,
+		EndpointProvider: " DeepSeek ",
+	})
+	if got := request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType]; got != appmodel.EndpointTypeDeepSeek {
+		t.Fatalf("metadata = %q, want deepseek", got)
+	}
+}
+
+func TestAttachRelayGroupEndpointMetadata_KeepsLegacyEndpointType(t *testing.T) {
+	request := &transmodel.InternalLLMRequest{}
+	attachRelayGroupEndpointMetadata(request, appmodel.EndpointTypeMimo, nil)
+	if got := request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType]; got != appmodel.EndpointTypeMimo {
+		t.Fatalf("metadata = %q, want mimo", got)
+	}
+}
+
+func TestAttachRelayGroupEndpointMetadata_AutoUsesChat(t *testing.T) {
+	request := &transmodel.InternalLLMRequest{}
+	attachRelayGroupEndpointMetadata(request, appmodel.EndpointTypeChat, &appmodel.Group{EndpointProvider: "auto"})
+	if got := request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType]; got != appmodel.EndpointTypeChat {
+		t.Fatalf("metadata = %q, want chat", got)
+	}
+}
+
 func TestApplyGroupParamOverridePriority(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 

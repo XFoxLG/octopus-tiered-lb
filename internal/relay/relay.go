@@ -1163,7 +1163,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			(!ra.streamTermination.Cause.IsProviderFailure() &&
 				ra.streamTermination.Cause.AllowsIdenticalReplay() &&
 				!ra.streamTermination.Cause.IsProviderRefusal())
-		if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent && canReplayEmptyOutput {
+		if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent && canReplayEmptyOutput && !ra.inlineReasoningExtracted {
 			if ra.streamTermination.Cause == model.TerminationCauseTokenLimit || ra.streamFinishReason == "length" {
 				log.Infof("channel %s returned empty stream truncated by max_tokens, will retry", ra.channel.Name)
 			} else {
@@ -1559,6 +1559,7 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		return nil, false, nil
 	}
 
+	ra.extractLeadingInlineReasoningStream(internalStream)
 	hasVisible := streamChunkHasVisibleContent(internalStream)
 	ra.streamAnswerText, ra.streamAnswerBypass = answerText(internalStream, true)
 
@@ -1651,6 +1652,7 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 	}
 
 	applyReasoningExhaustedHeader(ra.c, internalResponse)
+	inlineReasoningExtracted := extractLeadingInlineReasoning(internalResponse)
 	if termination, blocked := responseContentBlock(internalResponse); blocked {
 		ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
 		return providerTerminalFailureError(termination)
@@ -1669,7 +1671,7 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 
 	// 空输出检测（issue #106/#155）：上游返回 200 但无可见内容。
 	// 不依赖 CompletionTokens 判断——推理模型可能 CompletionTokens > 0 但无可见内容。
-	if isRetryEmptyOutputEnabled() && isEmptyOutputResponse(internalResponse) {
+	if isRetryEmptyOutputEnabled() && isEmptyOutputResponse(internalResponse) && !inlineReasoningExtracted {
 		log.Infof("channel %s returned empty output (no visible content), will retry", ra.channel.Name)
 		return errEmptyOutput
 	}

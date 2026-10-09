@@ -36,7 +36,7 @@ func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *trans
 
 	applyParamOverride(channel, group, target)
 	applyReasoningPolicy(group, target)
-	attachRelayGroupEndpointMetadata(target, groupEndpointType)
+	attachRelayGroupEndpointMetadata(target, groupEndpointType, group)
 	return target, effectiveRewrite, nil
 }
 
@@ -111,20 +111,30 @@ func mergeParamOverrideFloatField(groupOverrides, channelOverrides map[string]Ra
 	}
 }
 
-func attachRelayGroupEndpointMetadata(request *transmodel.InternalLLMRequest, groupEndpointType string) {
+func attachRelayGroupEndpointMetadata(request *transmodel.InternalLLMRequest, groupEndpointType string, group *appmodel.Group) {
 	if request == nil {
 		return
 	}
 
-	normalizedEndpointType := appmodel.NormalizeEndpointType(groupEndpointType)
-	if normalizedEndpointType == "" {
+	// The UI normalizes conversation groups to endpoint_type=chat while keeping
+	// the provider selection in endpoint_provider. Both old endpoint_type values
+	// and new provider values must reach outbound adapters, because DeepSeek/MiMo
+	// decide reasoning controls from this metadata.
+	provider := ""
+	if group != nil {
+		provider = strings.ToLower(strings.TrimSpace(group.EndpointProvider))
+	}
+	if provider == "" || provider == "auto" {
+		provider = appmodel.NormalizeEndpointType(groupEndpointType)
+	}
+	if provider == "" {
 		return
 	}
 
 	if request.TransformerMetadata == nil {
 		request.TransformerMetadata = make(map[string]string)
 	}
-	request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] = normalizedEndpointType
+	request.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] = provider
 }
 
 // applyReasoningPolicy 分组默认思考档位注入（Sub2API 参考，本仓库裁剪版）。

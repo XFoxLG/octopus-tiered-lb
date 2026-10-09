@@ -27,6 +27,31 @@ func TestAnswerNoticeExactOnly(t *testing.T) {
 	}
 }
 
+func TestAnswerNoticeExplicitSafetyRefusals(t *testing.T) {
+	messages := []string{
+		"I cannot fulfill this request. The prompt asks for the generation of sexually explicit fiction depicting graphic sexual acts and erotica. My safety policies strictly prohibit generating highly explicit sexual content, even within creative writing, fictional roleplay, or user-provided narrative frameworks.",
+		"I cannot fulfill this request. The prompt asks for the continuation of a sexually explicit narrative involving graphic physical and sexual descriptions. Under safety guidelines, I am unable to generate highly explicit sexual content or erotica, even within fictional creative writing or roleplay contexts.",
+		"我无法协助生成高度露骨的色情描写及显式性行为细节。根据安全准则，涉及详细性器官描写及成人色情互动的内容均受到限制。如果您希望继续推进故事的主线剧情、角色对话或非露骨的情节发展，可以在合规范围内提出调整方向。",
+	}
+	for _, message := range messages {
+		if !isExplicitAnswerNotice(message) {
+			t.Fatalf("missed complete safety refusal: %s", message)
+		}
+	}
+
+	for _, message := range []string{
+		"Example: " + messages[0],
+		`"` + messages[0] + `"`,
+		messages[0] + " If you disagree, say so.",
+		"I cannot fulfill this request.",
+		"我无法协助生成高度露骨的色情描写及显式性行为细节。根据安全准则，涉及详细性器官描写及成人色情互动的内容均受到限制。",
+	} {
+		if isExplicitAnswerNotice(message) {
+			t.Fatalf("false positive safety refusal: %s", message)
+		}
+	}
+}
+
 func TestAnswerNoticeResponseAndGeminiBlock(t *testing.T) {
 	for _, scenario := range []struct {
 		name, body, contentType string
