@@ -144,6 +144,59 @@ func TestRelayLogListCacheDBBoundarySorted(t *testing.T) {
 	assertIDOrder(t, listOrderIDs(logs), 3, 1, 2, 4)
 }
 
+// TestRelayLogListCacheDBPaginationDoesNotRepeatPersistedRows 回归：
+// 内存缓存中的日志通常也已经落库。分页跨过缓存边界时，DB 补页不能从头
+// 再取一遍已由缓存返回的行，否则前端去重后每页新增条数不足，滚动加载会卡住。
+func TestRelayLogListCacheDBPaginationDoesNotRepeatPersistedRows(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "relaylog-order-pagination.db")
+	if err := db.InitDB("sqlite", dsn, false); err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	if err := db.InitLogDB("", "", false); err != nil {
+		t.Fatalf("InitLogDB(shared) failed: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := setting.RefreshCache(context.Background()); err != nil {
+		t.Fatalf("RefreshCache failed: %v", err)
+	}
+	if err := setting.SetString(model.SettingKeyRelayLogKeepEnabled, "true"); err != nil {
+		t.Fatalf("enable relay log keep failed: %v", err)
+	}
+
+	seed := make([]model.RelayLog, 0, 25)
+	for id := 1; id <= 25; id++ {
+		seed = append(seed, model.RelayLog{ID: int64(id), Time: int64(id), RequestModelName: "m"})
+	}
+	if err := db.GetDB().Create(&seed).Error; err != nil {
+		t.Fatalf("seed relay logs failed: %v", err)
+	}
+
+	cache := make([]model.RelayLog, 0, 15)
+	for id := 25; id >= 11; id-- {
+		cache = append(cache, model.RelayLog{ID: int64(id), Time: int64(id), RequestModelName: "m"})
+	}
+	restore := SetCacheForTest(cache)
+	t.Cleanup(restore)
+
+	page1, err := RelayLogList(context.Background(), LogFilter{}, 1, 10)
+	if err != nil {
+		t.Fatalf("page 1 failed: %v", err)
+	}
+	assertIDOrder(t, listOrderIDs(page1), 25, 24, 23, 22, 21, 20, 19, 18, 17, 16)
+
+	page2, err := RelayLogList(context.Background(), LogFilter{}, 2, 10)
+	if err != nil {
+		t.Fatalf("page 2 failed: %v", err)
+	}
+	assertIDOrder(t, listOrderIDs(page2), 15, 14, 13, 12, 11, 10, 9, 8, 7, 6)
+
+	page3, err := RelayLogList(context.Background(), LogFilter{}, 3, 10)
+	if err != nil {
+		t.Fatalf("page 3 failed: %v", err)
+	}
+	assertIDOrder(t, listOrderIDs(page3), 5, 4, 3, 2, 1)
+}
+
 // TestRelayLogListSameSecondTiesByID 覆盖同秒并列：时间相同按 ID 降序，
 // 保证同秒内日志以入队序（完成序）稳定展示。
 func TestRelayLogListSameSecondTiesByID(t *testing.T) {

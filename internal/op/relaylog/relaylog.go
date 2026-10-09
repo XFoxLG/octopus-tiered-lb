@@ -1053,6 +1053,10 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 
 	cacheCount := len(cachedLogs)
 	offset := (page - 1) * pageSize
+	cacheIDs := make([]int64, 0, cacheCount)
+	for _, log := range cachedLogs {
+		cacheIDs = append(cacheIDs, log.ID)
+	}
 
 	var result []model.RelayLogListItem
 
@@ -1163,6 +1167,11 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 				} else {
 					query = query.Where("is_test = false OR is_test IS NULL")
 				}
+			}
+			// 缓存里的日志通常也已经落库。DB 只补缓存之外的行，避免跨页时
+			// 把缓存已返回的记录再带回一遍，导致前端去重后每页新增不足。
+			if len(cacheIDs) > 0 {
+				query = query.Where("id NOT IN ?", cacheIDs)
 			}
 
 			var dbLogs []model.RelayLogListItem

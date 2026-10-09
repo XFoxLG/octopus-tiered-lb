@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
+import { resolveReachEndTrigger } from './reach-end';
 
 const BREAKPOINTS = {
     sm: 640,
@@ -77,7 +78,7 @@ export function VirtualizedGrid<T>({
     const containerRef = useRef<HTMLDivElement | null>(null);
     const headerRef = useRef<HTMLDivElement | null>(null);
     const [headerHeight, setHeaderHeight] = useState(0);
-    const reachEndTriggeredRef = useRef(false);
+    const reachEndTriggeredKeyRef = useRef<string | number | null>(null);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -166,21 +167,28 @@ export function VirtualizedGrid<T>({
     });
 
     const virtualRows = rowVirtualizer.getVirtualItems();
+    const lastItemKey = items.length > 0
+        ? getItemKey(items[items.length - 1]!, items.length - 1)
+        : '';
 
     useEffect(() => {
-        if (!onReachEnd || !reachEndEnabled || itemRowCount === 0) return;
-
-        const lastVirtualIndex = virtualRows.length > 0 ? virtualRows[virtualRows.length - 1]!.index : -1;
-        const triggerIndex = Math.max(0, itemRowCount - 1 - reachEndOffset);
-        if (lastVirtualIndex < triggerIndex) {
-            reachEndTriggeredRef.current = false;
+        if (!onReachEnd) {
+            reachEndTriggeredKeyRef.current = null;
             return;
         }
-        if (reachEndTriggeredRef.current) return;
 
-        reachEndTriggeredRef.current = true;
-        onReachEnd();
-    }, [onReachEnd, reachEndEnabled, itemRowCount, reachEndOffset, virtualRows]);
+        const lastVirtualIndex = virtualRows.length > 0 ? virtualRows[virtualRows.length - 1]!.index : -1;
+        const { shouldTrigger, nextTriggeredKey } = resolveReachEndTrigger({
+            enabled: reachEndEnabled,
+            itemRowCount,
+            lastVirtualIndex,
+            reachEndOffset,
+            lastItemKey,
+            triggeredKey: reachEndTriggeredKeyRef.current,
+        });
+        reachEndTriggeredKeyRef.current = nextTriggeredKey;
+        if (shouldTrigger) onReachEnd();
+    }, [onReachEnd, reachEndEnabled, itemRowCount, reachEndOffset, virtualRows, lastItemKey]);
 
     return (
         <div className="relative h-full min-h-0 w-full">
