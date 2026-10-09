@@ -333,9 +333,6 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 <span className="min-w-0 max-w-full font-semibold text-card-foreground truncate md:max-w-[32%]" title={displayRequestModelName}>
                                     {displayRequestModelName}
                                 </span>
-                                <Badge variant={hasError && !clientDisconnected ? 'destructive' : 'secondary'}>
-                                    {clientDisconnected ? t('clientDisconnected') : t(hasError ? 'failed' : 'success')}
-                                </Badge>
                                 {log.is_test && (
                                     <Badge
                                         variant="outline"
