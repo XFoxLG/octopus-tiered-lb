@@ -8,8 +8,9 @@ WORKDIR /build
 # Install pnpm
 RUN corepack enable
 
-# Copy frontend package files
-COPY web/package.json web/pnpm-lock.yaml ./
+# Copy frontend package files (workspace config is required: the lockfile
+# records pnpm overrides, and frozen install fails without them in context)
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
