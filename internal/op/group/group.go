@@ -288,6 +288,14 @@ func conversationEndpointLookupOrder(endpointType string, requestModel string) [
 }
 
 func normalizeGroup(group model.Group) model.Group {
+	// groupCache.Get 返回的是浅拷贝：Items 切片头复制，但底层数组与缓存中的
+	// 其它读取者共享。本函数会原地改写 ModelName/Weight 并重排顺序，并发请求
+	// 会在同一数组上互相竞争（race 检测器可稳定复现），因此先复制再改。
+	if len(group.Items) > 0 {
+		items := make([]model.GroupItem, len(group.Items))
+		copy(items, group.Items)
+		group.Items = items
+	}
 	group.Name = strings.TrimSpace(group.Name)
 	group.Category = strings.TrimSpace(group.Category)
 	group.EndpointType = model.NormalizeEndpointType(group.EndpointType)
