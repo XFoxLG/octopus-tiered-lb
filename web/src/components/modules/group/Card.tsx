@@ -133,6 +133,8 @@ function EditDialogContent({
                             first_token_time_out: group.first_token_time_out ?? 0,
                             attempt_time_out: group.attempt_time_out ?? 0,
                             stream_idle_timeout: group.stream_idle_timeout ?? 0,
+                            hedge_enabled: group.hedge_enabled ?? false,
+                            hedge_delay_ms: group.hedge_delay_ms ?? 300,
                             session_keep_time: group.session_keep_time ?? 0,
                             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
                             default_reasoning_effort: group.default_reasoning_effort ?? '',
@@ -451,6 +453,8 @@ export function GroupCard({ group }: { group: Group }) {
         const nextFirstTokenTimeOut = values.first_token_time_out ?? 0;
         const nextAttemptTimeOut = values.attempt_time_out ?? 0;
         const nextStreamIdleTimeout = values.stream_idle_timeout ?? 0;
+        const nextHedgeEnabled = values.hedge_enabled ?? false;
+        const nextHedgeDelayMs = Math.min(30000, Math.max(0, values.hedge_delay_ms ?? 300));
         const nextSessionKeepTime = values.session_keep_time ?? 0;
         const nextReasoningBufferStrategy = (values.reasoning_buffer_strategy ?? '').trim();
         const nextDefaultReasoningEffort = (values.default_reasoning_effort ?? '').trim();
@@ -468,6 +472,8 @@ export function GroupCard({ group }: { group: Group }) {
         if (nextFirstTokenTimeOut !== (group.first_token_time_out ?? 0)) payload.first_token_time_out = nextFirstTokenTimeOut;
         if (nextAttemptTimeOut !== (group.attempt_time_out ?? 0)) payload.attempt_time_out = nextAttemptTimeOut;
         if (nextStreamIdleTimeout !== (group.stream_idle_timeout ?? 0)) payload.stream_idle_timeout = nextStreamIdleTimeout;
+        if (nextHedgeEnabled !== (group.hedge_enabled ?? false)) payload.hedge_enabled = nextHedgeEnabled;
+        if (nextHedgeDelayMs !== (group.hedge_delay_ms ?? 300)) payload.hedge_delay_ms = nextHedgeDelayMs;
         if (nextSessionKeepTime !== (group.session_keep_time ?? 0)) payload.session_keep_time = nextSessionKeepTime;
         if (nextReasoningBufferStrategy !== ((group.reasoning_buffer_strategy ?? '').trim())) payload.reasoning_buffer_strategy = nextReasoningBufferStrategy;
         if (nextDefaultReasoningEffort !== ((group.default_reasoning_effort ?? '').trim())) payload.default_reasoning_effort = nextDefaultReasoningEffort;
@@ -490,7 +496,7 @@ export function GroupCard({ group }: { group: Group }) {
             },
             onError,
         });
-    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.session_keep_time, group.reasoning_buffer_strategy, group.default_reasoning_effort, group.reasoning_force_override, group.param_override, group.custom_header, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
+    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.hedge_enabled, group.hedge_delay_ms, group.session_keep_time, group.reasoning_buffer_strategy, group.default_reasoning_effort, group.reasoning_force_override, group.param_override, group.custom_header, group.id, group.items, group.match_regex, group.mode, group.name, onSuccess, onError, updateGroup]);
 
     const resolvedMode = MODE_LABELS[group.mode] ? group.mode : GroupMode.Auto;
 
@@ -541,6 +547,8 @@ export function GroupCard({ group }: { group: Group }) {
             first_token_time_out: group.first_token_time_out ?? 0,
             attempt_time_out: group.attempt_time_out ?? 0,
             stream_idle_timeout: group.stream_idle_timeout ?? 0,
+            hedge_enabled: group.hedge_enabled ?? false,
+            hedge_delay_ms: group.hedge_delay_ms ?? 300,
             session_keep_time: group.session_keep_time ?? 0,
             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
             members: nextMembers,
@@ -552,7 +560,7 @@ export function GroupCard({ group }: { group: Group }) {
             handledTestCompletionRef.current = null;
             toast.success(t('toast.removedFailedModels'));
         });
-    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.id, group.match_regex, group.mode, group.name, group.session_keep_time, group.reasoning_buffer_strategy, handleSubmitEdit, members, t, testProgress?.results]);
+    }, [group.condition, group.outbound_format, group.endpoint_provider, group.endpoint_type, group.first_token_time_out, group.attempt_time_out, group.stream_idle_timeout, group.hedge_enabled, group.hedge_delay_ms, group.id, group.match_regex, group.mode, group.name, group.session_keep_time, group.reasoning_buffer_strategy, handleSubmitEdit, members, t, testProgress?.results]);
 
     const failedTestResults = useMemo(
         () => (testProgress?.done ? (testProgress.results ?? []).filter((result) => !result.passed) : []),

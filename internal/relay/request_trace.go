@@ -900,6 +900,10 @@ func relayLogOutcomes(relayLog model.RelayLog) (generationOutcome string, upstre
 		case model.AttemptFailed:
 			forwardedAttempts++
 			failedAttempts++
+		case model.AttemptCancelled:
+			// Cancellation still means the upstream request was started, but it
+			// carries no failure signal for generation or channel health.
+			forwardedAttempts++
 		}
 	}
 	if relayLog.SemanticCacheHit {

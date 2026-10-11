@@ -511,8 +511,7 @@ func expireRelayLogContentByAge(ctx context.Context, connection *gorm.DB) error 
 	for {
 		var relayLogIDs []int64
 		if err := connection.WithContext(ctx).Model(&model.RelayLog{}).
-			Distinct("relay_logs.id").
-			Joins("JOIN relay_log_content_refs ON relay_log_content_refs.relay_log_id = relay_logs.id").
+			Where("EXISTS (?)", connection.Model(&model.RelayLogContentRef{}).Select("1").Where("relay_log_content_refs.relay_log_id = relay_logs.id")).
 			Where("relay_logs.time < ?", cutoffTime).
 			Order("relay_logs.time ASC, relay_logs.id ASC").
 			Limit(100).
@@ -553,8 +552,7 @@ func expireRelayLogContentBySize(ctx context.Context, connection *gorm.DB) error
 
 		var oldestRelayLogIDs []int64
 		if err := connection.WithContext(ctx).Model(&model.RelayLog{}).
-			Distinct("relay_logs.id").
-			Joins("JOIN relay_log_content_refs ON relay_log_content_refs.relay_log_id = relay_logs.id").
+			Where("EXISTS (?)", connection.Model(&model.RelayLogContentRef{}).Select("1").Where("relay_log_content_refs.relay_log_id = relay_logs.id")).
 			Order("relay_logs.time ASC, relay_logs.id ASC").
 			Limit(1).
 			Pluck("relay_logs.id", &oldestRelayLogIDs).Error; err != nil {

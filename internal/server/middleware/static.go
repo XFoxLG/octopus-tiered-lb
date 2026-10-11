@@ -38,7 +38,8 @@ func static(urlPrefix string, fileSystem http.FileSystem) gin.HandlerFunc {
 		if requestPath == "" {
 			requestPath = "/"
 		}
-		if _, err := fileSystem.Open(requestPath); err == nil {
+		if file, err := fileSystem.Open(requestPath); err == nil {
+			_ = file.Close()
 			switch {
 			case requestPath == "/sw.js":
 				// Service worker scripts must revalidate on every navigation so clients can pick up updates.

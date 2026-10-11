@@ -158,6 +158,8 @@ export interface Group {
     // Optional during mixed-version rollout: an older backend may not expose
     // the new per-group watchdog setting yet. Callers normalize it to zero.
     stream_idle_timeout?: number;
+    hedge_enabled?: boolean;
+    hedge_delay_ms?: number;
     session_keep_time: number;
     condition: string;
     items: GroupItem[];
@@ -499,6 +501,8 @@ export interface CreateGroupRequest {
     first_token_time_out: number;
     attempt_time_out: number;
     stream_idle_timeout: number;
+    hedge_enabled?: boolean;
+    hedge_delay_ms?: number;
     session_keep_time: number;
     condition: string;
     items: GroupItem[];
@@ -525,6 +529,8 @@ export interface GroupUpdateRequest {
     first_token_time_out?: number;
     attempt_time_out?: number;
     stream_idle_timeout?: number;
+    hedge_enabled?: boolean;
+    hedge_delay_ms?: number;
     session_keep_time?: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     default_reasoning_effort?: string;

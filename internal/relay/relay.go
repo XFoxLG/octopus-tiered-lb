@@ -298,8 +298,10 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		}
 	}
 
-	// 创建迭代器（策略排序 + 粘性优先）
-	iter := balancer.NewIterator(group, apiKeyID, requestModel, parseExcludedChannels(c.GetString("excluded_channels")))
+	// Preflight and the first route round share one iterator. Creating it twice
+	// advances RoundRobin twice and repeats Auto/Weighted sorting.
+	routeModel := modelmapping.Resolve(operationCtx, requestModel, group.ID)
+	iter := balancer.NewIterator(group, apiKeyID, routeModel, parseExcludedChannels(c.GetString("excluded_channels")))
 	if iter.Len() == 0 {
 		lastErr = errors.New("no available channel")
 		resp.Error(c, http.StatusServiceUnavailable, "no available channel")
@@ -369,7 +371,8 @@ func (ra *relayAttempt) attempt() attemptResult {
 	ra.metrics.liveAttempt(ra.channel.ID, ra.channel.Name, ra.internalRequest.Model, ra.logAttemptNumber)
 
 	// 转发请求
-	statusCode, fwdErr := ra.forward()
+	statusCode, fwdErr, selectedSpan := ra.forwardWithOptionalHedge(span)
+	span = selectedSpan
 
 	// Client disconnected —— 不记失败统计、不记熔断、不写 failure hint。
 	// 客户端是自己选择停止的，不是渠道出了问题。
@@ -378,7 +381,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// 避免 adapter 降级场景误熔断），因此这里必须把「不该计数」随 Decision
 	// 一起传出去，由 executeRelay 的 shouldRecordChannelFailure 守卫落实。
 	if errors.Is(fwdErr, errClientDisconnected) {
-		span.End(dbmodel.AttemptFailed, statusCode, "client disconnected")
+		span.End(dbmodel.AttemptCancelled, statusCode, "client disconnected")
 		return attemptResult{
 			Success:  false,
 			Written:  ra.streamOutputWasCommitted(),
@@ -488,7 +491,9 @@ func (ra *relayAttempt) attempt() attemptResult {
 		// 速度策略：记录 EMA 平滑 TPS（output_tokens / duration_seconds），仅 speed 策略生效。
 		balancer.RecordKeySpeed(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.metrics.Stats.OutputToken, span.Duration().Milliseconds())
 		// 会话保持：更新粘性记录
-		balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		if !ra.hedgeWinnerIsBackup {
+			balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+		}
 
 		return attemptResult{Success: true, Decision: decision}
 	}
@@ -953,6 +958,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			return
 		}
 
+		ra.hedgeVisibleChunk = false
 		payload := ra.renderStreamInterruption(ctx, streamErr)
 		if ra.streamSession != nil {
 			sessionEvents := ra.streamSession.AddPayload(payload)
@@ -1132,7 +1138,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		}
 		writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 		reasoningBuffer, reasoningBufferBytes = nil, 0
+		ra.hedgeVisibleChunk = true
 		writeReasoningBuffer(ra, noticeBuffer.payloads, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+		if !clientDisconnected {
+			ra.metrics.SetClientFirstFlushTime(time.Now())
+		}
 		noticeBuffer.payloads, noticeBuffer.bytes, noticeBuffer.released = nil, 0, true
 		hasVisibleContent = true
 		hasDownstreamOutput = ra.streamOutputWasCommitted()
@@ -1403,7 +1413,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			continue
 		}
 		if chunkHasVisible && firstVisibleOutputPending {
-			ra.metrics.SetFirstTokenTime(time.Now())
+			ra.metrics.SetUpstreamFirstVisibleTime(time.Now())
 			firstVisibleOutputPending = false
 			stopFirstVisibleOutputTimer()
 			startStreamIdleTimer()
@@ -1458,6 +1468,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			hasVisibleContent = true
 		}
 
+		ra.hedgeVisibleChunk = chunkHasVisible
 		if ra.streamSession != nil {
 			sessionEvents := ra.streamSession.AddPayload(data)
 			if len(sessionEvents) > 0 {
@@ -1473,6 +1484,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 						break
 					}
 					ra.c.Writer.Flush()
+					if chunkHasVisible {
+						ra.metrics.SetClientFirstFlushTime(time.Now())
+					}
 				}
 			}
 			if terminalProviderFailure {
@@ -1496,6 +1510,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		}
 		markStreamOutputCommitted()
 		ra.c.Writer.Flush()
+		if chunkHasVisible {
+			ra.metrics.SetClientFirstFlushTime(time.Now())
+		}
 		if terminalProviderFailure {
 			return providerTerminalFailureError(ra.streamTermination)
 		}
@@ -1507,6 +1524,8 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 // release the reasoning that was buffered for retry-safety (issue #155).
 func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected *bool,
 	markClientDisconnected func(), logClientDisconnected func()) {
+	visible := ra.hedgeVisibleChunk
+	defer func() { ra.hedgeVisibleChunk = visible }()
 	for _, data := range buffer {
 		if ra.streamSession != nil {
 			sessionEvents := ra.streamSession.AddPayload(data)
@@ -1838,7 +1857,10 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 		}
 		budget.markRoundStart()
 
-		routeIter := balancer.NewIterator(group, req.apiKeyID, requestModel, parseExcludedChannels(req.c.GetString("excluded_channels")))
+		routeIter := req.iter
+		if routeRound != 1 || routeIter == nil {
+			routeIter = balancer.NewIterator(group, req.apiKeyID, requestModel, parseExcludedChannels(req.c.GetString("excluded_channels")))
+		}
 		routeIter.SetAttemptNumberBase(attemptNumberBase)
 		req.iter = routeIter
 
@@ -2044,9 +2066,15 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						}
 						break
 					}
+					req.hedgeRemaining = maxTotalAttempts - budget.forwardedBase - routeIter.ForwardedAttempts()
 					result = ra.attempt()
 					if channel.MaxConcurrency > 0 {
 						rl.ReleaseChannelSlot(channel.ID)
+					}
+					if ra.hedgeWinnerIsBackup {
+						channel = ra.channel
+						usedKey = ra.usedKey
+						resolvedModelName = ra.internalRequest.Model
 					}
 					if result.Success {
 						if adapterIndex > 0 {

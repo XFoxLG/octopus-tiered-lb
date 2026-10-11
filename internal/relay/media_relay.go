@@ -332,7 +332,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				// 豁免同语义。不记熔断/Auto 失败/离群/可用度衰减/key 冷却，
 				// 不做 KeyUpdate 与失败统计，直接终态返回（客户端已走，无需回错）。
 				if errors.Is(fwdErr, errClientDisconnected) {
-					span.End(dbmodel.AttemptFailed, statusCode, "client disconnected")
+					span.End(dbmodel.AttemptCancelled, statusCode, "client disconnected")
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
 					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, errClientDisconnected, clientIP, mediaReportedIP, userAgent, requestTrace)
 					return

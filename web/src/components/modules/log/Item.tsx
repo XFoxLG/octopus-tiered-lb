@@ -98,11 +98,13 @@ function formatCacheHitRate(cacheRead: number, total: number): string {
  */
 function attemptStatusBadge(status: ChannelAttempt['status']): {
     className: string;
-    labelKey: 'success' | 'failed' | 'skipped' | 'circuitBreak';
+    labelKey: 'success' | 'failed' | 'cancelled' | 'skipped' | 'circuitBreak';
 } {
     switch (status) {
         case 'success':
             return { className: 'bg-primary/15 text-primary', labelKey: 'success' };
+        case 'cancelled':
+            return { className: 'bg-slate-500/15 text-slate-600 dark:text-slate-300', labelKey: 'cancelled' };
         case 'circuit_break':
             return { className: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', labelKey: 'circuitBreak' };
         case 'skipped':
@@ -126,6 +128,8 @@ function attemptStatusCard(status: ChannelAttempt['status']): {
     switch (status) {
         case 'success':
             return { card: 'bg-primary/5 border-primary/20 hover:bg-primary/10', msg: 'text-foreground/80 border-foreground/20' };
+        case 'cancelled':
+            return { card: 'bg-slate-500/5 border-slate-500/20 hover:bg-slate-500/10', msg: 'text-slate-600 dark:text-slate-300 border-slate-500/30' };
         case 'circuit_break':
             return { card: 'bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/10', msg: 'text-amber-700 dark:text-amber-300 border-amber-500/30' };
         case 'skipped':
@@ -217,7 +221,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
     // 当它小于总尝试次数时，单独展示以便区分「实际请求报错」与「冷却中未请求」
     // （issue #95 改动6）。
     const forwardedCount = useMemo(
-        () => (log.attempts ?? []).filter((a) => a.status === 'success' || a.status === 'failed').length,
+        () => (log.attempts ?? []).filter((a) => a.status === 'success' || a.status === 'failed' || a.status === 'cancelled').length,
         [log.attempts],
     );
     const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);

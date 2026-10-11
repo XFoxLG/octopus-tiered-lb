@@ -650,6 +650,9 @@ func (i *ResponseInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 
 	// Aggregate choices by index
 	choicesMap := make(map[int]*model.Choice)
+	contentBuilders := make(map[int]*strings.Builder)
+	reasoningBuilders := make(map[int]*strings.Builder)
+	toolBuilders := make(map[int]map[int]*toolTextBuilder)
 
 	for _, chunk := range i.streamChunks {
 		// Update ID and Model if they appear in later chunks
@@ -695,7 +698,10 @@ func (i *ResponseInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 					if existingChoice.Message.Content.Content == nil {
 						existingChoice.Message.Content.Content = new(string)
 					}
-					*existingChoice.Message.Content.Content += *delta.Content.Content
+					if contentBuilders[choice.Index] == nil {
+						contentBuilders[choice.Index] = &strings.Builder{}
+					}
+					contentBuilders[choice.Index].WriteString(*delta.Content.Content)
 				}
 
 				// Append reasoning content
@@ -703,12 +709,18 @@ func (i *ResponseInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 					if existingChoice.Message.ReasoningContent == nil {
 						existingChoice.Message.ReasoningContent = new(string)
 					}
-					*existingChoice.Message.ReasoningContent += *delta.ReasoningContent
+					if reasoningBuilders[choice.Index] == nil {
+						reasoningBuilders[choice.Index] = &strings.Builder{}
+					}
+					reasoningBuilders[choice.Index].WriteString(*delta.ReasoningContent)
 				}
 
 				// Aggregate tool calls
 				for _, toolCall := range delta.ToolCalls {
-					existingChoice.Message.ToolCalls = mergeToolCall(existingChoice.Message.ToolCalls, toolCall)
+					if toolBuilders[choice.Index] == nil {
+						toolBuilders[choice.Index] = make(map[int]*toolTextBuilder)
+					}
+					existingChoice.Message.ToolCalls = mergeToolCallLinear(existingChoice.Message.ToolCalls, toolCall, toolBuilders[choice.Index])
 				}
 
 				// Set refusal if present
@@ -735,6 +747,24 @@ func (i *ResponseInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 		}
 	}
 
+	for index, choice := range choicesMap {
+		if builder := contentBuilders[index]; builder != nil {
+			text := builder.String()
+			choice.Message.Content.Content = &text
+		}
+		if builder := reasoningBuilders[index]; builder != nil {
+			text := builder.String()
+			choice.Message.ReasoningContent = &text
+		}
+		for pos := range choice.Message.ToolCalls {
+			tool := &choice.Message.ToolCalls[pos]
+			if builder := toolBuilders[index][tool.Index]; builder != nil {
+				tool.Function.Name = builder.name.String()
+				tool.Function.Arguments = builder.arguments.String()
+			}
+		}
+		sortToolCallsByIndex(choice.Message.ToolCalls)
+	}
 	result.Choices = model.SortedChoicesByIndex(choicesMap)
 
 	// Clear stored chunks after aggregation

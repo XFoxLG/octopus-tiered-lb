@@ -6,12 +6,12 @@ import { logger } from '@/lib/logger';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuthStore } from './user';
 import { exactId, withExactId, compareExactIds } from '@/lib/exact-id';
-import { mergeLogPages, mergeLiveRequest } from '@/lib/log-stream-state';
+import { mergeLogPages, mergeLogHead, mergeLiveRequest } from '@/lib/log-stream-state';
 
 /**
  * 尝试状态
  */
-export type AttemptStatus = 'success' | 'failed' | 'circuit_break' | 'skipped';
+export type AttemptStatus = 'success' | 'failed' | 'cancelled' | 'circuit_break' | 'skipped';
 
 /**
  * 单次渠道尝试信息
@@ -301,6 +301,26 @@ export function useDownloadRelayLogContent() {
 
 const logsInfiniteQueryKey = (pageSize: number, filter: LogFilter) => ['logs', 'infinite', pageSize, filter] as const;
 
+async function fetchLogsPage(pageSize: number, filter: LogFilter, page: number, signal?: AbortSignal): Promise<RelayLog[]> {
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('page_size', String(pageSize));
+    if (filter.model) params.set('model', filter.model);
+    if (filter.models && filter.models.length > 0) {
+        params.set('models', filter.models.join(','));
+    }
+    if (filter.channel_id != null) params.set('channel_id', String(filter.channel_id));
+    if (filter.api_key_id != null) params.set('api_key_id', String(filter.api_key_id));
+    if (filter.endpoint_type) params.set('endpoint_type', filter.endpoint_type);
+    if (filter.status) params.set('status', filter.status);
+    if (filter.start_time != null) params.set('start_time', String(filter.start_time));
+    if (filter.end_time != null) params.set('end_time', String(filter.end_time));
+    if (filter.include_attempts != null) params.set('include_attempts', String(filter.include_attempts));
+    if (filter.is_test != null) params.set('is_test', String(filter.is_test));
+    const result = await apiClient.get<RelayLog[] | null>(`/api/v1/log/list?${params.toString()}`, undefined, true, signal);
+    return (result ?? []).map(withExactId);
+}
+
 export const DEFAULT_LOG_PAGE_SIZE = 10;
 
 const logRefreshState = new Map<number, boolean>();
@@ -332,9 +352,8 @@ function subscribeLogRefresh(listener: () => void) {
  * // 滚动到底部时加载更多
  * if (hasMore && !isLoadingMore) loadMore();
  */
-export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {}) {
-    const { pageSize = DEFAULT_LOG_PAGE_SIZE, filter = {} } = options;
-    const { refresh } = useLogRefresh(pageSize, filter);
+export function useLogs(options: { pageSize?: number; filter?: LogFilter; active?: boolean } = {}) {
+    const { pageSize = DEFAULT_LOG_PAGE_SIZE, filter = {}, active = true } = options;
     const token = useAuthStore((state) => state.token);
 
     const [isConnected, setIsConnected] = useState(false);
@@ -359,27 +378,14 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
         filter.is_test,
     ]);
 
+    const { refresh, isRefreshing } = useLogRefresh(pageSize, stableFilter);
+
     const logsQuery = useInfiniteQuery({
         queryKey: logsInfiniteQueryKey(pageSize, stableFilter),
         initialPageParam: 1,
-        queryFn: async ({ pageParam }) => {
-            const params = new URLSearchParams();
-            params.set('page', String(pageParam));
-            params.set('page_size', String(pageSize));
-            if (stableFilter.model) params.set('model', stableFilter.model);
-            if (stableFilter.models && stableFilter.models.length > 0) {
-                params.set('models', stableFilter.models.join(','));
-            }
-            if (stableFilter.channel_id != null) params.set('channel_id', String(stableFilter.channel_id));
-            if (stableFilter.api_key_id != null) params.set('api_key_id', String(stableFilter.api_key_id));
-            if (stableFilter.endpoint_type) params.set('endpoint_type', stableFilter.endpoint_type);
-            if (stableFilter.status) params.set('status', stableFilter.status);
-            if (stableFilter.start_time != null) params.set('start_time', String(stableFilter.start_time));
-            if (stableFilter.end_time != null) params.set('end_time', String(stableFilter.end_time));
-            if (stableFilter.include_attempts != null) params.set('include_attempts', String(stableFilter.include_attempts));
-            if (stableFilter.is_test != null) params.set('is_test', String(stableFilter.is_test));
-            const result = await apiClient.get<RelayLog[] | null>(`/api/v1/log/list?${params.toString()}`);
-            return (result ?? []).map(withExactId);
+        enabled: active,
+        queryFn: async ({ pageParam, signal }) => {
+            return fetchLogsPage(pageSize, stableFilter, pageParam, signal);
         },
         getNextPageParam: (lastPage, allPages) => {
             if (!lastPage || lastPage.length < pageSize) return undefined;
@@ -418,7 +424,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
     }, [logsQuery.data]);
 
     const loadMore = useCallback(async () => {
-        if (!logsQuery.hasNextPage) return;
+        if (!active || !logsQuery.hasNextPage) return;
         if (logsQuery.isFetchingNextPage) return;
 
         try {
@@ -426,9 +432,14 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
         } catch (e) {
             logger.error('加载更多日志失败:', e);
         }
-    }, [logsQuery]);
+    }, [active, logsQuery]);
 
     useEffect(() => {
+        if (!active) {
+            void queryClient.cancelQueries({ queryKey: logsInfiniteQueryKey(pageSize, stableFilter), exact: true });
+            void queryClient.cancelQueries({ queryKey: ['logs', 'head', pageSize, stableFilter], exact: true });
+            return;
+        }
         let cancelled = false;
         let retryTimer: number | null = null;
         let retryAttempt = 0;
@@ -437,7 +448,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
 			if (cancelled || refreshTimer !== null) return;
 			refreshTimer = window.setTimeout(() => {
 				refreshTimer = null;
-				if (!cancelled) void queryClient.invalidateQueries({ queryKey: logsInfiniteQueryKey(pageSize, stableFilter) });
+				if (!cancelled) void refresh().catch(() => {});
 			}, 500);
 		};
 
@@ -474,8 +485,8 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
             }
 
             while (!cancelled) {
+                const controller = new AbortController();
                 try {
-                    const controller = new AbortController();
                     abortRef.current = controller;
 
                     const response = await fetch(`${API_BASE_URL}/api/v1/log/stream?version=2`, {
@@ -562,7 +573,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
                     setError(e instanceof Error ? e : new Error('Log stream connection failed'));
                     logger.warn('日志流连接失败，准备重连:', e);
                 } finally {
-                    abortRef.current = null;
+                    if (abortRef.current === controller) abortRef.current = null;
                 }
 
                 const delayMs = Math.min(1000 * 2 ** retryAttempt, 10000);
@@ -583,15 +594,15 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
             abortRef.current = null;
             setIsConnected(false);
         };
-    }, [pageSize, stableFilter, queryClient, token]);
+    }, [active, pageSize, stableFilter, queryClient, token, refresh]);
 
 	useEffect(() => {
-		if (isConnected || !token) return;
+		if (!active || isConnected || !token) return;
 		const timer = window.setInterval(() => {
-			if (document.visibilityState === 'visible') void queryClient.invalidateQueries({ queryKey: logsInfiniteQueryKey(pageSize, stableFilter) });
+			if (document.visibilityState === 'visible') void refresh().catch(() => {});
 		}, 15_000);
 		return () => window.clearInterval(timer);
-	}, [isConnected, token, pageSize, stableFilter, queryClient]);
+	}, [active, isConnected, token, refresh]);
 
     const clear = useCallback(() => {
         queryClient.removeQueries({ queryKey: logsInfiniteQueryKey(pageSize, stableFilter) });
@@ -617,7 +628,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter } = {})
         hasMore: !!logsQuery.hasNextPage,
         isLoading: logsQuery.isLoading,
         isLoadingMore: logsQuery.isFetchingNextPage,
-        isRefreshing: logsQuery.isRefetching,
+        isRefreshing: isRefreshing || logsQuery.isRefetching,
         loadMore,
         refresh,
         clear,
@@ -635,7 +646,21 @@ export function useLogRefresh(pageSize = DEFAULT_LOG_PAGE_SIZE, filter: LogFilte
     const refresh = useCallback(async () => {
         setLogRefreshState(pageSize, true);
         try {
-            await queryClient.refetchQueries({ queryKey: logsInfiniteQueryKey(pageSize, filter) });
+            // A live refresh requests only the newest page, regardless of loaded history.
+            // fetchQuery coalesces concurrent refreshes for this filter.
+            const previous = queryClient.getQueryData<InfiniteData<RelayLog[], number>>(logsInfiniteQueryKey(pageSize, filter));
+            const previousIds = new Set(previous?.pages.flat().map(log => log.id));
+            const incoming = await queryClient.fetchQuery({
+                queryKey: ['logs', 'head', pageSize, filter],
+                queryFn: ({ signal }) => fetchLogsPage(pageSize, filter, 1, signal),
+                staleTime: 0,
+            });
+            queryClient.setQueryData<InfiniteData<RelayLog[], number>>(
+                logsInfiniteQueryKey(pageSize, filter),
+                old => old
+                    ? { ...old, pages: mergeLogHead(old.pages, incoming, previousIds) }
+                    : { pages: [incoming], pageParams: [1] },
+            );
         } catch (e) {
             logger.error('手动刷新日志失败:', e);
             throw e;

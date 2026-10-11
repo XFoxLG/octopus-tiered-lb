@@ -1,8 +1,12 @@
 package relay
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/lingyuins/octopus/internal/db"
+	"github.com/lingyuins/octopus/internal/op/llm"
 
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
@@ -21,7 +25,18 @@ func beijingRelay(t *testing.T, h, m int) time.Time {
 //   - 北京 13:00（空闲）→ 高峰价 ×0.5
 //   - 非 DeepSeek 模型两个时刻费用相同
 func TestSetInternalResponseDeepSeekPeakPricing(t *testing.T) {
-	// 依赖 price 包 presets_manual.go 的高峰预设（GetLLMPrice 经 map 命中）。
+	dsn := filepath.Join(t.TempDir(), "deepseek-price.db")
+	if err := db.InitDB("sqlite", dsn, false); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := llm.SeedPriceSchedules(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := llm.RefreshPriceScheduleCache(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	// Initialize the same schedule rules and cache used at application startup.
 	// 1e6 uncached input + 1e6 output，便于直接对比价格数值。
 	resp := &transmodel.InternalLLMResponse{
 		Usage: &transmodel.Usage{

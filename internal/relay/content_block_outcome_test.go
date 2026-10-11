@@ -17,3 +17,20 @@ func TestContentBlockKeepsConnectionSuccessSeparate(t *testing.T) {
 		t.Fatalf("transport failure hidden: %s", upstream)
 	}
 }
+
+func TestRelayLogOutcomesCancelledAttemptsDoNotCountAsFailure(t *testing.T) {
+	record := model.RelayLog{Attempts: []model.ChannelAttempt{{Status: model.AttemptCancelled}}}
+	generation, upstream := relayLogOutcomes(record)
+	if generation != model.RelayLogGenerationUnknown || upstream != model.RelayLogUpstreamUnknown {
+		t.Fatalf("cancelled-only outcomes = (%s, %s), want unknown/unknown", generation, upstream)
+	}
+
+	record.Attempts = []model.ChannelAttempt{
+		{Status: model.AttemptCancelled},
+		{Status: model.AttemptSuccess, HTTPStatus: 200},
+	}
+	generation, upstream = relayLogOutcomes(record)
+	if generation != model.RelayLogGenerationSuccess || upstream != model.RelayLogUpstreamSuccess {
+		t.Fatalf("cancelled+success outcomes = (%s, %s), want success/success", generation, upstream)
+	}
+}

@@ -9,3 +9,13 @@ export function mergeLiveRequest<T extends { trace_id: string; state: string }>(
     const remaining = entries.filter(entry => entry.trace_id !== incoming.trace_id);
     return incoming.state === 'recorded' ? remaining : [incoming, ...remaining].slice(0, 256);
 }
+
+// Refresh the server's newest window without refetching loaded history. Entries
+// that no longer match a filter inside that window must disappear as well.
+export function mergeLogHead<T extends { id: string | number; time: number }>(pages: T[][], incoming: T[], previousIds = new Set(pages.flat().map(entry => entry.id))): T[][] {
+    if (incoming.length === 0) return pages.map(page => page.filter(entry => !previousIds.has(entry.id)));
+    const cutoff = Math.min(...incoming.map(entry => entry.time));
+    const ids = new Set(incoming.map(entry => entry.id));
+    const history = pages.map(page => page.filter(entry => !ids.has(entry.id) && (!previousIds.has(entry.id) || entry.time <= cutoff)));
+    return [[...incoming, ...(history[0] ?? [])].slice(0, 500), ...history.slice(1)];
+}

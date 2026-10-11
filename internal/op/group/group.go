@@ -626,6 +626,9 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	if group.Name == "" {
 		return fmt.Errorf("group name is required")
 	}
+	if group.HedgeDelayMs < 0 || group.HedgeDelayMs > 30000 {
+		return fmt.Errorf("hedge delay must be between 0 and 30000 ms")
+	}
 	if group.StreamIdleTimeout < 0 {
 		return fmt.Errorf("stream idle timeout must be non-negative")
 	}
@@ -750,6 +753,17 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 	if req.AttemptTimeOut != nil {
 		selectFields = append(selectFields, "attempt_time_out")
 		updates.AttemptTimeOut = *req.AttemptTimeOut
+	}
+	if req.HedgeEnabled != nil {
+		selectFields = append(selectFields, "hedge_enabled")
+		updates.HedgeEnabled = *req.HedgeEnabled
+	}
+	if req.HedgeDelayMs != nil {
+		if *req.HedgeDelayMs < 0 || *req.HedgeDelayMs > 30000 {
+			return nil, fmt.Errorf("hedge delay must be between 0 and 30000 ms")
+		}
+		selectFields = append(selectFields, "hedge_delay_ms")
+		updates.HedgeDelayMs = *req.HedgeDelayMs
 	}
 	if req.StreamIdleTimeout != nil {
 		if *req.StreamIdleTimeout < 0 {

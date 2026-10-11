@@ -15,6 +15,7 @@ import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { VirtualizedGrid } from '@/components/common/VirtualizedGrid';
 import { useNavHandoff } from '@/lib/nav-handoff';
+import { useNavStore } from '@/components/modules/navbar';
 import {
     Select,
     SelectContent,
@@ -343,6 +344,15 @@ function LogFilterBar({
  */
 export function Log() {
     const t = useTranslations('log');
+    const routeActive = useNavStore((state) => state.activeItem === 'log');
+    const [documentVisible, setDocumentVisible] = useState(true);
+    useEffect(() => {
+        const update = () => setDocumentVisible(document.visibilityState === 'visible');
+        update();
+        document.addEventListener('visibilitychange', update);
+        return () => document.removeEventListener('visibilitychange', update);
+    }, []);
+    const active = routeActive && documentVisible;
     const [view, setView] = useState<'relay' | 'error'>('relay');
     const [filter, setFilter] = useState<LogFilter>(EMPTY_FILTER);
     const modelSearch = useLogModelSearchStore((s) => s.modelSearch);
@@ -351,20 +361,20 @@ export function Log() {
         () => (modelSearch ? { ...filter, model: modelSearch } : filter),
         [filter, modelSearch],
     );
-    const { logs, liveRequests, isConnected, hasMore, isLoading, isLoadingMore, loadMore, refresh } = useLogs({ filter: combinedFilter });
+    const { logs, liveRequests, isConnected, hasMore, isLoading, isLoadingMore, loadMore, refresh } = useLogs({ filter: combinedFilter, active });
     const { data: channels = [] } = useChannelList();
 
     // 自动刷新：按用户在设置中选择的间隔轮询日志列表（0 = 关闭）。
     // 页面不可见时暂停轮询，避免后台标签页空转。
     const autoRefreshInterval = useLogAutoRefreshStore((s) => s.interval);
     useEffect(() => {
-        if (!autoRefreshInterval) return;
+        if (!active || !autoRefreshInterval) return;
         const timer = window.setInterval(() => {
             if (document.visibilityState !== 'visible') return;
             void refresh();
         }, autoRefreshInterval * 1000);
         return () => window.clearInterval(timer);
-    }, [autoRefreshInterval, refresh]);
+    }, [active, autoRefreshInterval, refresh]);
 
     // 消费来自其它模块（分析/分组健康）的待处理筛选，实现"点击失败渠道 → 跳转日志并预填"。
     const pendingLogFilter = useNavHandoff((s) => s.pendingLogFilter);
