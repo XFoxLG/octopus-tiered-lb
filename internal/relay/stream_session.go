@@ -161,6 +161,11 @@ var relayStreamSessions = relayStreamSessionStore{
 	activeByConversation: make(map[string]string),
 }
 
+// relayStreamEvictWG 跟踪在途的驱逐 Finish goroutine。生产环境 store 与进程
+// 同生命周期；测试会在用例间复位全局 store，必须先等这些 goroutine 退出，
+// 否则它们对 store 互斥量/索引的访问会与复位产生数据竞争。
+var relayStreamEvictWG sync.WaitGroup
+
 func buildRelayStreamSessionKey(conversationID string, requestHash uint64) string {
 	return strings.TrimSpace(conversationID) + ":" + strconv.FormatUint(requestHash, 16)
 }
@@ -300,7 +305,9 @@ func (s *relayStreamSessionStore) enforceSessionLimitLocked() {
 
 	// Finish 会取 store.mu 写锁，而这里正持有它 —— 必须异步调用避免自死锁。
 	// 会话已从 map 中摘除，异步 Finish 只影响其订阅者与缓冲释放。
+	relayStreamEvictWG.Add(1)
 	go func(sessions []*relayStreamSession) {
+		defer relayStreamEvictWG.Done()
 		for _, session := range sessions {
 			session.Finish(errRelayStreamSessionEvicted)
 		}

@@ -57,11 +57,22 @@ func TestPopulateRelayRequestSessionFields(t *testing.T) {
 	}
 }
 
+// resetRelayStreamSessionsForTest 清空全局会话 store。驱逐路径会异步调用
+// Finish，而 Finish 内部要触碰 store 的互斥量与索引 map：上一条测试遗留的
+// 在途 Finish 会与本测试的 store 复位产生数据竞争。复位前先等待在途驱逐
+// goroutine 退出，并在测试结束时再等一次，保证 -race 稳定通过。
+func resetRelayStreamSessionsForTest(t *testing.T) {
+	t.Helper()
+	relayStreamEvictWG.Wait()
+	relayStreamSessions.mu.Lock()
+	relayStreamSessions.byKey = make(map[string]*relayStreamSession)
+	relayStreamSessions.activeByConversation = make(map[string]string)
+	relayStreamSessions.mu.Unlock()
+	t.Cleanup(relayStreamEvictWG.Wait)
+}
+
 func TestAcquireRelayStreamSession_AllowsReconnectAndBlocksConcurrentDifferentRequest(t *testing.T) {
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
+	resetRelayStreamSessionsForTest(t)
 
 	session, created, err := acquireRelayStreamSession("conv-1", 1, 1)
 	if err != nil {
@@ -95,11 +106,7 @@ func TestAcquireRelayStreamSession_AllowsReconnectAndBlocksConcurrentDifferentRe
 }
 
 func TestAcquireRelayStreamSession_AllowsSameConversationAcrossAPIKeys(t *testing.T) {
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	first, created, err := acquireRelayStreamSession("conv-1", 1, 1)
 	if err != nil || !created || first == nil {
 		t.Fatalf("first acquireRelayStreamSession() = (%v, %t, %v)", first, created, err)
@@ -195,11 +202,7 @@ func TestRelayStreamSessionSnapshotReportsReplayWindowExpiredWhenTrimmed(t *test
 		overrideStreamSessionMaxBytes = nil
 	}()
 
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, created, err := acquireRelayStreamSession("conv-1", 1, 1)
 	if err != nil || !created || session == nil {
 		t.Fatalf("acquireRelayStreamSession() = (%v, %t, %v)", session, created, err)
@@ -229,11 +232,7 @@ func TestRelayStreamSessionFinishRemovesExpiredSession(t *testing.T) {
 		overrideStreamSessionTTL = nil
 	}()
 
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, created, err := acquireRelayStreamSession("conv-1", 1, 1)
 	if err != nil || !created || session == nil {
 		t.Fatalf("acquireRelayStreamSession() = (%v, %t, %v)", session, created, err)
@@ -300,11 +299,7 @@ func TestHandleStreamResponseStopsImmediatelyWhenClientDisconnectsWithoutSession
 func TestServeRelayStreamSessionReplayExpiredBeforeHeadersReturns409(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, created, err := acquireRelayStreamSession("conv-1", 1, 1)
 	if err != nil || !created || session == nil {
 		t.Fatalf("acquireRelayStreamSession() = (%v, %t, %v)", session, created, err)
@@ -336,11 +331,7 @@ func TestServeRelayStreamSessionReplayExpiredBeforeHeadersReturns409(t *testing.
 func TestServeRelayStreamSessionDoneWithErrorBeforeHeadersReturnsBadGateway(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, created, err := acquireRelayStreamSession("conv-1", 1, 1)
 	if err != nil || !created || session == nil {
 		t.Fatalf("acquireRelayStreamSession() = (%v, %t, %v)", session, created, err)
@@ -369,11 +360,7 @@ func TestServeRelayStreamSessionDoneWithErrorBeforeHeadersReturnsBadGateway(t *t
 func TestServeRelayStreamSessionDoneWithErrorAfterHeadersWritesSSEError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, created, err := acquireRelayStreamSession("conv-1", 1, 1)
 	if err != nil || !created || session == nil {
 		t.Fatalf("acquireRelayStreamSession() = (%v, %t, %v)", session, created, err)
@@ -410,11 +397,7 @@ func TestServeRelayStreamSessionDoneWithErrorAfterHeadersWritesSSEError(t *testi
 
 func TestRelayStreamSessionFinishKeepsBufferForReconnect(t *testing.T) {
 	// Finish 不应立即清空 replay 缓冲：断线重连需要重放已生成内容。
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, created, err := acquireRelayStreamSession("conv-keep", 1, 1)
 	if err != nil || !created || session == nil {
 		t.Fatalf("acquireRelayStreamSession() = (%v, %t, %v)", session, created, err)
@@ -432,10 +415,7 @@ func TestRelayStreamSessionFinishKeepsBufferForReconnect(t *testing.T) {
 }
 
 func TestEnforceSessionLimitEvictsOldestDoneSessions(t *testing.T) {
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
+	resetRelayStreamSessionsForTest(t)
 	store := &relayStreamSessions
 
 	// 填充超过上限的已完成会话，最旧的应被驱逐。
@@ -465,10 +445,7 @@ func TestEnforceSessionLimitEvictsOldestDoneSessions(t *testing.T) {
 // 旧实现「若全是活跃会话则不驱逐」，客户端中途断连时会话会一直保持活跃，
 // 导致硬上限完全失效、map 无界增长直到进程被 OOM killer 杀掉（issue #196）。
 func TestEnforceSessionLimitEvictsOldestActiveSessionsBeyondGrace(t *testing.T) {
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
+	resetRelayStreamSessionsForTest(t)
 	store := &relayStreamSessions
 
 	limit := 8
@@ -510,10 +487,7 @@ func TestEnforceSessionLimitEvictsOldestActiveSessionsBeyondGrace(t *testing.T) 
 
 // 未超过宽限阈值时不应驱逐活跃会话，避免正常波动打断正在进行的生成。
 func TestEnforceSessionLimitKeepsActiveSessionsWithinGrace(t *testing.T) {
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
+	resetRelayStreamSessionsForTest(t)
 	store := &relayStreamSessions
 
 	limit := 8
@@ -545,11 +519,7 @@ func TestEnforceSessionLimitKeepsActiveSessionsWithinGrace(t *testing.T) {
 }
 
 func TestClientGoneGraceExceeded(t *testing.T) {
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, created, err := acquireRelayStreamSession("conv-gone", 1, 1)
 	if err != nil || !created || session == nil {
 		t.Fatalf("acquireRelayStreamSession() = (%v, %t, %v)", session, created, err)
@@ -584,11 +554,7 @@ func TestClientGoneGraceExceeded(t *testing.T) {
 // 客户端重连（Subscribe）必须撤销断连宽限计时，否则原转发协程会在宽限期到点时
 // 把一个「正有人在读」的会话强行结束——原请求的 context 早已 Done，无法自行感知重连。
 func TestSubscribeCancelsClientGoneGrace(t *testing.T) {
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, _, err := acquireRelayStreamSession("conv-reconnect", 1, 1)
 	if err != nil || session == nil {
 		t.Fatalf("acquireRelayStreamSession() error: %v", err)
@@ -624,11 +590,7 @@ func TestSubscribeCancelsClientGoneGrace(t *testing.T) {
 
 // MarkClientGone 重复调用时宽限期应从第一次断连算起。
 func TestMarkClientGoneIsIdempotent(t *testing.T) {
-	relayStreamSessions = relayStreamSessionStore{
-		byKey:                make(map[string]*relayStreamSession),
-		activeByConversation: make(map[string]string),
-	}
-
+	resetRelayStreamSessionsForTest(t)
 	session, _, err := acquireRelayStreamSession("conv-gone-twice", 1, 1)
 	if err != nil || session == nil {
 		t.Fatalf("acquireRelayStreamSession() error: %v", err)
