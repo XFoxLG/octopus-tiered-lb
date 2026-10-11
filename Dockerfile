@@ -85,8 +85,10 @@ LABEL org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \
       org.opencontainers.image.created="${BUILD_TIME}"
 
-# Install runtime dependencies (su-exec for non-root user switching in entrypoint)
-RUN apk add --no-cache ca-certificates tzdata su-exec
+# Install runtime dependencies (su-exec for non-root user switching in entrypoint).
+# Upgrade installed packages first so the image picks up published Alpine
+# security patches regardless of the base image snapshot age.
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata su-exec
 
 # Set default timezone for the container.
 # Override with -e TZ=... at docker run or environment in compose.
