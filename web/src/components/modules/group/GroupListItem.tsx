@@ -164,6 +164,8 @@ function EditDialogContent({
                             first_token_time_out: group.first_token_time_out ?? 0,
                             attempt_time_out: group.attempt_time_out ?? 0,
                             stream_idle_timeout: group.stream_idle_timeout ?? 0,
+                            hedge_enabled: group.hedge_enabled ?? false,
+                            hedge_delay_ms: group.hedge_delay_ms ?? 300,
                             session_keep_time: group.session_keep_time ?? 0,
                             reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
                             default_reasoning_effort: group.default_reasoning_effort ?? '',
@@ -610,6 +612,8 @@ export function GroupListItem({ group }: { group: Group }) {
                 values.attempt_time_out ?? 0;
             const nextStreamIdleTimeout =
                 values.stream_idle_timeout ?? 0;
+            const nextHedgeEnabled = values.hedge_enabled ?? false;
+            const nextHedgeDelayMs = Math.min(30000, Math.max(0, values.hedge_delay_ms ?? 300));
             const nextSessionKeepTime =
                 values.session_keep_time ?? 0;
 
@@ -652,6 +656,10 @@ export function GroupListItem({ group }: { group: Group }) {
                 (group.stream_idle_timeout ?? 0)
             )
                 payload.stream_idle_timeout = nextStreamIdleTimeout;
+            if (nextHedgeEnabled !== (group.hedge_enabled ?? false))
+                payload.hedge_enabled = nextHedgeEnabled;
+            if (nextHedgeDelayMs !== (group.hedge_delay_ms ?? 300))
+                payload.hedge_delay_ms = nextHedgeDelayMs;
             if (
                 nextSessionKeepTime !==
                 (group.session_keep_time ?? 0)
@@ -717,6 +725,8 @@ export function GroupListItem({ group }: { group: Group }) {
             group.reasoning_force_override,
             group.reasoning_buffer_strategy,
             group.stream_idle_timeout,
+            group.hedge_enabled,
+            group.hedge_delay_ms,
             group.session_keep_time,
             group.id,
             group.items,
@@ -789,6 +799,8 @@ export function GroupListItem({ group }: { group: Group }) {
             first_token_time_out: group.first_token_time_out ?? 0,
             attempt_time_out: group.attempt_time_out ?? 0,
             stream_idle_timeout: group.stream_idle_timeout ?? 0,
+            hedge_enabled: group.hedge_enabled ?? false,
+            hedge_delay_ms: group.hedge_delay_ms ?? 300,
             session_keep_time: group.session_keep_time ?? 0,
             members: nextMembers,
         };
@@ -807,6 +819,8 @@ export function GroupListItem({ group }: { group: Group }) {
         group.first_token_time_out,
         group.attempt_time_out,
         group.stream_idle_timeout,
+        group.hedge_enabled,
+        group.hedge_delay_ms,
         group.id,
         group.match_regex,
         group.mode,

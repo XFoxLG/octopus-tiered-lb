@@ -46,6 +46,18 @@ func TestFinalChannelPrefersLastForwardedFailure(t *testing.T) {
 	}
 }
 
+func TestCountForwardedAttemptsIncludesCancelled(t *testing.T) {
+	attempts := []model.ChannelAttempt{
+		{Status: model.AttemptSkipped},
+		{Status: model.AttemptCircuitBreak},
+		{Status: model.AttemptCancelled},
+		{Status: model.AttemptSuccess},
+	}
+	if got := countForwardedAttempts(attempts); got != 2 {
+		t.Fatalf("countForwardedAttempts() = %d, want 2", got)
+	}
+}
+
 func TestRouteIteratorAttemptsCarrySuccessfulChannel(t *testing.T) {
 	iter := &balancer.Iterator{}
 	span := iter.StartAttempt(23, 7, "mimo-channel", "Mimo-v2.5-pro-codeplan")

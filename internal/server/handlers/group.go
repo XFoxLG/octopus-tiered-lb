@@ -362,6 +362,8 @@ type groupListResponseItem struct {
 	FirstTokenTimeOut int               `json:"first_token_time_out"`
 	AttemptTimeOut    int               `json:"attempt_time_out"`
 	StreamIdleTimeout int               `json:"stream_idle_timeout"`
+	HedgeEnabled      bool              `json:"hedge_enabled"`
+	HedgeDelayMs      int               `json:"hedge_delay_ms"`
 	SessionKeepTime   int               `json:"session_keep_time"`
 	Condition         string            `json:"condition,omitempty"`
 	Items             []model.GroupItem `json:"items"`
@@ -391,6 +393,8 @@ func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
 			FirstTokenTimeOut: group.FirstTokenTimeOut,
 			AttemptTimeOut:    group.AttemptTimeOut,
 			StreamIdleTimeout: group.StreamIdleTimeout,
+			HedgeEnabled:      group.HedgeEnabled,
+			HedgeDelayMs:      group.HedgeDelayMs,
 			SessionKeepTime:   group.SessionKeepTime,
 			Items:             groupItems,
 			LastTestPassed:    group.LastTestPassed,

@@ -454,18 +454,15 @@ func (s *relayStreamSession) AddPayload(payload []byte) []relayStreamEvent {
 	s.trimEventsLocked()
 	s.updatedAt = time.Now()
 
-	subscribers := make([]chan struct{}, 0, len(s.subscribers))
+	// Keep notification and unsubscribe/close under one lock. The send is
+	// deliberately non-blocking because subscribers only need a wake-up hint.
 	for ch := range s.subscribers {
-		subscribers = append(subscribers, ch)
-	}
-	s.mu.Unlock()
-
-	for _, ch := range subscribers {
 		select {
 		case ch <- struct{}{}:
 		default:
 		}
 	}
+	s.mu.Unlock()
 
 	return events
 }
@@ -587,6 +584,12 @@ func (s *relayStreamSession) Finish(err error) {
 		subscribers = append(subscribers, ch)
 	}
 	s.subscribers = make(map[chan struct{}]struct{})
+	// Close notifications while holding the same lock used by AddPayload.
+	// AddPayload performs only a non-blocking send, so this keeps the channel
+	// lifetime atomic without making a slow subscriber stall the producer.
+	for _, ch := range subscribers {
+		close(ch)
+	}
 	s.mu.Unlock()
 
 	s.store.mu.Lock()
@@ -607,9 +610,6 @@ func (s *relayStreamSession) Finish(err error) {
 		})
 	}
 
-	for _, ch := range subscribers {
-		close(ch)
-	}
 }
 
 func splitRelaySSEPayload(payload []byte) [][]byte {

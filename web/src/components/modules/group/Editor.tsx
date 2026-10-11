@@ -34,6 +34,8 @@ export type GroupEditorValues = {
     first_token_time_out: number;
     attempt_time_out: number;
     stream_idle_timeout: number;
+    hedge_enabled: boolean;
+    hedge_delay_ms: number;
     session_keep_time: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
     default_reasoning_effort?: string; // "" | minimal | low | medium | high | xhigh | max
@@ -314,6 +316,8 @@ export function GroupEditor({
     const [firstTokenTimeOut, setFirstTokenTimeOut] = useState<number>(initial?.first_token_time_out ?? 0);
     const [attemptTimeOut, setAttemptTimeOut] = useState<number>(initial?.attempt_time_out ?? 0);
     const [streamIdleTimeout, setStreamIdleTimeout] = useState<number>(initial?.stream_idle_timeout ?? 0);
+    const [hedgeEnabled, setHedgeEnabled] = useState<boolean>(initial?.hedge_enabled ?? false);
+    const [hedgeDelayMs, setHedgeDelayMs] = useState<number>(Math.min(30000, Math.max(0, initial?.hedge_delay_ms ?? 300)));
     const [sessionKeepTime, setSessionKeepTime] = useState<number>(initial?.session_keep_time ?? 0);
     const [reasoningBufferStrategy, setReasoningBufferStrategy] = useState<string>(initial?.reasoning_buffer_strategy ?? '');
     const [defaultReasoningEffort, setDefaultReasoningEffort] = useState<string>(initial?.default_reasoning_effort ?? '');
@@ -399,7 +403,8 @@ export function GroupEditor({
 
     const supportsProviderSelection = endpointType === 'music_generation' || endpointType === 'chat' || endpointType === 'video_generation' || endpointType === 'audio_speech' || endpointType === 'image_generation';
     const supportsOutboundFormat = endpointType === 'chat';
-    const isValid = groupKey.length > 0 && selectedMembers.length > 0 && !regexError;
+    const hedgeDelayValid = hedgeDelayMs >= 0 && hedgeDelayMs <= 30000;
+    const isValid = groupKey.length > 0 && selectedMembers.length > 0 && !regexError && hedgeDelayValid;
 
     const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -417,6 +422,8 @@ export function GroupEditor({
             first_token_time_out: firstTokenTimeOut,
             attempt_time_out: attemptTimeOut,
             stream_idle_timeout: streamIdleTimeout,
+            hedge_enabled: hedgeEnabled,
+            hedge_delay_ms: hedgeDelayMs,
             session_keep_time: sessionKeepTime,
             condition,
             reasoning_buffer_strategy: reasoningBufferStrategy,
@@ -755,6 +762,44 @@ export function GroupEditor({
                                         }}
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />
+                                </Field>
+                                <Field className="col-span-full">
+                                    <FieldLabel htmlFor="group-hedge-enabled">
+                                        {t('form.hedgeEnabled')}
+                                        <Hint text={t('form.hedgeEnabledHint')} />
+                                    </FieldLabel>
+                                    <div className="flex min-h-10 items-center gap-3 rounded-lg border border-border/40 bg-card px-3 py-2 md:min-h-11">
+                                        <Switch
+                                            id="group-hedge-enabled"
+                                            checked={hedgeEnabled}
+                                            onCheckedChange={setHedgeEnabled}
+                                        />
+                                        <span className="text-sm text-muted-foreground">{t('form.hedgeEnabled')}</span>
+                                    </div>
+                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('form.hedgeEnabledHint')}</p>
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="group-hedge-delay-ms">
+                                        {t('form.hedgeDelayMs')}
+                                        <Hint text={t('form.hedgeDelayMsHint')} />
+                                    </FieldLabel>
+                                    <Input
+                                        id="group-hedge-delay-ms"
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={0}
+                                        max={30000}
+                                        step={1}
+                                        value={String(hedgeDelayMs)}
+                                        aria-invalid={showValidation && !hedgeDelayValid ? true : undefined}
+                                        onChange={(event) => {
+                                            const raw = event.target.value;
+                                            const parsed = raw.trim() === '' ? 0 : Number.parseInt(raw, 10);
+                                            setHedgeDelayMs(Number.isFinite(parsed) ? parsed : 0);
+                                        }}
+                                        className={cn('h-10 rounded-lg text-sm md:h-11', showValidation && !hedgeDelayValid && 'border-destructive focus-visible:ring-destructive/20')}
+                                    />
+                                    {showValidation && !hedgeDelayValid ? <p className="mt-1 text-xs text-destructive">{t('form.hedgeDelayMsInvalid')}</p> : null}
                                 </Field>
                                 <Field>
                                     <FieldLabel htmlFor="group-reasoning-buffer-strategy">

@@ -504,6 +504,9 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (logID int64, add
 		if dropPolicy == "" {
 			dropPolicy = "oldest" // 默认丢弃最旧
 		}
+		if enabled {
+			triggerFlush()
+		}
 
 		switch dropPolicy {
 		case "disabled":
@@ -555,7 +558,11 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (logID int64, add
 	if relayLogPendingContentBytes < 0 {
 		relayLogPendingContentBytes = 0
 	}
+	shouldFlush := enabled && len(relayLogCache) >= max(1, maxSize*3/4)
 	relayLogCacheLock.Unlock()
+	if shouldFlush {
+		triggerFlush()
+	}
 	if enabled && droppedRelayLog != nil {
 		enqueueUnavailableRelayLogMetadata(*droppedRelayLog, droppedReason)
 	}
@@ -1084,7 +1091,7 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 					"client_ip", "reported_client_ip", "reported_client_ip_source",
 					"endpoint_type", "channel_id", "channel_name", "actual_model_name",
 					"input_tokens", "output_tokens", "semantic_cache_hit", "cache_read_tokens",
-					"reasoning_effort", "reasoning_tokens", "reasoning_chars",
+					"reasoning_effort", "reasoning_tokens", "reasoning_chars", "usage_state",
 					"ftut", "use_time",
 					"cost", "billing_window", "http_status", "generation_outcome", "upstream_outcome",
 					"persistence_state", "client_delivery_state", "termination_cause", "provider_termination_reason",

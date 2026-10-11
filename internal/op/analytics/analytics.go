@@ -997,7 +997,8 @@ func (s channelModelScope) inScope(channelID int, modelName string) bool {
 }
 
 // loadAnalyticsChannelModelRows 聚合 (渠道,模型) 维度的成功/失败/token/cost。
-// 成功/失败按单次尝试（relay_log_attempts）统计；token/cost 取自 relay_logs 且仅在
+// 成功/失败按单次尝试（relay_log_attempts）统计；cancelled 是已发起但未完成的
+// 竞速或请求取消，不进入成功率/失败率。token/cost 取自 relay_logs 且仅在
 // 该请求最终成功时计入（避免把整体失败的请求 token 重复计入多个渠道）。
 // scope 非空时只保留其中的 (channelID,modelName) 组合；zen/空 ModelName 的组项
 // 按 channel 维度通配（issue #103）。
@@ -1068,7 +1069,7 @@ func mergeRelayLogIntoChannelModelRows(rows map[string]*analyticsChannelModelAgg
 			if modelName == "" {
 				modelName = strings.TrimSpace(log.RequestModelName)
 			}
-			if !inScope(a.ChannelID, modelName) {
+			if a.Status == model.AttemptCancelled || !inScope(a.ChannelID, modelName) {
 				continue
 			}
 			key := strconv.Itoa(a.ChannelID) + "\x00" + modelName
@@ -1467,7 +1468,8 @@ func loadAnalyticsChannelModelRowsFromRelayLogs(ctx context.Context, r model.Ana
 }
 
 // loadChannelModelRowsFromAttemptsTable 从 relay_log_attempts 做 DB 端聚合。
-// token/cost 仅在 status=success 且父日志 error 为空时计入（与 mergeRelayLogIntoChannelModelRows 一致）。
+// 只有 status=success / failed 参与成功率；cancelled 明确排除。token/cost
+// 仅在 status=success 且父日志 error 为空时计入（与 mergeRelayLogIntoChannelModelRows 一致）。
 func loadChannelModelRowsFromAttemptsTable(
 	ctx context.Context,
 	conn *gorm.DB,
@@ -1488,6 +1490,7 @@ func loadChannelModelRowsFromAttemptsTable(
 	var dbRows []attemptAggRow
 	query := conn.WithContext(ctx).
 		Table("relay_log_attempts AS a").
+		Where("a.status IN ?", []string{string(model.AttemptSuccess), string(model.AttemptFailed)}).
 		Select(`
 			a.channel_id,
 			MAX(a.channel_name) AS channel_name,

@@ -369,6 +369,8 @@ type relayRequest struct {
 	group             *dbmodel.Group // 新增：用于读取分组级推理缓冲策略
 	iter              *balancer.Iterator
 	streamSession     *relayStreamSession
+	hedgeAttempted    bool
+	hedgeRemaining    int
 }
 
 // relayAttempt 尝试级上下文
@@ -385,6 +387,8 @@ type relayAttempt struct {
 	tryTotal                  int
 	logAttemptNumber          int
 	protocolFallbackRemaining bool
+	hedgeVisibleChunk         bool
+	hedgeWinnerIsBackup       bool
 
 	// streamFinishReason is retained for legacy log messages. Canonical policy
 	// decisions use streamTermination instead.

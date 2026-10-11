@@ -11,14 +11,14 @@ const (
 )
 
 type Group struct {
-	ID                int       `json:"id" gorm:"primaryKey"`
-	Name              string    `json:"name" gorm:"not null;size:191;uniqueIndex:idx_groups_endpoint_name,priority:2"`
-	Category          string    `json:"category,omitempty" gorm:"not null;default:'';index;size:191"`
-	EndpointType      string    `json:"endpoint_type" gorm:"not null;default:chat;index:idx_groups_endpoint_type;size:191;uniqueIndex:idx_groups_endpoint_name,priority:1"`
-	EndpointProvider  string    `json:"endpoint_provider,omitempty" gorm:"not null;default:''"`
-	OutboundFormat    string    `json:"outbound_format,omitempty" gorm:"not null;default:''"` // 出站格式: "" (auto), "chat", "responses", "messages", "chat_only", "responses_only", "messages_only", "passthrough", "raw" (原始穿透（信息体）: 保留原始请求体与请求路径，仅改写 model)
-	Mode              GroupMode `json:"mode" gorm:"not null"`
-	MatchRegex        string    `json:"match_regex"`
+	ID               int       `json:"id" gorm:"primaryKey"`
+	Name             string    `json:"name" gorm:"not null;size:191;uniqueIndex:idx_groups_endpoint_name,priority:2"`
+	Category         string    `json:"category,omitempty" gorm:"not null;default:'';index;size:191"`
+	EndpointType     string    `json:"endpoint_type" gorm:"not null;default:chat;index:idx_groups_endpoint_type;size:191;uniqueIndex:idx_groups_endpoint_name,priority:1"`
+	EndpointProvider string    `json:"endpoint_provider,omitempty" gorm:"not null;default:''"`
+	OutboundFormat   string    `json:"outbound_format,omitempty" gorm:"not null;default:''"` // 出站格式: "" (auto), "chat", "responses", "messages", "chat_only", "responses_only", "messages_only", "passthrough", "raw" (原始穿透（信息体）: 保留原始请求体与请求路径，仅改写 model)
+	Mode             GroupMode `json:"mode" gorm:"not null"`
+	MatchRegex       string    `json:"match_regex"`
 	// FirstTokenTimeOut is the maximum time to wait for the first visible
 	// client-facing output in a streaming response. Metadata, role-only, and
 	// reasoning-only frames do not satisfy this timer. Zero disables it.
@@ -29,10 +29,12 @@ type Group struct {
 	AttemptTimeOut int `json:"attempt_time_out" gorm:"column:attempt_time_out;default:0"`
 	// StreamIdleTimeout is the maximum allowed silence after visible streaming
 	// output begins. Zero disables the watchdog for backwards compatibility.
-	StreamIdleTimeout int `json:"stream_idle_timeout" gorm:"column:stream_idle_timeout;default:0"`
-	SessionKeepTime int         `json:"session_keep_time"`   // 会话保持时间(秒) 0 为禁用
-	Condition       string      `json:"condition,omitempty"` // 条件路由 JSON：[{"key":"model","op":"contains","value":"gpt-4"}]
-	Items           []GroupItem `json:"items,omitempty" gorm:"foreignKey:GroupID"`
+	StreamIdleTimeout int         `json:"stream_idle_timeout" gorm:"column:stream_idle_timeout;default:0"`
+	HedgeEnabled      bool        `json:"hedge_enabled" gorm:"column:hedge_enabled;not null;default:false"`
+	HedgeDelayMs      int         `json:"hedge_delay_ms" gorm:"column:hedge_delay_ms;not null;default:300"`
+	SessionKeepTime   int         `json:"session_keep_time"`   // 会话保持时间(秒) 0 为禁用
+	Condition         string      `json:"condition,omitempty"` // 条件路由 JSON：[{"key":"model","op":"contains","value":"gpt-4"}]
+	Items             []GroupItem `json:"items,omitempty" gorm:"foreignKey:GroupID"`
 	// LastTestPassed 记录最近一次分组测试是否全部通过（issue #113）。
 	// nil = 从未测试；true = 全部通过；false = 存在失败。测试完成时由
 	// group_probe 回写，前端据此对失败分组做灰色化标记。
@@ -100,17 +102,19 @@ type GroupItem struct {
 // GroupUpdateRequest 分组更新请求 - 仅包含变更的数据
 type GroupUpdateRequest struct {
 	ID                      int                      `json:"id" binding:"required"`
-	Name                    *string                  `json:"name,omitempty"`                      // 仅在名称变更时发送
-	Category                *string                  `json:"category,omitempty"`                  // 仅在分类变更时发送
-	EndpointType            *string                  `json:"endpoint_type,omitempty"`             // 仅在 API 分类变更时发送
-	EndpointProvider        *string                  `json:"endpoint_provider,omitempty"`         // 仅在端点提供方变更时发送
-	OutboundFormat          *string                  `json:"outbound_format,omitempty"`           // 仅在出站格式变更时发送
-	Mode                    *GroupMode               `json:"mode,omitempty"`                      // 仅在模式变更时发送
-	MatchRegex              *string                  `json:"match_regex,omitempty"`               // 仅在匹配正则变更时发送
-	Condition               *string                  `json:"condition,omitempty"`                 // 仅在条件变更时发送
-	FirstTokenTimeOut       *int                     `json:"first_token_time_out,omitempty"`      // 仅在超时变更时发送(秒)
-	AttemptTimeOut          *int                     `json:"attempt_time_out,omitempty"`          // 仅在转发超时变更时发送(秒)
-	StreamIdleTimeout       *int                     `json:"stream_idle_timeout,omitempty"`       // 仅在流式空闲超时变更时发送(秒)
+	Name                    *string                  `json:"name,omitempty"`                 // 仅在名称变更时发送
+	Category                *string                  `json:"category,omitempty"`             // 仅在分类变更时发送
+	EndpointType            *string                  `json:"endpoint_type,omitempty"`        // 仅在 API 分类变更时发送
+	EndpointProvider        *string                  `json:"endpoint_provider,omitempty"`    // 仅在端点提供方变更时发送
+	OutboundFormat          *string                  `json:"outbound_format,omitempty"`      // 仅在出站格式变更时发送
+	Mode                    *GroupMode               `json:"mode,omitempty"`                 // 仅在模式变更时发送
+	MatchRegex              *string                  `json:"match_regex,omitempty"`          // 仅在匹配正则变更时发送
+	Condition               *string                  `json:"condition,omitempty"`            // 仅在条件变更时发送
+	FirstTokenTimeOut       *int                     `json:"first_token_time_out,omitempty"` // 仅在超时变更时发送(秒)
+	AttemptTimeOut          *int                     `json:"attempt_time_out,omitempty"`     // 仅在转发超时变更时发送(秒)
+	StreamIdleTimeout       *int                     `json:"stream_idle_timeout,omitempty"`
+	HedgeEnabled            *bool                    `json:"hedge_enabled,omitempty"`
+	HedgeDelayMs            *int                     `json:"hedge_delay_ms,omitempty"`            // Delay before the backup attempt, in milliseconds.
 	SessionKeepTime         *int                     `json:"session_keep_time,omitempty"`         // 仅在会话保持时间变更时发送(秒)
 	ReasoningBufferStrategy *string                  `json:"reasoning_buffer_strategy,omitempty"` // 仅在推理缓冲策略变更时发送
 	ParamOverride           *string                  `json:"param_override,omitempty"`            // 仅在参数覆盖变更时发送（JSON object 字符串）

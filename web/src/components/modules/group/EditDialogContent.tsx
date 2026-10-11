@@ -121,6 +121,7 @@ export function EditDialogContent({
                             endpoint_provider: group.endpoint_provider ?? '', outbound_format: group.outbound_format ?? '',
                             match_regex: group.match_regex ?? '', condition: group.condition ?? '', mode: group.mode,
                             first_token_time_out: group.first_token_time_out ?? 0, attempt_time_out: group.attempt_time_out ?? 0,
+                            hedge_enabled: group.hedge_enabled ?? false, hedge_delay_ms: group.hedge_delay_ms ?? 300,
                             session_keep_time: group.session_keep_time ?? 0, reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
                             members: editMembers,
                         }}

@@ -1,7 +1,7 @@
 # =============================================================================
 # Build stage for frontend
 # =============================================================================
-FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
 
 WORKDIR /build
 
@@ -25,7 +25,7 @@ RUN NEXT_PUBLIC_APP_VERSION="${APP_VERSION}" NEXT_PUBLIC_GITHUB_REPO="${GITHUB_R
 # =============================================================================
 # Build stage for Go binary
 # =============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS go-builder
 
 WORKDIR /build
 
@@ -76,7 +76,7 @@ RUN set -eux; \
 # =============================================================================
 # Runtime stage
 # =============================================================================
-FROM alpine:3.20
+FROM alpine:3.22
 ARG APP_VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown

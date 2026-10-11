@@ -182,7 +182,7 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
         content.boundary === boundary && (attemptNumber === undefined || content.attempt_num === attemptNumber)
     ));
     const forwardedAttempts = (detail.attempts ?? []).filter((attempt) => (
-        attempt.send_started || attempt.status === 'success' || attempt.status === 'failed'
+        attempt.send_started || attempt.status === 'success' || attempt.status === 'failed' || attempt.status === 'cancelled'
     ));
     const clientProtocol = recordsFor('client_ingress')[0]?.protocol || recordsFor('client_egress')[0]?.protocol || detail.endpoint_type || '-';
     const upstreamProtocols = Array.from(new Set(contents

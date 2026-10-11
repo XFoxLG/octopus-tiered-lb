@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
@@ -17,6 +18,8 @@ var DisposableChannelFunc func(channelID int) bool
 // Iterator 统一的负载均衡迭代器
 // 内部编排：策略排序 + 粘性优先 + 决策追踪
 type Iterator struct {
+	mu sync.Mutex
+
 	candidates []model.GroupItem
 	index      int
 	stickyIdx  int    // 粘性通道在 candidates 中的位置，-1 表示无
@@ -34,7 +37,12 @@ type Iterator struct {
 // route round still owns an independent Iterator. It must be called before the
 // iterator records its first skip or forwarded attempt.
 func (it *Iterator) SetAttemptNumberBase(base int) {
-	if it == nil || it.count != 0 {
+	if it == nil {
+		return
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	if it.count != 0 {
 		return
 	}
 	if base < 0 {
@@ -49,6 +57,8 @@ func (it *Iterator) LastAttemptNumber() int {
 	if it == nil {
 		return 0
 	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	return it.attemptNumberBase + it.count
 }
 
@@ -60,13 +70,22 @@ func (it *Iterator) LastAttemptNumber() int {
 const maxSkipAttemptRecords = 200
 
 // appendSkipAttempt 追加一条跳过类记录，超限后只计数不存明细。
-func (it *Iterator) appendSkipAttempt(attempt model.ChannelAttempt) {
+func (it *Iterator) appendSkipAttemptLocked(attempt model.ChannelAttempt) {
 	if it.skipCount >= maxSkipAttemptRecords {
 		it.omittedSkips++
 		return
 	}
 	it.skipCount++
 	it.attempts = append(it.attempts, attempt)
+}
+
+func (it *Iterator) appendAttempt(attempt model.ChannelAttempt) {
+	if it == nil {
+		return
+	}
+	it.mu.Lock()
+	it.attempts = append(it.attempts, attempt)
+	it.mu.Unlock()
 }
 
 // NewIterator 创建负载均衡迭代器
@@ -160,41 +179,79 @@ func deduplicateGroupItems(items []model.GroupItem) []model.GroupItem {
 
 // Next 移动到下一个候选，返回 false 表示遍历完成
 func (it *Iterator) Next() bool {
+	if it == nil {
+		return false
+	}
+	it.mu.Lock()
 	it.index++
-	return it.index < len(it.candidates)
+	ok := it.index < len(it.candidates)
+	it.mu.Unlock()
+	return ok
 }
 
 // Item 返回当前候选的 GroupItem
 func (it *Iterator) Item() model.GroupItem {
+	if it == nil {
+		return model.GroupItem{}
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	if it.index < 0 || it.index >= len(it.candidates) {
+		return model.GroupItem{}
+	}
 	return it.candidates[it.index]
+}
+
+func (it *Iterator) isStickyLocked() bool {
+	return it.stickyIdx >= 0 && it.index == it.stickyIdx
 }
 
 // IsSticky 当前候选是否为粘性通道
 func (it *Iterator) IsSticky() bool {
-	return it.stickyIdx >= 0 && it.index == it.stickyIdx
+	if it == nil {
+		return false
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	return it.isStickyLocked()
 }
 
 // Len 返回候选列表长度
 func (it *Iterator) Len() int {
+	if it == nil {
+		return 0
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	return len(it.candidates)
 }
 
 // Index 返回当前迭代位置（0-based）
 func (it *Iterator) Index() int {
+	if it == nil {
+		return -1
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	return it.index
 }
 
 // Skip 记录当前通道被跳过（通道禁用、无Key、类型不兼容等）
 func (it *Iterator) Skip(channelID, channelKeyID int, channelName, msg string) {
+	if it == nil {
+		return
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	it.count++
-	it.appendSkipAttempt(model.ChannelAttempt{
+	it.appendSkipAttemptLocked(model.ChannelAttempt{
 		ChannelID:    channelID,
 		ChannelKeyID: channelKeyID,
 		ChannelName:  channelName,
-		ModelName:    it.candidates[it.index].ModelName,
+		ModelName:    it.currentModelNameLocked(),
 		AttemptNum:   it.attemptNumberBase + it.count,
 		Status:       model.AttemptSkipped,
-		Sticky:       it.IsSticky(),
+		Sticky:       it.isStickyLocked(),
 		Msg:          msg,
 	})
 }
@@ -209,15 +266,17 @@ func (it *Iterator) SkipCircuitBreak(channelID, channelKeyID int, channelName, m
 	if remaining > 0 {
 		msg = fmt.Sprintf("circuit breaker tripped, remaining cooldown: %ds", int(remaining.Seconds()))
 	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	it.count++
-	it.appendSkipAttempt(model.ChannelAttempt{
+	it.appendSkipAttemptLocked(model.ChannelAttempt{
 		ChannelID:    channelID,
 		ChannelKeyID: channelKeyID,
 		ChannelName:  channelName,
 		ModelName:    modelName,
 		AttemptNum:   it.attemptNumberBase + it.count,
 		Status:       model.AttemptCircuitBreak,
-		Sticky:       it.IsSticky(),
+		Sticky:       it.isStickyLocked(),
 		Msg:          msg,
 	})
 	return true
@@ -225,29 +284,40 @@ func (it *Iterator) SkipCircuitBreak(channelID, channelKeyID int, channelName, m
 
 // StartAttempt 开始一次真实转发尝试，返回 Span 用于记录结果
 func (it *Iterator) StartAttempt(channelID, channelKeyID int, channelName, modelName string) *AttemptSpan {
+	if it == nil {
+		return nil
+	}
+	it.mu.Lock()
 	it.count++
-	return &AttemptSpan{
+	span := &AttemptSpan{
 		attempt: model.ChannelAttempt{
 			ChannelID:    channelID,
 			ChannelKeyID: channelKeyID,
 			ChannelName:  channelName,
 			ModelName:    modelName,
 			AttemptNum:   it.attemptNumberBase + it.count,
-			Sticky:       it.IsSticky(),
+			Sticky:       it.isStickyLocked(),
 		},
 		startTime: time.Now(),
 		iter:      it,
 	}
+	it.mu.Unlock()
+	return span
 }
 
 // Attempts 返回所有决策记录（交给日志模块持久化）。
 // 跳过明细超限时追加一条汇总记录说明省略数量，保证日志读者知道有截断。
 func (it *Iterator) Attempts() []model.ChannelAttempt {
-	if it.omittedSkips == 0 {
-		return it.attempts
+	if it == nil {
+		return nil
 	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	out := make([]model.ChannelAttempt, len(it.attempts), len(it.attempts)+1)
 	copy(out, it.attempts)
+	if it.omittedSkips == 0 {
+		return out
+	}
 	return append(out, model.ChannelAttempt{
 		AttemptNum: it.attemptNumberBase + it.count,
 		Status:     model.AttemptSkipped,
@@ -257,6 +327,11 @@ func (it *Iterator) Attempts() []model.ChannelAttempt {
 
 // ForwardedAttempts 返回真实发往上游的尝试次数，不包含跳过和熔断拒绝。
 func (it *Iterator) ForwardedAttempts() int {
+	if it == nil {
+		return 0
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	count := 0
 	for _, attempt := range it.attempts {
 		if attempt.Status == model.AttemptSkipped || attempt.Status == model.AttemptCircuitBreak {
@@ -269,6 +344,7 @@ func (it *Iterator) ForwardedAttempts() int {
 
 // AttemptSpan 管理单次通道尝试的生命周期（计时、状态、结果）
 type AttemptSpan struct {
+	mu        sync.Mutex
 	attempt   model.ChannelAttempt
 	startTime time.Time
 	iter      *Iterator
@@ -277,7 +353,12 @@ type AttemptSpan struct {
 
 // End 结束尝试：设置状态，自动计算耗时，追加到 Iterator
 func (s *AttemptSpan) End(status model.AttemptStatus, statusCode int, msg string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
 	if s.ended {
+		s.mu.Unlock()
 		return
 	}
 	s.ended = true
@@ -285,7 +366,12 @@ func (s *AttemptSpan) End(status model.AttemptStatus, statusCode int, msg string
 	s.attempt.HTTPStatus = statusCode
 	s.attempt.Duration = int(time.Since(s.startTime).Milliseconds())
 	s.attempt.Msg = msg
-	s.iter.attempts = append(s.iter.attempts, s.attempt)
+	attempt := s.attempt
+	it := s.iter
+	s.mu.Unlock()
+	if it != nil {
+		it.appendAttempt(attempt)
+	}
 }
 
 // SetAdapterType 设置适配器类型（response, chat, anthropic 等）
@@ -308,4 +394,42 @@ func (s *AttemptSpan) StartedAt() time.Time { return s.startTime }
 
 func (s *AttemptSpan) Duration() time.Duration {
 	return time.Since(s.startTime)
+}
+
+// PeekNext keeps candidate order unchanged until a backup is admitted. The
+// coordinator consumes it with Next only after reserving resources.
+func (it *Iterator) PeekNext() (model.GroupItem, bool) {
+	if it == nil {
+		return model.GroupItem{}, false
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	if it.index+1 >= len(it.candidates) {
+		return model.GroupItem{}, false
+	}
+	return it.candidates[it.index+1], true
+}
+func (it *Iterator) HasSticky() bool {
+	if it == nil {
+		return false
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	return it.stickyIdx >= 0
+}
+
+func (it *Iterator) RequestModel() string {
+	if it == nil {
+		return ""
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	return it.modelName
+}
+
+func (it *Iterator) currentModelNameLocked() string {
+	if it.index < 0 || it.index >= len(it.candidates) {
+		return ""
+	}
+	return it.candidates[it.index].ModelName
 }

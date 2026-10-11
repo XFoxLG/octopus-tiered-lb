@@ -43,8 +43,10 @@ type RelayMetrics struct {
 	UserAgent              string
 	StartTime              time.Time
 
-	// 首 Token 时间
+	// 首 Token 时间：FirstTokenTime 保留为客户端首次成功写出时间，用于 FTUT。
 	FirstTokenTime time.Time
+	// UpstreamFirstVisibleTime 记录上游首个可见输出到达时间，用于区分上游延迟和客户端写出延迟。
+	UpstreamFirstVisibleTime time.Time
 
 	// 请求和响应内容
 	InternalRequest  *transformerModel.InternalLLMRequest
@@ -68,11 +70,26 @@ func NewRelayMetrics(apiKeyID int, requestModel string, requestedEndpointType st
 	}
 }
 
-func (m *RelayMetrics) SetFirstTokenTime(t time.Time) {
+func (m *RelayMetrics) SetUpstreamFirstVisibleTime(t time.Time) {
+	if m.UpstreamFirstVisibleTime.IsZero() {
+		m.UpstreamFirstVisibleTime = t
+	}
+}
+
+func (m *RelayMetrics) SetClientFirstFlushTime(t time.Time) {
+	if !m.FirstTokenTime.IsZero() {
+		return
+	}
 	m.FirstTokenTime = t
 	if m.RequestTrace != nil {
 		relaylog.UpdateLiveRequest(m.RequestTrace.id, func(entry *relaylog.LiveRequest) { entry.State = "streaming" })
 	}
+}
+
+// SetFirstTokenTime is retained for callers outside the stream writer; it now
+// records the client-visible milestone rather than an upstream parse milestone.
+func (m *RelayMetrics) SetFirstTokenTime(t time.Time) {
+	m.SetClientFirstFlushTime(t)
 }
 
 func (m *RelayMetrics) SetRequestTrace(trace *relayRequestTrace) {
@@ -102,26 +119,28 @@ func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMRes
 	}
 
 	usage := resp.Usage
-	m.Stats.InputToken = usage.PromptTokens
-	m.Stats.OutputToken = usage.CompletionTokens
-
+	m.Stats.InputToken = max(0, usage.PromptTokens)
+	m.Stats.OutputToken = max(0, usage.CompletionTokens)
+	m.Stats.InputCost, m.Stats.OutputCost = 0, 0
+	cachedTokens := int64(0)
+	if usage.PromptTokensDetails != nil {
+		cachedTokens = max(0, usage.PromptTokensDetails.CachedTokens)
+	}
+	if !usage.AnthropicUsage {
+		cachedTokens = min(cachedTokens, m.Stats.InputToken)
+	}
 	modelPrice := price.EffectiveLLMPrice(actualModel, m.StartTime)
 	if modelPrice == nil {
 		return
 	}
-	if usage.PromptTokensDetails == nil {
-		usage.PromptTokensDetails = &transformerModel.PromptTokensDetails{
-			CachedTokens: 0,
-		}
-	}
 	if usage.AnthropicUsage {
-		m.Stats.InputCost = (float64(usage.PromptTokensDetails.CachedTokens)*modelPrice.CacheRead +
-			float64(usage.PromptTokens)*modelPrice.Input +
-			float64(usage.CacheCreationInputTokens)*modelPrice.CacheWrite) * 1e-6
+		m.Stats.InputCost = (float64(cachedTokens)*modelPrice.CacheRead +
+			float64(m.Stats.InputToken)*modelPrice.Input +
+			float64(max(0, usage.CacheCreationInputTokens))*modelPrice.CacheWrite) * 1e-6
 	} else {
-		m.Stats.InputCost = (float64(usage.PromptTokensDetails.CachedTokens)*modelPrice.CacheRead + float64(usage.PromptTokens-usage.PromptTokensDetails.CachedTokens)*modelPrice.Input) * 1e-6
+		m.Stats.InputCost = (float64(cachedTokens)*modelPrice.CacheRead + float64(m.Stats.InputToken-cachedTokens)*modelPrice.Input) * 1e-6
 	}
-	m.Stats.OutputCost = float64(usage.CompletionTokens) * modelPrice.Output * 1e-6
+	m.Stats.OutputCost = float64(m.Stats.OutputToken) * modelPrice.Output * 1e-6
 }
 
 func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAttempt) {
@@ -287,6 +306,10 @@ func (m *RelayMetrics) recordDailyChannelModelDimensions(ctx context.Context, re
 			attemptStats.OutputCost = requestStats.OutputCost
 		case model.AttemptFailed:
 			attemptStats.RequestFailed = 1
+		case model.AttemptCancelled:
+			// Hedge losers and request-cancelled lanes were real upstream attempts,
+			// but are intentionally excluded from failure health statistics.
+			continue
 		default:
 			continue
 		}
@@ -341,6 +364,13 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		relayLog.RequestAPIKeyName = apiKey.Name
 	}
 
+	// Persist both milestones in detail traces without inferring old records.
+	if !m.UpstreamFirstVisibleTime.IsZero() {
+		relayLog.UpstreamFirstVisibleAt = m.UpstreamFirstVisibleTime.UnixMilli()
+	}
+	if !m.FirstTokenTime.IsZero() {
+		relayLog.ClientFirstFlushAt = m.FirstTokenTime.UnixMilli()
+	}
 	// 首字时间
 	if !m.FirstTokenTime.IsZero() {
 		relayLog.Ftut = int(m.FirstTokenTime.Sub(m.StartTime).Milliseconds())
@@ -348,11 +378,11 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 
 	// Usage
 	if m.InternalResponse != nil && m.InternalResponse.Usage != nil {
-		relayLog.InputTokens = int(m.InternalResponse.Usage.PromptTokens)
-		relayLog.OutputTokens = int(m.InternalResponse.Usage.CompletionTokens)
+		relayLog.InputTokens = int(m.Stats.InputToken)
+		relayLog.OutputTokens = int(m.Stats.OutputToken)
 		relayLog.Cost = m.Stats.InputCost + m.Stats.OutputCost
 		if m.InternalResponse.Usage.CompletionTokensDetails != nil {
-			relayLog.ReasoningTokens = int(m.InternalResponse.Usage.CompletionTokensDetails.ReasoningTokens)
+			relayLog.ReasoningTokens = int(max(0, m.InternalResponse.Usage.CompletionTokensDetails.ReasoningTokens))
 		}
 	}
 
@@ -401,6 +431,9 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		// list-level cache indicators never depend on legacy inline columns.
 		relayLog.CacheReadTokens = cacheReadTokensFromUsage(m.InternalResponse)
 	}
+
+	// Keep log counters bounded while preserving original usage in the body.
+	relayLog.CacheReadTokens = cacheReadTokensFromUsage(m.InternalResponse)
 
 	// 错误信息
 	if err != nil {
@@ -484,7 +517,7 @@ func resolveUsageState(resp *transformerModel.InternalLLMResponse, relayErr erro
 func lastForwardedAttemptNumber(attempts []model.ChannelAttempt) int {
 	for attemptIndex := len(attempts) - 1; attemptIndex >= 0; attemptIndex-- {
 		attempt := attempts[attemptIndex]
-		if attempt.Status == model.AttemptSuccess || attempt.Status == model.AttemptFailed {
+		if attempt.Status == model.AttemptSuccess || attempt.Status == model.AttemptFailed || attempt.Status == model.AttemptCancelled {
 			return attempt.AttemptNum
 		}
 	}
@@ -507,7 +540,11 @@ func cacheReadTokensFromUsage(resp *transformerModel.InternalLLMResponse) int {
 		return 0
 	}
 	if resp.Usage.PromptTokensDetails != nil {
-		return int(resp.Usage.PromptTokensDetails.CachedTokens)
+		cached := max(0, resp.Usage.PromptTokensDetails.CachedTokens)
+		if !resp.Usage.AnthropicUsage {
+			cached = min(cached, max(0, resp.Usage.PromptTokens))
+		}
+		return int(cached)
 	}
 	return 0
 }
