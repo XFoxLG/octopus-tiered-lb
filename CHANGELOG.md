@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.8.6] - 2026-10-13
+
+### 🚀 Features
+- **Relay**: 同协议流式直通——passthrough/raw 出站且入站协议一致时，保留上游 SSE 原始字节并直接写给客户端，跳过每个 chunk 的二次 JSON 序列化；usage、终止状态、stream session、首字与日志采集继续由内部解析路径维护。
+
+### 🐛 Bug Fixes
+- **Log**: 废除单条日志正文超过 2 MiB 就整条抹空的旧机制。长上下文请求与响应现在完整经 Gzip 压缩后写入 content blob，列表只返回元数据，详情按需解压；迁移 075 会清理旧的 `relay_log_max_content_size_mb` 设置行。
+
+## [v2.8.5] - 2026-10-11
+
+### 🚀 Features
+- **Relay**: 新增默认关闭的分组级两路 hedge 竞速；主路首字迟迟未到时才启动备用路，只有一条请求可以写客户端，取消的备用路不污染 sticky、计费或失败统计。
+- **Relay**: 拆分 `upstream_first_visible_at` 与 `client_first_flush_at`，同时记录上游首个可见内容和客户端真正收到首个刷新，便于区分上游慢与网关写出慢。
+
+### 🐛 Bug Fixes
+- **Stream Session/Group**: 修复 race 检测器发现的分组规范化共享数组与会话驱逐跨测试边界竞争，并将 relay stream race 检查纳入 quality 工作流。
+
+### 🔧 Improvements
+- **Security/Build**: 更新 Go、x/net、Next、Node 与 Alpine 构建/运行镜像依赖，补齐镜像安全升级与锁文件配置。
+
+## [v2.8.4] - 2026-10-09
+
+### 🐛 Bug Fixes
+- **Log/Web**: 修复缓存日志与数据库日志分页、滚动加载和排序边界不同步，避免列表翻页时出现重复、跳项或顺序错乱。
+
+## [v2.8.3] - 2026-10-09
+
+### 🚀 Features
+- **Channel**: 新增手动一键能力探测与结论落库。探测协议、模型列表、文本生成、工具调用、结构化输出和联网搜索，使用 pass/fail/unsupported/unknown 四态判定；只有明确结论才允许人工应用，不因一次限流或网络错误自动删配置。
+- **Channel/Relay**: 出站协议决策下沉到渠道，支持渠道级协议优先级、地址绑定、超时覆盖和 reasoning 缓冲策略；透传适配器增加能力闸门，避免把原生 Gemini/Anthropic 等渠道误当成 OpenAI 兼容接口。
+
+### 🐛 Bug Fixes
+- **Relay**: 修复 inline reasoning、provider refusal、终止状态和日志正文状态处理，补齐渠道协议回退、客户端断连和上游元数据相关边界。
+
+## [v2.8.2] - 2026-10-09
+
+### 🐛 Bug Fixes
+- **Channel/Web**: 修复渠道协议迁移预览在失败或不可转换时无限加载，统一标准接口鉴权/兼容性判断，并将模型目录失败原因以 502 返回。
+
+## [v2.8.1] - 2026-10-08
+
+### 🐛 Bug Fixes
+- **Log**: 修正 Render/Cloudflare 等托管平台下客户端 IP 展示来源，补充 True-Client-IP、代理来源徽标和私有网段过滤；展示轨与安全鉴权轨继续分离。
+
+## [v2.8.0] - 2026-10-08
+
+### 🚀 Features
+- **Channel**: 新建渠道改为配置接口协议与地址，保留旧品牌型渠道兼容；支持多协议地址、协议回退和透传能力判定。
+
+### 🐛 Bug Fixes
+- **Relay**: 修复协议回退误冷却共享 Key、reasoning_effort 不兼容时错误终止客户端等问题。
+
+### 🔧 Improvements
+- **Web/Log**: 停用下游全局与 API Key 速率限制（保留渠道限速与登录保护），精简日志列表并保留正文预览与诊断折叠。
+
+## [v2.7.3] - 2026-10-07
+
+### 🐛 Bug Fixes
+- **Channel/Probe**: 探测失败或渠道更新失败时保留已有能力结论和模型权限，避免一次临时错误清空可用配置。
+
+## [v2.7.2] - 2026-10-06
+
+### 🐛 Bug Fixes
+- **Channel**: 将按 key 同步的模型目录容量从旧的 512 字符限制提升到适配长目录的安全上限，避免长模型列表更新时报 500 或被静默丢弃。
+
+## [v2.7.1] - 2026-09-29
+
+### 🚀 Features
+- **Balancer/AI Route/Web**: 补充 Auto 路由探索与利用、TTFT 评分、sticky 逃生、AI 服务池结构化编辑、自校验追问和 JSON mode 配置入口。
+
+### 🐛 Bug Fixes
+- **Relay/Channel**: 客户端断连不再计入熔断，`[DONE]` 后主动收尾，媒体流增加空闲超时；删除渠道后同步清理分组缓存与相关状态；备份导入导出修复密钥加密与 hash 回填。
+- **Web/Client**: 修复渠道错误策略文案、表单无障碍名称、响应头超时和加权分配真实分流问题。
+
+## [v2.7.0] - 2026-09-27
+
+### 🚀 Features
+- **Rate Limit**: 新增全站 RPM 与并发上限设置，作用域限定在四条转发路由；API Key TPM 成功后按真实 input+output token 回扣，默认关闭时保持旧行为。
+
+### 🐛 Bug Fixes
+- **Relay**: 增加渠道级错误拦截、错误分级和自定义错误策略入口，明确区分客户端错误、可重试上游错误与终态错误。
+
 ## [v2.6.6] - 2026-09-22
 
 ### 🐛 Bug Fixes
