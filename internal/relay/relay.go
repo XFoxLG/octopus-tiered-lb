@@ -1452,7 +1452,16 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			continue
 		}
 
-		// 可见内容到达，先 flush 暂存的 reasoning buffer
+	// 同协议直通：上游适配器已按原格式解析，出站直通透传。字节不再二次序列化，
+	// 直接把原 SSE data 封装写回客户端；visible/状态记录仍复用原有 chunk 解析。
+	if ra.canPassthroughStream() && len(data) > 0 {
+		rawFrame := passthroughStreamEvent(r.data)
+		if len(rawFrame) > 0 {
+			data = rawFrame
+		}
+	}
+
+	// 可见内容到达，先 flush 暂存的 reasoning buffer
 		if len(reasoningBuffer) > 0 {
 			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 			if clientDisconnected && ra.streamSession == nil {

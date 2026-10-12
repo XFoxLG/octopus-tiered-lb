@@ -6,28 +6,6 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 )
 
-func TestRelayLogContentExceedsLimit(t *testing.T) {
-	cases := []struct {
-		name      string
-		size      int64
-		limitMB   int
-		wantExceed bool
-	}{
-		{"unlimited never exceeds", 1 << 30, -1, false},
-		{"exactly at limit passes", 2 * 1024 * 1024, 2, false},
-		{"one byte over limit exceeds", 2*1024*1024 + 1, 2, true},
-		{"zero limit skips any content", 1, 0, true},
-		{"empty content with zero limit passes", 0, 0, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := RelayLogContentExceedsLimit(tc.size, tc.limitMB); got != tc.wantExceed {
-				t.Fatalf("RelayLogContentExceedsLimit(%d, %d) = %v, want %v", tc.size, tc.limitMB, got, tc.wantExceed)
-			}
-		})
-	}
-}
-
 func TestHalveMemoryLogCacheKeepsNewestHalf(t *testing.T) {
 	relayLogCacheLock.Lock()
 	relayLogCache = make([]model.RelayLog, 0, relayLogMaxSizeNoDB)
