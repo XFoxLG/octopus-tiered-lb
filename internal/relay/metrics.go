@@ -458,16 +458,6 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		relayLog.ProviderTerminationReason = termination.ProviderReason
 	}
 
-	// 单条日志正文上限（XyzenSun 移植）：请求与响应正文合计超限则整条跳过，
-	// 避免超大 body（如长上下文原文）打爆日志库与内存。-1=不限。
-	if relaylog.RelayLogContentExceedsLimit(int64(len(relayLog.RequestContent)+len(relayLog.ResponseContent)), relaylog.GetRelayLogMaxContentSizeMB()) {
-		log.Warnf("relay log skipped: content size=%d bytes exceeds limit", len(relayLog.RequestContent)+len(relayLog.ResponseContent))
-		relayLog.RequestContent = ""
-		relayLog.ResponseContent = ""
-		relayLog.ContentState = model.RelayLogContentStateUnavailable
-		relayLog.ContentUnavailableError = "legacy normalized content exceeds configured limit"
-	}
-
 	if m.RequestTrace != nil {
 		if contentEnabled && m.InternalResponse != nil {
 			if normalizedResponse, marshalErr := jsonAPI.Marshal(m.InternalResponse); marshalErr == nil {

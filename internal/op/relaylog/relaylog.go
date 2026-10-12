@@ -28,9 +28,6 @@ const relayLogMaxSize = 200
 const relayLogMaxSizeNoDB = 200 // 当不保存到数据库时，允许更大的缓存用于实时查询
 const relayLogStreamTokenTTL = 5 * time.Minute
 
-// DefaultRelayLogMaxContentSizeMB 是单条日志正文上限默认值（MiB）。
-const DefaultRelayLogMaxContentSizeMB = 2
-
 // DefaultRelayLogMemoryLogMaxDimidiateTimes 是仅内存模式下折半次数阈值默认值。
 const DefaultRelayLogMemoryLogMaxDimidiateTimes = 15
 
@@ -38,25 +35,6 @@ const DefaultRelayLogMemoryLogMaxDimidiateTimes = 15
 // 达到阈值后主动调用一次 runtime.GC，及时回收旧日志正文占用的堆内存。
 // 计数更新复用 relayLogCacheLock，无需额外加锁。
 var memoryLogDimidiateTimes int
-
-// GetRelayLogMaxContentSizeMB 读取单条日志正文上限（MiB），-1=不限。
-// 读取失败或非法值回退默认值。
-func GetRelayLogMaxContentSizeMB() int {
-	v, err := setting.GetInt(model.SettingKeyRelayLogMaxContentSizeMB)
-	if err != nil || v < -1 {
-		return DefaultRelayLogMaxContentSizeMB
-	}
-	return v
-}
-
-// RelayLogContentExceedsLimit 报告正文合计字节数是否超限。-1 表示不限。
-func RelayLogContentExceedsLimit(contentSize int64, maxContentSizeMB int) bool {
-	if maxContentSizeMB == -1 {
-		return false
-	}
-	const bytesPerMiB = 1024 * 1024
-	return contentSize > int64(maxContentSizeMB)*bytesPerMiB
-}
 
 // getMemoryLogMaxDimidiateTimes 读取折半 GC 阈值，-1=关闭。非法值回退默认值。
 func getMemoryLogMaxDimidiateTimes() int {
