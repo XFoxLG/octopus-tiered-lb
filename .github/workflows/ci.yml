@@ -37,7 +37,8 @@ jobs:
       # 否则同二进制里先跑的 SQLite 测试会吃掉整条 after 链，Postgres 侧零迁移通过。
       # v2.8.6 的迁移 075 方言错误正是从这个盲区漏到线上的。
       - name: PostgreSQL full migration chain (fresh schema)
-        run: go test -count=1 -p 1 ./internal/db/pgchain/...
+        # -v 让日志里留下 --- PASS / --- SKIP，避免「静默跳过」被误读成通过。
+        run: go test -count=1 -v -p 1 ./internal/db/pgchain/...
   build-and-test:
     runs-on: ubuntu-latest
     env:
