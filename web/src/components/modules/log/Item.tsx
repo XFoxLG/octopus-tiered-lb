@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
-import { reportedIPSourceToken, resolveLogDisplayFields } from './display';
+import { formatLogDuration, reportedIPSourceToken, resolveFirstTokenMilestones, resolveLogDisplayFields } from './display';
 import { BoundaryDetails } from './BoundaryDetails';
 import { logIssueSummary } from './body-preview';
 import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
@@ -226,6 +226,9 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
     );
     const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);
     const displayFields = useMemo(() => resolveLogDisplayFields(log, detail, channelNameById), [channelNameById, detail, log]);
+    // 首字双里程碑（上游首个可见内容 / 客户端首次写出）：日志时间戳是 Unix
+    // 毫秒，log.time 是请求开始的 Unix 秒。未观测到的里程碑不展示对应行。
+    const firstTokenMilestones = useMemo(() => resolveFirstTokenMilestones(log), [log]);
     const vis = useLogFieldVisibility();
     const compact = useLogFieldVisibilityStore(s => s.compact);
     const chinaMode = useSettingStore((s) => s.chinaMode);
@@ -422,7 +425,20 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 )}
                                 <div className="flex items-center gap-1.5">
                                     <Zap className="size-3.5 shrink-0 text-amber-500" />
-                                    <span>{t('firstToken')} {formatDuration(log.ftut)}</span>
+                                    {log.ftut > 0 ? (
+                                        <span>{t('firstToken')} {formatLogDuration(log.ftut)}</span>
+                                    ) : (
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <span className="cursor-help underline decoration-dotted underline-offset-2">
+                                                    {t('firstToken')} {formatLogDuration(log.ftut)}
+                                                </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent className="border bg-card p-2 rounded-xl text-xs">
+                                                {t('firstTokenNotRecorded')}
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    )}
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                     <Cpu className="size-3.5 shrink-0 text-blue-500" />
@@ -757,8 +773,33 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                             )}
                             <div className="flex items-center gap-1.5">
                                 <Zap className="size-3.5 text-amber-500" />
-                                <span>{t('firstTokenTime')}: {formatDuration(log.ftut)}</span>
+                                {log.ftut > 0 ? (
+                                    <span>{t('firstTokenTime')}: {formatLogDuration(log.ftut)}</span>
+                                ) : (
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <span className="cursor-help underline decoration-dotted underline-offset-2">
+                                                {t('firstTokenTime')}: {formatLogDuration(log.ftut)}
+                                            </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="border bg-card p-2 rounded-xl text-xs">
+                                            {t('firstTokenNotRecorded')}
+                                        </TooltipContent>
+                                    </Tooltip>
+                                )}
                             </div>
+                            {firstTokenMilestones.upstreamFirstVisibleMs > 0 && (
+                                <div className="flex items-center gap-1.5">
+                                    <ArrowDown className="size-3.5 text-sky-500" />
+                                    <span>{t('upstreamFirstToken')}: {formatLogDuration(firstTokenMilestones.upstreamFirstVisibleMs)}</span>
+                                </div>
+                            )}
+                            {firstTokenMilestones.clientFirstFlushMs > 0 && (
+                                <div className="flex items-center gap-1.5">
+                                    <ArrowUpFromLine className="size-3.5 text-emerald-500" />
+                                    <span>{t('clientFirstFlush')}: {formatLogDuration(firstTokenMilestones.clientFirstFlushMs)}</span>
+                                </div>
+                            )}
                             <div className="flex items-center gap-1.5">
                                 <Cpu className="size-3.5 text-blue-500" />
                                 <span>{t('totalTime')}: {formatDuration(log.use_time)}</span>

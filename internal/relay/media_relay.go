@@ -77,7 +77,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 	// 1. Extract model name from the request
 	requestModel, bodyBytes, streamRequested, err := extractModelFromRequest(c, cfg)
 	if err != nil {
-		resp.Error(c, relayRequestBodyErrorStatus(err), err.Error())
+		rejectRelayRequestBody(c, err)
 		return
 	}
 	if cfg.MultipartInput && c.Request.MultipartForm != nil {
@@ -612,7 +612,7 @@ func extractModelFromRequest(c *gin.Context, cfg mediaEndpointConfig) (string, [
 
 // extractModelFromJSON reads the JSON body and extracts the "model" field.
 func extractModelFromJSON(c *gin.Context) (string, []byte, bool, error) {
-	body, err := readLimitedRequestBody(c, getMaxRelayJSONBodyBytes())
+	body, err := readRelayRequestBody(c, getMaxRelayJSONBodyBytes())
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -637,7 +637,11 @@ func extractModelFromMultipart(c *gin.Context) (string, []byte, bool, error) {
 		return extractModelFromJSON(c)
 	}
 
-	limitRequestBody(c, getMaxRelayMultipartBodyBytes())
+	limit := getMaxRelayMultipartBodyBytes()
+	if err := precheckRelayRequestBodySize(c, limit); err != nil {
+		return "", nil, false, err
+	}
+	limitRequestBody(c, limit)
 
 	// Parse the multipart form
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {

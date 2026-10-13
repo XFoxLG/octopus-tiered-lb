@@ -64,6 +64,9 @@ export interface RelayLog {
     reasoning_tokens?: number;   // 上游返回的思考 Token（确定性）
     reasoning_chars?: number;    // 思考文本字符数（无官方 token 时的估算回退）
     usage_state?: string;        // 用量可信度标注（reported/成因），空=历史行无标注
+    // Unix 毫秒；0/缺失表示该里程碑未被观测到（例如非流式请求）。
+    upstream_first_visible_at?: number; // 收到上游首个可见内容的时刻
+    client_first_flush_at?: number;     // 网关第一次成功 Write+Flush 给客户端的时刻
     ftut: number;                // 首字时间(毫秒)
     use_time: number;            // 总用时(毫秒)
     cost: number;                // 消耗费用

@@ -40,6 +40,9 @@ var startCmd = &cobra.Command{
 
 func runStart() error {
 	shutdown.Init(log.Logger)
+	// Install the memory guard before any database or cache client allocates,
+	// so a 512MB container degrades into GC pressure instead of an OOM kill.
+	applyRuntimeMemoryLimits()
 
 	if key := conf.AppConfig.Security.EncryptionKey; key != "" {
 		crypto.Init(key)

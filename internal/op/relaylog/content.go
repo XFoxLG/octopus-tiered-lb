@@ -21,15 +21,47 @@ import (
 )
 
 const (
-	// The queue owns complete bundles, never partial prefixes. When this budget
-	// is exhausted, metadata is retained and the whole new bundle is marked
-	// unavailable instead of allowing unbounded heap growth.
-	relayLogPendingContentMaxBytes int64 = 64 << 20
+	// Soft budget for pending content bundles. Crossing it no longer discards
+	// content outright: RelayLogAdd first triggers a flush and waits (bounded)
+	// for the backlog to drain. The hard safety cap below is the only point
+	// where a bundle is degraded for memory reasons.
+	relayLogPendingContentHardCapMultiplier int64 = 3
 
 	// Content storage deliberately uses only part of the 1 GiB Aiven Free disk.
 	// Operators can override this through relay_log_content_keep_size_mb.
 	defaultRelayLogContentKeepSizeMB = 256
+
+	// Truthful degradation reasons (previously everything said
+	// "content queue byte budget exceeded", which hid whether the database was
+	// slow, failing, or simply overloaded by one huge bundle).
+	relayLogHardCapDegradeReason = "content backlog exceeded the hard memory safety cap (3x the soft budget) after a bounded flush wait"
+
+	relayLogMetadataOnlyBudgetReason = "content queue byte budget exceeded while relay log persistence is disabled"
 )
+
+// relayLogPendingContentMaxBytes is the soft budget. Kept as a var so tests can
+// shrink it; production code never writes it.
+var relayLogPendingContentMaxBytes int64 = 64 << 20
+
+// relayLogPendingContentHardMaxBytes returns the hard safety cap: three times
+// the soft budget (192 MiB by default). Beyond it, complete bundles are
+// degraded to metadata so a stuck database cannot grow the heap without bound.
+func relayLogPendingContentHardMaxBytes() int64 {
+	return relayLogPendingContentMaxBytes * relayLogPendingContentHardCapMultiplier
+}
+
+// relayLogBundleExceedsSoftBudget reports whether the soft budget would be
+// crossed by admitting this bundle.
+func relayLogBundleExceedsSoftBudget(payloadBytes, pendingBytes int64) bool {
+	return payloadBytes > relayLogPendingContentMaxBytes ||
+		pendingBytes+payloadBytes > relayLogPendingContentMaxBytes
+}
+
+// relayLogBundleExceedsHardCap reports whether admitting this bundle would push
+// the pending backlog past the hard memory safety cap.
+func relayLogBundleExceedsHardCap(payloadBytes, pendingBytes int64) bool {
+	return pendingBytes+payloadBytes > relayLogPendingContentHardMaxBytes()
+}
 
 func relayLogCapturedPayloadBytes(relayLog *model.RelayLog) int64 {
 	if relayLog == nil {
@@ -72,7 +104,11 @@ func markRelayLogContentUnavailable(relayLog *model.RelayLog, reason string) {
 	}
 }
 
-func prepareRelayLogContentForQueue(relayLog *model.RelayLog, pendingBytes int64) int64 {
+// prepareRelayLogContentForQueue classifies captured content before it enters
+// the queue. When enforceBudget is set (log persistence is disabled, so there
+// is nothing to flush to), the legacy byte-budget guard still applies to keep
+// the process heap bounded.
+func prepareRelayLogContentForQueue(relayLog *model.RelayLog, pendingBytes int64, enforceBudget bool) int64 {
 	if relayLog == nil {
 		return 0
 	}
@@ -85,8 +121,8 @@ func prepareRelayLogContentForQueue(relayLog *model.RelayLog, pendingBytes int64
 		if payloadBytes == 0 {
 			return 0
 		}
-		if payloadBytes > relayLogPendingContentMaxBytes || pendingBytes+payloadBytes > relayLogPendingContentMaxBytes {
-			markRelayLogContentUnavailable(relayLog, "content queue byte budget exceeded")
+		if enforceBudget && relayLogBundleExceedsSoftBudget(payloadBytes, pendingBytes) {
+			markRelayLogContentUnavailable(relayLog, relayLogMetadataOnlyBudgetReason)
 			return 0
 		}
 		if relayLog.ContentState == "" {
@@ -95,8 +131,8 @@ func prepareRelayLogContentForQueue(relayLog *model.RelayLog, pendingBytes int64
 		return payloadBytes
 	}
 
-	if payloadBytes > relayLogPendingContentMaxBytes || pendingBytes+payloadBytes > relayLogPendingContentMaxBytes {
-		markRelayLogContentUnavailable(relayLog, "content queue byte budget exceeded")
+	if enforceBudget && relayLogBundleExceedsSoftBudget(payloadBytes, pendingBytes) {
+		markRelayLogContentUnavailable(relayLog, relayLogMetadataOnlyBudgetReason)
 		return 0
 	}
 
