@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.8.7] - 2026-10-13
+
+### 🐛 Bug Fixes
+- **Database/Deploy**: 修复迁移 075 的 PostgreSQL 方言错误。原先直接写入的反引号 `` `key` `` 会被 PostgreSQL 当成自定义操作符，执行时报 `syntax error at or near "=" (SQLSTATE 42601)`，导致 v2.8.6 在 PostgreSQL 部署上迁移失败并在启动时退出（Render 部署失败事故）。列名改为交给 GORM 按方言引用；迁移 011 与 034 的同类写法一并修正，避免全新 PostgreSQL 部署卡在更早的迁移上。
+
+### 🔧 Improvements
+- **CI**: 新增 `internal/db/pgchain` 回归测试，在全新 PostgreSQL schema 上执行完整迁移链并校验迁移记录确实落库。此前的 postgres-stability 任务因迁移注册表在进程内一次性清空（同测试二进制里 SQLite 测试先消费掉整条 after 链）而实际「零 after-migration」通过，是本次事故的 CI 盲区。
+
 ## [v2.8.6] - 2026-10-13
 
 ### 🚀 Features
