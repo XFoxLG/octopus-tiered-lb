@@ -2,7 +2,52 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { RelayLog, RelayLogDetail } from '@/api/endpoints/log';
-import { formatJsonForCopy, reportedIPSourceToken, resolveLogDisplayFields } from './display.ts';
+import {
+    formatJsonForCopy,
+    formatLogDuration,
+    reportedIPSourceToken,
+    resolveFirstTokenMilestones,
+    resolveLogDisplayFields,
+} from './display.ts';
+
+test('formatLogDuration renders a dash when the metric was not recorded', () => {
+    assert.equal(formatLogDuration(0), '—');
+    assert.equal(formatLogDuration(undefined), '—');
+    assert.equal(formatLogDuration(null), '—');
+    assert.equal(formatLogDuration(-1), '—');
+});
+
+test('formatLogDuration keeps millisecond and second rendering for recorded values', () => {
+    assert.equal(formatLogDuration(850), '850ms');
+    assert.equal(formatLogDuration(1500), '1.50s');
+});
+
+test('resolveFirstTokenMilestones converts absolute timestamps to request-relative values', () => {
+    const milestones = resolveFirstTokenMilestones({
+        time: 1_700_000_000,
+        upstream_first_visible_at: 1_700_000_000_000 + 1_200,
+        client_first_flush_at: 1_700_000_000_000 + 1_500,
+    });
+    assert.equal(milestones.upstreamFirstVisibleMs, 1_200);
+    assert.equal(milestones.clientFirstFlushMs, 1_500);
+});
+
+test('resolveFirstTokenMilestones hides unobserved or invalid milestones', () => {
+    const unobserved = resolveFirstTokenMilestones({ time: 1_700_000_000 });
+    assert.equal(unobserved.upstreamFirstVisibleMs, 0);
+    assert.equal(unobserved.clientFirstFlushMs, 0);
+
+    // Timestamps before the request start (clock skew / zeroed columns) are
+    // not rendered as negative durations.
+    const skewed = resolveFirstTokenMilestones({
+        time: 1_700_000_000,
+        upstream_first_visible_at: 1_700_000_000_000 - 500,
+        client_first_flush_at: 0,
+    });
+    assert.equal(skewed.upstreamFirstVisibleMs, 0);
+    assert.equal(skewed.clientFirstFlushMs, 0);
+});
+
 
 function buildLog(overrides: Partial<RelayLog> = {}): RelayLog {
     return {

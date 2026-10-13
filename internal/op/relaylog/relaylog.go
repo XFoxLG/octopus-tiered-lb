@@ -15,9 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/cacheusage"
+	"github.com/lingyuins/octopus/internal/op/errorlog"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/snowflake"
@@ -95,6 +97,7 @@ var relayLogPendingContentBytes int64
 var relayLogDroppedRecords atomic.Int64
 var relayLogDroppedNotifications atomic.Int64
 var relayLogUnavailableContentBundles atomic.Int64
+var relayLogContentHardCapDegrades atomic.Int64
 var relayLogPersistenceFailures atomic.Int64
 var relayLogLastPersistenceFailureAt atomic.Int64
 var relayLogLastPersistenceError atomic.Value
@@ -228,6 +231,99 @@ func triggerFlush() {
 	select {
 	case flushCh <- struct{}{}:
 	default:
+	}
+}
+
+// Pending-queue drain policy: crossing the soft byte budget or filling the
+// record queue first triggers a flush and waits (bounded) for the backlog to
+// make room. Only a timed-out wait or a genuinely oversized bundle degrades
+// content to metadata-only.
+const (
+	relayLogPendingContentDrainPollInterval = 100 * time.Millisecond
+	relayLogPendingContentDrainRetrigger    = 2 * time.Second
+
+	// relayLogQueueStayedFullDropReason replaces the old "queue policy" text
+	// when a record has to be displaced after the bounded wait failed. The
+	// cause is the database not draining, not an arbitrary policy choice.
+	relayLogQueueStayedFullDropReason = "log queue stayed full after a bounded flush wait (database slow or failing)"
+)
+
+// relayLogPendingContentDrainTimeout is a var so tests can shrink it.
+var relayLogPendingContentDrainTimeout = 30 * time.Second
+
+// relayLogQueueNeedsDrain reports whether admitting this bundle would cross the
+// soft budget or fill the record queue. A single bundle larger than the soft
+// budget is exempt: draining cannot make it fit, so it goes straight to the
+// flush queue instead of waiting for an impossible condition.
+func relayLogQueueNeedsDrain(payloadBytes int64, maxSize int) bool {
+	if payloadBytes > relayLogPendingContentMaxBytes {
+		return false
+	}
+	relayLogCacheLock.Lock()
+	defer relayLogCacheLock.Unlock()
+	return relayLogPendingContentBytes+payloadBytes > relayLogPendingContentMaxBytes ||
+		len(relayLogCache) >= maxSize
+}
+
+func relayLogQueueHasRoomFor(payloadBytes int64, maxSize int) bool {
+	relayLogCacheLock.Lock()
+	defer relayLogCacheLock.Unlock()
+	return relayLogPendingContentBytes+payloadBytes <= relayLogPendingContentMaxBytes &&
+		len(relayLogCache) < maxSize
+}
+
+// waitForRelayLogQueueDrain triggers flushes and polls until the queue can hold
+// the incoming bundle or the bounded wait budget runs out.
+func waitForRelayLogQueueDrain(payloadBytes int64, maxSize int) bool {
+	deadline := time.Now().Add(relayLogPendingContentDrainTimeout)
+	lastTrigger := time.Time{}
+	for {
+		if relayLogQueueHasRoomFor(payloadBytes, maxSize) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		if time.Since(lastTrigger) >= relayLogPendingContentDrainRetrigger {
+			triggerFlush()
+			lastTrigger = time.Now()
+		}
+		time.Sleep(relayLogPendingContentDrainPollInterval)
+	}
+}
+
+// relayLogDrainTimeoutReason builds the truthful degradation reason, appending
+// the last persistence error when the flush itself reported one.
+func relayLogDrainTimeoutReason() string {
+	reason := fmt.Sprintf("log persistence did not drain within %s (database slow or failing)", relayLogPendingContentDrainTimeout)
+	if stored := relayLogLastPersistenceError.Load(); stored != nil {
+		if text, _ := stored.(string); text != "" {
+			reason += ": " + text
+		}
+	}
+	return reason
+}
+
+// writeRelayLogHardCapErrorLog records the last-resort degradation event. The
+// running total is embedded in the message so the event stays observable
+// without a schema change.
+func writeRelayLogHardCapErrorLog(relayLogID int64, payloadBytes int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entry := model.ErrorLog{
+		Source: "backend",
+		Level:  "error",
+		Message: fmt.Sprintf(
+			"relay log content degraded: pending content crossed the hard safety cap (%d MiB); relay_log_id=%d payload_bytes=%d hard_cap_degrade_total=%d",
+			relayLogPendingContentHardMaxBytes()>>20,
+			relayLogID,
+			payloadBytes,
+			relayLogContentHardCapDegrades.Load(),
+		),
+		Version: conf.Version,
+	}
+	if err := errorlog.Add(ctx, entry); err != nil {
+		log.Warnf("failed to record relay log hard-cap degradation: %v", err)
 	}
 }
 
@@ -370,6 +466,14 @@ func relayLogFlushToDB(ctx context.Context) error {
 	copy(batch, relayLogCache)
 	// 记录 batch 中最后一条日志的 ID，用于安全截断
 	lastFlushedID := batch[len(batch)-1].ID
+	// batch 与缓存条目共享 Contents 底层数组：下面释放 batch 的大字段引用会同时
+	// 清空缓存条目的 Data，届时再统计字节数永远为 0，pending 计数只增不减
+	// （会让队列在累计到软预算后永久误判为超限）。因此在释放之前按 ID 快照，
+	// 供截断时精确扣减。
+	pendingBytesByCacheID := make(map[int64]int64, len(relayLogCache))
+	for i := range relayLogCache {
+		pendingBytesByCacheID[relayLogCache[i].ID] = relayLogCapturedPayloadBytes(&relayLogCache[i])
+	}
 	relayLogCacheLock.Unlock()
 
 	// 独立日志库被关闭（CloseLogDB）时 GetLogDB 返回 nil；此时不应写入，
@@ -419,7 +523,7 @@ func relayLogFlushToDB(ctx context.Context) error {
 	if cutIdx > 0 {
 		// 显式清空被截断前缀的大字段，避免底层数组仍被引用时拖住内存。
 		for i := 0; i < cutIdx; i++ {
-			relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLogCache[i])
+			relayLogPendingContentBytes -= pendingBytesByCacheID[relayLogCache[i].ID]
 			relayLogCache[i].RequestContent = ""
 			relayLogCache[i].ResponseContent = ""
 			releaseRelayLogCapturedPayloads(&relayLogCache[i])
@@ -464,11 +568,53 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (logID int64, add
 		relayLog.PersistenceState = model.RelayLogPersistencePending
 	}
 
+	logPersistenceActive := enabled && db.GetLogDB() != nil
+
+	// Content must not be silently discarded just because the queue is
+	// momentarily full or the byte budget is tight: flush first and wait
+	// (bounded) for the backlog to drain before any degradation decision.
+	drainTimedOut := false
+	if logPersistenceActive {
+		if payloadBytes := relayLogCapturedPayloadBytes(&relayLog); relayLogQueueNeedsDrain(payloadBytes, maxSize) {
+			if !waitForRelayLogQueueDrain(payloadBytes, maxSize) {
+				drainTimedOut = true
+				log.Warnf("relay log queue did not drain within %s; content is degraded only if the soft budget is still exceeded", relayLogPendingContentDrainTimeout)
+			}
+		}
+	}
+
 	relayLogCacheLock.Lock()
-	payloadBytes := prepareRelayLogContentForQueue(&relayLog, relayLogPendingContentBytes)
+	payloadBytes := prepareRelayLogContentForQueue(&relayLog, relayLogPendingContentBytes, !logPersistenceActive)
+	degradedPayloadBytes := int64(0)
+	hardCapDegraded := false
+	if logPersistenceActive {
+		switch {
+		case relayLogBundleExceedsHardCap(payloadBytes, relayLogPendingContentBytes):
+			// Last-resort memory guard: a stuck database plus a huge bundle
+			// must not grow the heap without bound.
+			hardCapDegraded = true
+			degradedPayloadBytes = payloadBytes
+			relayLogContentHardCapDegrades.Add(1)
+			markRelayLogContentUnavailable(&relayLog, relayLogHardCapDegradeReason)
+			payloadBytes = 0
+		case drainTimedOut && relayLogBundleExceedsSoftBudget(payloadBytes, relayLogPendingContentBytes):
+			// The bounded flush wait failed, so this is a persistence problem
+			// (slow or failing database), not an arbitrary byte policy.
+			markRelayLogContentUnavailable(&relayLog, relayLogDrainTimeoutReason())
+			payloadBytes = 0
+		}
+	}
 	var droppedRelayLog *model.RelayLog
 	var droppedReason string
 	needMemoryLogGC := false
+	// Registered while the cache lock is held but executed after RelayLogAdd
+	// returns (every early-return path unlocks first), so the error-log write
+	// never runs on the hot-path lock.
+	defer func() {
+		if hardCapDegraded {
+			writeRelayLogHardCapErrorLog(relayLog.ID, degradedPayloadBytes)
+		}
+	}()
 	// GC 必须在锁外触发，避免阻塞日志热路径。
 	defer func() {
 		if needMemoryLogGC {
@@ -494,7 +640,7 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (logID int64, add
 				triggerFlush()
 				releaseRelayLogCapturedPayloads(&relayLog)
 				relayLogDroppedRecords.Add(1)
-				enqueueUnavailableRelayLogMetadata(relayLog, "metadata queue is full while flush is pending")
+				enqueueUnavailableRelayLogMetadata(relayLog, relayLogQueueStayedFullDropReason)
 				return relayLog.ID, nil
 			}
 			// 不保存到数据库时，保留最近一半并重建底层数组，
@@ -506,7 +652,7 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (logID int64, add
 			// 丢弃最旧日志（推荐：保留最新的诊断数据）
 			dropped := relayLogCache[0]
 			droppedRelayLog = &dropped
-			droppedReason = "oldest pending log was displaced by queue policy"
+			droppedReason = relayLogQueueStayedFullDropReason
 			relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLogCache[0])
 			releaseRelayLogCapturedPayloads(&relayLogCache[0])
 			relayLogCache = relayLogCache[1:]
@@ -517,13 +663,13 @@ func RelayLogAdd(ctx context.Context, relayLog model.RelayLog) (logID int64, add
 			relayLogCacheLock.Unlock()
 			releaseRelayLogCapturedPayloads(&relayLog)
 			relayLogDroppedRecords.Add(1)
-			enqueueUnavailableRelayLogMetadata(relayLog, "newest log was dropped by queue policy")
+			enqueueUnavailableRelayLogMetadata(relayLog, relayLogQueueStayedFullDropReason)
 			return relayLog.ID, nil
 		default:
 			// 未知策略，回退到丢弃最旧
 			dropped := relayLogCache[0]
 			droppedRelayLog = &dropped
-			droppedReason = "oldest pending log was displaced by unknown queue policy"
+			droppedReason = relayLogQueueStayedFullDropReason
 			relayLogPendingContentBytes -= relayLogCapturedPayloadBytes(&relayLogCache[0])
 			releaseRelayLogCapturedPayloads(&relayLogCache[0])
 			relayLogCache = relayLogCache[1:]

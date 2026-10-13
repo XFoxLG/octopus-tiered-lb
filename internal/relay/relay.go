@@ -345,6 +345,11 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		maxTotalAttempts = 1
 	}
 
+	// Diagnostic probe: requests that spend >5s between "received" and the
+	// first upstream dispatch show up in the error log instead of silently
+	// sitting in the live-request panel.
+	reportRelayDispatchDelay(c, requestModel, endpointType)
+
 	// Each request owns its generation, even for identical concurrent prompts.
 	// executeRelay writes the response and metrics and owns the retry budget;
 	// neither its result nor its errors may be replayed by a second execution.
@@ -547,9 +552,9 @@ func (ra *relayAttempt) attempt() attemptResult {
 
 // parseRequest 解析并验证入站请求
 func parseRequest(inboundType inbound.InboundType, c *gin.Context) (*model.InternalLLMRequest, model.Inbound, error) {
-	body, err := readLimitedRequestBody(c, getMaxRelayJSONBodyBytes())
+	body, err := readRelayRequestBody(c, getMaxRelayJSONBodyBytes())
 	if err != nil {
-		resp.Error(c, relayRequestBodyErrorStatus(err), err.Error())
+		rejectRelayRequestBody(c, err)
 		return nil, nil, err
 	}
 
@@ -1452,16 +1457,16 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			continue
 		}
 
-	// 同协议直通：上游适配器已按原格式解析，出站直通透传。字节不再二次序列化，
-	// 直接把原 SSE data 封装写回客户端；visible/状态记录仍复用原有 chunk 解析。
-	if ra.canPassthroughStream() && len(data) > 0 {
-		rawFrame := passthroughStreamEvent(r.data)
-		if len(rawFrame) > 0 {
-			data = rawFrame
+		// 同协议直通：上游适配器已按原格式解析，出站直通透传。字节不再二次序列化，
+		// 直接把原 SSE data 封装写回客户端；visible/状态记录仍复用原有 chunk 解析。
+		if ra.canPassthroughStream() && len(data) > 0 {
+			rawFrame := passthroughStreamEvent(r.data)
+			if len(rawFrame) > 0 {
+				data = rawFrame
+			}
 		}
-	}
 
-	// 可见内容到达，先 flush 暂存的 reasoning buffer
+		// 可见内容到达，先 flush 暂存的 reasoning buffer
 		if len(reasoningBuffer) > 0 {
 			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 			if clientDisconnected && ra.streamSession == nil {

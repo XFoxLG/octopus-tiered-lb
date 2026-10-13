@@ -176,6 +176,7 @@ export function ErrorLogView() {
                         <SelectItem value="__all__">{t('filter.allLevels')}</SelectItem>
                         <SelectItem value="panic">panic</SelectItem>
                         <SelectItem value="error">error</SelectItem>
+                        <SelectItem value="warning">warning</SelectItem>
                         <SelectItem value="unhandledrejection">unhandledrejection</SelectItem>
                         <SelectItem value="uncaught">uncaught</SelectItem>
                     </SelectContent>

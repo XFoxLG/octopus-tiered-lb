@@ -39,6 +39,42 @@ function firstNonZero(...values: Array<number | null | undefined>) {
     return 0;
 }
 
+/**
+ * 统一的「耗时」展示：0、负数或缺失表示该指标没有被记录（例如非流式请求
+ * 不记录首字），用破折号而不是误导性的 0ms。
+ */
+export function formatLogDuration(ms: number | null | undefined): string {
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '—';
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
+}
+
+export interface RelayLogFirstTokenMilestones {
+    /** 上游首个可见内容相对请求开始的毫秒数；0 表示未观测到。 */
+    upstreamFirstVisibleMs: number;
+    /** 网关首次 Write+Flush 相对请求开始的毫秒数；0 表示未观测到。 */
+    clientFirstFlushMs: number;
+}
+
+/**
+ * 详情页两个首字里程碑：日志里的时间戳是 Unix 毫秒，log.time 是请求开始的
+ * Unix 秒。只返回 >0 的差值（未观测/早于请求开始时归 0，由调用方隐藏该行）。
+ */
+export function resolveFirstTokenMilestones(
+    log: Pick<RelayLog, 'time' | 'upstream_first_visible_at' | 'client_first_flush_at'>,
+): RelayLogFirstTokenMilestones {
+    const startedAtMs = typeof log.time === 'number' && log.time > 0 ? log.time * 1000 : 0;
+    const delta = (milestone: number | undefined) => {
+        if (startedAtMs <= 0 || typeof milestone !== 'number' || milestone <= 0) return 0;
+        const value = milestone - startedAtMs;
+        return value > 0 ? value : 0;
+    };
+    return {
+        upstreamFirstVisibleMs: delta(log.upstream_first_visible_at),
+        clientFirstFlushMs: delta(log.client_first_flush_at),
+    };
+}
+
 export type ReportedIPSourceToken = 'cf' | 'tru' | 'xff' | '';
 
 /**
