@@ -32,6 +32,12 @@ jobs:
           go-version: '1.27'
           cache: true
       - run: go test -count=1 -p 1 ./internal/op/group -run TestGroupUpdateStability
+      # 迁移注册表在进程内是一次性的（AfterAutoMigrate 跑完即清空），所以
+      # 「全新 PostgreSQL schema 上跑完整迁移链」必须用独立测试二进制单独执行：
+      # 否则同二进制里先跑的 SQLite 测试会吃掉整条 after 链，Postgres 侧零迁移通过。
+      # v2.8.6 的迁移 075 方言错误正是从这个盲区漏到线上的。
+      - name: PostgreSQL full migration chain (fresh schema)
+        run: go test -count=1 -p 1 ./internal/db/pgchain/...
   build-and-test:
     runs-on: ubuntu-latest
     env:

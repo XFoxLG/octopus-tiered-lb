@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func init() {
@@ -64,7 +65,9 @@ func cleanupNavSetting(db *gorm.DB, key string) error {
 	}
 
 	var setting Setting
-	result := db.Where("`key` = ?", key).First(&setting)
+	// clause.Column 让 GORM 按方言 quote 列名：反引号 `key` 在 PostgreSQL 下是
+	// 语法错误（backtick 被解析成操作符），会让全新 PostgreSQL 部署的迁移失败。
+	result := db.Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: key}).First(&setting)
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			return nil
@@ -117,5 +120,5 @@ func cleanupNavSetting(db *gorm.DB, key string) error {
 		return nil // nothing to update
 	}
 
-	return db.Model(&Setting{}).Where("`key` = ?", key).Update("value", string(newJSON)).Error
+	return db.Model(&Setting{}).Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: key}).Update("value", string(newJSON)).Error
 }

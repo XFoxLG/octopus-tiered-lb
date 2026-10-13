@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func init() {
@@ -39,7 +40,8 @@ func migrateNavAlertToNotification(db *gorm.DB) error {
 
 	for _, key := range []string{"nav_order", "nav_visible"} {
 		var setting Setting
-		result := db.Where("`key` = ?", key).First(&setting)
+			// 同 011：用 clause.Column 走方言安全 quote（PostgreSQL 不认反引号）。
+			result := db.Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: key}).First(&setting)
 		if result.Error != nil {
 			if result.Error == gorm.ErrRecordNotFound {
 				continue
@@ -67,7 +69,7 @@ func migrateNavAlertToNotification(db *gorm.DB) error {
 		if err != nil {
 			return fmt.Errorf("marshal %s: %w", key, err)
 		}
-		if err := db.Model(&Setting{}).Where("`key` = ?", key).Update("value", string(newJSON)).Error; err != nil {
+			if err := db.Model(&Setting{}).Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: key}).Update("value", string(newJSON)).Error; err != nil {
 			return fmt.Errorf("update %s: %w", key, err)
 		}
 	}
