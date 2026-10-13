@@ -227,8 +227,12 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
     const [isDiagnosticExpanded, setIsDiagnosticExpanded] = useState(false);
     const displayFields = useMemo(() => resolveLogDisplayFields(log, detail, channelNameById), [channelNameById, detail, log]);
     // 首字双里程碑（上游首个可见内容 / 客户端首次写出）：日志时间戳是 Unix
-    // 毫秒，log.time 是请求开始的 Unix 秒。未观测到的里程碑不展示对应行。
-    const firstTokenMilestones = useMemo(() => resolveFirstTokenMilestones(log), [log]);
+    // 毫秒，log.time 是请求开始的 Unix 秒。列表接口不返回这两个字段，所以优先
+    // 用详情数据；未观测到的里程碑不展示对应行。
+    const firstTokenMilestones = useMemo(
+        () => resolveFirstTokenMilestones(detail ?? log),
+        [detail, log],
+    );
     const vis = useLogFieldVisibility();
     const compact = useLogFieldVisibilityStore(s => s.compact);
     const chinaMode = useSettingStore((s) => s.chinaMode);
