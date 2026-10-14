@@ -25,6 +25,7 @@ test('formatLogDuration keeps millisecond and second rendering for recorded valu
 test('resolveFirstTokenMilestones converts absolute timestamps to request-relative values', () => {
     const milestones = resolveFirstTokenMilestones({
         time: 1_700_000_000,
+        ftut: 0,
         upstream_first_visible_at: 1_700_000_000_000 + 1_200,
         client_first_flush_at: 1_700_000_000_000 + 1_500,
     });
@@ -33,7 +34,7 @@ test('resolveFirstTokenMilestones converts absolute timestamps to request-relati
 });
 
 test('resolveFirstTokenMilestones hides unobserved or invalid milestones', () => {
-    const unobserved = resolveFirstTokenMilestones({ time: 1_700_000_000 });
+    const unobserved = resolveFirstTokenMilestones({ time: 1_700_000_000, ftut: 0 });
     assert.equal(unobserved.upstreamFirstVisibleMs, 0);
     assert.equal(unobserved.clientFirstFlushMs, 0);
 
@@ -41,11 +42,37 @@ test('resolveFirstTokenMilestones hides unobserved or invalid milestones', () =>
     // not rendered as negative durations.
     const skewed = resolveFirstTokenMilestones({
         time: 1_700_000_000,
+        ftut: 0,
         upstream_first_visible_at: 1_700_000_000_000 - 500,
         client_first_flush_at: 0,
     });
     assert.equal(skewed.upstreamFirstVisibleMs, 0);
     assert.equal(skewed.clientFirstFlushMs, 0);
+});
+
+test('resolveFirstTokenMilestones anchors to ftut so values cannot exceed the total duration', () => {
+    // 线上实测样本：log.time 秒级截断导致「上游首字 10.16s > 总耗时 9.83s」。
+    // ftut 与 client_first_flush_at 是同一时间戳，必须严格一致。
+    const milestones = resolveFirstTokenMilestones({
+        time: 1_700_000_000,
+        ftut: 9_580,
+        upstream_first_visible_at: 1_700_000_000_000 + 10_160,
+        client_first_flush_at: 1_700_000_000_000 + 10_160,
+    });
+    assert.equal(milestones.clientFirstFlushMs, 9_580);
+    assert.equal(milestones.upstreamFirstVisibleMs, 9_580);
+});
+
+test('resolveFirstTokenMilestones keeps the exact upstream lead over client flush', () => {
+    // 上游首个可见内容比客户端写出早 1.16s → 上游首字 = ftut − 1.16s。
+    const milestones = resolveFirstTokenMilestones({
+        time: 1_700_000_000,
+        ftut: 9_580,
+        upstream_first_visible_at: 1_700_000_000_000 + 9_000,
+        client_first_flush_at: 1_700_000_000_000 + 10_160,
+    });
+    assert.equal(milestones.clientFirstFlushMs, 9_580);
+    assert.equal(milestones.upstreamFirstVisibleMs, 8_420);
 });
 
 
