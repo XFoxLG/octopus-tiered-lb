@@ -45,19 +45,21 @@ type RelayLog struct {
 	// 仅用于日志展示；client_ip 保持 Gin 安全解析语义（限流/白名单）。见迁移 061。
 	ReportedClientIP       string `json:"reported_client_ip,omitempty" gorm:"column:reported_client_ip"`
 	ReportedClientIPSource string `json:"reported_client_ip_source,omitempty" gorm:"column:reported_client_ip_source;size:24"`
-	UserAgent              string `json:"user_agent,omitempty" gorm:"column:user_agent"`                                 // 客户端自报 User-Agent（详情页展示来源）
-	EndpointType           string `json:"endpoint_type" gorm:"column:endpoint_type"`                                     // 命中的端点分类
-	ChannelId              int    `json:"channel" gorm:"column:channel_id;index:idx_relay_logs_channel_time,priority:1"` // 实际使用的渠道ID
-	ChannelName            string `json:"channel_name" gorm:"column:channel_name"`                                       // 渠道名称
-	ActualModelName        string `json:"actual_model_name" gorm:"column:actual_model_name"`                             // 实际使用模型名称
-	InputTokens            int    `json:"input_tokens" gorm:"column:input_tokens"`                                       // 输入Token
-	OutputTokens           int    `json:"output_tokens" gorm:"column:output_tokens"`                                     // 输出 Token
-	SemanticCacheHit       bool   `json:"semantic_cache_hit" gorm:"column:semantic_cache_hit"`                           // 语义缓存命中（写入时落库，避免列表查询重解析大字段）
-	CacheReadTokens        int    `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`                             // 提供方提示缓存命中 Token（写入时落库）
-	ReasoningEffort        string `json:"reasoning_effort" gorm:"column:reasoning_effort"`                               // 出站最终思考强度（effective）
-	ReasoningTokens        int    `json:"reasoning_tokens" gorm:"column:reasoning_tokens"`                               // 上游返回的思考 Token（usage，确定性）
-	ReasoningChars         int    `json:"reasoning_chars" gorm:"column:reasoning_chars"`                                 // 思考文本字符数（无官方 token 时的估算回退，UTF-8 rune 数）
-	UsageState             string `json:"usage_state,omitempty" gorm:"column:usage_state;size:24"`                       // 用量可信度标注（reported/成因），见 log_content.go RelayLogUsage*
+	UserAgent              string `json:"user_agent,omitempty" gorm:"column:user_agent"`                                  // 客户端自报 User-Agent（详情页展示来源）
+	EndpointType           string `json:"endpoint_type" gorm:"column:endpoint_type"`                                      // 命中的端点分类
+	ChannelId              int    `json:"channel" gorm:"column:channel_id;index:idx_relay_logs_channel_time,priority:1"`  // 实际使用的渠道ID
+	ChannelName            string `json:"channel_name" gorm:"column:channel_name"`                                        // 渠道名称
+	ActualModelName        string `json:"actual_model_name" gorm:"column:actual_model_name"`                              // 实际使用模型名称
+	InputTokens            int    `json:"input_tokens" gorm:"column:input_tokens"`                                        // 输入Token
+	OutputTokens           int    `json:"output_tokens" gorm:"column:output_tokens"`                                      // 输出 Token
+	InputTokensEst         int    `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est;not null;default:0"`   // 输入 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
+	OutputTokensEst        int    `json:"output_tokens_est,omitempty" gorm:"column:output_tokens_est;not null;default:0"` // 输出 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
+	SemanticCacheHit       bool   `json:"semantic_cache_hit" gorm:"column:semantic_cache_hit"`                            // 语义缓存命中（写入时落库，避免列表查询重解析大字段）
+	CacheReadTokens        int    `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`                              // 提供方提示缓存命中 Token（写入时落库）
+	ReasoningEffort        string `json:"reasoning_effort" gorm:"column:reasoning_effort"`                                // 出站最终思考强度（effective）
+	ReasoningTokens        int    `json:"reasoning_tokens" gorm:"column:reasoning_tokens"`                                // 上游返回的思考 Token（usage，确定性）
+	ReasoningChars         int    `json:"reasoning_chars" gorm:"column:reasoning_chars"`                                  // 思考文本字符数（无官方 token 时的估算回退，UTF-8 rune 数）
+	UsageState             string `json:"usage_state,omitempty" gorm:"column:usage_state;size:24"`                        // 用量可信度标注（reported/成因），见 log_content.go RelayLogUsage*
 
 	// Unix milliseconds; zero means this milestone was not observed.
 	UpstreamFirstVisibleAt int64 `json:"upstream_first_visible_at,omitempty" gorm:"column:upstream_first_visible_at;not null;default:0"`
@@ -106,6 +108,8 @@ type RelayLogListItem struct {
 	ActualModelName           string           `json:"actual_model_name" gorm:"column:actual_model_name"`
 	InputTokens               int              `json:"input_tokens" gorm:"column:input_tokens"`
 	OutputTokens              int              `json:"output_tokens" gorm:"column:output_tokens"`
+	InputTokensEst            int              `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est"`
+	OutputTokensEst           int              `json:"output_tokens_est,omitempty" gorm:"column:output_tokens_est"`
 	SemanticCacheHit          bool             `json:"semantic_cache_hit" gorm:"column:semantic_cache_hit"`
 	CacheReadTokens           int              `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`
 	ReasoningEffort           string           `json:"reasoning_effort" gorm:"column:reasoning_effort"`
@@ -186,6 +190,8 @@ func (r *RelayLog) ToListItem() RelayLogListItem {
 		ActualModelName:           r.ActualModelName,
 		InputTokens:               r.InputTokens,
 		OutputTokens:              r.OutputTokens,
+		InputTokensEst:            r.InputTokensEst,
+		OutputTokensEst:           r.OutputTokensEst,
 		SemanticCacheHit:          r.SemanticCacheHit,
 		CacheReadTokens:           r.CacheReadTokens,
 		ReasoningEffort:           r.ReasoningEffort,

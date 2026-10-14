@@ -2874,6 +2874,7 @@
         "emptyOutputHint": "Upstream returned success with zero output tokens. Check whether this channel actually generates content.",
         "outputUncounted": "Output not counted",
         "outputUncountedHint": "Upstream reported usage with zero output tokens, but data was actually written to the client (the channel under-reports completion counts; TPS and cost will look too low). Check the response body before drawing conclusions.",
+        "estimatedHint": "The upstream did not report usage for this direction. Values marked with ≈ are estimated by the gateway from the visible text (excluding reasoning and images) and are approximate only; cost and statistics still use upstream-reported values.",
         "clientInterrupted": "Client interrupted",
         "clientInterruptedHint": "The client disconnected or gave up early; this log reflects the state at interruption, so output and usage are incomplete.",
         "usageNotReported": "Usage not reported",

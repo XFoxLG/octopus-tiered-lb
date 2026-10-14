@@ -2830,6 +2830,7 @@
         "emptyOutputHint": "上游回報成功但沒有任何輸出 Token，需檢查該渠道是否正常生成。",
         "outputUncounted": "輸出量未計",
         "outputUncountedHint": "上游回報的用量裡輸出 Token 為 0，但閘道確實向客戶端寫出了資料（常見於渠道漏報完成量，TPS 與費用會偏低），需結合正文判斷。",
+        "estimatedHint": "上游未回報該方向的用量：帶 ≈ 的數值由閘道按可見正文估算（不含思考與圖片），僅供參考；費用與統計仍按上游回報計算。",
         "clientInterrupted": "客戶端中斷",
         "clientInterruptedHint": "客戶端提前斷開或逾時放棄；日誌記錄的是中斷時刻的狀態，輸出與用量都不完整。",
         "usageNotReported": "未回報用量",

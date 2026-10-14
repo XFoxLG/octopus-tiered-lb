@@ -58,6 +58,8 @@ export interface RelayLog {
     actual_model_name: string;   // 实际使用模型名称
     input_tokens: number;        // 输入Token
     output_tokens: number;       // 输出Token
+    input_tokens_est?: number;   // 输入 Token 估算（仅上游漏报时 >0；0/缺失=未估算，v2.8.13）
+    output_tokens_est?: number;  // 输出 Token 估算（仅上游漏报时 >0；0/缺失=未估算，v2.8.13）
     semantic_cache_hit?: boolean;// 语义缓存命中
     cache_read_tokens?: number;  // 提供方提示缓存命中 Token
     reasoning_effort?: string;   // 出站最终思考强度

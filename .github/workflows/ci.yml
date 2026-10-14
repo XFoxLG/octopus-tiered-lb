@@ -69,3 +69,7 @@ jobs:
 
       - name: Test relay package（含 budget 预算拆分回归测试）
         run: go test -tags=jsoniter ./internal/relay/...
+
+      - name: Token estimate benchmark（400KB 中英混合文本，仅留档不设阈值）
+        # v2.8.13：为估算采样阈值与慢告警线提供校准数据。
+        run: go test -tags=jsoniter -run '^$' -bench BenchmarkCountTokensLargeMixedText -benchtime 3x ./internal/utils/tokenizer/

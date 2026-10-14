@@ -5,6 +5,7 @@ import type { RelayLog, RelayLogDetail } from '@/api/endpoints/log';
 import {
     formatJsonForCopy,
     formatLogDuration,
+    resolveEffectiveTokenCounts,
     reportedIPSourceToken,
     resolveFirstTokenMilestones,
     resolveLogDisplayFields,
@@ -612,6 +613,100 @@ test('resolveLogInvestigationMarkers separates uncounted output from truly empty
         termination_cause: '',
     });
     assert.deepEqual(legacyNoBytes, ['empty_output']);
+});
+
+test('resolveEffectiveTokenCounts prefers estimates when the upstream omitted usage', () => {
+    // v2.8.13：上游只漏报输出方向（烁-gemini 自报 completion=0，实际写出 567B）→ 输出取估算值。
+    const estimatedOutput = resolveEffectiveTokenCounts({
+        input_tokens: 1159,
+        output_tokens: 0,
+        output_tokens_est: 14813,
+    });
+    assert.equal(estimatedOutput.inputTokens, 1159);
+    assert.equal(estimatedOutput.outputTokens, 14813);
+    assert.equal(estimatedOutput.totalTokens, 15972);
+    assert.equal(estimatedOutput.inputEstimated, false);
+    assert.equal(estimatedOutput.outputEstimated, true);
+    assert.equal(estimatedOutput.estimated, true);
+
+    // 双向估算（not_reported 且正文齐全）。
+    const bothEstimated = resolveEffectiveTokenCounts({
+        input_tokens: 0,
+        output_tokens: 0,
+        input_tokens_est: 106138,
+        output_tokens_est: 22000,
+    });
+    assert.equal(bothEstimated.inputTokens, 106138);
+    assert.equal(bothEstimated.outputTokens, 22000);
+    assert.equal(bothEstimated.totalTokens, 128138);
+    assert.equal(bothEstimated.inputEstimated, true);
+    assert.equal(bothEstimated.outputEstimated, true);
+    assert.equal(bothEstimated.estimated, true);
+});
+
+test('resolveEffectiveTokenCounts falls back to reported values without estimates', () => {
+    // 正常上报（est 缺失）：完全按上报值显示，不出现 ≈。
+    const reportedOnly = resolveEffectiveTokenCounts({
+        input_tokens: 110410,
+        output_tokens: 69,
+    });
+    assert.equal(reportedOnly.inputTokens, 110410);
+    assert.equal(reportedOnly.outputTokens, 69);
+    assert.equal(reportedOnly.totalTokens, 110479);
+    assert.equal(reportedOnly.inputEstimated, false);
+    assert.equal(reportedOnly.outputEstimated, false);
+    assert.equal(reportedOnly.estimated, false);
+
+    // est=0 表示「未估算」，不是「估算为 0」，必须回退上报值。
+    const zeroEst = resolveEffectiveTokenCounts({
+        input_tokens: 100,
+        output_tokens: 50,
+        input_tokens_est: 0,
+        output_tokens_est: 0,
+    });
+    assert.equal(zeroEst.inputTokens, 100);
+    assert.equal(zeroEst.outputTokens, 50);
+    assert.equal(zeroEst.totalTokens, 150);
+    assert.equal(zeroEst.estimated, false);
+});
+
+test('resolveLogInvestigationMarkers suppresses uncounted-output markers once estimates exist', () => {
+    // v2.8.13：网关已按可见正文给出 ≈N 估算（output_tokens_est>0）时，「输出量未计」不再成立。
+    const estimated = resolveLogInvestigationMarkers({
+        ftut: 4335,
+        use_time: 4483,
+        output_tokens: 0,
+        output_tokens_est: 14813,
+        usage_state: 'reported',
+        provider_termination_reason: 'STOP',
+        termination_cause: 'complete',
+        client_write_bytes: 567,
+    });
+    assert.deepEqual(estimated, []);
+
+    // 有估算但历史行缺 client_write_bytes 时，也不落回「空输出」。
+    const estimatedNoBytes = resolveLogInvestigationMarkers({
+        ftut: 0,
+        use_time: 3000,
+        output_tokens: 0,
+        output_tokens_est: 1200,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        termination_cause: '',
+    });
+    assert.deepEqual(estimatedNoBytes, []);
+
+    // 其余标记判据不变：not_reported 样本即使有估算，仍保留「未回报用量」标记。
+    const notReported = resolveLogInvestigationMarkers({
+        ftut: 1200,
+        use_time: 3400,
+        output_tokens: 0,
+        output_tokens_est: 800,
+        usage_state: 'not_reported',
+        provider_termination_reason: '',
+        termination_cause: '',
+    });
+    assert.deepEqual(notReported, ['usage_not_reported']);
 });
 
 test('resolveLogInvestigationMarkers maps usage_state causes to markers', () => {

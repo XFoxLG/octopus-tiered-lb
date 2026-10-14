@@ -386,6 +386,10 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		}
 	}
 
+	// v2.8.13：上游漏报某个方向的用量时，按可见文本估算填充（只做展示补充，
+	// 不参与计费、统计聚合与 usage_state 判定，见 usage_estimate.go）。
+	applyUsageEstimate(&relayLog, m, actualModel)
+
 	// 出站最终思考强度：以 InternalRequest 当前值为准（出站 sanitize/normalize 后写回）。
 	if m.InternalRequest != nil {
 		relayLog.ReasoningEffort = strings.TrimSpace(m.InternalRequest.ReasoningEffort)
