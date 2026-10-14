@@ -211,6 +211,7 @@ const INVESTIGATION_MARKER_LABEL_KEY: Record<RelayLogInvestigationMarker, string
     length_truncated: 'investigation.lengthTruncated',
     stream_interrupted: 'investigation.streamInterrupted',
     empty_output: 'investigation.emptyOutput',
+    output_uncounted: 'investigation.outputUncounted',
     client_interrupted: 'investigation.clientInterrupted',
     usage_not_reported: 'investigation.usageNotReported',
 };
@@ -220,6 +221,7 @@ const INVESTIGATION_MARKER_HINT_KEY: Record<RelayLogInvestigationMarker, string>
     length_truncated: 'investigation.lengthTruncatedHint',
     stream_interrupted: 'investigation.streamInterruptedHint',
     empty_output: 'investigation.emptyOutputHint',
+    output_uncounted: 'investigation.outputUncountedHint',
     client_interrupted: 'investigation.clientInterruptedHint',
     usage_not_reported: 'investigation.usageNotReportedHint',
 };
@@ -229,6 +231,7 @@ const INVESTIGATION_MARKER_CLASS: Record<RelayLogInvestigationMarker, string> = 
     length_truncated: 'border-destructive/50 bg-destructive/10 text-destructive',
     stream_interrupted: 'border-destructive/50 bg-destructive/10 text-destructive',
     empty_output: 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    output_uncounted: 'border-border/60 bg-muted/60 text-muted-foreground',
     client_interrupted: 'border-border/60 bg-muted/60 text-muted-foreground',
     usage_not_reported: 'border-border/60 bg-muted/60 text-muted-foreground',
 };
