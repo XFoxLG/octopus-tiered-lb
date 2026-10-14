@@ -1,0 +1,18 @@
+{
+  "id": "baseline-responses-to-responses",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "openai_responses",
+  "outbound": "responses",
+  "model": "gpt-5-nano",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：responses → responses（同协议再序列化；两个 oracle 的覆盖不同，用于验证 unsupported 登记路径）"
+  },
+  "request": {
+    "model": "gpt-5-nano",
+    "input": "Reply with the single word: OK",
+    "max_output_tokens": 64
+  }
+}

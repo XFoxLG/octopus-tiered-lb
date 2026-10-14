@@ -1,0 +1,21 @@
+{
+  "id": "baseline-anthropic-to-gemini",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "anthropic",
+  "outbound": "gemini",
+  "model": "gemini-3.1-pro-preview",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：anthropic → gemini"
+  },
+  "request": {
+    "model": "gemini-3.1-pro-preview",
+    "max_tokens": 64,
+    "system": "You are a conformance fixture.",
+    "messages": [
+      {"role": "user", "content": "Reply with the single word: OK"}
+    ]
+  }
+}

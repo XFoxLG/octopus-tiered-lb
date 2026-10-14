@@ -73,3 +73,51 @@ jobs:
       - name: Token estimate benchmark（400KB 中英混合文本，仅留档不设阈值）
         # v2.8.13：为估算采样阈值与慢告警线提供校准数据。
         run: go test -tags=jsoniter -run '^$' -bench BenchmarkCountTokensLargeMixedText -benchtime 3x ./internal/utils/tokenizer/
+
+      - name: Conformance samples（无 oracle：只复现我方当前行为并校验样本）
+        # 协议层三方对拍的第一步：这里不提供 oracle 二进制，验证样本可加载、
+        # 我方转换链可用；真正的三方对拍在 conformance-oracle job。
+        run: go test -count=1 -tags=jsoniter ./internal/conformance/...
+
+  conformance-oracle:
+    # 协议层三方对拍（v2.8.15 起）：我方引擎 vs axonhub（主裁判）vs CLIProxyAPI（次裁判）。
+    # 未登记差异 = 红；完整对照报告作为 artifact 上传，用于校准 conformance/deviations.json。
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            conformance/oracle-axonhub/go.sum
+            conformance/oracle-cliproxyapi/go.sum
+
+      - name: Download dependencies (main module)
+        run: go mod download
+
+      - name: Build conformance oracles
+        run: |
+          mkdir -p conformance/bin
+          (cd conformance/oracle-axonhub && go build -o ../bin/oracle-axonhub .)
+          (cd conformance/oracle-cliproxyapi && go build -o ../bin/oracle-cliproxyapi .)
+
+      - name: Three-way conformance（ours vs axonhub vs cliproxyapi）
+        env:
+          CONFORMANCE_ORACLE_AXONHUB: ${{ github.workspace }}/conformance/bin/oracle-axonhub
+          CONFORMANCE_ORACLE_CLIPROXYAPI: ${{ github.workspace }}/conformance/bin/oracle-cliproxyapi
+          CONFORMANCE_REPORT: ${{ github.workspace }}/conformance-report.json
+        run: go test -count=1 -v -tags=jsoniter ./internal/conformance/...
+
+      - name: Upload conformance report
+        # 对照报告在失败时同样上传：它是校准 deviations.json 的输入。
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-report
+          path: conformance-report.json
+          if-no-files-found: warn

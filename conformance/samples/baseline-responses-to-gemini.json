@@ -1,0 +1,18 @@
+{
+  "id": "baseline-responses-to-gemini",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "openai_responses",
+  "outbound": "gemini",
+  "model": "gemini-3.1-pro-preview",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：responses → gemini"
+  },
+  "request": {
+    "model": "gemini-3.1-pro-preview",
+    "input": "Reply with the single word: OK",
+    "max_output_tokens": 64
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "baseline-responses-to-anthropic",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "openai_responses",
+  "outbound": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：responses → anthropic"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "input": "Reply with the single word: OK",
+    "max_output_tokens": 64
+  }
+}

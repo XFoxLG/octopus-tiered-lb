@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "notes": "三方对拍偏差登记簿：记录每一条『已接受的三方差异』。CI（conformance-oracle job）遇到未登记差异即红。条目由 CI artifact conformance-report.json 校准生成；outcome=unsupported 表示该 oracle 没有这个方向的转换器（显式登记，不是缺陷）。详细字段语义见 conformance/README.md 与 internal/conformance/registry_test.go。",
+  "entries": [
+    {
+      "sample": "baseline-anthropic-to-anthropic",
+      "oracle": "cliproxyapi",
+      "outcome": "unsupported",
+      "note": "CLIProxyAPI v8.0.29 的注册矩阵中没有 Claude→Claude（同协议不再序列化，属其设计选择）"
+    },
+    {
+      "sample": "baseline-anthropic-to-responses",
+      "oracle": "cliproxyapi",
+      "outcome": "unsupported",
+      "note": "CLIProxyAPI 的 responses 出站仅支持 Interactions→OpenaiResponse；本方向无转换器"
+    },
+    {
+      "sample": "baseline-chat-to-responses",
+      "oracle": "cliproxyapi",
+      "outcome": "unsupported",
+      "note": "CLIProxyAPI 的 responses 出站仅支持 Interactions→OpenaiResponse；本方向无转换器"
+    },
+    {
+      "sample": "baseline-responses-to-responses",
+      "oracle": "cliproxyapi",
+      "outcome": "unsupported",
+      "note": "CLIProxyAPI 的 responses 出站仅支持 Interactions→OpenaiResponse；本方向无转换器"
+    }
+  ]
+}

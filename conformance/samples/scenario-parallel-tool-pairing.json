@@ -1,0 +1,29 @@
+{
+  "id": "scenario-parallel-tool-pairing",
+  "class": "parallel-tool-pairing",
+  "side": "request",
+  "inbound": "openai_responses",
+  "outbound": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "test",
+    "ref": "sub2api/backend/internal/pkg/apicompat/responses_to_anthropic_tool_pairing_test.go",
+    "note": "并行工具调用在 Responses → Anthropic 转换中的配对与结果回填（tool_use/tool_result 顺序与 id 一致性）"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_output_tokens": 256,
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "Check both cities."}]
+      },
+      {"type": "function_call", "call_id": "call_a", "name": "get_weather", "arguments": "{\"city\":\"SF\"}"},
+      {"type": "function_call", "call_id": "call_b", "name": "get_weather", "arguments": "{\"city\":\"NY\"}"},
+      {"type": "function_call_output", "call_id": "call_a", "output": "sunny"},
+      {"type": "function_call_output", "call_id": "call_b", "output": "cloudy"}
+    ]
+  }
+}

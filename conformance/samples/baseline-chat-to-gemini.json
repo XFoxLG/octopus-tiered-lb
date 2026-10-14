@@ -1,0 +1,21 @@
+{
+  "id": "baseline-chat-to-gemini",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "openai_chat",
+  "outbound": "gemini",
+  "model": "gemini-3.1-pro-preview",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：chat → gemini"
+  },
+  "request": {
+    "model": "gemini-3.1-pro-preview",
+    "messages": [
+      {"role": "system", "content": "You are a conformance fixture."},
+      {"role": "user", "content": "Reply with the single word: OK"}
+    ],
+    "max_tokens": 64
+  }
+}

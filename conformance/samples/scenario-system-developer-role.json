@@ -1,0 +1,36 @@
+{
+  "id": "scenario-system-developer-role",
+  "class": "system-developer-role",
+  "side": "request",
+  "inbound": "openai_responses",
+  "outbound": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "issue",
+    "ref": "CLIProxyAPI#5879",
+    "url": "https://github.com/router-for-me/CLIProxyAPI/issues/5879",
+    "note": "Responses input 中 role system/developer 的条目被当作 user turn，上游 system prompt 为空"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_output_tokens": 256,
+    "input": [
+      {
+        "type": "message",
+        "role": "system",
+        "content": [{"type": "input_text", "text": "System level instruction."}]
+      },
+      {
+        "type": "message",
+        "role": "developer",
+        "content": [{"type": "input_text", "text": "Developer level instruction."}]
+      },
+      {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "Say hi."}]
+      }
+    ]
+  }
+}

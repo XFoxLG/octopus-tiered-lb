@@ -1,0 +1,28 @@
+{
+  "id": "scenario-text-form-tool-call",
+  "class": "text-form-tool-calls",
+  "side": "response",
+  "phase": 2,
+  "inbound": "anthropic",
+  "outbound": "gemini",
+  "model": "gemini-3.1-pro-preview",
+  "source": {
+    "kind": "issue",
+    "ref": "CLIProxyAPI#6202",
+    "url": "https://github.com/router-for-me/CLIProxyAPI/issues/6202",
+    "note": "上游把工具调用作为文本 content 返回（Antigravity text-form tool calls are returned as chat content instead of tool_calls）；响应方向的规范化对照在第二阶段启用"
+  },
+  "upstream_response": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [
+            {"text": "{\"name\":\"get_weather\",\"arguments\":{\"city\":\"SF\"}}"}
+          ]
+        },
+        "finishReason": "STOP"
+      }
+    ]
+  }
+}

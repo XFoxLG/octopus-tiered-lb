@@ -1,0 +1,21 @@
+{
+  "id": "baseline-chat-to-chat",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "openai_chat",
+  "outbound": "chat",
+  "model": "gpt-5-nano",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：chat → chat（同协议再序列化，检查归一化差异）"
+  },
+  "request": {
+    "model": "gpt-5-nano",
+    "messages": [
+      {"role": "system", "content": "You are a conformance fixture."},
+      {"role": "user", "content": "Reply with the single word: OK"}
+    ],
+    "max_tokens": 64
+  }
+}

@@ -42,6 +42,13 @@ frontend_out.txt
 # planning & docs
 docs/*
 !docs/channel-connections.md
+# 协议层对拍审计笔记（v2.8.15 起纳入版本控制）
+!docs/conformance/
+!docs/conformance/**
+
+# 协议层对拍产物（oracle 二进制与对照报告由 CI 生成）
+conformance/bin/
+conformance-report.json
 
 # git hooks (husky)
 .husky/

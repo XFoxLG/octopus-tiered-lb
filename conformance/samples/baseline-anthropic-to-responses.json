@@ -1,0 +1,21 @@
+{
+  "id": "baseline-anthropic-to-responses",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "anthropic",
+  "outbound": "responses",
+  "model": "gpt-5-nano",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：anthropic → responses（CLIProxyAPI 无 responses 出站，验证 unsupported 登记路径）"
+  },
+  "request": {
+    "model": "gpt-5-nano",
+    "max_tokens": 64,
+    "system": "You are a conformance fixture.",
+    "messages": [
+      {"role": "user", "content": "Reply with the single word: OK"}
+    ]
+  }
+}
