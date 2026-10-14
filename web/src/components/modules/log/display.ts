@@ -1,5 +1,6 @@
 import type { ChannelAttempt, RelayLog, RelayLogDetail } from '../../../api/endpoints/log.ts';
 import { inferCapabilities, type CapabilityType } from '../group/capabilities.ts';
+import { isSuspectFakeStreamSignature } from '../../../lib/fake-stream.ts';
 
 const capabilityEndpointMap: Record<Exclude<CapabilityType, 'chat' | 'moderation'>, string> = {
     embeddings: 'embeddings',
@@ -97,6 +98,65 @@ export function resolveFirstTokenMilestones(
         upstreamFirstVisibleMs: deltaFromSeconds(upstreamAt),
         clientFirstFlushMs: deltaFromSeconds(clientAt),
     };
+}
+
+/**
+ * 日志调查标记：把「排查问题时需要一眼看到」的异常指纹从日志字段里算出来。
+ * 全部基于列表接口已返回的字段，不新增查询；文案一律带「疑似」或直接引用
+ * 后端 usage_state 的成因标注，不做超出证据的判断。
+ */
+export type RelayLogInvestigationMarker =
+    | 'suspect_fake_stream'
+    | 'length_truncated'
+    | 'stream_interrupted'
+    | 'empty_output'
+    | 'client_interrupted'
+    | 'usage_not_reported';
+
+/** 首字后内容以异常高的速率集中到达：真流式约 80–110 tok/s，实锤伪流式为 6.5 万–13 万 tok/s。 */
+const FAKE_STREAM_BURST_MIN_TPS = 1500;
+
+export function resolveLogInvestigationMarkers(
+    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'usage_state' | 'provider_termination_reason' | 'termination_cause'>,
+): RelayLogInvestigationMarker[] {
+    const markers: RelayLogInvestigationMarker[] = [];
+    const ftut = typeof log.ftut === 'number' ? log.ftut : 0;
+    const useTime = typeof log.use_time === 'number' ? log.use_time : 0;
+    const outputTokens = typeof log.output_tokens === 'number' ? log.output_tokens : 0;
+    const usageState = log.usage_state ?? '';
+
+    if (outputTokens > 0) {
+        if (isSuspectFakeStreamSignature(ftut, useTime)) {
+            markers.push('suspect_fake_stream');
+        } else if (ftut > 0 && useTime > ftut) {
+            // 首字占比不高但首字之后内容以极高速度集中到达（尾部突发）。
+            const tailTps = outputTokens / ((useTime - ftut) / 1000);
+            if (tailTps >= FAKE_STREAM_BURST_MIN_TPS) {
+                markers.push('suspect_fake_stream');
+            }
+        }
+    }
+
+    const providerReason = (log.provider_termination_reason ?? '').trim().toLowerCase();
+    if (providerReason === 'length' || providerReason === 'max_tokens') {
+        markers.push('length_truncated');
+    }
+    // 空输出：后端成因标注，或「用量可信但输出 0 token」的成功日志（实测案例：
+    // 输出 0.00 却以 stop/complete 收尾的早停渠道）。内容被上游拦截的终止原因
+    // 不算空输出（有明确解释）。
+    const terminationCause = (log.termination_cause ?? '').trim().toLowerCase();
+    const explainedNoOutput = ['content_filter', 'refusal', 'prompt_blocked'].includes(terminationCause);
+    const emptyOutputByUsage = usageState === 'empty_output';
+    const emptyOutputByZeroTokens =
+        outputTokens === 0 &&
+        (usageState === 'reported' || usageState === 'not_reported') &&
+        !explainedNoOutput;
+    if (emptyOutputByUsage || emptyOutputByZeroTokens) markers.push('empty_output');
+    if (usageState === 'missing_terminal') markers.push('stream_interrupted');
+    if (usageState === 'client_disconnected') markers.push('client_interrupted');
+    if (usageState === 'not_reported') markers.push('usage_not_reported');
+
+    return markers;
 }
 
 export type ReportedIPSourceToken = 'cf' | 'tru' | 'xff' | '';

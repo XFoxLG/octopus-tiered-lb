@@ -266,7 +266,12 @@
         "title": "智能策略实时表现",
         "disabled": "已停用",
         "samples": " 样本",
-        "insufficient": "样本不足"
+        "insufficient": "样本不足",
+        "titleGeneric": "渠道实时表现",
+        "ttftLabel": "首字",
+        "ttftHint": "近期流式请求首个可见内容的指数加权平均（EMA，当前 {count} 个首字样本）。0 或缺失表示该渠道×模型还没有流式首字样本。",
+        "fakeStreamBadge": "疑似伪流式",
+        "fakeStreamHint": "首字耗时占单次请求时长 ≥60%（请求时长 ≥60 秒；或首字 ≥60 秒且占比 ≥40%）。常见于先维持连接、临近结束才一次性输出的渠道，需结合实际响应确认。"
       }
     },
     "channelModel": {
@@ -2814,7 +2819,21 @@
       "collapseAll": "折叠全部",
       "firstTokenTime": "首字时间",
       "firstTokenNotRecorded": "非流式请求不记录首字耗时",
-      "upstreamFirstToken": "上游首字",
+            "investigation": {
+        "suspectFakeStream": "疑似伪流式",
+        "suspectFakeStreamHint": "首字很晚或内容集中到达：单次时长 ≥60 秒且首字占比 ≥60%（或首字 ≥60 秒且占比 ≥40%），或首字后内容以 ≥1500 tok/s 集中到达。常见于先维持连接、临近结束才一次性输出的渠道，需结合响应内容确认。",
+        "lengthTruncated": "触达长度上限",
+        "lengthTruncatedHint": "上游终止原因报告为长度上限（length / max_tokens），输出可能被截断。",
+        "streamInterrupted": "上游流中断",
+        "streamInterruptedHint": "上游流未发送终止事件即结束，收到的内容可能不完整，用量不可信。",
+        "emptyOutput": "空输出",
+        "emptyOutputHint": "上游返回成功但没有任何输出 Token，需检查该渠道是否正常生成。",
+        "clientInterrupted": "客户端中断",
+        "clientInterruptedHint": "客户端提前断开或超时放弃；日志记录的是中断时刻的状态，输出与用量都不完整。",
+        "usageNotReported": "未回报用量",
+        "usageNotReportedHint": "上游未在响应中回报 usage，Token 与费用不可信。"
+      },
+"upstreamFirstToken": "上游首字",
       "clientFirstFlush": "客户端首字",
       "tokens": "tokens",
       "retryDetails": "重试详情",

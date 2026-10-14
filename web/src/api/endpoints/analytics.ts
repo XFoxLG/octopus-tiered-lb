@@ -120,6 +120,10 @@ export interface AutoStrategySnapshotItem {
     success_rate: number;
     sample_count: number;
     avg_latency_ms: number;
+    /** 流式请求首个可见输出的 EMA（毫秒）；0 表示没有流式首字样本。 */
+    avg_ttft_ms: number;
+    /** 已记录的流式首字样本数；0 表示还没有首字证据。 */
+    ttft_samples: number;
     last_active_at: number;
     min_samples_met: boolean;
 }

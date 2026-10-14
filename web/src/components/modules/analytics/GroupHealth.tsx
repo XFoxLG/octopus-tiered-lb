@@ -9,6 +9,7 @@ import { useAnalyticsCacheTtl } from './cache-context';
 import { useNavStore } from '@/components/modules/navbar/nav-store';
 import { useNavHandoff } from '@/lib/nav-handoff';
 import { cn } from '@/lib/utils';
+import { formatFirstTokenMs, isSuspectFakeStreamSignature } from '@/lib/fake-stream';
 import type { FailingChannelItem, AutoStrategySnapshotItem } from '@/api/endpoints/analytics';
 
 function getStatusTone(status: 'healthy' | 'warning' | 'degraded' | 'down' | 'empty') {
@@ -178,8 +179,9 @@ function GroupHealthCard({
                 </div>
             )}
 
-            {/* Auto 策略实时表现：仅 Auto 组展示 */}
-            {isAutoGroup && autoItems.length > 0 && (
+            {/* 渠道实时表现：v2.8.10 起对所有分组模式展示（轮询/随机组同样记录运行态
+                统计），指标含成功率、样本、延迟与「可见首字」；疑似伪流式的渠道会带标记。 */}
+            {autoItems.length > 0 && (
                 <div className="mt-3">
                     <button
                         type="button"
@@ -188,7 +190,7 @@ function GroupHealthCard({
                     >
                         {showAuto ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
                         <Gauge className="size-3.5 text-primary" />
-                        {t('routeHealth.autoStrategy.title')} ({autoItems.length})
+                        {isAutoGroup ? t('routeHealth.autoStrategy.title') : t('routeHealth.autoStrategy.titleGeneric')} ({autoItems.length})
                     </button>
                     {showAuto && (
                         <ul className="mt-2 space-y-1">
@@ -219,6 +221,22 @@ function GroupHealthCard({
                                             </span>
                                             {ai.avg_latency_ms > 0 && (
                                                 <span className="text-muted-foreground">{Math.round(ai.avg_latency_ms)}ms</span>
+                                            )}
+                                            {ai.ttft_samples > 0 && ai.avg_ttft_ms > 0 && (
+                                                <span
+                                                    className="text-muted-foreground"
+                                                    title={t('routeHealth.autoStrategy.ttftHint', { count: ai.ttft_samples })}
+                                                >
+                                                    {t('routeHealth.autoStrategy.ttftLabel')} {formatFirstTokenMs(ai.avg_ttft_ms)}
+                                                </span>
+                                            )}
+                                            {isSuspectFakeStreamSignature(ai.avg_ttft_ms, ai.avg_latency_ms) && (
+                                                <span
+                                                    className="shrink-0 rounded border border-amber-500/50 bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+                                                    title={t('routeHealth.autoStrategy.fakeStreamHint')}
+                                                >
+                                                    {t('routeHealth.autoStrategy.fakeStreamBadge')}
+                                                </span>
                                             )}
                                         </div>
                                     </li>

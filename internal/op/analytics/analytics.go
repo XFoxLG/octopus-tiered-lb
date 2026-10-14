@@ -314,6 +314,8 @@ func buildAutoStrategyItems(snapshot []balancer.AutoStatsSnapshotItem, channelBy
 			SuccessRate:   s.SuccessRate * 100,
 			SampleCount:   s.SampleCount,
 			AvgLatencyMs:  s.AvgLatencyMs,
+			AvgTTFTMs:     s.AvgTTFTMs,
+			TTFTSamples:   s.TTFTSamples,
 			LastActiveAt:  lastActive,
 			MinSamplesMet: s.SampleCount >= minSamples,
 		})
@@ -766,17 +768,16 @@ func buildGroupHealth(groups []model.Group, channelByID map[int]model.Channel, f
 			channelIDs = append(channelIDs, item.ChannelID)
 		}
 
-		// 仅 Auto 组（mode==5）按本组 (channel_id, model_name) 精确过滤 Auto 快照，
-		// 填入 AutoItems 供前端直接展示。取前 12 条（与前端原逻辑一致）。
+		// 按本组 (channel_id, model_name) 精确过滤运行态快照，填入 AutoItems 供前端
+		// 直接展示，取前 12 条（与前端原逻辑一致）。v2.8.10 起对所有分组模式填充：
+		// 运行态统计（成功率/延迟/首字 TTFT）对轮询、随机等模式同样在记录，
+		// 主力 Gemini 轮询分组也需要看到「可见首字」与疑似伪流式标记。
 		// 这里按 (channel, model) 精确匹配，避免跨组渠道的他组模型泄漏（issue #87 Bug）。
-		var autoItems []model.AutoStrategySnapshotItem
-		if group.Mode == model.GroupModeAuto {
-			scope := buildGroupAutoScope(group.Items)
-			filtered := filterAutoSnapshot(autoSnapshot, scope)
-			autoItems = buildAutoStrategyItems(filtered, channelByID, minSamples)
-			if len(autoItems) > 12 {
-				autoItems = autoItems[:12]
-			}
+		scope := buildGroupAutoScope(group.Items)
+		filtered := filterAutoSnapshot(autoSnapshot, scope)
+		autoItems := buildAutoStrategyItems(filtered, channelByID, minSamples)
+		if len(autoItems) > 12 {
+			autoItems = autoItems[:12]
 		}
 
 		items = append(items, model.AnalyticsGroupHealthItem{

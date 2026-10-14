@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.8.10] - 2026-10-14
+
+### 🚀 Features
+- **Web/Analytics**: 「分析中心 → 路由健康」的渠道实时表现面板扩展到所有分组模式（原先仅智能选择组展示）。每个渠道×模型新增「可见首字」（流式首字 EMA）显示；首字占单次时长 ≥60%（或首字 ≥60 秒且占比 ≥40%）的渠道带「疑似伪流式」标记，用于快速定位先维持连接、临近结束才集中输出的渠道，轮询/随机主力分组同样可见。
+- **Web/Log**: 日志卡片与详情新增调查标记：疑似伪流式（首字占比 ≥60%，或首字后内容以 ≥1500 tok/s 集中到达）、触达长度上限（上游终止原因 length / max_tokens）、上游流中断、空输出、客户端中断、未回报用量。阈值基于 2026-10-14 的 60 条真实日志校准：真流式请求首字占比普遍低于 22%，实锤伪流式渠道为 99.8%–100%。
+
+### 🔧 Improvements
+- **Analytics**: Auto 策略快照透出 TTFT EMA 与首字样本数（快照新增 `AvgTTFTMs` / `TTFTSamples`，分析接口 `auto_items` 新增 `avg_ttft_ms` / `ttft_samples`），前端区分「首字为 0」与「还没有流式首字样本」。
+
 ## [v2.8.9] - 2026-10-14
 
 ### 🐛 Bug Fixes

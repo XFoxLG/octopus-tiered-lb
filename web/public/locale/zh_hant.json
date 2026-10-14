@@ -266,7 +266,12 @@
         "title": "智慧策略即時表現",
         "disabled": "已停用",
         "samples": " 樣本",
-        "insufficient": "樣本不足"
+        "insufficient": "樣本不足",
+        "titleGeneric": "渠道即時表現",
+        "ttftLabel": "首字",
+        "ttftHint": "近期串流請求首個可見內容的指數加權平均（EMA，目前 {count} 個首字樣本）。0 或缺失表示該渠道×模型還沒有串流首字樣本。",
+        "fakeStreamBadge": "疑似偽串流",
+        "fakeStreamHint": "首字耗時佔單次請求時長 ≥60%（請求時長 ≥60 秒；或首字 ≥60 秒且佔比 ≥40%）。常見於先維持連線、臨近結束才一次性輸出的渠道，需結合實際回應確認。"
       }
     },
     "channelModel": {
@@ -2814,7 +2819,21 @@
       "collapseAll": "折疊全部",
       "firstTokenTime": "首字時間",
       "firstTokenNotRecorded": "非串流請求不記錄首字耗時",
-      "upstreamFirstToken": "上游首字",
+            "investigation": {
+        "suspectFakeStream": "疑似偽串流",
+        "suspectFakeStreamHint": "首字很晚或內容集中到達：單次時長 ≥60 秒且首字佔比 ≥60%（或首字 ≥60 秒且佔比 ≥40%），或首字後內容以 ≥1500 tok/s 集中到達。常見於先維持連線、臨近結束才一次性輸出的渠道，需結合實際回應確認。",
+        "lengthTruncated": "達到長度上限",
+        "lengthTruncatedHint": "上游終止原因回報為長度上限（length / max_tokens），輸出可能被截斷。",
+        "streamInterrupted": "上游串流中斷",
+        "streamInterruptedHint": "上游串流未發送終止事件即結束，收到的內容可能不完整，用量不可信。",
+        "emptyOutput": "空輸出",
+        "emptyOutputHint": "上游回報成功但沒有任何輸出 Token，需檢查該渠道是否正常生成。",
+        "clientInterrupted": "客戶端中斷",
+        "clientInterruptedHint": "客戶端提前斷開或逾時放棄；日誌記錄的是中斷時刻的狀態，輸出與用量都不完整。",
+        "usageNotReported": "未回報用量",
+        "usageNotReportedHint": "上游未在回應中回報 usage，Token 與費用不可信。"
+      },
+"upstreamFirstToken": "上游首字",
       "clientFirstFlush": "客戶端首字",
       "tokens": "tokens",
       "retryDetails": "重試詳情",

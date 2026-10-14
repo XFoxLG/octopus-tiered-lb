@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
-import { formatLogDuration, reportedIPSourceToken, resolveFirstTokenMilestones, resolveLogDisplayFields } from './display';
+import { formatLogDuration, reportedIPSourceToken, resolveFirstTokenMilestones, resolveLogDisplayFields, resolveLogInvestigationMarkers, type RelayLogInvestigationMarker } from './display';
 import { BoundaryDetails } from './BoundaryDetails';
 import { logIssueSummary } from './body-preview';
 import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
@@ -204,6 +204,47 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts, channelNameB
     );
 }
 
+// 调查标记徽标（v2.8.10）：把排查时需要一眼看到的异常指纹标在卡片与详情底部。
+// 文案与阈值解释都走 i18n，避免界面出现无法理解的缩写。
+const INVESTIGATION_MARKER_LABEL_KEY: Record<RelayLogInvestigationMarker, string> = {
+    suspect_fake_stream: 'investigation.suspectFakeStream',
+    length_truncated: 'investigation.lengthTruncated',
+    stream_interrupted: 'investigation.streamInterrupted',
+    empty_output: 'investigation.emptyOutput',
+    client_interrupted: 'investigation.clientInterrupted',
+    usage_not_reported: 'investigation.usageNotReported',
+};
+
+const INVESTIGATION_MARKER_HINT_KEY: Record<RelayLogInvestigationMarker, string> = {
+    suspect_fake_stream: 'investigation.suspectFakeStreamHint',
+    length_truncated: 'investigation.lengthTruncatedHint',
+    stream_interrupted: 'investigation.streamInterruptedHint',
+    empty_output: 'investigation.emptyOutputHint',
+    client_interrupted: 'investigation.clientInterruptedHint',
+    usage_not_reported: 'investigation.usageNotReportedHint',
+};
+
+const INVESTIGATION_MARKER_CLASS: Record<RelayLogInvestigationMarker, string> = {
+    suspect_fake_stream: 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    length_truncated: 'border-destructive/50 bg-destructive/10 text-destructive',
+    stream_interrupted: 'border-destructive/50 bg-destructive/10 text-destructive',
+    empty_output: 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    client_interrupted: 'border-border/60 bg-muted/60 text-muted-foreground',
+    usage_not_reported: 'border-border/60 bg-muted/60 text-muted-foreground',
+};
+
+function LogInvestigationBadge({ marker }: { marker: RelayLogInvestigationMarker }) {
+    const t = useTranslations('log.card');
+    return (
+        <span
+            className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-4', INVESTIGATION_MARKER_CLASS[marker])}
+            title={t(INVESTIGATION_MARKER_HINT_KEY[marker])}
+        >
+            {t(INVESTIGATION_MARKER_LABEL_KEY[marker])}
+        </span>
+    );
+}
+
 export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyLabelById }: {
     log: RelayLog;
     channelNameById?: ReadonlyMap<number, string>;
@@ -233,6 +274,9 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
         () => resolveFirstTokenMilestones(detail ?? log),
         [detail, log],
     );
+    // 调查标记：疑似伪流式、长度截断、各类用量成因（v2.8.10）。纯前端计算，
+    // 数据全部来自列表接口已有字段。
+    const investigationMarkers = useMemo(() => resolveLogInvestigationMarkers(log), [log]);
     const vis = useLogFieldVisibility();
     const compact = useLogFieldVisibilityStore(s => s.compact);
     const chinaMode = useSettingStore((s) => s.chinaMode);
@@ -395,6 +439,13 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                     <Pin className="size-3.5 shrink-0 text-amber-500" />
                                 )}
                             </div>
+                            {investigationMarkers.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {investigationMarkers.map((marker) => (
+                                        <LogInvestigationBadge key={marker} marker={marker} />
+                                    ))}
+                                </div>
+                            )}
                             <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs tabular-nums text-muted-foreground">
                                 <div className="flex items-center gap-1.5">
                                     <Clock className="size-3.5 shrink-0" style={{ color: badgeColor }} />
@@ -762,6 +813,13 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                         </MorphingDialogDescription>
 
                         <div className="shrink-0 border-t border-border/50 pt-3 text-xs text-muted-foreground">
+                            {investigationMarkers.length > 0 && (
+                                <div className="mb-2 flex flex-wrap gap-1.5">
+                                    {investigationMarkers.map((marker) => (
+                                        <LogInvestigationBadge key={marker} marker={marker} />
+                                    ))}
+                                </div>
+                            )}
                             <div className="flex flex-wrap items-center gap-3 md:gap-4">
                             <div className="flex items-center gap-1.5">
                                 <Clock className="size-3.5" style={{ color: badgeColor }} />
