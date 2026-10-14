@@ -1,0 +1,18 @@
+{
+  "id": "baseline-responses-to-chat",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "openai_responses",
+  "outbound": "chat",
+  "model": "gpt-5-nano",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：responses → chat"
+  },
+  "request": {
+    "model": "gpt-5-nano",
+    "input": "Reply with the single word: OK",
+    "max_output_tokens": 64
+  }
+}

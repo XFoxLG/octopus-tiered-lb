@@ -1,0 +1,369 @@
+{
+  "version": 1,
+  "notes": "三方对拍偏差登记簿：记录每一条『已接受的三方差异』。CI（conformance-oracle job）遇到未登记差异即红。条目由 CI artifact conformance-report.json 校准生成；outcome=unsupported 表示该 oracle 没有这个方向的转换器（显式登记，不是缺陷）。详细字段语义见 conformance/README.md 与 internal/conformance/registry_test.go。",
+  "entries": [
+    {
+      "sample": "baseline-anthropic-to-anthropic",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/system|type_diff"
+      ],
+      "note": "system 表示差异：我方用内容块数组（Claude 官方推荐且保留多块），axonhub 用纯字符串；两者均合法。[no-change] 端点差异属 baseURL 前缀约定（/messages vs /v1/messages）。"
+    },
+    {
+      "sample": "baseline-anthropic-to-anthropic",
+      "oracle": "cliproxyapi",
+      "outcome": "unsupported",
+      "note": "CLIProxyAPI v8.0.29 的注册矩阵中没有 Claude→Claude（同协议不再序列化，属其设计选择）"
+    },
+    {
+      "sample": "baseline-anthropic-to-chat",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages/0/content|value_diff",
+        "/stream|only_oracle"
+      ],
+      "note": "system 消息 content：我方纯字符串，CLIProxyAPI 包成 text 块数组（两者上游皆受）；stream=false 其恒显式、我方省略。[no-change]"
+    },
+    {
+      "sample": "baseline-anthropic-to-gemini",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/generationConfig/thinkingConfig|only_ours",
+        "/systemInstruction|only_oracle",
+        "/system_instruction|only_ours"
+      ],
+      "note": "thinkingConfig 是我方透传能力（axonhub 丢弃 thinking 配置）；system_instruction 命名（我方 snake_case，含空 role）与 axonhub camelCase 的差异，Gemini proto3 JSON 两者皆受。[fix-p2：统一 camelCase 并去掉空 role] 端点前缀差异同前。"
+    },
+    {
+      "sample": "baseline-anthropic-to-gemini",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/generationConfig|only_ours",
+        "/model|only_oracle",
+        "/safetySettings|only_oracle",
+        "/systemInstruction|only_oracle",
+        "/system_instruction|only_ours"
+      ],
+      "note": "CLIProxyAPI 注入 model 字段与 5 条 safetySettings（全 OFF/BLOCK_NONE）——产品决策不采纳。[no-change] generationConfig：其 anthropic→gemini 完全丢弃 max_tokens，我方保留 maxOutputTokens。[no-change 记录] system 命名差异同前。[fix-p2]"
+    },
+    {
+      "sample": "baseline-anthropic-to-responses",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "diff_paths": [
+        "/input|value_diff",
+        "/max_output_tokens|only_oracle"
+      ],
+      "note": "input 字符串简写（我方）vs 结构化消息数组（axonhub）——两者皆合法；max_tokens 未被映射为 max_output_tokens（axonhub 保留 64）。[fix-p1：anthropic/chat → responses 的 max_tokens 映射]"
+    },
+    {
+      "sample": "baseline-anthropic-to-responses",
+      "oracle": "cliproxyapi",
+      "outcome": "unsupported",
+      "note": "CLIProxyAPI 的 responses 出站仅支持 Interactions→OpenaiResponse；本方向无转换器"
+    },
+    {
+      "sample": "baseline-chat-to-anthropic",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/system|type_diff"
+      ],
+      "note": "同 baseline-anthropic-to-anthropic：system 块数组 vs 纯字符串。[no-change] 端点差异属 baseURL 前缀约定。"
+    },
+    {
+      "sample": "baseline-chat-to-anthropic",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages/0/content|value_diff",
+        "/metadata|only_oracle",
+        "/stream|only_oracle"
+      ],
+      "note": "metadata.user_id（CLIProxyAPI 注入 API key 哈希）与显式 stream=false 为我方不采纳的注入项。[no-change] messages[0].content：字符串 vs text 块数组，皆合法。[no-change]"
+    },
+    {
+      "sample": "baseline-chat-to-gemini",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/generationConfig/thinkingConfig|only_ours",
+        "/systemInstruction|only_oracle",
+        "/system_instruction|only_ours"
+      ],
+      "note": "thinkingConfig 我方透传；system 命名差异（snake_case vs camelCase）。[fix-p2：统一 camelCase] 端点前缀差异同前。"
+    },
+    {
+      "sample": "baseline-chat-to-gemini",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/generationConfig/thinkingConfig|only_ours",
+        "/model|only_oracle",
+        "/safetySettings|only_oracle",
+        "/systemInstruction|only_oracle",
+        "/system_instruction|only_ours"
+      ],
+      "note": "model 与 safetySettings 注入不采纳；generationConfig 我方保留 maxOutputTokens、CLIProxyAPI 丢弃。[no-change] system 命名差异。[fix-p2]"
+    },
+    {
+      "sample": "baseline-chat-to-responses",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "diff_paths": [
+        "/input|value_diff",
+        "/max_output_tokens|only_oracle"
+      ],
+      "note": "input 字符串简写 vs 结构化数组（皆合法）；max_tokens 未映射 max_output_tokens。[fix-p1：max_tokens 映射]"
+    },
+    {
+      "sample": "baseline-chat-to-responses",
+      "oracle": "cliproxyapi",
+      "outcome": "unsupported",
+      "note": "CLIProxyAPI 的 responses 出站仅支持 Interactions→OpenaiResponse；本方向无转换器"
+    },
+    {
+      "sample": "baseline-responses-to-anthropic",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "note": "请求体逐字段一致，仅端点前缀（/messages vs /v1/messages）。[no-change]"
+    },
+    {
+      "sample": "baseline-responses-to-anthropic",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/metadata|only_oracle",
+        "/stream|only_oracle"
+      ],
+      "note": "metadata 与 stream=false 注入。[no-change]"
+    },
+    {
+      "sample": "baseline-responses-to-chat",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/max_completion_tokens|only_ours",
+        "/max_tokens|only_oracle",
+        "/stream|only_oracle"
+      ],
+      "note": "max_completion_tokens（我方，GPT-5 系要求的正确参数）vs max_tokens（CLIProxyAPI 旧参数，GPT-5 上游会拒绝）；保持我方。[no-change] stream=false 注入。[no-change]"
+    },
+    {
+      "sample": "baseline-responses-to-gemini",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/generationConfig/maxOutputTokens|only_oracle",
+        "/generationConfig/thinkingConfig|only_ours"
+      ],
+      "note": "axonhub 把 max_output_tokens 映射为 generationConfig.maxOutputTokens，我方未映射。[fix-p1] thinkingConfig 为我方新增透传能力。端点前缀差异同前。"
+    },
+    {
+      "sample": "baseline-responses-to-gemini",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/generationConfig/maxOutputTokens|only_oracle",
+        "/generationConfig/thinkingConfig|only_ours",
+        "/safetySettings|only_oracle"
+      ],
+      "note": "max_output_tokens 未映射为 maxOutputTokens。[fix-p1] safetySettings 注入不采纳。[no-change] thinkingConfig 我方透传。"
+    },
+    {
+      "sample": "baseline-responses-to-responses",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "diff_paths": [
+        "/instructions|only_oracle"
+      ],
+      "note": "空 instructions：axonhub 输出空字符串，我方省略该键；语义等价。[no-change]"
+    },
+    {
+      "sample": "baseline-responses-to-responses",
+      "oracle": "cliproxyapi",
+      "outcome": "unsupported",
+      "note": "CLIProxyAPI 的 responses 出站仅支持 Interactions→OpenaiResponse；本方向无转换器"
+    },
+    {
+      "sample": "scenario-multi-assistant-separator",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/messages|length_diff"
+      ],
+      "note": "多 assistant 消息：我方合并为一条 assistant 多文本块（CLIProxyAPI 同策略），axonhub 拆成两条 assistant。合并对要求角色交替的上游更安全。[no-change，样本留档观察] 端点前缀差异同前。"
+    },
+    {
+      "sample": "scenario-multi-assistant-separator",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages/0/content|value_diff",
+        "/metadata|only_oracle",
+        "/stream|only_oracle"
+      ],
+      "note": "CLIProxyAPI 同我方合并策略；差异仅 content 字符串 vs text 块数组与 metadata/stream 注入。[no-change]"
+    },
+    {
+      "sample": "scenario-multiturn-reasoning",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/contents/1/parts|length_diff",
+        "/generationConfig|only_ours"
+      ],
+      "note": "多轮 reasoning 上下文：我方在 Gemini 出站丢弃 assistant 的 thought part（含 thoughtSignature），axonhub 保留。[fix-p0] 端点前缀差异同前。"
+    },
+    {
+      "sample": "scenario-multiturn-reasoning",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/contents/1/parts|length_diff",
+        "/generationConfig|only_ours",
+        "/model|only_oracle",
+        "/safetySettings|only_oracle"
+      ],
+      "note": "CLIProxyAPI 保留 thought part（与我方 P0 缺失相反）；model/safetySettings/thinkingConfig 差异同前。[fix-p0 见 axonhub 条目]"
+    },
+    {
+      "sample": "scenario-parallel-tool-pairing",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "note": "请求体逐字段一致，仅端点前缀。[no-change]"
+    },
+    {
+      "sample": "scenario-parallel-tool-pairing",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/metadata|only_oracle",
+        "/stream|only_oracle"
+      ],
+      "note": "仅 metadata 与 stream=false 注入。[no-change]"
+    },
+    {
+      "sample": "scenario-system-developer-role",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/system|length_diff"
+      ],
+      "note": "developer 角色消息被我方丢弃（axonhub 将其并入 system 得到两块）。[fix-p1：developer/system 合并策略] 端点前缀差异同前。"
+    },
+    {
+      "sample": "scenario-system-developer-role",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/metadata|only_oracle",
+        "/stream|only_oracle",
+        "/system|length_diff"
+      ],
+      "note": "system 长度差异同我方 developer 丢弃问题。[fix-p1] metadata/stream 注入。[no-change]"
+    },
+    {
+      "sample": "scenario-thinking-signature-wire",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/messages/1/content/0/signature|only_oracle"
+      ],
+      "note": "缺 signature 的 thinking 块：axonhub 补空 signature 键，我方原样透传；上游 Claude API 可能报 signature required。[fix-p1：先复现上游行为，再决定补空值或丢弃块] 端点前缀差异同前。"
+    },
+    {
+      "sample": "scenario-thinking-signature-wire",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages/0/content|value_diff",
+        "/messages/1/content|length_diff",
+        "/messages/2/content|value_diff",
+        "/metadata|only_oracle",
+        "/stream|only_oracle"
+      ],
+      "note": "CLIProxyAPI 直接丢弃 thinking 块（messages[1].content 少一项），我方保留——两种策略；其把 content 归一为 text 块数组。[no-change 记录取舍] metadata/stream 注入。[no-change]"
+    },
+    {
+      "sample": "scenario-tool-result-image-base64",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages/1/tool_calls/0/function/arguments|value_diff",
+        "/messages/2/content|value_diff"
+      ],
+      "note": "工具结果图片（base64）被我方丢弃（tool content 为空），axonhub 保留 image_url 数组。[fix-p0：已在 v2.8.14 计划内] 另 arguments JSON 空白（内部序列化再压缩）为无害差异。"
+    },
+    {
+      "sample": "scenario-tool-result-image-base64",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages|length_diff",
+        "/stream|only_oracle"
+      ],
+      "note": "CLIProxyAPI 把工具结果图片改写为后续 user 消息（tool content 换占位文本）；我方的修复方向（v2.8.14）是在 tool content 中保留 image_url 数组（同 axonhub）。[no-change 记录策略差异]"
+    },
+    {
+      "sample": "scenario-tool-result-image-url",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages/1/tool_calls/0/function/arguments|value_diff",
+        "/messages/2/content|value_diff"
+      ],
+      "note": "工具结果图片（URL）被我方丢弃（tool content 为空），axonhub 保留 image_url 数组。[fix-p0：已在 v2.8.14 计划内] 另 arguments JSON 空白为无害差异。"
+    },
+    {
+      "sample": "scenario-tool-result-image-url",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages|length_diff",
+        "/stream|only_oracle"
+      ],
+      "note": "同 base64：CLIProxyAPI 用后续 user 消息承载图片。[no-change 记录策略差异]"
+    },
+    {
+      "sample": "scenario-trailing-reasoning-item",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "diff_paths": [
+        "/contents/1/parts|length_diff",
+        "/generationConfig/maxOutputTokens|only_oracle",
+        "/generationConfig/thinkingConfig|only_ours"
+      ],
+      "note": "尾随 reasoning item：我方输出空 parts（丢弃 thought 文本），axonhub 保留 thought+thoughtSignature——空 parts 可能直接触发上游 400。[fix-p0] maxOutputTokens 映射缺失同 baseline。[fix-p1]"
+    },
+    {
+      "sample": "scenario-trailing-reasoning-item",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/contents/1/parts|length_diff",
+        "/generationConfig/maxOutputTokens|only_oracle",
+        "/generationConfig/thinkingConfig|only_ours",
+        "/safetySettings|only_oracle"
+      ],
+      "note": "CLIProxyAPI 保留 thought 文本（我方 P0 缺失）；maxOutputTokens/safetySettings/thinkingConfig 差异同前。[fix-p0 见 axonhub 条目]"
+    }
+  ]
+}

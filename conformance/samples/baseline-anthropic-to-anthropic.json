@@ -1,0 +1,21 @@
+{
+  "id": "baseline-anthropic-to-anthropic",
+  "class": "baseline",
+  "side": "request",
+  "inbound": "anthropic",
+  "outbound": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "baseline",
+    "note": "矩阵覆盖：anthropic → anthropic（同协议再序列化；CLIProxyAPI 无此方向，验证 unsupported 登记路径）"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 64,
+    "system": "You are a conformance fixture.",
+    "messages": [
+      {"role": "user", "content": "Reply with the single word: OK"}
+    ]
+  }
+}

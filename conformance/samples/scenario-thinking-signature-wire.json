@@ -1,0 +1,27 @@
+{
+  "id": "scenario-thinking-signature-wire",
+  "class": "thinking-signature-wire",
+  "side": "request",
+  "inbound": "openai_chat",
+  "outbound": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "test",
+    "ref": "sub2api/backend/internal/pkg/apicompat/thinking_signature_wire_test.go",
+    "note": "严格客户端（如 Grok Build）会因 thinking block 缺少 signature 键报 missing field signature；本样本验证我方 chat→anthropic 转换输出的 thinking 线上形状"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 256,
+    "messages": [
+      {"role": "user", "content": "Think first."},
+      {
+        "role": "assistant",
+        "content": "The answer.",
+        "reasoning_content": "Deliberation before answering."
+      },
+      {"role": "user", "content": "Continue."}
+    ]
+  }
+}

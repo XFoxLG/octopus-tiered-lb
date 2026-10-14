@@ -1,0 +1,27 @@
+{
+  "id": "scenario-multiturn-reasoning",
+  "class": "multiturn-reasoning-context",
+  "side": "request",
+  "inbound": "openai_chat",
+  "outbound": "gemini",
+  "model": "gemini-3.1-pro-preview",
+  "stream": false,
+  "source": {
+    "kind": "issue",
+    "ref": "CLIProxyAPI#5840",
+    "url": "https://github.com/router-for-me/CLIProxyAPI/issues/5840",
+    "note": "多轮对话中的 reasoning 上下文（Gemini/Antigravity thought signature）在 OpenAI 兼容端点上的保留"
+  },
+  "request": {
+    "model": "gemini-3.1-pro-preview",
+    "messages": [
+      {"role": "user", "content": "First question."},
+      {
+        "role": "assistant",
+        "content": "First answer.",
+        "reasoning_content": "Internal reasoning for the first answer."
+      },
+      {"role": "user", "content": "Second question."}
+    ]
+  }
+}

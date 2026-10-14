@@ -1,0 +1,31 @@
+{
+  "id": "scenario-trailing-reasoning-item",
+  "class": "trailing-reasoning-item",
+  "side": "request",
+  "inbound": "openai_responses",
+  "outbound": "gemini",
+  "model": "gemini-3.1-pro-preview",
+  "stream": false,
+  "source": {
+    "kind": "issue",
+    "ref": "CLIProxyAPI#6630",
+    "url": "https://github.com/router-for-me/CLIProxyAPI/issues/6630",
+    "note": "Vertex /v1/responses 尾随 reasoning item 触发 400 Requests ending with a model turn（同族 #6530）"
+  },
+  "request": {
+    "model": "gemini-3.1-pro-preview",
+    "max_output_tokens": 256,
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "Continue the analysis."}]
+      },
+      {
+        "type": "reasoning",
+        "id": "rs_conformance_1",
+        "summary": [{"type": "summary_text", "text": "Considered the previous answer."}]
+      }
+    ]
+  }
+}
