@@ -148,7 +148,7 @@ function resolveLeadingAttemptMs(attempts: ChannelAttempt[] | undefined, firstVi
 }
 
 export function resolveLogInvestigationMarkers(
-    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes'>,
+    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes'>,
 ): RelayLogInvestigationMarker[] {
     const markers: RelayLogInvestigationMarker[] = [];
     const ftutRaw = typeof log.ftut === 'number' ? log.ftut : 0;
@@ -193,10 +193,14 @@ export function resolveLogInvestigationMarkers(
     if (emptyOutputByUsage) {
         markers.push('empty_output');
     } else if (zeroTokensReported) {
-        if (deliveredBytes !== null && deliveredBytes > 0) {
-            markers.push('output_uncounted');
-        } else {
-            markers.push('empty_output');
+        // v2.8.13：网关已按可见正文给出估算值（≈N），「输出量未计」不再成立。
+        const outputTokensEst = typeof log.output_tokens_est === 'number' ? log.output_tokens_est : 0;
+        if (outputTokensEst <= 0) {
+            if (deliveredBytes !== null && deliveredBytes > 0) {
+                markers.push('output_uncounted');
+            } else {
+                markers.push('empty_output');
+            }
         }
     }
     if (usageState === 'missing_terminal') markers.push('stream_interrupted');
@@ -204,6 +208,30 @@ export function resolveLogInvestigationMarkers(
     if (usageState === 'not_reported') markers.push('usage_not_reported');
 
     return markers;
+}
+
+/**
+ * v2.8.13：Token 显示的生效值——上游漏报的方向优先使用网关估算值（est > 0），
+ * 否则回退到上报值。估算行在 UI 上以「≈」前缀与提示文案标注，费用与统计仍按
+ * 上游上报值计算。
+ */
+export function resolveEffectiveTokenCounts(
+    log: Pick<RelayLog, 'input_tokens' | 'output_tokens' | 'input_tokens_est' | 'output_tokens_est'>,
+) {
+    const inputEst = typeof log.input_tokens_est === 'number' && log.input_tokens_est > 0 ? log.input_tokens_est : 0;
+    const outputEst = typeof log.output_tokens_est === 'number' && log.output_tokens_est > 0 ? log.output_tokens_est : 0;
+    const reportedInput = typeof log.input_tokens === 'number' ? log.input_tokens : 0;
+    const reportedOutput = typeof log.output_tokens === 'number' ? log.output_tokens : 0;
+    const inputTokens = inputEst > 0 ? inputEst : reportedInput;
+    const outputTokens = outputEst > 0 ? outputEst : reportedOutput;
+    return {
+        inputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+        inputEstimated: inputEst > 0,
+        outputEstimated: outputEst > 0,
+        estimated: inputEst > 0 || outputEst > 0,
+    };
 }
 
 export type ReportedIPSourceToken = 'cf' | 'tru' | 'xff' | '';

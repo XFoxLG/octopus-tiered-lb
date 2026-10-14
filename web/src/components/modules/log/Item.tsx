@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
-import { formatLogDuration, reportedIPSourceToken, resolveFirstTokenMilestones, resolveLogDisplayFields, resolveLogInvestigationMarkers, type RelayLogInvestigationMarker } from './display';
+import { formatLogDuration, reportedIPSourceToken, resolveEffectiveTokenCounts, resolveFirstTokenMilestones, resolveLogDisplayFields, resolveLogInvestigationMarkers, type RelayLogInvestigationMarker } from './display';
 import { BoundaryDetails } from './BoundaryDetails';
 import { logIssueSummary } from './body-preview';
 import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
@@ -296,7 +296,9 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
     const ipSourceToken = reportedIPSourceToken(displayFields.reportedClientIPSource);
     const cacheReadTokens = displayFields.cacheReadTokens;
     const semanticCacheHit = displayFields.semanticCacheHit;
-    const effectiveInputTokens = Math.max(0, log.input_tokens - cacheReadTokens);
+    // v2.8.13：上游漏报的方向优先使用网关估算值（est > 0），其余显示上报值。
+    const tokenCounts = resolveEffectiveTokenCounts(log);
+    const effectiveInputTokens = Math.max(0, tokenCounts.inputTokens - cacheReadTokens);
     const inputLabel = cacheReadTokens > 0 ? t('realInput') : t('input');
     const displayChannelName = displayFields.channelName || '-';
     const displayEndpointType = useMemo(() => {
@@ -352,17 +354,24 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
         return t(`usageState.${log.usage_state}`);
     }, [log.usage_state, t]);
 
-    const inputTokenDisplay = usageKnown
-        ? fmt(formatCount(effectiveInputTokens).formatted)
-        : (usageStateHint || tCommon('unknown'));
-    const outputTokenDisplay = usageKnown
-        ? fmt(formatCount(log.output_tokens).formatted)
-        : (usageStateHint || tCommon('unknown'));
+    // v2.8.13：估算行以「≈」前缀标注并挂估算说明 tooltip；费用与统计仍按上报值计算。
+    const estimatedHint = t('investigation.estimatedHint');
+    const inputTokenDisplay = tokenCounts.inputEstimated
+        ? `≈${fmt(formatCount(effectiveInputTokens).formatted)}`
+        : usageKnown
+            ? fmt(formatCount(effectiveInputTokens).formatted)
+            : (usageStateHint || tCommon('unknown'));
+    const outputTokenDisplay = tokenCounts.outputEstimated
+        ? `≈${fmt(formatCount(tokenCounts.outputTokens).formatted)}`
+        : usageKnown
+            ? fmt(formatCount(tokenCounts.outputTokens).formatted)
+            : (usageStateHint || tCommon('unknown'));
     // 总消耗 = 真实输入 + 缓存输入 + 输出 = input_tokens(含缓存) + output_tokens（issue #107）
-    const totalTokens = log.input_tokens + log.output_tokens;
-    const totalTokenDisplay = usageKnown
-        ? fmt(formatCount(totalTokens).formatted)
-        : (usageStateHint || tCommon('unknown'));
+    const totalTokenDisplay = tokenCounts.estimated
+        ? `≈${fmt(formatCount(tokenCounts.totalTokens).formatted)}`
+        : usageKnown
+            ? fmt(formatCount(tokenCounts.totalTokens).formatted)
+            : (usageStateHint || tCommon('unknown'));
     const costDisplay = usageKnown
         ? (chinaMode
             ? costFmt(formatMoney(Number(log.cost)).raw)
@@ -505,18 +514,20 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 {vis.tps && (
                                     <div className="flex items-center gap-1.5">
                                         <Gauge className="size-3.5 shrink-0 text-lime-500" />
-                                        <span>{t('tps')} {formatTPS(log.output_tokens, log.use_time)}</span>
+                                        <span>{t('tps')} {formatTPS(tokenCounts.outputTokens, log.use_time)}</span>
                                     </div>
                                 )}
                                 {vis.cacheHitRate && cacheReadTokens > 0 && (
                                     <div className="flex items-center gap-1.5">
                                         <Percent className="size-3.5 shrink-0 text-teal-500" />
-                                        <span>{t('cacheHitRate')} {formatCacheHitRate(cacheReadTokens, totalTokens)}</span>
+                                        <span>{t('cacheHitRate')} {formatCacheHitRate(cacheReadTokens, tokenCounts.totalTokens)}</span>
                                     </div>
                                 )}
                                 <div className="flex items-center gap-1.5">
                                     <ArrowDownToLine className="size-3.5 shrink-0 text-green-500" />
-                                    <span>{inputLabel} {inputTokenDisplay}</span>
+                                    <span title={tokenCounts.inputEstimated ? estimatedHint : undefined}>
+                                        {inputLabel} {inputTokenDisplay}
+                                    </span>
                                 </div>
                                 {semanticCacheHit && (
                                     <div className="flex items-center gap-1.5">
@@ -532,11 +543,18 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 )}
                                 <div className="flex items-center gap-1.5">
                                     <ArrowUpFromLine className="size-3.5 shrink-0 text-purple-500" />
-                                    <span>{t('output')} {outputTokenDisplay}</span>
+                                    <span title={tokenCounts.outputEstimated ? estimatedHint : undefined}>
+                                        {t('output')} {outputTokenDisplay}
+                                    </span>
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                     <Sigma className="size-3.5 shrink-0 text-rose-500" />
-                                    <span className="font-medium text-rose-600 dark:text-rose-400">{t('totalTokens')} {totalTokenDisplay}</span>
+                                    <span
+                                        className="font-medium text-rose-600 dark:text-rose-400"
+                                        title={tokenCounts.estimated ? estimatedHint : undefined}
+                                    >
+                                        {t('totalTokens')} {totalTokenDisplay}
+                                    </span>
                                 </div>
                                 {vis.cost && (
                                     <div className="flex items-center gap-1.5">
@@ -872,26 +890,35 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                             {vis.tps && (
                                 <div className="flex items-center gap-1.5">
                                     <Gauge className="size-3.5 text-lime-500" />
-                                    <span>{t('tps')}: {formatTPS(log.output_tokens, log.use_time)}</span>
+                                    <span>{t('tps')}: {formatTPS(tokenCounts.outputTokens, log.use_time)}</span>
                                 </div>
                             )}
                             {vis.cacheHitRate && cacheReadTokens > 0 && (
                                 <div className="flex items-center gap-1.5">
                                     <Percent className="size-3.5 text-teal-500" />
-                                    <span>{t('cacheHitRate')}: {formatCacheHitRate(cacheReadTokens, totalTokens)}</span>
+                                    <span>{t('cacheHitRate')}: {formatCacheHitRate(cacheReadTokens, tokenCounts.totalTokens)}</span>
                                 </div>
                             )}
                             <div className="flex items-center gap-1.5">
                                 <ArrowDownToLine className="size-3.5 text-green-500" />
-                                <span>{inputLabel}: {inputTokenDisplay}</span>
+                                <span title={tokenCounts.inputEstimated ? estimatedHint : undefined}>
+                                    {inputLabel}: {inputTokenDisplay}
+                                </span>
                             </div>
                             <div className="flex items-center gap-1.5">
                                 <ArrowUpFromLine className="size-3.5 text-purple-500" />
-                                <span>{t('output')}: {outputTokenDisplay}</span>
+                                <span title={tokenCounts.outputEstimated ? estimatedHint : undefined}>
+                                    {t('output')}: {outputTokenDisplay}
+                                </span>
                             </div>
                             <div className="flex items-center gap-1.5">
                                 <Sigma className="size-3.5 text-rose-500" />
-                                <span className="font-medium text-rose-600 dark:text-rose-400">{t('totalTokens')}: {totalTokenDisplay}</span>
+                                <span
+                                    className="font-medium text-rose-600 dark:text-rose-400"
+                                    title={tokenCounts.estimated ? estimatedHint : undefined}
+                                >
+                                    {t('totalTokens')}: {totalTokenDisplay}
+                                </span>
                             </div>
                             {cacheReadTokens > 0 && (
                                 <div className="flex items-center gap-1.5">

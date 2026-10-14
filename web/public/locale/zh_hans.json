@@ -2830,6 +2830,7 @@
         "emptyOutputHint": "上游返回成功但没有任何输出 Token，需检查该渠道是否正常生成。",
         "outputUncounted": "输出量未计",
         "outputUncountedHint": "上游回报的用量里输出 Token 为 0，但网关确实向客户端写出了数据（常见于渠道漏报完成量，TPS 与费用会偏低），需结合正文判断。",
+        "estimatedHint": "上游未回报该方向的用量：带 ≈ 的数值由网关按可见正文估算（不含思考与图片），仅供参考；费用与统计仍按上游回报计算。",
         "clientInterrupted": "客户端中断",
         "clientInterruptedHint": "客户端提前断开或超时放弃；日志记录的是中断时刻的状态，输出与用量都不完整。",
         "usageNotReported": "未回报用量",
