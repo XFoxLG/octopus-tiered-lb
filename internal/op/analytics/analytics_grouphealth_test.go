@@ -315,13 +315,16 @@ func TestBuildGroupHealth_AutoItemsFilteredByChannelModel(t *testing.T) {
 	}
 }
 
-// TestBuildGroupHealth_AutoItemsEmptyForNonAutoGroup 验证非 Auto 组不填充 AutoItems。
-func TestBuildGroupHealth_AutoItemsEmptyForNonAutoGroup(t *testing.T) {
+// TestBuildGroupHealth_AutoItemsForNonAutoGroup 验证非 Auto 组同样填充本组范围内的
+// 运行态快照（v2.8.10 行为变更）：成功率/延迟/首字 TTFT 对所有分组模式都在记录，
+// 轮询等主力分组也需要在「分析中心」看到可见首字与疑似伪流式标记。过滤仍按本组
+// (channel, model) 精确匹配，不会泄漏他组模型（issue #87）。
+func TestBuildGroupHealth_AutoItemsForNonAutoGroup(t *testing.T) {
 	groups := []model.Group{
 		{
 			ID:   1,
-			Name: "failover-group",
-			Mode: model.GroupModeFailover,
+			Name: "round-robin-group",
+			Mode: model.GroupModeRoundRobin,
 			Items: []model.GroupItem{
 				{ChannelID: 1, ModelName: "model-X"},
 			},
@@ -331,15 +334,53 @@ func TestBuildGroupHealth_AutoItemsEmptyForNonAutoGroup(t *testing.T) {
 		1: {ID: 1, Name: "channelA", Enabled: true},
 	}
 	autoSnapshot := []balancer.AutoStatsSnapshotItem{
-		{ChannelID: 1, ModelName: "model-x", SuccessRate: 0.9, SampleCount: 20, AvgLatencyMs: 100, LastActiveAt: time.Now()},
+		{ChannelID: 1, ModelName: "model-x", SuccessRate: 0.9, SampleCount: 20, AvgLatencyMs: 260000, AvgTTFTMs: 259000, TTFTSamples: 3, LastActiveAt: time.Now()},
+		{ChannelID: 1, ModelName: "model-other", SuccessRate: 0.9, SampleCount: 5, AvgLatencyMs: 100, LastActiveAt: time.Now()},
 	}
 
 	items := buildGroupHealth(groups, channelByID, nil, autoSnapshot, 10)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 group health item, got %d", len(items))
 	}
-	if len(items[0].AutoItems) != 0 {
-		t.Fatalf("non-Auto group AutoItems len = %d, want 0", len(items[0].AutoItems))
+	if len(items[0].AutoItems) != 1 {
+		t.Fatalf("non-Auto group AutoItems len = %d, want 1 (model-x only)", len(items[0].AutoItems))
+	}
+	ai := items[0].AutoItems[0]
+	if ai.ModelName != "model-x" {
+		t.Fatalf("non-Auto group AutoItems[0].ModelName = %q, want model-x (no cross-model leak)", ai.ModelName)
+	}
+	if ai.AvgTTFTMs != 259000 || ai.TTFTSamples != 3 {
+		t.Fatalf("AutoItems[0] TTFT = (%f, %d), want (259000, 3)", ai.AvgTTFTMs, ai.TTFTSamples)
+	}
+}
+
+// TestBuildAutoStrategyItems_MapsTTFT 验证 buildAutoStrategyItems 把 balancer 快照的
+// TTFT EMA 与样本数映射到对外 model（前端据此渲染「可见首字」与疑似伪流式标记）。
+func TestBuildAutoStrategyItems_MapsTTFT(t *testing.T) {
+	snapshot := []balancer.AutoStatsSnapshotItem{
+		{
+			ChannelID:    97,
+			ModelName:    "gemini-3.1-pro-preview",
+			SuccessRate:  1,
+			SampleCount:  4,
+			AvgLatencyMs: 260379,
+			AvgTTFTMs:    260112,
+			TTFTSamples:  2,
+		},
+	}
+	channelByID := map[int]model.Channel{
+		97: {ID: 97, Name: "GG", Enabled: true},
+	}
+
+	items := buildAutoStrategyItems(snapshot, channelByID, 1)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(items))
+	}
+	if items[0].AvgTTFTMs != 260112 {
+		t.Fatalf("AvgTTFTMs = %f, want 260112", items[0].AvgTTFTMs)
+	}
+	if items[0].TTFTSamples != 2 {
+		t.Fatalf("TTFTSamples = %d, want 2", items[0].TTFTSamples)
 	}
 }
 

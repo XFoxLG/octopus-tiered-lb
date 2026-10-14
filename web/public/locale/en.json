@@ -266,7 +266,12 @@
         "title": "Auto strategy (live)",
         "disabled": "disabled",
         "samples": " samples",
-        "insufficient": "few samples"
+        "insufficient": "few samples",
+        "titleGeneric": "Channel live performance",
+        "ttftLabel": "First token",
+        "ttftHint": "EMA of time to first visible token over recent streaming requests (samples: {count}). 0 or missing means no streaming first-token sample yet.",
+        "fakeStreamBadge": "Suspected fake streaming",
+        "fakeStreamHint": "First token took at least 60% of a request lasting 60s or more (or first token at 60s+ with a 40%+ share). Typical of channels that keep the connection alive and flush everything at the end; confirm against the response body."
       }
     },
     "channelModel": {
@@ -2858,7 +2863,21 @@
       "collapseAll": "Collapse All",
       "firstTokenTime": "First Token Time",
       "firstTokenNotRecorded": "First-token latency is not recorded for non-streaming requests",
-      "upstreamFirstToken": "Upstream first token",
+            "investigation": {
+        "suspectFakeStream": "Suspected fake streaming",
+        "suspectFakeStreamHint": "First token arrived very late or content burst at the very end: ≥60s total with a ≥60% first-token share (or first token ≥60s with a ≥40% share), or post-first-token throughput ≥1500 tok/s. Typical of channels that keep the connection alive and flush everything at the end; confirm against the response body.",
+        "lengthTruncated": "Hit length limit",
+        "lengthTruncatedHint": "Upstream reported a length termination (length / max_tokens); the output may be truncated.",
+        "streamInterrupted": "Upstream stream interrupted",
+        "streamInterruptedHint": "The upstream stream ended without a terminal event; received content may be incomplete and usage is unreliable.",
+        "emptyOutput": "Empty output",
+        "emptyOutputHint": "Upstream returned success with zero output tokens. Check whether this channel actually generates content.",
+        "clientInterrupted": "Client interrupted",
+        "clientInterruptedHint": "The client disconnected or gave up early; this log reflects the state at interruption, so output and usage are incomplete.",
+        "usageNotReported": "Usage not reported",
+        "usageNotReportedHint": "Upstream did not report usage in the response; token counts and cost are unreliable."
+      },
+"upstreamFirstToken": "Upstream first token",
       "clientFirstFlush": "Client first flush",
       "tokens": "tokens",
       "retryDetails": "Retry Details",

@@ -8,6 +8,7 @@ import {
     reportedIPSourceToken,
     resolveFirstTokenMilestones,
     resolveLogDisplayFields,
+    resolveLogInvestigationMarkers,
 } from './display.ts';
 
 test('formatLogDuration renders a dash when the metric was not recorded', () => {
@@ -424,4 +425,156 @@ test('resolveLogDisplayFields separates a real client IP from the Render proxy f
     assert.equal(proxyFallback.clientIP, '10.0.0.5');
     assert.equal(proxyFallback.rawClientIP, '10.0.0.5');
     assert.equal(proxyFallback.reportedClientIPSource, '');
+});
+
+test('resolveLogInvestigationMarkers flags fake-streaming bursts on long requests', () => {
+    // GG 假流式-cache：首字占满单次时长（260.112s / 260.379s，输出 18447 token）
+    const fakeCache = resolveLogInvestigationMarkers({
+        ftut: 260112,
+        use_time: 260379,
+        output_tokens: 18447,
+        usage_state: 'reported',
+        provider_termination_reason: 'complete',
+    });
+    assert.deepEqual(fakeCache, ['suspect_fake_stream']);
+
+    // 旧 GG 变体：首字 205.3s / 总 509.4s（占比 40.3%，走次判定）
+    const legacyVariant = resolveLogInvestigationMarkers({
+        ftut: 205299,
+        use_time: 509415,
+        output_tokens: 23002,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+    });
+    assert.deepEqual(legacyVariant, ['suspect_fake_stream']);
+
+    // 尾部突发：首字占比不高，但首字后 82ms 内灌入 10957 token（13.3 万 tok/s）
+    const tailBurst = resolveLogInvestigationMarkers({
+        ftut: 244183,
+        use_time: 244265,
+        output_tokens: 10957,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+    });
+    assert.deepEqual(tailBurst, ['suspect_fake_stream']);
+});
+
+test('resolveLogInvestigationMarkers leaves real streaming logs unmarked', () => {
+    // New Cross 真流式：首字 19.5s / 总 90.7s（21.5%），尾部速率 ~99 tok/s
+    const realStream = resolveLogInvestigationMarkers({
+        ftut: 19538,
+        use_time: 90709,
+        output_tokens: 7012,
+        usage_state: 'reported',
+        provider_termination_reason: 'complete',
+    });
+    assert.deepEqual(realStream, []);
+
+    // 短请求：9.584s / 9.828s（占比 97.5% 但总时长 < 60s，不标记）
+    const shortRequest = resolveLogInvestigationMarkers({
+        ftut: 9584,
+        use_time: 9828,
+        output_tokens: 69,
+        usage_state: 'reported',
+        provider_termination_reason: 'stop',
+    });
+    assert.deepEqual(shortRequest, []);
+
+    // 非流式请求：ftut=0
+    const nonStreaming = resolveLogInvestigationMarkers({
+        ftut: 0,
+        use_time: 2200,
+        output_tokens: 120,
+        usage_state: 'reported',
+        provider_termination_reason: 'stop',
+    });
+    assert.deepEqual(nonStreaming, []);
+});
+
+test('resolveLogInvestigationMarkers maps usage_state causes to markers', () => {
+    const build = (usageState: string, extra: Partial<Parameters<typeof resolveLogInvestigationMarkers>[0]> = {}) =>
+        resolveLogInvestigationMarkers({
+            ftut: 1200,
+            use_time: 3400,
+            output_tokens: 40,
+            usage_state: usageState,
+            provider_termination_reason: 'stop',
+            ...extra,
+        });
+
+    assert.deepEqual(build('missing_terminal'), ['stream_interrupted']);
+    assert.deepEqual(build('empty_output'), ['empty_output']);
+    assert.deepEqual(build('client_disconnected'), ['client_interrupted']);
+    assert.deepEqual(build('not_reported'), ['usage_not_reported']);
+    assert.deepEqual(build('reported'), []);
+    // 空 usage_state（历史行）不猜测成因
+    assert.deepEqual(build(''), []);
+
+    // 长度截断：上游终止原因 length / max_tokens（大小写不敏感）
+    assert.deepEqual(
+        build('reported', { provider_termination_reason: 'length' }),
+        ['length_truncated'],
+    );
+    assert.deepEqual(
+        build('reported', { provider_termination_reason: 'MAX_TOKENS' }),
+        ['length_truncated'],
+    );
+});
+
+test('resolveLogInvestigationMarkers flags trusted zero-output successes as empty output', () => {
+    // 烁-gemini 早停样本（13:07:25）：成功、用量可信但输出 0 token
+    const zeroOutput = resolveLogInvestigationMarkers({
+        ftut: 9171,
+        use_time: 14252,
+        output_tokens: 0,
+        usage_state: 'reported',
+        provider_termination_reason: 'complete',
+        termination_cause: 'complete',
+    });
+    assert.deepEqual(zeroOutput, ['empty_output']);
+
+    // 上游拦截（内容过滤）的零输出有明确解释，不标空输出
+    const filtered = resolveLogInvestigationMarkers({
+        ftut: 800,
+        use_time: 1500,
+        output_tokens: 0,
+        usage_state: 'reported',
+        provider_termination_reason: 'content_filter',
+        termination_cause: 'content_filter',
+    });
+    assert.deepEqual(filtered, []);
+
+    // 客户端中断导致的零输出只标客户端中断
+    const disconnected = resolveLogInvestigationMarkers({
+        ftut: 0,
+        use_time: 309702,
+        output_tokens: 0,
+        usage_state: 'client_disconnected',
+        provider_termination_reason: '',
+        termination_cause: '',
+    });
+    assert.deepEqual(disconnected, ['client_interrupted']);
+
+    // 历史行（无 usage_state）不猜测
+    const legacy = resolveLogInvestigationMarkers({
+        ftut: 0,
+        use_time: 126257,
+        output_tokens: 0,
+        usage_state: '',
+        provider_termination_reason: '',
+        termination_cause: '',
+    });
+    assert.deepEqual(legacy, []);
+});
+
+test('resolveLogInvestigationMarkers stacks independent markers', () => {
+    // 合成叠加用例：伪流式指纹（首字 110.7s / 总 112.9s）+ 客户端断开成因
+    const stacked = resolveLogInvestigationMarkers({
+        ftut: 110709,
+        use_time: 112930,
+        output_tokens: 234,
+        usage_state: 'client_disconnected',
+        provider_termination_reason: '',
+    });
+    assert.deepEqual(stacked, ['suspect_fake_stream', 'client_interrupted']);
 });

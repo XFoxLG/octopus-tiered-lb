@@ -242,6 +242,15 @@ func (cs *ChannelStats) GetTTFT() float64 {
 	return cs.avgTTFTMs
 }
 
+// GetTTFTSamples 返回已记录的流式 TTFT 样本数。
+// 返回 0 表示该 (渠道,模型) 还没有流式首字证据（只有非流式流量，或进程刚重启）。
+// 分析中心用「样本数 > 0」区分「首字为 0」与「没有首字样本」。
+func (cs *ChannelStats) GetTTFTSamples() int64 {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.ttftSamples
+}
+
 // GetAutoStats returns the success rate and total samples for a channel+model.
 // This is primarily for debugging/testing purposes.
 func GetAutoStats(channelID int, modelName string) (successRate float64, totalSamples int) {
@@ -270,6 +279,10 @@ type AutoStatsSnapshotItem struct {
 	SuccessRate  float64 // 0-1
 	SampleCount  int
 	AvgLatencyMs float64
+	// AvgTTFTMs 是流式请求首个可见输出的 EMA（毫秒）；0 表示无流式首字样本。
+	// 供分析中心展示「可见首字」并识别疑似伪流式渠道（首字占满单次时长）。
+	AvgTTFTMs    float64
+	TTFTSamples  int64
 	LastActiveAt time.Time
 }
 
@@ -325,6 +338,8 @@ func snapshotFromStats(channelID int, modelName string, stats *ChannelStats) Aut
 		SuccessRate:  successRate,
 		SampleCount:  samples,
 		AvgLatencyMs: stats.GetLatency(),
+		AvgTTFTMs:    stats.GetTTFT(),
+		TTFTSamples:  stats.GetTTFTSamples(),
 		LastActiveAt: stats.lastActivity(),
 	}
 }
