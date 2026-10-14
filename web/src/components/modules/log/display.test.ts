@@ -491,6 +491,99 @@ test('resolveLogInvestigationMarkers leaves real streaming logs unmarked', () =>
     assert.deepEqual(nonStreaming, []);
 });
 
+test('resolveLogInvestigationMarkers ignores retry-chain time before the first visible token', () => {
+    // 10/14 16:14:02（yuecheng）：前 5 次尝试失败共 102s，第 6 次 23.8s 正常流式；
+    // 未扣除重试耗时会把首字占比抬到 89% 造成误报。
+    const retriedRealStream = resolveLogInvestigationMarkers({
+        ftut: 111960,
+        use_time: 125815,
+        output_tokens: 314,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        termination_cause: '',
+        attempts: [
+            { attempt_num: 1, channel_id: 97, channel_name: 'GG', model_name: '假流式-a', status: 'failed', duration: 183 },
+            { attempt_num: 2, channel_id: 97, channel_name: 'GG', model_name: '假流式-a', status: 'failed', duration: 190 },
+            { attempt_num: 3, channel_id: 289, channel_name: 'Bosco', model_name: 'gemini-3.1-pro', status: 'failed', duration: 101482 },
+            { attempt_num: 4, channel_id: 97, channel_name: 'GG', model_name: '抗截断-a', status: 'failed', duration: 73 },
+            { attempt_num: 5, channel_id: 97, channel_name: 'GG', model_name: '抗截断-a', status: 'failed', duration: 68 },
+            { attempt_num: 6, channel_id: 51, channel_name: 'yuecheng', model_name: 'gemini-3.1-pro', status: 'success', duration: 23804 },
+        ],
+    });
+    assert.deepEqual(retriedRealStream, []);
+
+    // 10/14 02:10:02（GG，20K 长输出）：4 次失败共 186s，最后一次 230.5s 真流式。
+    const longOutputAfterRetries = resolveLogInvestigationMarkers({
+        ftut: 247533,
+        use_time: 456899,
+        output_tokens: 20263,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        termination_cause: '',
+        attempts: [
+            { attempt_num: 1, channel_id: 335, channel_name: 'wududu', model_name: 'gemini-3.1-pro-low', status: 'skipped', duration: 0 },
+            { attempt_num: 2, channel_id: 97, channel_name: 'GG', model_name: 'gemini-3.1-pro-preview-cache', status: 'failed', duration: 69330 },
+            { attempt_num: 3, channel_id: 97, channel_name: 'GG', model_name: 'gemini-3.1-pro-preview-cache', status: 'failed', duration: 34138 },
+            { attempt_num: 4, channel_id: 97, channel_name: 'GG', model_name: 'gemini-3.1-pro-preview-cache', status: 'failed', duration: 47109 },
+            { attempt_num: 5, channel_id: 97, channel_name: 'GG', model_name: 'gemini-3.1-pro-preview-cache', status: 'failed', duration: 35722 },
+            { attempt_num: 6, channel_id: 97, channel_name: 'GG', model_name: 'gemini-3.1-pro-preview-cache', status: 'success', duration: 230510 },
+        ],
+    });
+    assert.deepEqual(longOutputAfterRetries, []);
+
+    // 对照组：失败重试之后仍是一次「临近结束才集中输出」的真伪流式，扣除后依旧成立。
+    const dumpAfterRetries = resolveLogInvestigationMarkers({
+        ftut: 200000,
+        use_time: 200300,
+        output_tokens: 10000,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        termination_cause: '',
+        attempts: [
+            { attempt_num: 1, channel_id: 9, channel_name: 'dead', model_name: 'x', status: 'failed', duration: 100000 },
+            { attempt_num: 2, channel_id: 97, channel_name: 'GG', model_name: '假流式-x', status: 'success', duration: 100300 },
+        ],
+    });
+    assert.deepEqual(dumpAfterRetries, ['suspect_fake_stream']);
+});
+
+test('resolveLogInvestigationMarkers separates uncounted output from truly empty output', () => {
+    // 烁-gemini「回答 OK 却自报 completion=0」：已写出 567 字节 → 输出量未计，不再冒充空输出。
+    const uncounted = resolveLogInvestigationMarkers({
+        ftut: 4335,
+        use_time: 4483,
+        output_tokens: 0,
+        usage_state: 'reported',
+        provider_termination_reason: 'STOP',
+        termination_cause: 'complete',
+        client_write_bytes: 567,
+    });
+    assert.deepEqual(uncounted, ['output_uncounted']);
+
+    // 后端权威成因（empty_output）优先，即使有字节写出也按空输出标注。
+    const backendEmpty = resolveLogInvestigationMarkers({
+        ftut: 800,
+        use_time: 1500,
+        output_tokens: 0,
+        usage_state: 'empty_output',
+        provider_termination_reason: '',
+        termination_cause: '',
+        client_write_bytes: 120,
+    });
+    assert.deepEqual(backendEmpty, ['empty_output']);
+
+    // 历史行缺 client_write_bytes 时保持旧行为，不猜测。
+    const legacyNoBytes = resolveLogInvestigationMarkers({
+        ftut: 0,
+        use_time: 3000,
+        output_tokens: 0,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        termination_cause: '',
+    });
+    assert.deepEqual(legacyNoBytes, ['empty_output']);
+});
+
 test('resolveLogInvestigationMarkers maps usage_state causes to markers', () => {
     const build = (usageState: string, extra: Partial<Parameters<typeof resolveLogInvestigationMarkers>[0]> = {}) =>
         resolveLogInvestigationMarkers({

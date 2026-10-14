@@ -110,20 +110,46 @@ export type RelayLogInvestigationMarker =
     | 'length_truncated'
     | 'stream_interrupted'
     | 'empty_output'
+    | 'output_uncounted'
     | 'client_interrupted'
     | 'usage_not_reported';
 
 /** 首字后内容以异常高的速率集中到达：真流式约 80–110 tok/s，实锤伪流式为 6.5 万–13 万 tok/s。 */
 const FAKE_STREAM_BURST_MIN_TPS = 1500;
 
+/**
+ * 扣除「首个可见内容之前就已结束的尝试」消耗的时间。
+ *
+ * `ftut`/`use_time` 都是相对**整个请求**（含失败重试链）计的，而「疑似伪流式」要看的
+ * 是真正产出内容那一次尝试内部的首字占比。实测案例（2026-10-14 16:14:02）：前 5 次
+ * 尝试失败共 102s（Bosco 单次 504 就白等 101.5s），第 6 次 23.8s 正常流式，未扣除时
+ * 占比 89% 被误标为伪流式；02:10 的 20K 长输出样本同理（4 次失败 186s）。
+ * 判定键是尝试顺序 + 各自耗时：累加直到某次尝试跨越首个可见内容为止。
+ */
+function resolveLeadingAttemptMs(attempts: ChannelAttempt[] | undefined, firstVisibleMs: number): number {
+    if (!Array.isArray(attempts) || firstVisibleMs <= 0) return 0;
+    let leading = 0;
+    for (const attempt of attempts) {
+        const duration = typeof attempt?.duration === 'number' && attempt.duration > 0 ? attempt.duration : 0;
+        if (duration <= 0) continue;
+        if (leading + duration > firstVisibleMs) break;
+        leading += duration;
+    }
+    return leading;
+}
+
 export function resolveLogInvestigationMarkers(
-    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'usage_state' | 'provider_termination_reason' | 'termination_cause'>,
+    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes'>,
 ): RelayLogInvestigationMarker[] {
     const markers: RelayLogInvestigationMarker[] = [];
-    const ftut = typeof log.ftut === 'number' ? log.ftut : 0;
-    const useTime = typeof log.use_time === 'number' ? log.use_time : 0;
+    const ftutRaw = typeof log.ftut === 'number' ? log.ftut : 0;
+    const useTimeRaw = typeof log.use_time === 'number' ? log.use_time : 0;
     const outputTokens = typeof log.output_tokens === 'number' ? log.output_tokens : 0;
     const usageState = log.usage_state ?? '';
+    // 伪流式判据必须扣掉「首个可见内容之前」的失败重试耗时，否则重试链会抬高首字占比。
+    const leadingAttemptMs = resolveLeadingAttemptMs(log.attempts, ftutRaw);
+    const ftut = ftutRaw > 0 ? Math.max(0, ftutRaw - leadingAttemptMs) : 0;
+    const useTime = useTimeRaw > 0 ? Math.max(0, useTimeRaw - leadingAttemptMs) : 0;
 
     if (outputTokens > 0) {
         if (isSuspectFakeStreamSignature(ftut, useTime)) {
@@ -147,11 +173,23 @@ export function resolveLogInvestigationMarkers(
     const terminationCause = (log.termination_cause ?? '').trim().toLowerCase();
     const explainedNoOutput = ['content_filter', 'refusal', 'prompt_blocked'].includes(terminationCause);
     const emptyOutputByUsage = usageState === 'empty_output';
-    const emptyOutputByZeroTokens =
+    const zeroTokensReported =
         outputTokens === 0 &&
         (usageState === 'reported' || usageState === 'not_reported') &&
         !explainedNoOutput;
-    if (emptyOutputByUsage || emptyOutputByZeroTokens) markers.push('empty_output');
+    // 「输出 Token 为 0」有两种成因：真没内容（空输出）；或渠道回报了请求用量但完成量
+    // 恒为 0、实际有内容写出（实测 烁-gemini 渠道：回答 OK 却自报 completion=0）。
+    // 后者标「输出量未计」，不再冒充「空输出」。
+    const deliveredBytes = typeof log.client_write_bytes === 'number' ? log.client_write_bytes : null;
+    if (emptyOutputByUsage) {
+        markers.push('empty_output');
+    } else if (zeroTokensReported) {
+        if (deliveredBytes !== null && deliveredBytes > 0) {
+            markers.push('output_uncounted');
+        } else {
+            markers.push('empty_output');
+        }
+    }
     if (usageState === 'missing_terminal') markers.push('stream_interrupted');
     if (usageState === 'client_disconnected') markers.push('client_interrupted');
     if (usageState === 'not_reported') markers.push('usage_not_reported');
