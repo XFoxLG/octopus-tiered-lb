@@ -821,6 +821,14 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 </div>
                             )}
                             <div className="flex items-center gap-1.5">
+                                <ArrowDownToLine className="size-3.5 text-green-500" />
+                                <span>{inputLabel}: {inputTokenDisplay}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <ArrowUpFromLine className="size-3.5 text-purple-500" />
+                                <span>{t('output')}: {outputTokenDisplay}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
                                 <Sigma className="size-3.5 text-rose-500" />
                                 <span className="font-medium text-rose-600 dark:text-rose-400">{t('totalTokens')}: {totalTokenDisplay}</span>
                             </div>

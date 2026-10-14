@@ -57,21 +57,45 @@ export interface RelayLogFirstTokenMilestones {
 }
 
 /**
- * 详情页两个首字里程碑：日志里的时间戳是 Unix 毫秒，log.time 是请求开始的
- * Unix 秒。只返回 >0 的差值（未观测/早于请求开始时归 0，由调用方隐藏该行）。
+ * 详情页两个首字里程碑（相对请求开始的毫秒数；0 = 未观测到，调用方隐藏该行）。
+ *
+ * 精确口径：后端 `ftut` 就是 `client_first_flush_at - 请求开始`（同一时间戳相减），
+ * `upstream_first_visible_at` 与 `client_first_flush_at` 也来自同一时钟，两者之差
+ * 精确。所以：
+ *   客户端首字 = ftut
+ *   上游首字   = ftut +（upstream_first_visible_at − client_first_flush_at）
+ *
+ * 为什么不直接「时间戳 − log.time」：log.time 是 Unix **秒**（被截断），最多会多算
+ * 0.999s，实测出现过「上游首字 10.16s > 总耗时 9.83s」的矛盾。缺 ftut 的历史
+ * 数据（或非流式）退回秒级差值计算，行为与旧版一致。
  */
 export function resolveFirstTokenMilestones(
-    log: Pick<RelayLog, 'time' | 'upstream_first_visible_at' | 'client_first_flush_at'>,
+    log: Pick<RelayLog, 'time' | 'ftut' | 'upstream_first_visible_at' | 'client_first_flush_at'>,
 ): RelayLogFirstTokenMilestones {
+    const upstreamAt = typeof log.upstream_first_visible_at === 'number' && log.upstream_first_visible_at > 0
+        ? log.upstream_first_visible_at
+        : 0;
+    const clientAt = typeof log.client_first_flush_at === 'number' && log.client_first_flush_at > 0
+        ? log.client_first_flush_at
+        : 0;
+    const ftut = typeof log.ftut === 'number' && log.ftut > 0 ? log.ftut : 0;
+
+    if (ftut > 0 && clientAt > 0) {
+        return {
+            upstreamFirstVisibleMs: upstreamAt > 0 ? Math.max(0, ftut + (upstreamAt - clientAt)) : 0,
+            clientFirstFlushMs: ftut,
+        };
+    }
+
     const startedAtMs = typeof log.time === 'number' && log.time > 0 ? log.time * 1000 : 0;
-    const delta = (milestone: number | undefined) => {
-        if (startedAtMs <= 0 || typeof milestone !== 'number' || milestone <= 0) return 0;
+    const deltaFromSeconds = (milestone: number) => {
+        if (startedAtMs <= 0 || milestone <= 0) return 0;
         const value = milestone - startedAtMs;
         return value > 0 ? value : 0;
     };
     return {
-        upstreamFirstVisibleMs: delta(log.upstream_first_visible_at),
-        clientFirstFlushMs: delta(log.client_first_flush_at),
+        upstreamFirstVisibleMs: deltaFromSeconds(upstreamAt),
+        clientFirstFlushMs: deltaFromSeconds(clientAt),
     };
 }
 
