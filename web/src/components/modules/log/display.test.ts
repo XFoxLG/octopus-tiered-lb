@@ -545,6 +545,36 @@ test('resolveLogInvestigationMarkers ignores retry-chain time before the first v
         ],
     });
     assert.deepEqual(dumpAfterRetries, ['suspect_fake_stream']);
+
+    // 边界：单次尝试、内容临近结束才到达（尝试时长恰好 ≤ 首字）时，产出内容的那次
+    // 尝试不能被当成「首字之前的尝试」扣掉，否则真伪流式会被漏标。
+    const dumpAtAttemptBoundary = resolveLogInvestigationMarkers({
+        ftut: 60100,
+        use_time: 60200,
+        output_tokens: 100,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        termination_cause: '',
+        attempts: [
+            { attempt_num: 1, channel_id: 335, channel_name: 'wududu', model_name: 'grok-4.2', status: 'success', duration: 60000 },
+        ],
+    });
+    assert.deepEqual(dumpAtAttemptBoundary, ['suspect_fake_stream']);
+
+    // 真实样本（01:27:46 wududu grok-4.2）：首字 5.697s / 总 5.785s，661 token 在
+    // 88ms 内到达；短请求仍按尾部突发命中，不因扣除逻辑而失效。
+    const shortDump = resolveLogInvestigationMarkers({
+        ftut: 5697,
+        use_time: 5785,
+        output_tokens: 661,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        termination_cause: '',
+        attempts: [
+            { attempt_num: 1, channel_id: 335, channel_name: 'wududu', model_name: 'grok-4.2', status: 'success', duration: 5573 },
+        ],
+    });
+    assert.deepEqual(shortDump, ['suspect_fake_stream']);
 });
 
 test('resolveLogInvestigationMarkers separates uncounted output from truly empty output', () => {

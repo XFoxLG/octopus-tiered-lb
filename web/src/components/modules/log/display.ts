@@ -128,14 +128,23 @@ const FAKE_STREAM_BURST_MIN_TPS = 1500;
  */
 function resolveLeadingAttemptMs(attempts: ChannelAttempt[] | undefined, firstVisibleMs: number): number {
     if (!Array.isArray(attempts) || firstVisibleMs <= 0) return 0;
-    let leading = 0;
+    let cumulative = 0;
     for (const attempt of attempts) {
         const duration = typeof attempt?.duration === 'number' && attempt.duration > 0 ? attempt.duration : 0;
         if (duration <= 0) continue;
-        if (leading + duration > firstVisibleMs) break;
-        leading += duration;
+        cumulative += duration;
+        if (cumulative > firstVisibleMs) {
+            // 首个可见内容落在这次尝试内（含「内容临近结束才到达」的边界情形）：
+            // 扣除它之前的尝试，产出内容的那一次必须保留。
+            return cumulative - duration;
+        }
     }
-    return leading;
+    // 所有尝试的耗时都没超过首字（只在计时口径有偏差或尝试记录不全时出现）：
+    // 保留最后一次尝试，绝不把产出内容的那一次也扣掉。
+    const lastDuration = typeof attempts[attempts.length - 1]?.duration === 'number'
+        ? (attempts[attempts.length - 1].duration > 0 ? attempts[attempts.length - 1].duration : 0)
+        : 0;
+    return Math.max(0, cumulative - lastDuration);
 }
 
 export function resolveLogInvestigationMarkers(
