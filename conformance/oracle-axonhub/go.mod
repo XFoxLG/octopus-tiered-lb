@@ -4,6 +4,11 @@ go 1.27
 
 require github.com/looplj/axonhub/llm v0.0.0-20261014175143-1c695ac32a9a
 
+// 依赖模块内部的 replace 不会被主模块继承：axonhub/llm 的 go.mod 里用 wtj-0527/go-sse
+// 的 fork 覆盖了 tmaxmax/go-sse（新增 sse.NewStreamWithConfig / sse.Stream 等 API），
+// 这里必须同步这条 replace，否则 httpclient 包编译失败（undefined: sse.NewStreamWithConfig）。
+replace github.com/tmaxmax/go-sse => github.com/wtj-0527/go-sse v0.0.0-20260811060543-0bb36b8ea0cd
+
 require (
 	cloud.google.com/go/auth v0.18.2 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
