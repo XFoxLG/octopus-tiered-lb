@@ -10,6 +10,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/channelmodellimit"
 	"github.com/lingyuins/octopus/internal/op/modelmapping"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/utils/log"
@@ -218,6 +219,12 @@ func init() {
 	RegisterCacheInit(func(ctx context.Context) error {
 		if err := modelmapping.InitCache(ctx); err != nil {
 			return fmt.Errorf("model mapping init cache error: %w", err)
+		}
+		return nil
+	})
+	RegisterCacheInit(func(ctx context.Context) error {
+		if err := channelmodellimit.InitCache(ctx); err != nil {
+			return fmt.Errorf("channel model limit init cache error: %w", err)
 		}
 		return nil
 	})

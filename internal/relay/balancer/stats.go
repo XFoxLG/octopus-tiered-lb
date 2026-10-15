@@ -38,6 +38,10 @@ type ChannelStats struct {
 	softHead   int
 	softCount  int
 
+	// v2.9.0 渠道画像：最近一次候选跳过原因（分析中心「最近决策原因」）。
+	lastDecisionReason string
+	lastDecisionAt     time.Time
+
 	// EMA-smoothed latency in milliseconds
 	avgLatencyMs float64
 
@@ -313,6 +317,8 @@ type AutoStatsSnapshotItem struct {
 	DeadChannel           bool    // 连续失败达到熔断阈值（附加罚分已生效）
 	UpstreamModelSamples  int     // 上游自报模型的样本数（一致性分母）
 	UpstreamModelMismatch int     // 上游自报模型与请求模型不一致的次数
+	LastDecisionReason    string  // 最近一次候选跳过原因（v2.9.0）
+	LastDecisionAt        time.Time
 }
 
 // GetAutoStatsSnapshot 返回 globalAutoStats 中所有条目的快照。
@@ -385,6 +391,7 @@ func snapshotFromStats(channelID int, modelName string, stats *ChannelStats) Aut
 	item.DeadChannel = int64(streak) >= getThreshold()
 	item.UpstreamModelSamples = counts.ModelReported
 	item.UpstreamModelMismatch = counts.ModelMismatches
+	item.LastDecisionReason, item.LastDecisionAt = stats.lastDecision()
 	return item
 }
 

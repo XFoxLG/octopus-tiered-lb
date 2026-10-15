@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"strings"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
@@ -178,6 +179,33 @@ func RecordAutoUpstreamModel(channelID int, modelName string, reported bool, mis
 	}
 	stats := getOrCreateStats(channelID, modelName)
 	stats.recordSoftMask(mask, time.Now())
+}
+
+// setLastDecision 记录最近一次候选跳过原因。
+func (cs *ChannelStats) setLastDecision(reason string, now time.Time) {
+	cs.mu.Lock()
+	cs.lastDecisionReason = reason
+	cs.lastDecisionAt = now
+	cs.mu.Unlock()
+}
+
+// lastDecision 读取最近一次候选跳过原因（无人记录时返回零值）。
+func (cs *ChannelStats) lastDecision() (string, time.Time) {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.lastDecisionReason, cs.lastDecisionAt
+}
+
+// RecordAutoDecisionReason 记录候选的最近一次跳过原因（v2.9.0 渠道画像）。
+// 由 Iterator.Skip 统一调用，覆盖禁用/冷却/熔断/并发满/上下文超限等全部闸门。
+func RecordAutoDecisionReason(channelID int, modelName, reason string) {
+	reason = strings.TrimSpace(reason)
+	modelName = strings.TrimSpace(modelName)
+	if channelID <= 0 || modelName == "" || reason == "" {
+		return
+	}
+	stats := getOrCreateStats(channelID, modelName)
+	stats.setLastDecision(reason, time.Now())
 }
 
 // softSignalWeights 是归一化后的软信号配置（0-1 评分尺度）。

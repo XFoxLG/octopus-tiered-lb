@@ -248,18 +248,25 @@ func (it *Iterator) Skip(channelID, channelKeyID int, channelName, msg string) {
 		return
 	}
 	it.mu.Lock()
-	defer it.mu.Unlock()
 	it.count++
+	attemptModel := it.currentModelNameLocked()
 	it.appendSkipAttemptLocked(model.ChannelAttempt{
 		ChannelID:    channelID,
 		ChannelKeyID: channelKeyID,
 		ChannelName:  channelName,
-		ModelName:    it.currentModelNameLocked(),
+		ModelName:    attemptModel,
 		AttemptNum:   it.attemptNumberBase + it.count,
 		Status:       model.AttemptSkipped,
 		Sticky:       it.isStickyLocked(),
 		Msg:          msg,
 	})
+	it.mu.Unlock()
+	// v2.9.0：把最近一次跳过原因写进渠道×模型画像（分析中心「最近决策原因」）。
+	// 候选条目没有模型覆盖时退回请求级模型名（与统计键口径一致）。
+	if strings.TrimSpace(attemptModel) == "" {
+		attemptModel = it.modelName
+	}
+	RecordAutoDecisionReason(channelID, attemptModel, msg)
 }
 
 // SkipCircuitBreak 检查熔断状态，若已熔断自动记录（含剩余冷却时间）并返回 true
