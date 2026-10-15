@@ -17,10 +17,10 @@
 ### 1. Claude thinking 与 max_tokens 的联动钳制 + 诊断码 [fix-p1]
 
 - 样本/出处：`relaykit/relayconvert/claude_default_max_tokens_test.go`（`budget below 1024 is raised`、`budget at max_tokens is lowered`、`max_tokens too small for manual thinking is raised`，诊断码 `claude_budget_adjusted` / `claude_max_tokens_raised`）
-- 当前行为（我们）：`internal/transformer/outbound/anthropic/messages.go` 的 `getThinkingBudget` 只做 effort→budget 映射（low=1024/medium=8192/high=32768/xhigh=65536/max=128000），不校验 `budget ≥ 1024`、不保证 `budget < max_tokens`。
-- 目标行为：出站前钳制（下限 1024；`budget ≥ max_tokens` 时把 max_tokens 抬到 `budget+1`），并把调整写进聊天日志（我们的「错误日志/警告」通道已有）。
+- 修复前行为（我们，v2.9.1 之前）：`internal/transformer/outbound/anthropic/messages.go` 的 `getThinkingBudget` 只做 effort→budget 映射（low=1024/medium=8192/high=32768/xhigh=65536/max=128000），不校验 `budget ≥ 1024`、不保证 `budget < max_tokens`。
+- 目标行为：出站前钳制（下限 1024；`budget ≥ max_tokens` 时按 new-api 口径降到 `max_tokens-1`，仅当 max_tokens ≤1024 装不下最小预算时抬到 `max(1280, budget+1)`），并留痕。
 - 优先级：P1（直接消除一类上游 400）。
-- triage：**修**——与 CLIProxyAPI 审计第 2 条合并成同一个修复 PR；待补样本 `scenario-thinking-budget-vs-max-tokens`（thinking.enabled + budget_tokens=4096 + max_tokens=4096 → 期望出站 budget=4095 或 max=4097；待定口径取 new-api 的「budget=max_tokens-1」）。
+- triage：**已修**——与 CLIProxyAPI 审计第 2 条合并为 v2.9.1 fix-p1；样本 `scenario-thinking-budget-vs-max-tokens`（thinking.enabled + budget_tokens=4096 + max_tokens=4096 → 出站 budget=4095）已入库并通过三方对拍；口径最终取 new-api 的「budget=max_tokens-1」，仅 max_tokens ≤1024 时才抬 max_tokens（`claude_max_tokens_raised` 语义）。
 
 ### 2. 工具结果图片外提策略 [fix-p0，已并入 v2.8.14]
 
@@ -68,7 +68,7 @@
 
 | # | 主题 | 优先级 | 结论 |
 | --- | --- | --- | --- |
-| 1 | thinking×max_tokens 钳制+诊断 | P1 | **修**（与 CLIProxyAPI #2 合并） |
+| 1 | thinking×max_tokens 钳制+诊断 | P1 | **已修**（v2.9.1 fix-p1，与 CLIProxyAPI #2 合并） |
 | 2 | 工具结果图片外提 | P0 | **修**（v2.8.14） |
 | 3 | developer 角色 | P1 | **修**（与 sub2api #2 合并） |
 | 4 | reasoning 修饰符语法 | P2 | 挂起（等需求确认） |

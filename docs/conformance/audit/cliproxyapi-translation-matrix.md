@@ -31,10 +31,10 @@
 
 - 样本/出处：`internal/thinking/validate.go`（校验/钳制）、`kimi_max_clamp_repro_test.go`；对照 new-api 的 `claude_budget_adjusted` / `claude_max_tokens_raised` 诊断（见 `newapi-claude-gemini.md`）
 - 源行为：按目标模型能力（`ModelInfo.Thinking` 的 levels/min/max）校验并钳制 budget/level；不支持 thinking 的模型直接剥离配置；未知模型透传给上游校验。
-- 当前行为（我们）：anthropic 出站 `getThinkingBudget` 只做 effort→budget 映射，**不检查 `budget_tokens < max_tokens` 也不检查 `≥1024`**；用户传 `thinking.budget_tokens ≥ max_tokens` 时会把 400 直接透传。
-- 目标行为：出站前置钳制——`budget` 下限 1024、`budget ≤ max_tokens-1`（必要时抬高 max_tokens），并在聊天日志诊断字段留痕（对齐 new-api 的诊断码思路）。
+- 修复前行为（我们，v2.9.1 之前）：anthropic 出站 `getThinkingBudget` 只做 effort→budget 映射，**不检查 `budget_tokens < max_tokens` 也不检查 `≥1024`**；用户传 `thinking.budget_tokens ≥ max_tokens` 时会把 400 直接透传。
+- 目标行为：出站前置钳制——`budget` 下限 1024、`budget ≤ max_tokens-1`（必要时抬高 max_tokens），并留痕（对齐 new-api 的诊断码思路）。
 - 优先级：P1（真实 400 类缺陷，且我们已有 `thinking.budget_tokens` 与 `max_tokens` 相关的历史反馈）。
-- triage：**修**——协议层第二阶段第一个小 PR 候选；样本先行（新增 `scenario-thinking-budget-vs-max-tokens`），修 `outbound/anthropic` 一处 + 单测。
+- triage：**已修**——v2.9.1 fix-p1：`internal/transformer/outbound/anthropic/thinking_budget.go`（纯函数 `clampThinkingBudget`，口径对齐 new-api relaykit：max_tokens ≤1024 时抬到 `max(1280, budget+1)`，否则 budget 下限 1024 且 ≥max_tokens 时降到 `max_tokens-1`；调整时 `log.Warnf` 留痕）+ 单测（含 new-api 三条既有用例）+ 样本 `scenario-thinking-budget-vs-max-tokens`（anthropic→anthropic 三方对拍）。
 
 ### 3. 模型名后缀语法（请求级覆写 thinking） [fix-p2]
 
@@ -62,7 +62,7 @@
 | # | 主题 | 优先级 | 结论 |
 | --- | --- | --- | --- |
 | 1 | level↔budget 表统一 | P2 | 挂起（与出站换算统一一起做） |
-| 2 | budget 与 max_tokens 联动钳制 | P1 | **修**（第二阶段首个小 PR 候选） |
+| 2 | budget 与 max_tokens 联动钳制 | P1 | **已修**（v2.9.1 fix-p1） |
 | 3 | 模型名后缀语法 | P2 | 挂起（等用户确认） |
 | 4 | per-model 能力表 | — | 不做（归渠道能力学习立项） |
 | 5 | 矩阵缺口 | — | no-change（登记为 unsupported） |
