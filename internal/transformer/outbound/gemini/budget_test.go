@@ -44,14 +44,24 @@ func TestResolveThinkingConfigBudgetRespectsZeroAndDynamic(t *testing.T) {
 func TestResolveThinkingConfigEffortFallback(t *testing.T) {
 	cases := map[string]int32{
 		"low":     1024,
-		"medium":  4096,
+		"medium":  8192,
 		"high":    24576,
 		"minimal": 0,
+		"none":    0,
 	}
 	for eff, want := range cases {
 		d := resolveThinkingConfig("gemini-2.5-flash", nil, eff, false)
 		if d.UseLevel || d.Budget != want {
 			t.Errorf("effort=%s: got budget=%d want=%d", eff, d.Budget, want)
+		}
+	}
+
+	// xhigh/max come from OpenAI-style clients; Gemini 2.5 accepts them as a
+	// larger budget and the family clamp below keeps the wire value legal.
+	for _, eff := range []string{"xhigh", "max", "XHIGH"} {
+		d := resolveThinkingConfig("gemini-2.5-pro", nil, eff, false)
+		if d.UseLevel || d.Budget != 32768 {
+			t.Errorf("effort=%s on 2.5-pro: got budget=%d want=32768 (family max)", eff, d.Budget)
 		}
 	}
 
@@ -265,5 +275,15 @@ func TestResolveThinkingConfigGemini3EffortCoercion(t *testing.T) {
 	d = resolveThinkingConfig("gemini-3.0-pro", nil, "bogus", false)
 	if !d.UseLevel || d.Level != "" || !d.IncludeThoughts {
 		t.Errorf("3-pro effort=bogus → dynamic, got %+v", d)
+	}
+
+	// Multi-protocol clients can carry xhigh/max (OpenAI-style) into a Gemini 3
+	// target; Gemini has no tier above high so both collapse to high instead of
+	// silently falling back to the dynamic default.
+	for _, eff := range []string{"xhigh", "max", "MAX"} {
+		d = resolveThinkingConfig("gemini-3.0-flash", nil, eff, false)
+		if !d.UseLevel || d.Level != "high" || !d.IncludeThoughts {
+			t.Errorf("3-flash effort=%s → high, got %+v", eff, d)
+		}
 	}
 }

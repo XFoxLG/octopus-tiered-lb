@@ -3,6 +3,7 @@ package gemini
 import (
 	"strings"
 
+	crossThinking "github.com/lingyuins/octopus/internal/transformer/thinking"
 	"github.com/lingyuins/octopus/internal/utils/log"
 )
 
@@ -260,23 +261,27 @@ func decisionFromEffort(fam geminiFamily, effort string) thinkingDecision {
 	return thinkingDecision{Supported: true, Budget: clampGeminiBudget(fam, b), IncludeThoughts: true}
 }
 
-// map25EffortToBudget keeps the historical effort-to-budget table used by
-// reasoningToThinkingBudget. "minimal" maps to 0 (disabled).
+// map25EffortToBudget resolves an effort keyword to a Gemini 2.5 integer
+// budget through the shared cross-protocol table (medium 8192 / high 24576).
+//
+// Two values intentionally keep Gemini-local semantics instead of the shared
+// numbers:
+//   - "none" → 0 disables thinking on the families that accept 0.
+//   - "minimal" → 0 because Gemini 2.5 has no sub-1024 tier and the historical
+//     behavior treated minimal as the closest thing to disabled.
+//
+// Unknown efforts return -1 (dynamic), matching the previous default.
 func map25EffortToBudget(effort string) int32 {
-	switch effort {
-	case "none", "off":
+	switch crossThinking.NormalizeEffort(effort) {
+	case crossThinking.EffortNone:
 		return 0
-	case "minimal":
+	case crossThinking.EffortMinimal:
 		return 0
-	case "low":
-		return 1024
-	case "medium":
-		return 4096
-	case "high":
-		return 24576
-	default:
-		return -1
 	}
+	if budget, ok := crossThinking.EffortToBudget(effort); ok {
+		return int32(budget)
+	}
+	return -1
 }
 
 // map3EffortToLevel maps the OpenAI reasoning_effort keyword to a Gemini 3.x
@@ -284,23 +289,21 @@ func map25EffortToBudget(effort string) int32 {
 // it through clampLevelToFamily for sub-family restrictions. Special return
 // values:
 //
-//	"off" → caller should invoke the family-specific disable path
-//	""    → unknown / unspecified; caller should emit dynamic (no level)
+//	"off"                → caller should invoke the family-specific disable path
+//	""                   → unknown / unspecified; caller should emit dynamic
+//	"minimal".."high"    → native Gemini 3 levels
+//	"xhigh" / "max"      → "high"; Gemini 3 has no tier above high, so an
+//	                       OpenAI xhigh/max client still gets maximum depth
 func map3EffortToLevel(effort string) string {
-	switch effort {
-	case "none", "off":
+	switch crossThinking.NormalizeEffort(effort) {
+	case crossThinking.EffortNone:
 		return "off"
-	case "minimal":
-		return "minimal"
-	case "low":
-		return "low"
-	case "medium":
-		return "medium"
-	case "high":
-		return "high"
-	default:
-		return ""
+	case crossThinking.EffortMinimal, crossThinking.EffortLow, crossThinking.EffortMedium, crossThinking.EffortHigh:
+		return crossThinking.NormalizeEffort(effort)
+	case crossThinking.EffortXHigh, crossThinking.EffortMax:
+		return crossThinking.EffortHigh
 	}
+	return ""
 }
 
 // clampLevelToFamily coerces a thinkingLevel string to one supported by the
