@@ -71,27 +71,30 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 	// Add system message if present
 	if anthropicReq.System != nil {
 		if anthropicReq.System.Prompt != nil {
-			systemContent := anthropicReq.System.Prompt
+			// 剥离计费头 cch 动态字段，保住上游 prompt cache（v2.8.15 fix-p1）。
+			systemContent := stripCchFromBillingHeader(*anthropicReq.System.Prompt)
 			messages = append(messages, model.Message{
 				Role: "system",
 				Content: model.MessageContent{
-					Content: systemContent,
+					Content: &systemContent,
 				},
 			})
-			i.inputToken += int64(tokenizer.CountTokens(*systemContent, chatReq.Model))
+			i.inputToken += int64(tokenizer.CountTokens(systemContent, chatReq.Model))
 		} else if len(anthropicReq.System.MultiplePrompts) > 0 {
 			// Mark that system was originally in array format
 			chatReq.TransformerMetadata["anthropic_system_array_format"] = "true"
 
 			for _, prompt := range anthropicReq.System.MultiplePrompts {
+				// 计费头文本块：剥离 cch 动态字段（v2.8.15 fix-p1）。
+				text := stripCchFromBillingHeader(prompt.Text)
 				msg := model.Message{
 					Role: "system",
 					Content: model.MessageContent{
-						Content: &prompt.Text,
+						Content: &text,
 					},
 					CacheControl: convertToLLMCacheControl(prompt.CacheControl),
 				}
-				i.inputToken += int64(tokenizer.CountTokens(prompt.Text, chatReq.Model))
+				i.inputToken += int64(tokenizer.CountTokens(text, chatReq.Model))
 				messages = append(messages, msg)
 			}
 		}
