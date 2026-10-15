@@ -1,0 +1,32 @@
+{
+  "id": "scenario-billing-header-cch",
+  "class": "billing-header-cch",
+  "side": "request",
+  "inbound": "anthropic",
+  "outbound": "chat",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "audit",
+    "ref": "higress ai-proxy provider/claude_to_openai.go stripCchFromBillingHeader",
+    "url": "https://github.com/alibaba/higress/blob/main/plugins/wasm-go/extensions/ai-proxy/provider/claude_to_openai.go",
+    "note": "Claude Code 每个请求都会在 system 首块注入 x-anthropic-billing-header，其中 cch= 每次请求都变；原样转发会让上游前缀 prompt cache 整段失效（计费与首字都受损）。样本按真实抓包脱敏（cc_version 与 cch 值已替换），system 为 Claude Code 的数组形态：计费头块 + 官方身份块。"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 256,
+    "system": [
+      {
+        "type": "text",
+        "text": "x-anthropic-billing-header: cc_version=2.0.30; cc_entrypoint=cli; cch=1a2b3c;"
+      },
+      {
+        "type": "text",
+        "text": "You are Claude Code, Anthropic's official CLI for Claude."
+      }
+    ],
+    "messages": [
+      {"role": "user", "content": "Reply with the single word: OK"}
+    ]
+  }
+}

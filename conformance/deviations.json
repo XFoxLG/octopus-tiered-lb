@@ -193,6 +193,25 @@
       "note": "CLIProxyAPI 的 responses 出站仅支持 Interactions→OpenaiResponse；本方向无转换器"
     },
     {
+      "sample": "scenario-billing-header-cch",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages|length_diff"
+      ],
+      "note": "v2.9.1 fix-p1（PR #41 artifact 校准）：我方按 higress 口径只剥离计费头里的动态 `; cch=…` 字段、保留整块与其余字段（cc_version/cc_entrypoint），保住上游前缀缓存，且两个 system 块保持独立；AxonHub 把多 system 块**合并为一条**（`\\n\\n` 连接）且完全不处理 cch（其清洗只在 claudecode 子包，`RemoveBillingSystemMessages` 在 llm 模块内无生产调用点）→ 消息数 3 vs 2，仅 /messages|length_diff。合并后文本里 cch 原样存在。[no-change：两端各为一种合法策略]"
+    },
+    {
+      "sample": "scenario-billing-header-cch",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages|length_diff",
+        "/stream|only_oracle"
+      ],
+      "note": "v2.9.1 fix-p1（PR #41 artifact 校准）：CLIProxyAPI 在 claude→openai 时把整块 attribution system 直接丢弃（internal/translator/common/claude_system.go 与 internal/translator/openai/claude/openai_claude_request.go 的 IsClaudeCodeAttributionSystemText 过滤；身份块保留为 text 数组），故消息数 2 vs 3；我方保留该块、仅剥离 cch（与 higress 一致）。stream=false 显式注入。[no-change 策略差异]"
+    },
+    {
       "sample": "scenario-multi-assistant-separator",
       "oracle": "axonhub",
       "outcome": "diff",

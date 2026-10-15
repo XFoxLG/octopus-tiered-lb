@@ -8,19 +8,19 @@
 
 1. **请求方向**的处理链已经很成熟：system（字符串/数组）→ 头部 system 消息；tool_use/tool_result → tool_calls/tool 消息；图片 base64/URL → `image_url`；thinking → `reasoning_effort` 阈值映射，且**非标准字段一律不发给严格 OpenAI 上游**（存为 `ClaudeThinking` 交给专门的 provider 适配器）。
 2. **流式方向**是本文件最厚的部分：content block 动态索引分配、thinking→text→tool 的块序维护、**工具块串行化**（Claude 要求顺序 tool 块，OpenAI delta 可能交错到达时先缓存参数再逐块发出）、pending stop_reason 与 usage 合流、`[DONE]` 兜底关块、重复 usage 块忽略。
-3. 两个「细小但值钱」的技巧：① 剥离 system 文本里 `x-anthropic-billing-header` 的 `cch=` 动态字段（值每次请求都变，会**破坏 prompt cache**）；② `computeClaudeInputTokens` 处理 OpenAI `prompt_tokens` 含 cached tokens 与 Claude `input_tokens` 不含的口径差。
+3. 两个「细小但值钱」的技巧：① 剥离 system 文本里 `x-anthropic-billing-header` 的 `cch=` 动态字段（值每次请求都变，会**破坏 prompt cache**）——我方 v2.9.1 已采用同一口径；② `computeClaudeInputTokens` 处理 OpenAI `prompt_tokens` 含 cached tokens 与 Claude `input_tokens` 不含的口径差。
 4. 请求侧对「无效回合」有兜底：只含 reasoning 块的回合降级为空可见内容（`Content = ""`），避免 strict 上游拒绝 role-only 消息。
-5. 与我们重叠度很高（我们的 outbound 已有 `stream_options.include_usage` 注入、thinking→effort 映射、图片 data URL 转换），真正的差距集中在两处：**cch 剥离**与**工具块串行化的细节完备度**。
+5. 与我们重叠度很高（我们的 outbound 已有 `stream_options.include_usage` 注入、thinking→effort 映射、图片 data URL 转换），真正的差距：**cch 剥离**（v2.9.1 已补，见差距 1）与**工具块串行化的细节完备度**（二期流式对拍）。
 
 ## 差距清单
 
 ### 1. `cch=` 动态字段剥离（提示缓存保命） [fix-p1]
 
 - 样本/出处：`stripCchFromBillingHeader`（`claude_to_openai.go:1230–1267`），注释：cch 每次请求都变，会破坏 prompt caching
-- 当前行为（我们）：全仓库无 `cch` 处理（grep 0 命中）；Claude Code 类客户端把 `x-anthropic-billing-header: ...; cch=...` 作为 system 文本块传入时，我们原样转发，**上游每次看到的 system 都不同** → 前缀缓存失效 → 计费与首字都受损（与我们实测「输入 88–110K、缓存命中率对首字影响巨大」同一机制）。
+- 修复前行为（我们，v2.9.1 之前）：全仓库无 `cch` 处理（grep 0 命中）；Claude Code 类客户端把 `x-anthropic-billing-header: ...; cch=...` 作为 system 文本块传入时，我们原样转发，**上游每次看到的 system 都不同** → 前缀缓存失效 → 计费与首字都受损（与我们实测「输入 88–110K、缓存命中率对首字影响巨大」同一机制）。
 - 目标行为：在入站（anthropic）解析或出站（chat/anthropic/responses）序列化前，对 `x-anthropic-billing-header:` 前缀的文本块做 `; cch=...` 剥离。
 - 优先级：P1（省钱 + 首字；改动极小）。
-- triage：**修**——第二阶段小 PR 候选：在 `inbound/anthropic` 的 system 文本处理处加一个纯函数 + 单测（样本可用真实 Claude Code system 文本脱敏后入库：`scenario-billing-header-cch`）。
+- triage：**已修**——v2.9.1 fix-p1：`internal/transformer/inbound/anthropic/billing_header.go` 纯函数（只剥 `; cch=…`，保留块与其余字段；ASCII 大小写不敏感、支持中段/末尾/多次）+ 单测 + 集成用例；样本 `scenario-billing-header-cch`（真实 Claude Code system 数组形态脱敏）入库并通过三方对拍登记（axonhub 不处理该字段、CLIProxyAPI 整块丢弃，均已在 `conformance/deviations.json` 记录为 no-change 策略差异）。
 
 ### 2. 工具块串行化与流式块序完备度 [fix-p2]
 
@@ -60,7 +60,7 @@
 
 | # | 主题 | 优先级 | 结论 |
 | --- | --- | --- | --- |
-| 1 | `cch=` 剥离（缓存） | P1 | **修**（第二阶段 PR 候选） |
+| 1 | `cch=` 剥离（缓存） | P1 | **已修**（v2.9.1 fix-p1） |
 | 2 | 工具块串行化（流式） | P2 | 挂起（二期流式对拍） |
 | 3 | reasoning-only 回合降级 | P2 | 部分修（补样本） |
 | 4 | effort 阈值口径 | — | no-change |
