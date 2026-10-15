@@ -257,10 +257,7 @@
       "oracle": "axonhub",
       "outcome": "diff",
       "endpoint_diff": true,
-      "diff_paths": [
-        "/system|length_diff"
-      ],
-      "note": "developer 角色消息被我方丢弃（axonhub 将其并入 system 得到两块）。[fix-p1：developer/system 合并策略] 端点前缀差异同前。"
+      "note": "v2.8.15 已修复 developer 丢弃：developer 与 system 一并并入 system（与 axonhub 两块一致）。残余仅端点前缀差异。"
     },
     {
       "sample": "scenario-system-developer-role",
@@ -268,20 +265,16 @@
       "outcome": "diff",
       "diff_paths": [
         "/metadata|only_oracle",
-        "/stream|only_oracle",
-        "/system|length_diff"
+        "/stream|only_oracle"
       ],
-      "note": "system 长度差异同我方 developer 丢弃问题。[fix-p1] metadata/stream 注入。[no-change]"
+      "note": "v2.8.15 已修复 developer 合并（system 两块与 CLIProxyAPI 一致）。metadata/stream 注入不采纳。[no-change]"
     },
     {
       "sample": "scenario-thinking-signature-wire",
       "oracle": "axonhub",
       "outcome": "diff",
       "endpoint_diff": true,
-      "diff_paths": [
-        "/messages/1/content/0/signature|only_oracle"
-      ],
-      "note": "缺 signature 的 thinking 块：axonhub 补空 signature 键，我方原样透传；上游 Claude API 可能报 signature required。[fix-p1：先复现上游行为，再决定补空值或丢弃块] 端点前缀差异同前。"
+      "note": "v2.8.15 已修复：thinking 块始终带 signature 键（无真实签名时空串），与 axonhub 一致。残余仅端点前缀差异。"
     },
     {
       "sample": "scenario-thinking-signature-wire",
