@@ -4,7 +4,7 @@ package model
 // Shared by both inbound and outbound transformers.
 type GeminiGenerateContentRequest struct {
 	Contents          []*GeminiContent        `json:"contents"`
-	SystemInstruction *GeminiContent          `json:"system_instruction,omitempty"`
+	SystemInstruction *GeminiContent          `json:"systemInstruction,omitempty"`
 	Tools             []*GeminiTool           `json:"tools,omitempty"`
 	ToolConfig        *GeminiToolConfig       `json:"toolConfig,omitempty"`
 	GenerationConfig  *GeminiGenerationConfig `json:"generationConfig,omitempty"`
@@ -27,7 +27,7 @@ type GeminiFunctionCallingConfig struct {
 
 // GeminiContent represents a message content in Gemini format
 type GeminiContent struct {
-	Role  string        `json:"role"`
+	Role  string        `json:"role,omitempty"`
 	Parts []*GeminiPart `json:"parts"`
 }
 
