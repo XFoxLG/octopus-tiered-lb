@@ -1,0 +1,33 @@
+{
+  "id": "scenario-reasoning-only-turn",
+  "class": "reasoning-only-turn",
+  "side": "request",
+  "inbound": "anthropic",
+  "outbound": "chat",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "audit",
+    "ref": "higress/plugins/wasm-go/extensions/ai-proxy/provider/claude_to_openai.go:ConvertClaudeRequestToOpenAI",
+    "note": "只含 thinking 块、无可见文本的 assistant 回合。higress 的处理是降级为空可见内容（Content = \"\"），避免 strict OpenAI 上游拒绝 role-only 消息；本样本先对拍我方当前形态再决定策略。"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 64,
+    "system": "You are a conformance fixture.",
+    "messages": [
+      {"role": "user", "content": "What is the capital of France?"},
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "The user asks for the capital of France. I should answer briefly in the next turn.",
+            "signature": "conformance-fixture-signature"
+          }
+        ]
+      },
+      {"role": "user", "content": "Answer now."}
+    ]
+  }
+}

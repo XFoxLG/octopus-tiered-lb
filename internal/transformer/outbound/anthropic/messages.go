@@ -650,6 +650,17 @@ func convertAssistantWithToolCalls(msg model.Message) []anthropicModel.MessagePa
 }
 
 func buildMessageContent(msg model.Message) anthropicModel.MessageContent {
+	// Thinking-only 回合（无可见文本、无多块）：只回吐 thinking 块。
+	// 若落入下方空内容分支会序列化为 `{}`，strict Anthropic 上游直接 400
+	// （v2.9.2 fix-p2 B：anthropic 入站不再丢弃 reasoning-only 回合）。
+	if msg.Content.Content == nil && len(msg.Content.MultipleContent) == 0 && hasThinkingContent(msg) {
+		return anthropicModel.MessageContent{MultipleContent: []anthropicModel.MessageContentBlock{{
+			Type:      "thinking",
+			Thinking:  msg.ReasoningContent,
+			Signature: ensureThinkingSignature(msg.ReasoningSignature),
+		}}}
+	}
+
 	// Handle simple string content
 	if msg.Content.Content != nil {
 		if msg.CacheControl != nil || hasThinkingContent(msg) {

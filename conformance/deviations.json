@@ -375,6 +375,26 @@
         "/safetySettings|only_oracle"
       ],
       "note": "尾随 reasoning：v2.8.15 已修复——thought 文本与 maxOutputTokens 均对齐 CLIProxyAPI。safetySettings/thinkingConfig 差异同前。[no-change]"
+    },
+    {
+      "sample": "scenario-reasoning-only-turn",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages/2/reasoning_content|only_oracle"
+      ],
+      "note": "v2.9.2 fix-p2 B：anthropic 入站 reasoning-only 回合由「整条丢弃（user→user）」改为「保留 + 空可见内容」（与 axonhub/higress 一致）。残余差异仅 axonhub 在 chat 消息上保留 reasoning_content，我方 sanitize 对 generic OpenAI-compat 上游始终剥离该非标准字段（与 chat→anthropic/chat 已登记的口径一致）。[no-change]"
+    },
+    {
+      "sample": "scenario-reasoning-only-turn",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages|length_diff",
+        "/messages/0/content|value_diff",
+        "/stream|only_oracle"
+      ],
+      "note": "裁判分歧：CLIProxyAPI 与两方旧行为一致——把 reasoning-only 回合整条丢弃（消息数 4 vs 3）；我方按 axonhub/higress 口径保留（避免 user→user 断裂，strict OpenAI 上游更安全）。system 字符串 vs text 块数组、显式 stream=false 为既有已知差异。[no-change，人工裁决采纳 axonhub]"
     }
   ]
 }

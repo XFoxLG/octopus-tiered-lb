@@ -279,7 +279,16 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 		}
 
 		if !hasContent {
-			continue
+			// reasoning-only 回合（仅 thinking 块、无可见文本/工具调用）：
+			// 整条丢弃会让回合交替断裂成 user→user（strict OpenAI 上游可能
+			// 直接拒绝），并丢失多轮 reasoning 上下文。保留为「空可见内容 +
+			// reasoning」——与主裁判 axonhub / higress 口径一致：
+			//   · chat 出站 generic 渠道：归一为 content:""（reasoning 不外发）；
+			//   · chat 出站 DeepSeek/MiMo：仍由 standalone 合并/丢弃逻辑处理；
+			//   · anthropic/gemini 出站：还原为 thinking/thought 块。
+			if chatMsg.GetReasoningContent() == "" {
+				continue
+			}
 		}
 
 		// If this message had tool_result blocks, set MessageIndex so we can match it later

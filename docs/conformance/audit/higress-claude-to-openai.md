@@ -33,10 +33,10 @@
 ### 3. reasoning-only 回合的降级策略 [fix-p2]
 
 - 样本/出处：`ConvertClaudeRequestToOpenAI`（`openaiMsg.Content == nil && ReasoningContent == "" && hasReasoningBlocks` → `Content = ""`；注释「Strict OpenAI-style providers reject role-only messages」）
-- 当前行为（我们）：`scenario-thinking-signature-wire` 显示我们保留 thinking 块往返；对「仅 reasoning、无可见文本」的回合在 chat 出站的形态未入库。
+- 修复前行为（我们）：对「仅 reasoning、无可见文本」的 assistant 回合在入站阶段整条 `continue` 丢弃——不产生 role-only，但回合交替断裂成 `user→user`，多轮 reasoning 上下文一并丢失（chat/anthropic/gemini 各出站都拿不到这一回合）。
 - 目标行为：不产生「role-only」消息；要么降级空可见内容，要么整块丢弃并留诊断。
 - 优先级：P2。
-- triage：**部分修**——补样本 `scenario-reasoning-only-turn`（anthropic→chat），先对拍再定。
+- triage：**已修**（v2.9.2 fix-p2 B）——样本 `scenario-reasoning-only-turn`（anthropic→chat）入库并完成三方对拍：axonhub（主裁判）保留回合并降级为 `content:""` + `reasoning_content`（与 higress 同口径），CLIProxyAPI（次裁判）整条丢弃——裁判分歧，人工裁决采纳 axonhub：入站保留「空可见内容 + reasoning」；generic chat 出站归一 `content:""` 且不外发 reasoning_content；anthropic 出站回吐 thinking 块（修复前会产出 `content:{}`）；gemini 出站还原 thought part；DeepSeek/MiMo 仍走 standalone 合并/丢弃。两条差异已登记 `deviations.json`，三处单测锁定。
 
 ### 4. thinking→reasoning_effort 阈值口径 [no-change，记录]
 
@@ -62,7 +62,7 @@
 | --- | --- | --- | --- |
 | 1 | `cch=` 剥离（缓存） | P1 | **已修**（v2.9.1 fix-p1） |
 | 2 | 工具块串行化（流式） | P2 | 挂起（二期流式对拍） |
-| 3 | reasoning-only 回合降级 | P2 | 部分修（补样本） |
+| 3 | reasoning-only 回合降级 | P2 | **已修**（v2.9.2 fix-p2 B） |
 | 4 | effort 阈值口径 | — | no-change |
 | 5 | input_tokens 口径 | — | no-change（已对齐） |
 | 6 | `[DONE]`/重复 usage 兜底 | P2 | 挂起（二期流式对拍） |
