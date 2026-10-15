@@ -344,9 +344,10 @@ func Migrate(conn *gorm.DB) error {
 		&model.ProxyConfiguration{},
 		&model.WSResponseAffinity{},
 		&model.WebAuthnCredential{},
-			&model.ChannelProbeRun{},
-			&model.ChannelProbeResult{},
-			&model.ChannelModelCapability{},
+		&model.ChannelProbeRun{},
+		&model.ChannelProbeResult{},
+		&model.ChannelModelCapability{},
+		&model.ChannelModelLimit{},
 		&migrate.MigrationRecord{},
 	)
 	if restoreFK != nil {

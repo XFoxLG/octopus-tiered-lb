@@ -50,6 +50,7 @@ type RelayLog struct {
 	ChannelId              int    `json:"channel" gorm:"column:channel_id;index:idx_relay_logs_channel_time,priority:1"`  // 实际使用的渠道ID
 	ChannelName            string `json:"channel_name" gorm:"column:channel_name"`                                        // 渠道名称
 	ActualModelName        string `json:"actual_model_name" gorm:"column:actual_model_name"`                              // 实际使用模型名称
+	UpstreamModel          string `json:"upstream_model,omitempty" gorm:"column:upstream_model"`                          // 上游响应自报模型（v2.9.0，空=未回报；与请求模型不一致时前端打「模型不一致」标记）
 	InputTokens            int    `json:"input_tokens" gorm:"column:input_tokens"`                                        // 输入Token
 	OutputTokens           int    `json:"output_tokens" gorm:"column:output_tokens"`                                      // 输出 Token
 	InputTokensEst         int    `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est;not null;default:0"`   // 输入 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
@@ -107,6 +108,7 @@ type RelayLogListItem struct {
 	ChannelId                 int              `json:"channel" gorm:"column:channel_id"`
 	ChannelName               string           `json:"channel_name" gorm:"column:channel_name"`
 	ActualModelName           string           `json:"actual_model_name" gorm:"column:actual_model_name"`
+	UpstreamModel             string           `json:"upstream_model,omitempty" gorm:"column:upstream_model"`
 	InputTokens               int              `json:"input_tokens" gorm:"column:input_tokens"`
 	OutputTokens              int              `json:"output_tokens" gorm:"column:output_tokens"`
 	InputTokensEst            int              `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est"`
@@ -190,6 +192,7 @@ func (r *RelayLog) ToListItem() RelayLogListItem {
 		ChannelId:                 r.ChannelId,
 		ChannelName:               r.ChannelName,
 		ActualModelName:           r.ActualModelName,
+		UpstreamModel:             r.UpstreamModel,
 		InputTokens:               r.InputTokens,
 		OutputTokens:              r.OutputTokens,
 		InputTokensEst:            r.InputTokensEst,

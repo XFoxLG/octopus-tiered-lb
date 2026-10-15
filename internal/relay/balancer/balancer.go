@@ -160,6 +160,9 @@ type autoScoredItem struct {
 	score        float64
 	totalSamples int
 	explored     bool
+	// v2.9.0：软信号因子（1=无罚分）与死渠道标记，仅用于诊断快照/日志可读性。
+	softScore   float64
+	deadChannel bool
 }
 
 func (b *Auto) Candidates(items []model.GroupItem) []model.GroupItem {
@@ -172,12 +175,13 @@ func (b *Auto) Candidates(items []model.GroupItem) []model.GroupItem {
 	latencyWeight := getLatencyWeight()
 	ttftWeight := getAutoTTFTWeight()
 	priceWeight := getAutoPriceWeight()
+	softSignals := getSoftSignalWeights()
 
 	// Calculate scores for each item
 	scored := make([]autoScoredItem, len(items))
 	for i, item := range items {
 		stats := getOrCreateStats(item.ChannelID, item.ModelName)
-		successRate, totalSamples := stats.GetStats(timeWindow)
+		successRate, totalSamples, successSamples := stats.GetStatsWithSuccessCount(timeWindow)
 
 		scored[i].item = item
 		scored[i].totalSamples = totalSamples
@@ -207,6 +211,17 @@ func (b *Auto) Candidates(items []model.GroupItem) []model.GroupItem {
 				if priceScore := AutoPriceFunc(item.ModelName); priceScore > 0 {
 					scored[i].score = scored[i].score*(1-priceWeight) + priceScore*priceWeight
 				}
+			}
+			// v2.9.0：软信号因子——假流式/空输出/流中断/截断按窗口命中率罚分，
+			// 成功样本不足时用中性先验；已判定死亡的渠道（尾部连续失败达熔断阈值）
+			// 在罚分之上再扣一档。只作用于利用期，探索期排序保持原语义。
+			if softSignals.Enabled {
+				softScore, _, streak := softScoreFor(stats, timeWindow, successSamples, softSignals)
+				scored[i].softScore = softScore
+				scored[i].deadChannel = int64(streak) >= getThreshold()
+				scored[i].score *= softScore
+			} else {
+				scored[i].softScore = 1
 			}
 		}
 		// #133: 全熔断的渠道降权排末尾，不剔除（保留 HalfOpen 探测能力）。

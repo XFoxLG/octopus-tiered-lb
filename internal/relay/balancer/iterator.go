@@ -91,7 +91,9 @@ func (it *Iterator) appendAttempt(attempt model.ChannelAttempt) {
 // NewIterator 创建负载均衡迭代器
 // 自动处理：策略排序 + 渠道黑名单过滤 + 粘性通道提前
 // excludedChannels 为该 API Key 排除的渠道 ID 集合（issue #55），nil/空表示不排除。
-func NewIterator(group model.Group, apiKeyID int, requestModel string, excludedChannels map[int]struct{}) *Iterator {
+// promptCacheKey（可选，v2.9.0）：客户端携带的缓存亲和键，用于把粘性粒度细化到
+// 「Key × 模型 × prompt_cache_key」；缺省时退回原有「Key × 模型」行为。
+func NewIterator(group model.Group, apiKeyID int, requestModel string, excludedChannels map[int]struct{}, promptCacheKey ...string) *Iterator {
 	group.Items = deduplicateGroupItems(group.Items)
 	b := GetBalancer(group.Mode)
 	candidates := b.Candidates(group.Items)
@@ -121,7 +123,11 @@ func NewIterator(group model.Group, apiKeyID int, requestModel string, excludedC
 	stickyIdx := -1
 	if group.SessionKeepTime > 0 {
 		stickyTTL := time.Duration(group.SessionKeepTime) * time.Second
-		if sticky := GetSticky(apiKeyID, requestModel, stickyTTL); sticky != nil {
+		cacheKey := ""
+		if len(promptCacheKey) > 0 {
+			cacheKey = promptCacheKey[0]
+		}
+		if sticky := GetStickyFor(apiKeyID, requestModel, cacheKey, stickyTTL); sticky != nil {
 			for i, item := range candidates {
 				if item.ChannelID == sticky.ChannelID {
 					if i > 0 {
