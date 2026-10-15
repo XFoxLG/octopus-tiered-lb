@@ -301,7 +301,7 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	// Preflight and the first route round share one iterator. Creating it twice
 	// advances RoundRobin twice and repeats Auto/Weighted sorting.
 	routeModel := modelmapping.Resolve(operationCtx, requestModel, group.ID)
-	iter := balancer.NewIterator(group, apiKeyID, routeModel, parseExcludedChannels(c.GetString("excluded_channels")))
+	iter := balancer.NewIterator(group, apiKeyID, routeModel, parseExcludedChannels(c.GetString("excluded_channels")), promptCacheKeyOf(internalRequest))
 	if iter.Len() == 0 {
 		lastErr = errors.New("no available channel")
 		resp.Error(c, http.StatusServiceUnavailable, "no available channel")
@@ -491,13 +491,16 @@ func (ra *relayAttempt) attempt() attemptResult {
 		if !ra.metrics.FirstTokenTime.IsZero() {
 			balancer.RecordAutoTTFT(ra.channel.ID, ra.internalRequest.Model, ra.metrics.FirstTokenTime.Sub(span.StartedAt()).Milliseconds())
 		}
+		// v2.9.0：成功响应上的软信号（假流式/空输出/截断/上游模型一致性）。
+		// 只进 Auto 打分，不影响成功率、熔断与计费口径。
+		recordSuccessSoftSignals(ra, span)
 		// 可用度：成功加分（上限 100），仅 availability 策略生效。
 		balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, true)
 		// 速度策略：记录 EMA 平滑 TPS（output_tokens / duration_seconds），仅 speed 策略生效。
 		balancer.RecordKeySpeed(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, ra.metrics.Stats.OutputToken, span.Duration().Milliseconds())
 		// 会话保持：更新粘性记录
 		if !ra.hedgeWinnerIsBackup {
-			balancer.SetSticky(ra.apiKeyID, ra.requestModel, ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+			balancer.SetStickyFor(ra.apiKeyID, ra.requestModel, promptCacheKeyOf(ra.internalRequest), ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
 		}
 
 		return attemptResult{Success: true, Decision: decision}
@@ -1851,6 +1854,9 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 	// 应用全局模型映射表（Phase 7）
 	requestModel = modelmapping.Resolve(req.operationCtx, requestModel, group.ID)
 
+	// v2.9.0：请求级上下文预检（每请求只估算一次输入 token；开关/阈值读 settings）。
+	contextPrecheck := prepareContextPrecheck(req)
+
 	for routeRound := 1; routeRound <= maxRouteRetries; routeRound++ {
 		if isClientDisconnected(req.clientCtx) {
 			return handleClientDisconnect(req, allAttempts)
@@ -1873,7 +1879,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 
 		routeIter := req.iter
 		if routeRound != 1 || routeIter == nil {
-			routeIter = balancer.NewIterator(group, req.apiKeyID, requestModel, parseExcludedChannels(req.c.GetString("excluded_channels")))
+			routeIter = balancer.NewIterator(group, req.apiKeyID, requestModel, parseExcludedChannels(req.c.GetString("excluded_channels")), promptCacheKeyOf(req.internalRequest))
 		}
 		routeIter.SetAttemptNumberBase(attemptNumberBase)
 		req.iter = routeIter
@@ -1911,6 +1917,21 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 			if strings.TrimSpace(resolvedModelName) == "" {
 				routeIter.Skip(channel.ID, 0, channel.Name, "resolved upstream model is empty")
 				continue
+			}
+
+			// v2.9.0：渠道×模型上下文上限预检。已知上限且估算输入超限 → 直接排除
+			// 候选（决策原因标注 capability: context_over_limit）；接近上限（≥阈值，
+			// 默认 90%）照常路由，但每请求写一条 warning 便于调查「为什么被掐」。
+			if over, limit, source, warn := contextPrecheck.evaluate(channel.ID, resolvedModelName); over {
+				routeIter.Skip(channel.ID, 0, channel.Name, fmt.Sprintf(
+					"capability: context_over_limit (est=%d limit=%d source=%s)", contextPrecheck.estimatedInput, limit, source))
+				lastErr = fmt.Errorf("channel %s context limit exceeded: estimated input %d > %d", channel.Name, contextPrecheck.estimatedInput, limit)
+				continue
+			} else if warn && !contextPrecheck.warned {
+				contextPrecheck.warned = true
+				writeRelayErrorLog(nil, relayErrorLogLevelWarning, fmt.Sprintf(
+					"context precheck near limit: channel_id=%d model=%s est=%d limit=%d source=%s",
+					channel.ID, resolvedModelName, contextPrecheck.estimatedInput, limit, source))
 			}
 
 			plans := channel.ResolveConnectionPlans(req.internalRequest, group.OutboundFormat)
@@ -2155,6 +2176,13 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					balancer.OutlierReport(channel.ID, false, result.Decision.Code, time.Now())
 				}
 
+				// v2.9.0：上游流缺终止事件在现有语义里走 ScopeSameChannel、不计入
+				// 渠道失败统计（shouldRecordChannelFailure 只认 NextChannel/AbortAll），
+				// 这里单独留痕，否则这类「假成功」对 Auto 完全不可见。
+				if isMissingTerminalError(result.Err) {
+					recordMissingTerminalSoftSignal(channel.ID, resolvedModelName, result.Err)
+				}
+
 				// hold 路径：本轮 429 会立刻再试同一渠道，不写 failure hint / 不记 failedKey，
 				// 并清掉 attempt() 里刚写入的 key 冷却，避免间隔到期后仍被挡住。
 				holdingRateLimit := shouldHoldOnRateLimit(rateLimitHoldCfg, result.Decision)
@@ -2164,6 +2192,9 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				switch result.Decision.Scope {
 				case ScopeNone:
 					lastErr = result.Err
+					// v2.9.0：确定性 400（上下文超限）→ 累计「渠道×模型」上限学习证据；
+					// 同一目标累计 2 次独立超限后写入 learned 上限（manual 永不被覆盖）。
+					maybeRecordContextOverflow(req.operationCtx, contextPrecheck, channel.ID, resolvedModelName, result.Decision.Code, result.Err)
 					req.metrics.Save(false, lastErr, currentAttempts)
 					// 400 类客户端错误不再重试，把上游错误体原样回给下游，
 					// 避免吞成 502 导致客户端无法识别 context_length_exceeded。

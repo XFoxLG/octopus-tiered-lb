@@ -394,6 +394,11 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 	// 与内容留存开关无关，见 metrics_image_count.go）。
 	relayLog.ImageCount = countRequestImages(m.InternalRequest)
 
+	// v2.9.0：上游响应自报模型（空=未回报；与请求模型不一致时前端打「模型不一致」标记）。
+	if m.InternalResponse != nil {
+		relayLog.UpstreamModel = strings.TrimSpace(m.InternalResponse.Model)
+	}
+
 	// 出站最终思考强度：以 InternalRequest 当前值为准（出站 sanitize/normalize 后写回）。
 	if m.InternalRequest != nil {
 		relayLog.ReasoningEffort = strings.TrimSpace(m.InternalRequest.ReasoningEffort)

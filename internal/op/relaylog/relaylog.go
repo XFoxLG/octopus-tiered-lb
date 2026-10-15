@@ -1220,7 +1220,7 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 					"client_ip", "reported_client_ip", "reported_client_ip_source",
 					"endpoint_type", "channel_id", "channel_name", "actual_model_name",
 					"input_tokens", "output_tokens", "input_tokens_est", "output_tokens_est",
-					"image_count",
+					"image_count", "upstream_model",
 					"semantic_cache_hit", "cache_read_tokens",
 					"reasoning_effort", "reasoning_tokens", "reasoning_chars", "usage_state",
 					"ftut", "use_time",
