@@ -271,6 +271,17 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 				Role:  "model",
 				Parts: []*model.GeminiPart{},
 			}
+			// 多轮 reasoning 上下文：把 assistant 的 reasoning 还原为 thought part。
+			// 否则含 reasoning 的回合（如 Responses 尾随 reasoning item）会退化成
+			// 空 parts 的 model turn，上游 Gemini 直接 400。
+			// 刻意不携带 ReasoningSignature：该字段是 Anthropic 签名载体
+			// （见 model.Message 字段注释），跨协议塞给 Gemini 会因签名无效被拒。
+			if reasoning := msg.GetReasoningContent(); reasoning != "" {
+				content.Parts = append(content.Parts, &model.GeminiPart{
+					Text:    reasoning,
+					Thought: true,
+				})
+			}
 			// Handle text content
 			if msg.Content.Content != nil && *msg.Content.Content != "" {
 				content.Parts = append(content.Parts, &model.GeminiPart{
@@ -293,7 +304,10 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 					})
 				}
 			}
-			geminiReq.Contents = append(geminiReq.Contents, content)
+			// Gemini 要求每个 content 的 parts 非空；丢弃退化为空的 model 回合。
+			if len(content.Parts) > 0 {
+				geminiReq.Contents = append(geminiReq.Contents, content)
+			}
 
 		case "tool":
 			// Tool result
