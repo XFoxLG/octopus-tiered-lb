@@ -34,11 +34,9 @@
       "outcome": "diff",
       "endpoint_diff": true,
       "diff_paths": [
-        "/generationConfig/thinkingConfig|only_ours",
-        "/systemInstruction|only_oracle",
-        "/system_instruction|only_ours"
+        "/generationConfig/thinkingConfig|only_ours"
       ],
-      "note": "thinkingConfig 是我方透传能力（axonhub 丢弃 thinking 配置）；system_instruction 命名（我方 snake_case，含空 role）与 axonhub camelCase 的差异，Gemini proto3 JSON 两者皆受。[fix-p2：统一 camelCase 并去掉空 role] 端点前缀差异同前。"
+      "note": "thinkingConfig 是我方透传能力（axonhub 丢弃 thinking 配置）。systemInstruction 命名已于 v2.9.2 fix-p2 统一为 camelCase 并去掉空 role（与 axonhub/CLIProxyAPI 一致），原 /system_instruction|only_ours 与 /systemInstruction|only_oracle 差异消除。端点前缀差异属 baseURL 前缀约定（/messages vs /v1/messages）。"
     },
     {
       "sample": "baseline-anthropic-to-gemini",
@@ -47,11 +45,9 @@
       "diff_paths": [
         "/generationConfig|only_ours",
         "/model|only_oracle",
-        "/safetySettings|only_oracle",
-        "/systemInstruction|only_oracle",
-        "/system_instruction|only_ours"
+        "/safetySettings|only_oracle"
       ],
-      "note": "CLIProxyAPI 注入 model 字段与 5 条 safetySettings（全 OFF/BLOCK_NONE）——产品决策不采纳。[no-change] generationConfig：其 anthropic→gemini 完全丢弃 max_tokens，我方保留 maxOutputTokens。[no-change 记录] system 命名差异同前。[fix-p2]"
+      "note": "CLIProxyAPI 注入 model 字段与 5 条 safetySettings（全 OFF/BLOCK_NONE）——产品决策不采纳。[no-change] generationConfig：其 anthropic→gemini 完全丢弃 max_tokens，我方保留 maxOutputTokens。[no-change 记录] systemInstruction 命名已于 v2.9.2 fix-p2 统一（camelCase、无空 role），差异消除。"
     },
     {
       "sample": "baseline-anthropic-to-responses",
@@ -95,11 +91,9 @@
       "outcome": "diff",
       "endpoint_diff": true,
       "diff_paths": [
-        "/generationConfig/thinkingConfig|only_ours",
-        "/systemInstruction|only_oracle",
-        "/system_instruction|only_ours"
+        "/generationConfig/thinkingConfig|only_ours"
       ],
-      "note": "thinkingConfig 我方透传；system 命名差异（snake_case vs camelCase）。[fix-p2：统一 camelCase] 端点前缀差异同前。"
+      "note": "thinkingConfig 我方透传。systemInstruction 命名已于 v2.9.2 fix-p2 统一（camelCase、无空 role），差异消除。端点前缀差异同前。"
     },
     {
       "sample": "baseline-chat-to-gemini",
@@ -109,10 +103,9 @@
         "/generationConfig/thinkingConfig|only_ours",
         "/model|only_oracle",
         "/safetySettings|only_oracle",
-        "/systemInstruction|only_oracle",
-        "/system_instruction|only_ours"
+        "/systemInstruction/role|only_oracle"
       ],
-      "note": "model 与 safetySettings 注入不采纳；generationConfig 我方保留 maxOutputTokens、CLIProxyAPI 丢弃。[no-change] system 命名差异。[fix-p2]"
+      "note": "model 与 safetySettings 注入不采纳；generationConfig 我方保留 maxOutputTokens、CLIProxyAPI 丢弃。[no-change] systemInstruction 命名差异已于 v2.9.2 fix-p2 消除；残余 role 差异属裁判分歧——CLIProxyAPI 的 chat→gemini 转换器注入 systemInstruction.role=\"user\"（其 anthropic→gemini 转换器却不注入），axonhub 两向均省略 role；Gemini 该字段可选，我方与 axonhub 一致保持省略。[no-change]"
     },
     {
       "sample": "baseline-chat-to-responses",
