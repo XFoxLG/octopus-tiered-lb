@@ -13,6 +13,7 @@ import (
 
 	anthropicModel "github.com/lingyuins/octopus/internal/transformer/inbound/anthropic"
 	"github.com/lingyuins/octopus/internal/transformer/model"
+	crossThinking "github.com/lingyuins/octopus/internal/transformer/thinking"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
@@ -368,11 +369,28 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 			Type: anthropicModel.ThinkingTypeAdaptive,
 		}
 		result.OutputConfig = &anthropicModel.OutputConfig{
-			Effort: effort,
+			Effort: normalizeAnthropicEffort(effort),
 		}
 	}
 
 	return result
+}
+
+// normalizeAnthropicEffort maps a cross-protocol effort keyword onto the set
+// Claude's adaptive output_config.effort accepts (max / xhigh / high / medium /
+// low). OpenAI-compatible clients can send "minimal", which is not an Anthropic
+// tier and would be rejected upstream with a 400; it collapses to the lowest
+// available tier, matching CLIProxyAPI's MapToClaudeEffort (minimal → low).
+// The rest of the enum is passed through untouched so xhigh/max still survive.
+//
+// "none" is deliberately not handled here: callers that need to disable
+// thinking go through ReasoningBudget=0 instead of the adaptive branch.
+func normalizeAnthropicEffort(effort string) string {
+	normalized := strings.ToLower(strings.TrimSpace(effort))
+	if normalized == crossThinking.EffortMinimal {
+		return crossThinking.EffortLow
+	}
+	return normalized
 }
 
 func resolveMaxTokens(req *model.InternalLLMRequest) int64 {
@@ -831,21 +849,9 @@ func getThinkingBudget(effort string, budget *int64) *int64 {
 		return budget
 	}
 
-	var result int64
-	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case anthropicModel.EffortLow:
-		result = 1024
-	case anthropicModel.EffortMedium:
-		result = 8192
-	case anthropicModel.EffortHigh:
-		result = 32768
-	case anthropicModel.EffortXHigh:
-		// 扩展高强度：介于 high 与 max 之间，给更大 budget。
-		result = 65536
-	case anthropicModel.EffortMax:
-		result = 128000
-	default:
-		result = 8192
+	result := int64(crossThinking.BudgetDefault)
+	if mapped, ok := crossThinking.EffortToBudget(effort); ok && mapped > 0 {
+		result = mapped
 	}
 	return &result
 }

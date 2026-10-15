@@ -1,0 +1,23 @@
+{
+  "id": "scenario-thinking-effort-minimal",
+  "class": "thinking-effort-budget",
+  "side": "request",
+  "inbound": "openai_chat",
+  "outbound": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "audit",
+    "ref": "CLIProxyAPI internal/thinking/convert.go MapToClaudeEffort（minimal→low，anthropic 不接受 minimal 档）",
+    "url": "https://github.com/router-for-me/CLIProxyAPI",
+    "note": "OpenAI 兼容客户端会发 reasoning_effort=minimal，但 Claude 的 adaptive output_config.effort 只接受 max/xhigh/high/medium/low，原样透传会被上游 400。v2.9.2 fix-p2 C-1 起映射为 low，与 CLIProxyAPI MapToClaudeEffort 一致。"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 40000,
+    "reasoning_effort": "minimal",
+    "messages": [
+      {"role": "user", "content": "Think briefly, then answer with the single word: OK"}
+    ]
+  }
+}

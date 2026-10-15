@@ -3,6 +3,27 @@
   "notes": "三方对拍偏差登记簿：记录每一条『已接受的三方差异』。CI（conformance-oracle job）遇到未登记差异即红。条目由 CI artifact conformance-report.json 校准生成；outcome=unsupported 表示该 oracle 没有这个方向的转换器（显式登记，不是缺陷）。详细字段语义见 conformance/README.md 与 internal/conformance/registry_test.go。",
   "entries": [
     {
+      "sample": "scenario-thinking-effort-minimal",
+      "oracle": "axonhub",
+      "outcome": "diff",
+      "endpoint_diff": true,
+      "note": "v2.9.2 fix-p2 C-1 新增样本（run 38771078827 校准）：minimal → output_config.effort=low，我方与 axonhub 逐字段一致，仅剩端点前缀差异（/messages vs /v1/messages）。"
+    },
+    {
+      "sample": "scenario-thinking-effort-minimal",
+      "oracle": "cliproxyapi",
+      "outcome": "diff",
+      "diff_paths": [
+        "/messages/0/content|value_diff",
+        "/metadata|only_oracle",
+        "/output_config|only_ours",
+        "/stream|only_oracle",
+        "/thinking/budget_tokens|only_oracle",
+        "/thinking/type|value_diff"
+      ],
+      "note": "minimal→low 两方一致（其 MapToClaudeEffort 同口径），差异全在表达风格：CLIProxyAPI 转成 enabled+budget_tokens=512，我方与 axonhub 走 adaptive+output_config.effort=low；另有 content 块包装、metadata.user_id 注入、显式 stream 字段。均 [no-change]。"
+    },
+    {
       "sample": "baseline-anthropic-to-anthropic",
       "oracle": "axonhub",
       "outcome": "diff",

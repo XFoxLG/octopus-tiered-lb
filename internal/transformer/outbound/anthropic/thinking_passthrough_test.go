@@ -8,7 +8,15 @@ import (
 )
 
 func TestConvertToAnthropicRequest_PassthroughEffortAsAdaptive(t *testing.T) {
-	for _, effort := range []string{"low", "medium", "high", "xhigh", "max"} {
+	for effort, want := range map[string]string{
+		"low":     "low",
+		"medium":  "medium",
+		"high":    "high",
+		"xhigh":   "xhigh",
+		"max":     "max",
+		"MINIMAL": "low", // not an Anthropic tier; collapses to the lowest one
+		"minimal": "low",
+	} {
 		got := convertToAnthropicRequest(&model.InternalLLMRequest{
 			Model:           "claude-opus-4-8",
 			ReasoningEffort: effort,
@@ -23,8 +31,8 @@ func TestConvertToAnthropicRequest_PassthroughEffortAsAdaptive(t *testing.T) {
 		if got.Thinking.BudgetTokens != nil {
 			t.Fatalf("effort %q: expected no budget_tokens, got %v", effort, *got.Thinking.BudgetTokens)
 		}
-		if got.OutputConfig == nil || got.OutputConfig.Effort != effort {
-			t.Fatalf("effort %q: expected output_config.effort=%q, got %#v", effort, effort, got.OutputConfig)
+		if got.OutputConfig == nil || got.OutputConfig.Effort != want {
+			t.Fatalf("effort %q: expected output_config.effort=%q, got %#v", effort, want, got.OutputConfig)
 		}
 	}
 }

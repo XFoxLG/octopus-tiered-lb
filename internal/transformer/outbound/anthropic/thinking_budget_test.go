@@ -4,16 +4,21 @@ import (
 	"testing"
 
 	anthropicModel "github.com/lingyuins/octopus/internal/transformer/inbound/anthropic"
+	crossThinking "github.com/lingyuins/octopus/internal/transformer/thinking"
 )
 
 func TestGetThinkingBudget_MapsExtendedEfforts(t *testing.T) {
 	cases := map[string]int64{
-		anthropicModel.EffortLow:    1024,
-		anthropicModel.EffortMedium: 8192,
-		anthropicModel.EffortHigh:   32768,
-		"xhigh":                     65536,
-		anthropicModel.EffortMax:    128000,
-		"unknown":                   8192,
+		anthropicModel.EffortLow:    crossThinking.ThresholdLow,
+		anthropicModel.EffortMedium: crossThinking.ThresholdMedium,
+		anthropicModel.EffortHigh:   crossThinking.ThresholdHigh,
+		"xhigh":                     crossThinking.BudgetXHigh,
+		anthropicModel.EffortMax:    crossThinking.BudgetMax,
+		// Unknown efforts keep the historical 8192 fallback: the caller only
+		// reaches this branch with an explicit budget pointer, so emitting a
+		// concrete number is still safer than dropping thinking entirely.
+		"unknown": crossThinking.BudgetDefault,
+		"MINIMAL": crossThinking.ThresholdMinimal,
 	}
 	for effort, want := range cases {
 		got := getThinkingBudget(effort, nil)
