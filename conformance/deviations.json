@@ -375,6 +375,18 @@
         "/safetySettings|only_oracle"
       ],
       "note": "尾随 reasoning：v2.8.15 已修复——thought 文本与 maxOutputTokens 均对齐 CLIProxyAPI。safetySettings/thinkingConfig 差异同前。[no-change]"
+    },
+    {
+      "sample": "scenario-reasoning-only-turn",
+      "oracle": "axonhub",
+      "outcome": "pending",
+      "note": "首次校准（样本先行）：anthropic 入站仅含 thinking 块、无可见文本的 assistant 回合，我方当前整条跳过（user→user 会让 role 交替断裂）。先取 CI artifact 定标两裁判形态，再决定降级为空可见内容（higress 口径）或维持丢弃。"
+    },
+    {
+      "sample": "scenario-reasoning-only-turn",
+      "oracle": "cliproxyapi",
+      "outcome": "pending",
+      "note": "同 axonhub：等待首次 artifact 校准。"
     }
   ]
 }
