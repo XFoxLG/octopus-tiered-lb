@@ -345,7 +345,13 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 	// 1) 客户端显式 budget_tokens（ReasoningBudget）→ 保留 enabled+budget，兼容老请求
 	// 2) 有 reasoning effort（含 AdaptiveThinking / OpenAI reasoning_effort）→
 	//    与 Claude Code 一致：adaptive + output_config.effort 原样透传，不再猜 budget
-	if req.ReasoningBudget != nil {
+	if req.ReasoningBudget != nil && *req.ReasoningBudget <= 0 {
+		// 显式 0/-1 是「关闭思考 / 动态分配」，但 Anthropic 的 enabled thinking
+		// 又要求 1024 ≤ budget < max_tokens，无法如实表达；原样钳制会把
+		// 「关闭」变成 1024 的意外思考。与 convertToAnthropicRequest 对空
+		// effort 的既有处理一致：省略 thinking 字段，让上游用默认行为。
+		// （模型名后缀 `(none)` 走的就是这条路径。）
+	} else if req.ReasoningBudget != nil {
 		// 手动 thinking 必须满足 budget_tokens ∈ [1024, max_tokens)，
 		// 违反约束的组合在上游是 400；出站前按 new-api 口径钳制（v2.9.1 fix-p1）。
 		budgetTokens := getThinkingBudget(req.ReasoningEffort, req.ReasoningBudget)

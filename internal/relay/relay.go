@@ -200,6 +200,10 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	}
 
 	requestModel := internalRequest.Model
+	// 模型名思考后缀（model(high) / model(8192)）在这一步解析：剥离后的名字才是
+	// 分组/渠道路由与上报上游用的模型名；后缀本身转成请求级推理覆盖。
+	applyModelThinkingSuffix(internalRequest)
+	requestModel = internalRequest.Model
 	apiKeyID := c.GetInt("api_key_id")
 	var streamSession *relayStreamSession
 	var streamSessionOwned bool
