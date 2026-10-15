@@ -378,8 +378,10 @@ func resolveMaxTokens(req *model.InternalLLMRequest) int64 {
 
 func convertSystemPrompt(req *model.InternalLLMRequest) *anthropicModel.SystemPrompt {
 	var systemMessages []model.Message
+	// developer 与 system 同为系统级指令（axonhub / CLIProxyAPI 均并入 system；
+	// v2.8.15 fix-p1：此前 developer 在出站被整体丢弃）。
 	for _, msg := range req.Messages {
-		if msg.Role == "system" {
+		if msg.Role == "system" || msg.Role == "developer" {
 			systemMessages = append(systemMessages, msg)
 		}
 	}
@@ -416,7 +418,7 @@ func convertMessages(req *model.InternalLLMRequest) []anthropicModel.MessagePara
 	processedIndexes := make(map[int]bool)
 
 	for _, msg := range req.Messages {
-		if msg.Role == "system" {
+		if msg.Role == "system" || msg.Role == "developer" {
 			continue
 		}
 
@@ -582,7 +584,7 @@ func convertAssistantWithToolCalls(msg model.Message) []anthropicModel.MessagePa
 		blocks = append(blocks, anthropicModel.MessageContentBlock{
 			Type:      "thinking",
 			Thinking:  msg.ReasoningContent,
-			Signature: msg.ReasoningSignature,
+			Signature: ensureThinkingSignature(msg.ReasoningSignature),
 		})
 	}
 
@@ -653,6 +655,17 @@ func hasThinkingContent(msg model.Message) bool {
 	return msg.ReasoningContent != nil && *msg.ReasoningContent != ""
 }
 
+// ensureThinkingSignature 保证 thinking 块序列化时始终带 signature 键：
+// 无真实签名时输出空串而非省略键。sub2api 审计 + axonhub 对拍：严格客户端
+// （如 Grok Build）会因缺 signature 键报 missing field signature（v2.8.15 fix-p1）。
+func ensureThinkingSignature(sig *string) *string {
+	if sig != nil && *sig != "" {
+		return sig
+	}
+	empty := ""
+	return &empty
+}
+
 func buildMultipleContentWithThinking(msg model.Message) anthropicModel.MessageContent {
 	var blocks []anthropicModel.MessageContentBlock
 
@@ -660,7 +673,7 @@ func buildMultipleContentWithThinking(msg model.Message) anthropicModel.MessageC
 		blocks = append(blocks, anthropicModel.MessageContentBlock{
 			Type:      "thinking",
 			Thinking:  msg.ReasoningContent,
-			Signature: msg.ReasoningSignature,
+			Signature: ensureThinkingSignature(msg.ReasoningSignature),
 		})
 	}
 
