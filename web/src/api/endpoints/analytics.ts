@@ -126,6 +126,24 @@ export interface AutoStrategySnapshotItem {
     ttft_samples: number;
     last_active_at: number;
     min_samples_met: boolean;
+    /** v2.9.0 软信号计数与画像（Auto 打分因子；截断默认只记录不罚分）。 */
+    soft_sample_count: number;
+    fake_stream_count: number;
+    empty_output_count: number;
+    missing_terminal_count: number;
+    truncated_count: number;
+    soft_score: number;
+    consecutive_failures: number;
+    dead_channel: boolean;
+    /** 上游自报模型样本与不一致数（有自报才有样本）。 */
+    upstream_model_samples: number;
+    upstream_model_mismatch: number;
+    /** 渠道×模型上下文上限（0/缺失=未知；source ∈ manual/learned）。 */
+    context_limit_tokens?: number;
+    context_limit_source?: string;
+    /** 最近一次候选跳过原因与时间（unix 秒）。 */
+    last_decision_reason?: string;
+    last_decision_at?: number;
 }
 
 export interface AnalyticsEvaluationRuntime {

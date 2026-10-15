@@ -56,6 +56,7 @@ export interface RelayLog {
     channel: number;             // 实际使用的渠道ID
     channel_name: string;        // 渠道名称
     actual_model_name: string;   // 实际使用模型名称
+    upstream_model?: string;     // 上游响应自报模型（有则记；v2.9.0 一致性标记）
     input_tokens: number;        // 输入Token
     output_tokens: number;       // 输出Token
     input_tokens_est?: number;   // 输入 Token 估算（仅上游漏报时 >0；0/缺失=未估算，v2.8.13）

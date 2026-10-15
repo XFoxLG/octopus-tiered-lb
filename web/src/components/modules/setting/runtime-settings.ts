@@ -150,3 +150,87 @@ export const AUTO_STRATEGY_FIELDS: RuntimeSettingField[] = [
         max: '100',
     },
 ];
+
+// v2.9.0：Auto 软信号罚分与先验（百分点，0-100）。截断默认 0 = 只记录不罚分；
+// 各罚分累加后受 cap 约束，样本不足时使用中性先验，避免冷启动误判。
+export const AUTO_SOFT_SIGNAL_FIELDS: RuntimeSettingField[] = [
+    {
+        key: 'auto_soft_penalty_fake_stream',
+        labelKey: 'autoStrategy.softSignals.fakeStream.label',
+        placeholderKey: 'autoStrategy.softSignals.fakeStream.placeholder',
+        hintKey: 'autoStrategy.softSignals.fakeStream.hint',
+        min: '0',
+        max: '100',
+    },
+    {
+        key: 'auto_soft_penalty_empty_output',
+        labelKey: 'autoStrategy.softSignals.emptyOutput.label',
+        placeholderKey: 'autoStrategy.softSignals.emptyOutput.placeholder',
+        hintKey: 'autoStrategy.softSignals.emptyOutput.hint',
+        min: '0',
+        max: '100',
+    },
+    {
+        key: 'auto_soft_penalty_missing_terminal',
+        labelKey: 'autoStrategy.softSignals.missingTerminal.label',
+        placeholderKey: 'autoStrategy.softSignals.missingTerminal.placeholder',
+        hintKey: 'autoStrategy.softSignals.missingTerminal.hint',
+        min: '0',
+        max: '100',
+    },
+    {
+        key: 'auto_soft_penalty_truncated',
+        labelKey: 'autoStrategy.softSignals.truncated.label',
+        placeholderKey: 'autoStrategy.softSignals.truncated.placeholder',
+        hintKey: 'autoStrategy.softSignals.truncated.hint',
+        min: '0',
+        max: '100',
+    },
+    {
+        key: 'auto_soft_penalty_cap',
+        labelKey: 'autoStrategy.softSignals.cap.label',
+        placeholderKey: 'autoStrategy.softSignals.cap.placeholder',
+        hintKey: 'autoStrategy.softSignals.cap.hint',
+        min: '0',
+        max: '100',
+    },
+    {
+        key: 'auto_soft_neutral_prior',
+        labelKey: 'autoStrategy.softSignals.neutralPrior.label',
+        placeholderKey: 'autoStrategy.softSignals.neutralPrior.placeholder',
+        hintKey: 'autoStrategy.softSignals.neutralPrior.hint',
+        min: '0',
+        max: '100',
+    },
+    {
+        key: 'auto_dead_channel_penalty',
+        labelKey: 'autoStrategy.softSignals.deadChannelPenalty.label',
+        placeholderKey: 'autoStrategy.softSignals.deadChannelPenalty.placeholder',
+        hintKey: 'autoStrategy.softSignals.deadChannelPenalty.hint',
+        min: '0',
+        max: '100',
+    },
+];
+
+// v2.9.0：请求前上下文预检阈值（百分比；估算输入达到已知上限的该比例时告警）。
+export const CONTEXT_PREFLIGHT_FIELDS: RuntimeSettingField[] = [
+    {
+        key: 'relay_context_warn_threshold',
+        labelKey: 'autoStrategy.contextGuard.warnThreshold.label',
+        placeholderKey: 'autoStrategy.contextGuard.warnThreshold.placeholder',
+        hintKey: 'autoStrategy.contextGuard.warnThreshold.hint',
+        min: '1',
+        max: '100',
+    },
+];
+
+// v2.9.0：上限学习触发阈值（同一渠道×模型累计多少次独立超限后写入学习值）。
+export const CONTEXT_LIMIT_LEARN_FIELDS: RuntimeSettingField[] = [
+    {
+        key: 'channel_model_limit_learn_threshold',
+        labelKey: 'autoStrategy.limitLearn.threshold.label',
+        placeholderKey: 'autoStrategy.limitLearn.threshold.placeholder',
+        hintKey: 'autoStrategy.limitLearn.threshold.hint',
+        min: '1',
+    },
+];

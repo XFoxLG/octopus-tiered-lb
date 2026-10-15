@@ -22,6 +22,20 @@ func sessionKey(apiKeyID int, requestModel string) string {
 	return buildKey2(apiKeyID, requestModel)
 }
 
+// sessionKeyWithCache 生成会话键：apiKeyID:requestModel[:promptCacheKey]（v2.9.0）。
+// 客户端在请求体里携带 prompt_cache_key（或等价的缓存键字段）时，说明同一段
+// 前缀会被反复复用；此时把亲和粒度从「Key × 模型」细化到「Key × 模型 × 缓存键」，
+// 让同一会话稳定落在同一渠道，保住上游前缀缓存、避免跨账号重放历史
+// （GPT-Load rc.18 / Codex-Proxy-RS #443 的外部实证）。缺失时退回原两级键。
+func sessionKeyWithCache(apiKeyID int, requestModel, promptCacheKey string) string {
+	key := sessionKey(apiKeyID, requestModel)
+	cacheKey := strings.TrimSpace(promptCacheKey)
+	if cacheKey == "" {
+		return key
+	}
+	return key + ":" + cacheKey
+}
+
 // stickyEvictSuccessThreshold is the success-rate floor for a sticky channel.
 // When a sticky channel's Auto-strategy success rate (computed over the sliding
 // window with at least getMinSamples() samples) drops below this threshold, the
@@ -51,7 +65,12 @@ func ShouldEvictSticky(apiKeyID int, requestModel string, channelID int) bool {
 // (the next request re-selects via the normal strategy order and, on success,
 // writes a fresh sticky entry).
 func RemoveSticky(apiKeyID int, requestModel string) {
-	globalSession.Delete(sessionKey(apiKeyID, requestModel))
+	RemoveStickyFor(apiKeyID, requestModel, "")
+}
+
+// RemoveStickyFor 删除指定亲和键（含 prompt_cache_key）的粘性会话条目。
+func RemoveStickyFor(apiKeyID int, requestModel, promptCacheKey string) {
+	globalSession.Delete(sessionKeyWithCache(apiKeyID, requestModel, promptCacheKey))
 }
 
 // GetSticky 获取粘性通道（ttl 内有效）
@@ -59,7 +78,12 @@ func RemoveSticky(apiKeyID int, requestModel string) {
 // 逃生逻辑：粘性渠道的 Auto 策略成功率已崩（样本足够且低于阈值）时，
 // 删除粘性记录并返回 nil，让 iterator 走正常策略排序重新选路。
 func GetSticky(apiKeyID int, requestModel string, ttl time.Duration) *SessionEntry {
-	key := sessionKey(apiKeyID, requestModel)
+	return GetStickyFor(apiKeyID, requestModel, "", ttl)
+}
+
+// GetStickyFor 获取粘性通道（ttl 内有效），亲和键可携带 prompt_cache_key（v2.9.0）。
+func GetStickyFor(apiKeyID int, requestModel, promptCacheKey string, ttl time.Duration) *SessionEntry {
+	key := sessionKeyWithCache(apiKeyID, requestModel, promptCacheKey)
 	v, ok := globalSession.Load(key)
 	if !ok {
 		return nil
@@ -90,10 +114,19 @@ func GetSticky(apiKeyID int, requestModel string, ttl time.Duration) *SessionEnt
 
 // SetSticky 写入/更新粘性记录
 func SetSticky(apiKeyID int, requestModel string, channelID, keyID int, resolvedModel ...string) {
-	key := sessionKey(apiKeyID, requestModel)
 	statsModel := requestModel
 	if len(resolvedModel) > 0 && resolvedModel[0] != "" {
 		statsModel = resolvedModel[0]
+	}
+	SetStickyFor(apiKeyID, requestModel, "", channelID, keyID, statsModel)
+}
+
+// SetStickyFor 写入/更新粘性记录，亲和键可携带 prompt_cache_key（v2.9.0）。
+func SetStickyFor(apiKeyID int, requestModel, promptCacheKey string, channelID, keyID int, resolvedModel string) {
+	key := sessionKeyWithCache(apiKeyID, requestModel, promptCacheKey)
+	statsModel := requestModel
+	if resolvedModel != "" {
+		statsModel = resolvedModel
 	}
 	globalSession.Store(key, &SessionEntry{
 		ChannelID:     channelID,

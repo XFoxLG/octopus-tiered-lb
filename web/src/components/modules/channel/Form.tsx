@@ -20,6 +20,7 @@ import {
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
 import { useSettingList, SettingKey } from '@/api/endpoints/setting';
 import { ConnectionEditor } from './ConnectionEditor';
+import { ContextLimits } from './ContextLimits';
 import { canFetchConnectionModels, hasConnectionAddress } from './connection-config';
 import { normalizeFetchedModels, toggleModelSelection } from './model-picker';
 import {
@@ -1137,6 +1138,12 @@ export function ChannelForm({
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <ConnectionEditor value={formData.connection_config} onChange={(connection_config) => onFormDataChange({ ...formData, connection_config, ...(connection_config.catalog.format === 'manual' ? { auto_sync: false, auto_sync_key_models: false } : {}) })} channelId={channelId} idPrefix={idPrefix} />
             </section>
+
+            {typeof channelId === 'number' && channelId > 0 ? (
+                <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
+                    <ContextLimits channelId={channelId} />
+                </section>
+            ) : null}
 
             <section className={cn(sectionClassName, isCreateLayout && 'md:col-span-2')}>
                 <SectionHeader icon={KeyRound} title={t('apiKeyConfig')} />

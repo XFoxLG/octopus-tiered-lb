@@ -27,9 +27,20 @@ type ChannelStats struct {
 
 	// Cached values to avoid frequent recomputation
 	cachedSuccessRate  float64
+	cachedSuccessCount int
 	cachedTotalSamples int
 	lastCacheUpdate    time.Time
 	cacheValidDuration time.Duration
+
+	// v2.9.0 软信号窗口（假流式/空输出/流中断/截断/上游模型一致性），
+	// 与请求窗口分离：软信号只挂在自己的环上，避免并发下错配到别人的请求记录。
+	softWindow []softSignalRecord
+	softHead   int
+	softCount  int
+
+	// v2.9.0 渠道画像：最近一次候选跳过原因（分析中心「最近决策原因」）。
+	lastDecisionReason string
+	lastDecisionAt     time.Time
 
 	// EMA-smoothed latency in milliseconds
 	avgLatencyMs float64
@@ -70,6 +81,7 @@ func getOrCreateStats(channelID int, modelName string) *ChannelStats {
 	threshold := getSampleThreshold()
 	entry := &ChannelStats{
 		window:             make([]RequestRecord, threshold),
+		softWindow:         make([]softSignalRecord, threshold),
 		cacheValidDuration: 5 * time.Second,
 	}
 	actual, _ := globalAutoStats.LoadOrStore(key, entry)
@@ -127,6 +139,14 @@ func (cs *ChannelStats) Record(success bool) {
 
 // GetStats returns the success rate and total samples within the time window.
 func (cs *ChannelStats) GetStats(windowDuration time.Duration) (successRate float64, totalSamples int) {
+	successRate, totalSamples, _ = cs.GetStatsWithSuccessCount(windowDuration)
+	return successRate, totalSamples
+}
+
+// GetStatsWithSuccessCount 在 GetStats 的基础上额外返回窗口内的成功样本数。
+// v2.9.0 软信号判定的分母只统计「能产生软信号」的成功响应（失败请求不可能出现
+// 假流式/空输出/截断），因此评分路径需要 successCount 而不只是总数。
+func (cs *ChannelStats) GetStatsWithSuccessCount(windowDuration time.Duration) (successRate float64, totalSamples int, successSamples int) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
@@ -134,7 +154,7 @@ func (cs *ChannelStats) GetStats(windowDuration time.Duration) (successRate floa
 
 	// Return cached value if still valid
 	if now.Sub(cs.lastCacheUpdate) < cs.cacheValidDuration && cs.cachedTotalSamples > 0 {
-		return cs.cachedSuccessRate, cs.cachedTotalSamples
+		return cs.cachedSuccessRate, cs.cachedTotalSamples, cs.cachedSuccessCount
 	}
 
 	// Recompute stats
@@ -158,10 +178,11 @@ func (cs *ChannelStats) GetStats(windowDuration time.Duration) (successRate floa
 	} else {
 		cs.cachedSuccessRate = 0
 	}
+	cs.cachedSuccessCount = successCount
 	cs.cachedTotalSamples = validCount
 	cs.lastCacheUpdate = now
 
-	return cs.cachedSuccessRate, cs.cachedTotalSamples
+	return cs.cachedSuccessRate, cs.cachedTotalSamples, cs.cachedSuccessCount
 }
 
 // RecordAutoSuccess records a successful request for the Auto strategy.
@@ -284,6 +305,20 @@ type AutoStatsSnapshotItem struct {
 	AvgTTFTMs    float64
 	TTFTSamples  int64
 	LastActiveAt time.Time
+
+	// v2.9.0 软信号（窗口内命中数）与渠道画像。
+	SoftSampleCount       int     // 软信号分母：窗口内成功响应数
+	FakeStreamCount       int     // 假流式命中数
+	EmptyOutputCount      int     // 空输出命中数
+	MissingTerminalCount  int     // 流中断命中数
+	TruncatedCount        int     // 截断命中数
+	SoftScore             float64 // 当前生效的软信号因子（1=无罚分，含中性先验/死渠道罚分）
+	ConsecutiveFailures   int     // 窗口尾部连续失败数
+	DeadChannel           bool    // 连续失败达到熔断阈值（附加罚分已生效）
+	UpstreamModelSamples  int     // 上游自报模型的样本数（一致性分母）
+	UpstreamModelMismatch int     // 上游自报模型与请求模型不一致的次数
+	LastDecisionReason    string  // 最近一次候选跳过原因（v2.9.0）
+	LastDecisionAt        time.Time
 }
 
 // GetAutoStatsSnapshot 返回 globalAutoStats 中所有条目的快照。
@@ -331,8 +366,9 @@ func GetAutoStatsSnapshot(channelIDs []int) []AutoStatsSnapshotItem {
 }
 
 func snapshotFromStats(channelID int, modelName string, stats *ChannelStats) AutoStatsSnapshotItem {
-	successRate, samples := stats.GetStats(getTimeWindow())
-	return AutoStatsSnapshotItem{
+	window := getTimeWindow()
+	successRate, samples, successSamples := stats.GetStatsWithSuccessCount(window)
+	item := AutoStatsSnapshotItem{
 		ChannelID:    channelID,
 		ModelName:    modelName,
 		SuccessRate:  successRate,
@@ -342,6 +378,21 @@ func snapshotFromStats(channelID int, modelName string, stats *ChannelStats) Aut
 		TTFTSamples:  stats.GetTTFTSamples(),
 		LastActiveAt: stats.lastActivity(),
 	}
+	// v2.9.0：渠道画像的软信号部分（命中数、软分、死渠道、上游模型一致性）。
+	weights := getSoftSignalWeights()
+	score, counts, streak := softScoreFor(stats, window, successSamples, weights)
+	item.SoftSampleCount = successSamples
+	item.FakeStreamCount = counts.FakeStream
+	item.EmptyOutputCount = counts.EmptyOutput
+	item.MissingTerminalCount = counts.MissingTerminal
+	item.TruncatedCount = counts.Truncated
+	item.SoftScore = score
+	item.ConsecutiveFailures = streak
+	item.DeadChannel = int64(streak) >= getThreshold()
+	item.UpstreamModelSamples = counts.ModelReported
+	item.UpstreamModelMismatch = counts.ModelMismatches
+	item.LastDecisionReason, item.LastDecisionAt = stats.lastDecision()
+	return item
 }
 
 // RemoveChannelStats deletes all auto-strategy statistics entries for the given channel.

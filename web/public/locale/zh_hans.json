@@ -271,7 +271,18 @@
         "ttftLabel": "首字",
         "ttftHint": "近期流式请求首个可见内容的指数加权平均（EMA，当前 {count} 个首字样本）。0 或缺失表示该渠道×模型还没有流式首字样本。",
         "fakeStreamBadge": "疑似伪流式",
-        "fakeStreamHint": "首字耗时占单次请求时长 ≥60%（请求时长 ≥60 秒；或首字 ≥60 秒且占比 ≥40%）。常见于先维持连接、临近结束才一次性输出的渠道，需结合实际响应确认。"
+        "fakeStreamHint": "首字耗时占单次请求时长 ≥60%（请求时长 ≥60 秒；或首字 ≥60 秒且占比 ≥40%）。常见于先维持连接、临近结束才一次性输出的渠道，需结合实际响应确认。",
+        "deadChannelBadge": "死渠道",
+        "deadChannelHint": "近期连续失败达到阈值，已在智能选择中附加罚分（仍保留少量探索机会）。",
+        "contextLimitBadge": "上限 {size}",
+        "contextLimitHint": "该渠道×模型的已知上下文上限（来源：{source}）。请求前预检会在估算输入超限时直接排除该候选。",
+        "contextLimitSourceManual": "手动声明",
+        "contextLimitSourceLearned": "自动学习",
+        "softSignalsBadge": "软信号 {count}",
+        "softSignalsHint": "近期窗口中：伪流式 {fake}、空输出 {empty}、流中断 {terminal}、触达长度上限 {truncated}（共 {samples} 个样本；软信号评分 {score}，越低越差）。截断默认只记录不罚分。",
+        "modelMismatchBadge": "模型不一致 {rate}%",
+        "modelMismatchHint": "上游响应自报模型与出站实际模型不一致 {mismatch}/{total} 次（已容忍供应商前缀与大小写）。",
+        "lastDecision": "最近决策"
       }
     },
     "channelModel": {
@@ -1322,6 +1333,75 @@
         "label": "同分桶容差（0-100）",
         "hint": "评分差在该容差内的渠道视为同分，桶内随机打散顺序，消除轮流垄断。0 关闭打散。",
         "placeholder": "5"
+      },
+      "softSignals": {
+        "title": "软信号罚分",
+        "hint": "把「被记成功但实际有问题」的上游行为（假流式 / 空输出 / 流中断 / 截断）变成可统计的软信号，按近期比例对智能选择的评分打折；只影响智能选择模式，不改计费与统计口径。",
+        "toggle": {
+          "label": "启用软信号打分",
+          "hint": "关闭后软信号只记录、不参与评分。"
+        },
+        "fakeStream": {
+          "label": "假流式罚分（0-100）",
+          "hint": "首字很晚或内容集中到达的请求占比越高，评分折扣越大（按百分点累加）。",
+          "placeholder": "15"
+        },
+        "emptyOutput": {
+          "label": "空输出罚分（0-100）",
+          "hint": "成功但既无上报输出 Token 也无可见正文的比例。",
+          "placeholder": "10"
+        },
+        "missingTerminal": {
+          "label": "流中断罚分（0-100）",
+          "hint": "上游流未发终止事件即结束的比例（内容可能不完整）。",
+          "placeholder": "10"
+        },
+        "truncated": {
+          "label": "截断罚分（0-100）",
+          "hint": "触达长度上限的比例。默认 0：只记录不罚分，避免误伤按 max_tokens 正常收尾的请求。",
+          "placeholder": "0"
+        },
+        "cap": {
+          "label": "总罚分上限（0-100）",
+          "hint": "各软信号罚分累加后的上限，避免单项极端值把渠道分数压得过低。",
+          "placeholder": "30"
+        },
+        "neutralPrior": {
+          "label": "中性先验（0-100）",
+          "hint": "样本不足时使用的默认软信号得分（50 = 不奖不罚），用于避免冷启动误判。",
+          "placeholder": "50"
+        },
+        "deadChannelPenalty": {
+          "label": "死渠道附加罚分（0-100）",
+          "hint": "连续失败达到阈值的渠道，在软信号得分之上额外附加的罚分。",
+          "placeholder": "20"
+        }
+      },
+      "contextGuard": {
+        "title": "上下文预检",
+        "hint": "请求转发前用网关分词器估算输入 Token，对照「渠道×模型」的已知上限：超限的候选直接排除（不再等上游 400），接近上限时写一条告警日志。",
+        "toggle": {
+          "label": "启用上下文预检",
+          "hint": "关闭后不再按已知上限排除候选，只保留上游报错后的既有处理。"
+        },
+        "warnThreshold": {
+          "label": "告警阈值（1-100）",
+          "hint": "估算输入达到已知上限的该百分比时写告警日志（便于排查「为什么被掐」）。",
+          "placeholder": "90"
+        }
+      },
+      "limitLearn": {
+        "title": "上下文上限自动学习",
+        "hint": "同一渠道×模型累计多次独立的上游上下文超限（400）后，自动记下该上限；人工声明（手动）永不被学习值覆盖。",
+        "toggle": {
+          "label": "启用上限自动学习",
+          "hint": "关闭后只使用人工声明的上限。"
+        },
+        "threshold": {
+          "label": "学习触发次数",
+          "hint": "同一渠道×模型需要累计的独立超限次数（60 秒内的重复只计一次）。",
+          "placeholder": "2"
+        }
       }
     },
     "aiRoute": {
@@ -2837,7 +2917,11 @@
         "clientInterrupted": "客户端中断",
         "clientInterruptedHint": "客户端提前断开或超时放弃；日志记录的是中断时刻的状态，输出与用量都不完整。",
         "usageNotReported": "未回报用量",
-        "usageNotReportedHint": "上游未在响应中回报 usage，Token 与费用不可信。"
+        "usageNotReportedHint": "上游未在响应中回报 usage，Token 与费用不可信。",
+        "modelMismatch": "模型不一致",
+        "modelMismatchHint": "上游响应自报的模型名与网关实际请求的模型名不一致（已容忍供应商前缀与大小写）。可能意味着中转层做了模型替换，需结合实际响应确认。",
+        "upstreamModelLabel": "上游自报",
+        "upstreamModelHint": "上游响应体里自报的模型名（有则记录；部分渠道与别名不回报）。"
       },
 "upstreamFirstToken": "上游首字",
       "clientFirstFlush": "客户端首字",
@@ -3019,6 +3103,28 @@
     }
   },
   "channel": {
+    "contextLimits": {
+      "title": "上下文上限",
+      "titleHint": "按「渠道×模型」声明或查看上下文上限；请求前预检用它排除必然被上游拒绝的超长请求。",
+      "description": "人工声明（手动）永不被自动学习覆盖；自动学习值由累计多次独立的上游超限写入。上限用于请求前预检：估算输入超限的候选会被直接排除。",
+      "modelPlaceholder": "模型名（如 gemini-3.1-pro）",
+      "tokensPlaceholder": "上限 Token 数",
+      "add": "添加/覆盖",
+      "edit": "编辑",
+      "save": "保存",
+      "cancel": "取消",
+      "remove": "删除",
+      "saved": "已保存",
+      "deleted": "已删除",
+      "loading": "加载中…",
+      "empty": "暂无上限记录；可人工添加上限，或等待自动学习。",
+      "sourceManual": "手动",
+      "sourceManualHint": "人工声明的上限，永不被自动学习覆盖。",
+      "sourceLearned": "自动学习",
+      "sourceLearnedHint": "由累计多次独立的上游上下文超限自动写入，可在上方新增人工值覆盖。",
+      "tokensValue": "上限 {tokens} tokens",
+      "evidence": "已累计 {count} 次独立超限"
+    },
     "connection": {
       "title": "接口与地址",
       "hint": "每条接口选择协议和地址，共用本渠道的 Key 池与限速。地址不会自动识别协议。",

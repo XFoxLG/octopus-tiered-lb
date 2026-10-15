@@ -5,6 +5,7 @@ import type { RelayLog, RelayLogDetail } from '@/api/endpoints/log';
 import {
     formatJsonForCopy,
     formatLogDuration,
+    isUpstreamModelMismatch,
     resolveEffectiveTokenCounts,
     reportedIPSourceToken,
     resolveFirstTokenMilestones,
@@ -795,4 +796,52 @@ test('resolveLogInvestigationMarkers stacks independent markers', () => {
         provider_termination_reason: '',
     });
     assert.deepEqual(stacked, ['suspect_fake_stream', 'client_interrupted']);
+});
+
+test('isUpstreamModelMismatch tolerates vendor prefixes, case and missing reports', () => {
+    // 与后端 upstreamModelConsistency 同判据：大小写、供应商前缀不算不一致。
+    assert.equal(isUpstreamModelMismatch('gemini-3.1-pro', 'gemini-3.1-pro'), false);
+    assert.equal(isUpstreamModelMismatch('Gemini-3.1-Pro', 'gemini-3.1-pro'), false);
+    assert.equal(isUpstreamModelMismatch('google/gemini-3.1-pro', 'gemini-3.1-pro'), false);
+    assert.equal(isUpstreamModelMismatch('gemini-3.1-pro', 'google/gemini-3.1-pro'), false);
+    // 真不一致：中转层换了模型。
+    assert.equal(isUpstreamModelMismatch('gpt-4o', 'gemini-3.1-pro'), true);
+    // 未回报（空/缺省）不标记。
+    assert.equal(isUpstreamModelMismatch('', 'gemini-3.1-pro'), false);
+    assert.equal(isUpstreamModelMismatch(undefined, 'gemini-3.1-pro'), false);
+    assert.equal(isUpstreamModelMismatch('gemini-3.1-pro', ''), false);
+});
+
+test('resolveLogInvestigationMarkers flags upstream model mismatch', () => {
+    const mismatched = resolveLogInvestigationMarkers({
+        ftut: 500,
+        use_time: 2000,
+        output_tokens: 120,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        upstream_model: 'gpt-4o',
+        actual_model_name: 'gemini-3.1-pro',
+    });
+    assert.ok(mismatched.includes('model_mismatch'));
+
+    // 一致（含 vendor 前缀）或未回报时不产生标记。
+    const consistent = resolveLogInvestigationMarkers({
+        ftut: 500,
+        use_time: 2000,
+        output_tokens: 120,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        upstream_model: 'google/gemini-3.1-pro',
+        actual_model_name: 'gemini-3.1-pro',
+    });
+    assert.equal(consistent.includes('model_mismatch'), false);
+
+    const unreported = resolveLogInvestigationMarkers({
+        ftut: 500,
+        use_time: 2000,
+        output_tokens: 120,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+    });
+    assert.equal(unreported.includes('model_mismatch'), false);
 });

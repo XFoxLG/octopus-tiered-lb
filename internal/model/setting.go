@@ -64,6 +64,18 @@ const (
 	SettingKeyAutoStrategyPriceWeight              SettingKey = "auto_strategy_price_weight"               // Auto策略成本权重（0-100），启用后按渠道模型单价对评分降权
 	SettingKeyAutoStrategyExploreRate              SettingKey = "auto_strategy_explore_rate"               // Auto策略探索概率（0-100），>0时按评分softmax随机化候选顺序
 	SettingKeyAutoStrategyBucketTolerance          SettingKey = "auto_strategy_bucket_tolerance"           // Auto策略同分桶容差（0-100评分点），桶内随机打散避免轮流垄断
+	SettingKeyAutoSoftSignalsEnabled               SettingKey = "auto_soft_signals_enabled"                // Auto软信号开关（v2.9.0）：假流式/空输出/流中断/截断罚分参与评分
+	SettingKeyAutoSoftPenaltyFakeStream            SettingKey = "auto_soft_penalty_fake_stream"            // 假流式罚分（0-100评分点，默认15）：首个可见内容时间占比≥60%
+	SettingKeyAutoSoftPenaltyEmptyOutput           SettingKey = "auto_soft_penalty_empty_output"           // 空输出罚分（0-100评分点，默认10）：成功但无可见输出
+	SettingKeyAutoSoftPenaltyMissingTerminal       SettingKey = "auto_soft_penalty_missing_terminal"       // 流中断罚分（0-100评分点，默认10）：上游流未发终止事件
+	SettingKeyAutoSoftPenaltyTruncated             SettingKey = "auto_soft_penalty_truncated"              // 截断罚分（0-100评分点，默认0=只记录不罚分）：触达 max_tokens 上限
+	SettingKeyAutoSoftPenaltyCap                   SettingKey = "auto_soft_penalty_cap"                    // 软信号总罚分上限（0-100评分点，默认30）
+	SettingKeyAutoSoftNeutralPrior                 SettingKey = "auto_soft_neutral_prior"                  // 样本不足时的中性先验分（0-100，默认50）
+	SettingKeyAutoDeadChannelPenalty               SettingKey = "auto_dead_channel_penalty"                // 连续失败达熔断阈值的附加罚分（0-100评分点，默认20）
+	SettingKeyRelayContextPrecheckEnabled          SettingKey = "relay_context_precheck_enabled"           // 请求前上下文预检开关（默认开）：已知渠道×模型上限时排除超限候选
+	SettingKeyRelayContextWarnThreshold            SettingKey = "relay_context_warn_threshold"             // 上下文预检告警阈值（占上限百分比，默认90）
+	SettingKeyChannelModelLimitLearnEnabled        SettingKey = "channel_model_limit_learn_enabled"        // 渠道×模型上下文上限学习开关（默认开）
+	SettingKeyChannelModelLimitLearnThreshold      SettingKey = "channel_model_limit_learn_threshold"      // 学习阈值：独立上下文超限次数达到后写入 learned 上限（默认2）
 	SettingKeySemanticCacheEnabled                 SettingKey = "semantic_cache_enabled"                   // 语义缓存开关
 	SettingKeySemanticCacheTTL                     SettingKey = "semantic_cache_ttl"                       // 语义缓存 TTL（秒）
 	SettingKeySemanticCacheThreshold               SettingKey = "semantic_cache_threshold"                 // 语义缓存相似度阈值（0-1）
@@ -195,14 +207,26 @@ func DefaultSettings() []Setting {
 		{Key: SettingKeyGlobalMaxConcurrency, Value: "0"},                // 默认关闭:不限制全站并发
 
 		{Key: SettingKeyPublicAPIBaseURL, Value: ""},
-		{Key: SettingKeyAutoStrategyMinSamples, Value: "10"},       // 默认最小样本数10次
-		{Key: SettingKeyAutoStrategyTimeWindow, Value: "300"},      // 默认时间窗口300秒（5分钟）
-		{Key: SettingKeyAutoStrategySampleThreshold, Value: "100"}, // 默认滑动窗口大小100条
-		{Key: SettingKeyAutoStrategyLatencyWeight, Value: "30"},    // 默认延迟权重30%
-		{Key: SettingKeyAutoStrategyTTFTWeight, Value: "0"},        // 默认0=关闭，TTFT EMA有样本后可设50切换延迟评分输入
-		{Key: SettingKeyAutoStrategyPriceWeight, Value: "0"},       // 默认0=关闭，价格目录有数据后可开启省钱降权
-		{Key: SettingKeyAutoStrategyExploreRate, Value: "0"},       // 默认0=纯贪心（保持旧行为），>0启用softmax探索
-		{Key: SettingKeyAutoStrategyBucketTolerance, Value: "5"},   // 默认5评分点容差，桶内随机打散
+		{Key: SettingKeyAutoStrategyMinSamples, Value: "10"},          // 默认最小样本数10次
+		{Key: SettingKeyAutoStrategyTimeWindow, Value: "300"},         // 默认时间窗口300秒（5分钟）
+		{Key: SettingKeyAutoStrategySampleThreshold, Value: "100"},    // 默认滑动窗口大小100条
+		{Key: SettingKeyAutoStrategyLatencyWeight, Value: "30"},       // 默认延迟权重30%
+		{Key: SettingKeyAutoStrategyTTFTWeight, Value: "0"},           // 默认0=关闭，TTFT EMA有样本后可设50切换延迟评分输入
+		{Key: SettingKeyAutoStrategyPriceWeight, Value: "0"},          // 默认0=关闭，价格目录有数据后可开启省钱降权
+		{Key: SettingKeyAutoStrategyExploreRate, Value: "0"},          // 默认0=纯贪心（保持旧行为），>0启用softmax探索
+		{Key: SettingKeyAutoStrategyBucketTolerance, Value: "5"},      // 默认5评分点容差，桶内随机打散
+		{Key: SettingKeyAutoSoftSignalsEnabled, Value: "true"},        // 默认开启软信号罚分（v2.9.0）
+		{Key: SettingKeyAutoSoftPenaltyFakeStream, Value: "15"},       // 默认假流式罚15分
+		{Key: SettingKeyAutoSoftPenaltyEmptyOutput, Value: "10"},      // 默认空输出罚10分
+		{Key: SettingKeyAutoSoftPenaltyMissingTerminal, Value: "10"},  // 默认流中断罚10分
+		{Key: SettingKeyAutoSoftPenaltyTruncated, Value: "0"},         // 默认0=截断只记录不罚分
+		{Key: SettingKeyAutoSoftPenaltyCap, Value: "30"},              // 默认总罚分上限30分
+		{Key: SettingKeyAutoSoftNeutralPrior, Value: "50"},            // 默认中性先验0.5
+		{Key: SettingKeyAutoDeadChannelPenalty, Value: "20"},          // 默认连续失败渠道附加罚20分
+		{Key: SettingKeyRelayContextPrecheckEnabled, Value: "true"},   // 默认开启上下文预检
+		{Key: SettingKeyRelayContextWarnThreshold, Value: "90"},       // 默认90%触发告警
+		{Key: SettingKeyChannelModelLimitLearnEnabled, Value: "true"}, // 默认开启上下文上限学习
+		{Key: SettingKeyChannelModelLimitLearnThreshold, Value: "2"},  // 默认2次独立超限后写入 learned 上限
 		{Key: SettingKeyNavOrder, Value: `["home","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
 		{Key: SettingKeyNavVisible, Value: `["home","channel","group","model","analytics","log","notification","ops","apikey","setting","user"]`},
 		{Key: SettingKeyAnalyticsTabOrder, Value: `["utilization","route-health","channel-model","evaluation","latency"]`},
@@ -290,6 +314,10 @@ func (s *Setting) Validate() error {
 		SettingKeyAutoStrategyLatencyWeight,
 		SettingKeyAutoStrategyTTFTWeight, SettingKeyAutoStrategyPriceWeight,
 		SettingKeyAutoStrategyExploreRate, SettingKeyAutoStrategyBucketTolerance,
+		SettingKeyAutoSoftPenaltyFakeStream, SettingKeyAutoSoftPenaltyEmptyOutput,
+		SettingKeyAutoSoftPenaltyMissingTerminal, SettingKeyAutoSoftPenaltyTruncated,
+		SettingKeyAutoSoftPenaltyCap, SettingKeyAutoSoftNeutralPrior, SettingKeyAutoDeadChannelPenalty,
+		SettingKeyRelayContextWarnThreshold, SettingKeyChannelModelLimitLearnThreshold,
 		SettingKeyAIRouteGroupID, SettingKeyAIRouteTimeoutSeconds, SettingKeyAIRouteParallelism,
 		SettingKeyAIRouteMaxModelsPerRequest,
 		SettingKeyStatsTimezoneOffset,
@@ -344,6 +372,21 @@ func (s *Setting) Validate() error {
 		if (s.Key == SettingKeyAutoStrategyTTFTWeight || s.Key == SettingKeyAutoStrategyPriceWeight || s.Key == SettingKeyAutoStrategyExploreRate || s.Key == SettingKeyAutoStrategyBucketTolerance) && (v < 0 || v > 100) {
 			return fmt.Errorf("auto strategy weight must be between 0 and 100")
 		}
+		// v2.9.0 软信号：罚分/上限/先验全部按 0-100 评分点表达（评分尺度 0-1）。
+		if (s.Key == SettingKeyAutoSoftPenaltyFakeStream || s.Key == SettingKeyAutoSoftPenaltyEmptyOutput ||
+			s.Key == SettingKeyAutoSoftPenaltyMissingTerminal || s.Key == SettingKeyAutoSoftPenaltyTruncated ||
+			s.Key == SettingKeyAutoSoftPenaltyCap || s.Key == SettingKeyAutoSoftNeutralPrior ||
+			s.Key == SettingKeyAutoDeadChannelPenalty) && (v < 0 || v > 100) {
+			return fmt.Errorf("auto soft signal penalty must be between 0 and 100")
+		}
+		// 上下文预检告警阈值：占上限百分比，必须落在 (0,100]。
+		if s.Key == SettingKeyRelayContextWarnThreshold && (v < 1 || v > 100) {
+			return fmt.Errorf("relay context warn threshold must be between 1 and 100")
+		}
+		// 上限学习阈值：独立超限次数，至少 1 次。
+		if s.Key == SettingKeyChannelModelLimitLearnThreshold && v < 1 {
+			return fmt.Errorf("channel model limit learn threshold must be greater than 0")
+		}
 		if s.Key == SettingKeyAIRouteGroupID && v < 0 {
 			return fmt.Errorf("ai route group id must be greater than or equal to 0")
 		}
@@ -386,7 +429,7 @@ func (s *Setting) Validate() error {
 				return fmt.Errorf("setting value is too large")
 			}
 		}
-	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRetryTruncationEnabled, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify:
+	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRetryTruncationEnabled, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify, SettingKeyAutoSoftSignalsEnabled, SettingKeyRelayContextPrecheckEnabled, SettingKeyChannelModelLimitLearnEnabled:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}

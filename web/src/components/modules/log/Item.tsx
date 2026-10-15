@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
-import { formatLogDuration, reportedIPSourceToken, resolveEffectiveTokenCounts, resolveFirstTokenMilestones, resolveLogDisplayFields, resolveLogInvestigationMarkers, type RelayLogInvestigationMarker } from './display';
+import { formatLogDuration, isUpstreamModelMismatch, reportedIPSourceToken, resolveEffectiveTokenCounts, resolveFirstTokenMilestones, resolveLogDisplayFields, resolveLogInvestigationMarkers, type RelayLogInvestigationMarker } from './display';
 import { BoundaryDetails } from './BoundaryDetails';
 import { logIssueSummary } from './body-preview';
 import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
@@ -214,6 +214,7 @@ const INVESTIGATION_MARKER_LABEL_KEY: Record<RelayLogInvestigationMarker, string
     output_uncounted: 'investigation.outputUncounted',
     client_interrupted: 'investigation.clientInterrupted',
     usage_not_reported: 'investigation.usageNotReported',
+    model_mismatch: 'investigation.modelMismatch',
 };
 
 const INVESTIGATION_MARKER_HINT_KEY: Record<RelayLogInvestigationMarker, string> = {
@@ -224,6 +225,7 @@ const INVESTIGATION_MARKER_HINT_KEY: Record<RelayLogInvestigationMarker, string>
     output_uncounted: 'investigation.outputUncountedHint',
     client_interrupted: 'investigation.clientInterruptedHint',
     usage_not_reported: 'investigation.usageNotReportedHint',
+    model_mismatch: 'investigation.modelMismatchHint',
 };
 
 const INVESTIGATION_MARKER_CLASS: Record<RelayLogInvestigationMarker, string> = {
@@ -234,6 +236,7 @@ const INVESTIGATION_MARKER_CLASS: Record<RelayLogInvestigationMarker, string> = 
     output_uncounted: 'border-border/60 bg-muted/60 text-muted-foreground',
     client_interrupted: 'border-border/60 bg-muted/60 text-muted-foreground',
     usage_not_reported: 'border-border/60 bg-muted/60 text-muted-foreground',
+    model_mismatch: 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400',
 };
 
 function LogInvestigationBadge({ marker }: { marker: RelayLogInvestigationMarker }) {
@@ -688,6 +691,19 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                             )}
                             {vis.actualModel && (
                                 <span className="min-w-0 flex-1 truncate text-muted-foreground" title={displayActualModelName}>{displayActualModelName}</span>
+                            )}
+                            {log.upstream_model && (
+                                <span
+                                    className={cn(
+                                        'shrink-0 rounded border px-1 py-0.5 text-[10px]',
+                                        isUpstreamModelMismatch(log.upstream_model, log.actual_model_name)
+                                            ? 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                                            : 'border-border/60 bg-muted/60 text-muted-foreground',
+                                    )}
+                                    title={t('investigation.upstreamModelHint')}
+                                >
+                                    {t('investigation.upstreamModelLabel')}: {log.upstream_model}
+                                </span>
                             )}
                             {log.attempts?.some(a => a.sticky) && (
                                 <Pin className="size-3.5 shrink-0 text-amber-500" />

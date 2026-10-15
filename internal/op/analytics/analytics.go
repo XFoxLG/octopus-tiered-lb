@@ -11,6 +11,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/apikey"
 	"github.com/lingyuins/octopus/internal/op/channel"
+	"github.com/lingyuins/octopus/internal/op/channelmodellimit"
 	"github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"github.com/lingyuins/octopus/internal/op/setting"
@@ -306,18 +307,42 @@ func buildAutoStrategyItems(snapshot []balancer.AutoStatsSnapshotItem, channelBy
 			chName = c.Name
 			enabled = c.Enabled
 		}
+		lastDecisionAt := int64(0)
+		if !s.LastDecisionAt.IsZero() {
+			lastDecisionAt = s.LastDecisionAt.Unix()
+		}
+		limitTokens := 0
+		limitSource := ""
+		if entry, ok := channelmodellimit.Lookup(s.ChannelID, s.ModelName); ok {
+			limitTokens = entry.MaxContextTokens
+			limitSource = entry.Source
+		}
 		items = append(items, model.AutoStrategySnapshotItem{
-			ChannelID:     s.ChannelID,
-			ChannelName:   chName,
-			Enabled:       enabled,
-			ModelName:     s.ModelName,
-			SuccessRate:   s.SuccessRate * 100,
-			SampleCount:   s.SampleCount,
-			AvgLatencyMs:  s.AvgLatencyMs,
-			AvgTTFTMs:     s.AvgTTFTMs,
-			TTFTSamples:   s.TTFTSamples,
-			LastActiveAt:  lastActive,
-			MinSamplesMet: s.SampleCount >= minSamples,
+			ChannelID:             s.ChannelID,
+			ChannelName:           chName,
+			Enabled:               enabled,
+			ModelName:             s.ModelName,
+			SuccessRate:           s.SuccessRate * 100,
+			SampleCount:           s.SampleCount,
+			AvgLatencyMs:          s.AvgLatencyMs,
+			AvgTTFTMs:             s.AvgTTFTMs,
+			TTFTSamples:           s.TTFTSamples,
+			LastActiveAt:          lastActive,
+			MinSamplesMet:         s.SampleCount >= minSamples,
+			SoftSampleCount:       s.SoftSampleCount,
+			FakeStreamCount:       s.FakeStreamCount,
+			EmptyOutputCount:      s.EmptyOutputCount,
+			MissingTerminalCount:  s.MissingTerminalCount,
+			TruncatedCount:        s.TruncatedCount,
+			SoftScore:             s.SoftScore,
+			ConsecutiveFailures:   s.ConsecutiveFailures,
+			DeadChannel:           s.DeadChannel,
+			UpstreamModelSamples:  s.UpstreamModelSamples,
+			UpstreamModelMismatch: s.UpstreamModelMismatch,
+			ContextLimitTokens:    limitTokens,
+			ContextLimitSource:    limitSource,
+			LastDecisionReason:    s.LastDecisionReason,
+			LastDecisionAt:        lastDecisionAt,
 		})
 	}
 

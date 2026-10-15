@@ -99,6 +99,25 @@ type AutoStrategySnapshotItem struct {
 	TTFTSamples   int64   `json:"ttft_samples"`
 	LastActiveAt  int64   `json:"last_active_at"`  // unix 秒，0 表示无活动
 	MinSamplesMet bool    `json:"min_samples_met"` // 样本数是否达到最小阈值
+
+	// v2.9.0：软信号率与渠道×模型能力画像（分析中心「路由健康」用）。
+	SoftSampleCount       int     `json:"soft_sample_count"`
+	FakeStreamCount       int     `json:"fake_stream_count"`
+	EmptyOutputCount      int     `json:"empty_output_count"`
+	MissingTerminalCount  int     `json:"missing_terminal_count"`
+	TruncatedCount        int     `json:"truncated_count"`
+	SoftScore             float64 `json:"soft_score"`
+	ConsecutiveFailures   int     `json:"consecutive_failures"`
+	DeadChannel           bool    `json:"dead_channel"`
+	UpstreamModelSamples  int     `json:"upstream_model_samples"`
+	UpstreamModelMismatch int     `json:"upstream_model_mismatch"`
+	// ContextLimitTokens 是该渠道×模型已知的上下文上限（0=未声明/未知）；
+	// ContextLimitSource ∈ {manual, learned}（v2.9.0 请求前预检的数据源）。
+	ContextLimitTokens int    `json:"context_limit_tokens,omitempty"`
+	ContextLimitSource string `json:"context_limit_source,omitempty"`
+	// LastDecisionReason/LastDecisionAt 是最近一次候选跳过原因与时间（unix 秒）。
+	LastDecisionReason string `json:"last_decision_reason,omitempty"`
+	LastDecisionAt     int64  `json:"last_decision_at,omitempty"`
 }
 
 type AnalyticsUtilization struct {
