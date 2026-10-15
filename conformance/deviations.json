@@ -223,22 +223,21 @@
       "outcome": "diff",
       "endpoint_diff": true,
       "diff_paths": [
-        "/contents/1/parts|length_diff",
+        "/contents/1/parts/1/thoughtSignature|only_oracle",
         "/generationConfig|only_ours"
       ],
-      "note": "多轮 reasoning 上下文：我方在 Gemini 出站丢弃 assistant 的 thought part（含 thoughtSignature），axonhub 保留。[fix-p0] 端点前缀差异同前。"
+      "note": "多轮 reasoning 上下文：v2.8.15 已修复——assistant 的 reasoning 现还原为 thought part（与 axonhub/CLIProxyAPI 一致）。残余差异为 axonhub 额外注入的占位 thoughtSignature（固定 base64 常量），我方不伪造签名。[no-change] 端点前缀差异同前。"
     },
     {
       "sample": "scenario-multiturn-reasoning",
       "oracle": "cliproxyapi",
       "outcome": "diff",
       "diff_paths": [
-        "/contents/1/parts|length_diff",
         "/generationConfig|only_ours",
         "/model|only_oracle",
         "/safetySettings|only_oracle"
       ],
-      "note": "CLIProxyAPI 保留 thought part（与我方 P0 缺失相反）；model/safetySettings/thinkingConfig 差异同前。[fix-p0 见 axonhub 条目]"
+      "note": "多轮 reasoning：v2.8.15 已修复——thought part 现与 CLIProxyAPI 一致。model/safetySettings 注入不采纳。[no-change]"
     },
     {
       "sample": "scenario-parallel-tool-pairing",
@@ -345,23 +344,22 @@
       "outcome": "diff",
       "endpoint_diff": true,
       "diff_paths": [
-        "/contents/1/parts|length_diff",
+        "/contents/1/parts/0/thoughtSignature|only_oracle",
         "/generationConfig/maxOutputTokens|only_oracle",
         "/generationConfig/thinkingConfig|only_ours"
       ],
-      "note": "尾随 reasoning item：我方输出空 parts（丢弃 thought 文本），axonhub 保留 thought+thoughtSignature——空 parts 可能直接触发上游 400。[fix-p0] maxOutputTokens 映射缺失同 baseline。[fix-p1]"
+      "note": "尾随 reasoning item：v2.8.15 已修复——不再产出空 parts，thought 文本现保留（与 axonhub 一致）。残余差异为 axonhub 的占位 thoughtSignature。[no-change] maxOutputTokens 映射缺失。[fix-p1]"
     },
     {
       "sample": "scenario-trailing-reasoning-item",
       "oracle": "cliproxyapi",
       "outcome": "diff",
       "diff_paths": [
-        "/contents/1/parts|length_diff",
         "/generationConfig/maxOutputTokens|only_oracle",
         "/generationConfig/thinkingConfig|only_ours",
         "/safetySettings|only_oracle"
       ],
-      "note": "CLIProxyAPI 保留 thought 文本（我方 P0 缺失）；maxOutputTokens/safetySettings/thinkingConfig 差异同前。[fix-p0 见 axonhub 条目]"
+      "note": "尾随 reasoning：v2.8.15 已修复——thought 文本现与 CLIProxyAPI 一致。maxOutputTokens/safetySettings/thinkingConfig 差异同前。[fix-p1: maxOutputTokens]"
     }
   ]
 }
