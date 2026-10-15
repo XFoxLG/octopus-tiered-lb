@@ -112,7 +112,8 @@ export type RelayLogInvestigationMarker =
     | 'empty_output'
     | 'output_uncounted'
     | 'client_interrupted'
-    | 'usage_not_reported';
+    | 'usage_not_reported'
+    | 'model_mismatch';
 
 /** 首字后内容以异常高的速率集中到达：真流式约 80–110 tok/s，实锤伪流式为 6.5 万–13 万 tok/s。 */
 const FAKE_STREAM_BURST_MIN_TPS = 1500;
@@ -148,7 +149,10 @@ function resolveLeadingAttemptMs(attempts: ChannelAttempt[] | undefined, firstVi
 }
 
 export function resolveLogInvestigationMarkers(
-    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes'>,
+    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes'> & {
+        upstream_model?: string | null;
+        actual_model_name?: string | null;
+    },
 ): RelayLogInvestigationMarker[] {
     const markers: RelayLogInvestigationMarker[] = [];
     const ftutRaw = typeof log.ftut === 'number' ? log.ftut : 0;
@@ -206,8 +210,30 @@ export function resolveLogInvestigationMarkers(
     if (usageState === 'missing_terminal') markers.push('stream_interrupted');
     if (usageState === 'client_disconnected') markers.push('client_interrupted');
     if (usageState === 'not_reported') markers.push('usage_not_reported');
+    // v2.9.0：上游响应自报模型与出站实际模型不一致（GPT-Load rc.34/#412 同类能力）。
+    // 判据与后端 upstreamModelConsistency 一致，避免把带 vendor 前缀的别名误报。
+    if (isUpstreamModelMismatch(log.upstream_model, log.actual_model_name)) {
+        markers.push('model_mismatch');
+    }
 
     return markers;
+}
+
+/**
+ * 上游自报模型与出站实际模型是否不一致。
+ * 容忍大小写与供应商前缀（如 "google/gemini-3.1-pro"）——与后端
+ * upstreamModelConsistency 同判据；任一为空时视为「未回报」，不标记。
+ */
+export function isUpstreamModelMismatch(
+    upstreamModel: string | null | undefined,
+    actualModelName: string | null | undefined,
+): boolean {
+    const upstream = (upstreamModel ?? '').trim().toLowerCase();
+    const actual = (actualModelName ?? '').trim().toLowerCase();
+    if (!upstream || !actual) return false;
+    if (upstream === actual) return false;
+    if (upstream.endsWith(`/${actual}`) || actual.endsWith(`/${upstream}`)) return false;
+    return true;
 }
 
 /**

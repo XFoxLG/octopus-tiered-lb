@@ -271,7 +271,18 @@
         "ttftLabel": "First token",
         "ttftHint": "EMA of time to first visible token over recent streaming requests (samples: {count}). 0 or missing means no streaming first-token sample yet.",
         "fakeStreamBadge": "Suspected fake streaming",
-        "fakeStreamHint": "First token took at least 60% of a request lasting 60s or more (or first token at 60s+ with a 40%+ share). Typical of channels that keep the connection alive and flush everything at the end; confirm against the response body."
+        "fakeStreamHint": "First token took at least 60% of a request lasting 60s or more (or first token at 60s+ with a 40%+ share). Typical of channels that keep the connection alive and flush everything at the end; confirm against the response body.",
+        "deadChannelBadge": "Dead",
+        "deadChannelHint": "Consecutive failures reached the threshold; the channel now carries an extra penalty in Auto mode (a small exploration chance remains).",
+        "contextLimitBadge": "Limit {size}",
+        "contextLimitHint": "Known context limit for this channel×model (source: {source}). Pre-flight excludes this candidate when the estimated input exceeds the limit.",
+        "contextLimitSourceManual": "manual",
+        "contextLimitSourceLearned": "learned",
+        "softSignalsBadge": "Soft {count}",
+        "softSignalsHint": "Recent window: fake-stream {fake}, empty output {empty}, stream interrupted {terminal}, length-limited {truncated} (out of {samples} samples; soft score {score}, lower is worse). Truncation is recorded but not penalized by default.",
+        "modelMismatchBadge": "Model mismatch {rate}%",
+        "modelMismatchHint": "Upstream-reported model differed from the model actually requested {mismatch}/{total} times (vendor prefixes and case are tolerated).",
+        "lastDecision": "Last decision"
       }
     },
     "channelModel": {
@@ -1366,6 +1377,75 @@
         "label": "Same-Score Bucket Tolerance (%)",
         "hint": "Channels whose scores differ within this tolerance are treated as tied and shuffled within the bucket, removing round-robin monopolies. 0 disables shuffling.",
         "placeholder": "5"
+      },
+      "softSignals": {
+        "title": "Soft signal penalties",
+        "hint": "Turn upstream behaviors that still count as success (fake streaming, empty output, interrupted streams, truncation) into measurable soft signals that discount the Auto score by their recent rates. Applies only to Auto mode; billing and statistics are unchanged.",
+        "toggle": {
+          "label": "Enable soft signal scoring",
+          "hint": "When off, soft signals are recorded but do not affect scoring."
+        },
+        "fakeStream": {
+          "label": "Fake-stream penalty (0-100)",
+          "hint": "Higher share of requests where the first token arrived very late or content flushed only at the end; applied per percentage point.",
+          "placeholder": "15"
+        },
+        "emptyOutput": {
+          "label": "Empty-output penalty (0-100)",
+          "hint": "Share of requests that succeeded with neither reported output tokens nor visible content.",
+          "placeholder": "10"
+        },
+        "missingTerminal": {
+          "label": "Interrupted-stream penalty (0-100)",
+          "hint": "Share of streams that ended without a terminal event (content may be incomplete).",
+          "placeholder": "10"
+        },
+        "truncated": {
+          "label": "Truncation penalty (0-100)",
+          "hint": "Share of requests that hit the length limit. Default 0: record only, to avoid penalizing requests that end normally at max_tokens.",
+          "placeholder": "0"
+        },
+        "cap": {
+          "label": "Total penalty cap (0-100)",
+          "hint": "Upper bound for the sum of soft signal penalties, so a single extreme rate cannot push a channel too low.",
+          "placeholder": "30"
+        },
+        "neutralPrior": {
+          "label": "Neutral prior (0-100)",
+          "hint": "Default soft score used when samples are insufficient (50 = neutral), preventing cold-start misjudgment.",
+          "placeholder": "50"
+        },
+        "deadChannelPenalty": {
+          "label": "Dead-channel extra penalty (0-100)",
+          "hint": "Extra penalty applied on top of the soft score once consecutive failures reach the threshold.",
+          "placeholder": "20"
+        }
+      },
+      "contextGuard": {
+        "title": "Context pre-flight",
+        "hint": "Before forwarding, the gateway estimates input tokens with its tokenizer and compares them against the known channel×model limit: over-limit candidates are excluded (no more upstream 400s), and near-limit requests write a warning log.",
+        "toggle": {
+          "label": "Enable context pre-flight",
+          "hint": "When off, candidates are no longer excluded by known limits; only the existing upstream-error handling remains."
+        },
+        "warnThreshold": {
+          "label": "Warning threshold (1-100)",
+          "hint": "Write a warning log when the estimated input reaches this percentage of the known limit (useful for investigating sudden cutoffs).",
+          "placeholder": "90"
+        }
+      },
+      "limitLearn": {
+        "title": "Context limit auto-learning",
+        "hint": "After the same channel×model accumulates several independent upstream context-limit (400) errors, the limit is recorded automatically. Manual declarations are never overwritten.",
+        "toggle": {
+          "label": "Enable limit auto-learning",
+          "hint": "When off, only manually declared limits are used."
+        },
+        "threshold": {
+          "label": "Learning threshold (count)",
+          "hint": "Number of independent over-limit errors required per channel×model (repeats within 60 seconds count once).",
+          "placeholder": "2"
+        }
       }
     },
     "pageOrder": {
@@ -2881,7 +2961,11 @@
         "clientInterrupted": "Client interrupted",
         "clientInterruptedHint": "The client disconnected or gave up early; this log reflects the state at interruption, so output and usage are incomplete.",
         "usageNotReported": "Usage not reported",
-        "usageNotReportedHint": "Upstream did not report usage in the response; token counts and cost are unreliable."
+        "usageNotReportedHint": "Upstream did not report usage in the response; token counts and cost are unreliable.",
+        "modelMismatch": "Model mismatch",
+        "modelMismatchHint": "The model name reported by the upstream differs from the model the gateway actually requested (vendor prefixes and case are tolerated). A relay layer may have substituted the model; confirm against the response body.",
+        "upstreamModelLabel": "Upstream model",
+        "upstreamModelHint": "Model name reported by the upstream response body (recorded when present; some channels and aliases never report it)."
       },
 "upstreamFirstToken": "Upstream first token",
       "clientFirstFlush": "Client first flush",
@@ -3063,6 +3147,28 @@
     }
   },
   "channel": {
+    "contextLimits": {
+      "title": "Context limits",
+      "titleHint": "Declare or inspect the context limit per channel×model; the pre-flight uses it to exclude requests that upstream would certainly reject.",
+      "description": "Manual declarations are never overwritten by auto-learning; learned values are written after several independent upstream over-limit errors. The pre-flight excludes candidates whose estimated input exceeds the known limit.",
+      "modelPlaceholder": "Model name (e.g. gemini-3.1-pro)",
+      "tokensPlaceholder": "Max tokens",
+      "add": "Add / override",
+      "edit": "Edit",
+      "save": "Save",
+      "cancel": "Cancel",
+      "remove": "Delete",
+      "saved": "Saved",
+      "deleted": "Deleted",
+      "loading": "Loading…",
+      "empty": "No limits yet; add one manually or wait for auto-learning.",
+      "sourceManual": "Manual",
+      "sourceManualHint": "Manually declared limit; never overwritten by auto-learning.",
+      "sourceLearned": "Learned",
+      "sourceLearnedHint": "Written automatically after several independent upstream over-limit errors; add a manual row above to override.",
+      "tokensValue": "Limit {tokens} tokens",
+      "evidence": "{count} independent over-limit events"
+    },
     "connection": {
       "title": "Interfaces and addresses",
       "hint": "Choose a protocol and address per interface. All interfaces share this channel's keys and limits. Addresses do not identify protocols.",

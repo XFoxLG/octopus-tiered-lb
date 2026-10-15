@@ -61,6 +61,12 @@ function successRateClass(tone: 'danger' | 'warning' | 'success' | 'neutral') {
     }
 }
 
+// formatContextLimit 把上下文上限转换为紧凑显示（32768 → 32K，110000 → 110K）。
+function formatContextLimit(tokens: number): string {
+    if (tokens >= 1000) return `${Math.round(tokens / 1000)}K`;
+    return String(tokens);
+}
+
 function GroupHealthCard({
     item,
     autoItems,
@@ -196,6 +202,8 @@ function GroupHealthCard({
                         <ul className="mt-2 space-y-1">
                             {autoItems.map((ai, idx) => {
                                 const tone = successRateTone(ai.success_rate, ai.min_samples_met);
+                                const softTotal = (ai.fake_stream_count ?? 0) + (ai.empty_output_count ?? 0) + (ai.missing_terminal_count ?? 0) + (ai.truncated_count ?? 0);
+                                const mismatchRate = ai.upstream_model_samples > 0 ? (ai.upstream_model_mismatch / ai.upstream_model_samples) * 100 : null;
                                 return (
                                     <li
                                         key={`${ai.channel_id}-${ai.model_name}-${idx}`}
@@ -207,8 +215,64 @@ function GroupHealthCard({
                                                 {!ai.enabled && (
                                                     <span className="ml-1 text-muted-foreground">({t('routeHealth.autoStrategy.disabled')})</span>
                                                 )}
+                                                {ai.dead_channel && (
+                                                    <span
+                                                        className="ml-1 rounded border border-destructive/50 bg-destructive/10 px-1 py-0.5 text-[10px] text-destructive"
+                                                        title={t('routeHealth.autoStrategy.deadChannelHint')}
+                                                    >
+                                                        {t('routeHealth.autoStrategy.deadChannelBadge')}
+                                                    </span>
+                                                )}
                                             </div>
-                                            <div className="truncate text-muted-foreground">{ai.model_name}</div>
+                                            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-muted-foreground">
+                                                <span className="truncate">{ai.model_name}</span>
+                                                {typeof ai.context_limit_tokens === 'number' && ai.context_limit_tokens > 0 && (
+                                                    <span
+                                                        className="shrink-0 rounded border border-border/60 bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground"
+                                                        title={t('routeHealth.autoStrategy.contextLimitHint', {
+                                                            source: ai.context_limit_source === 'manual'
+                                                                ? t('routeHealth.autoStrategy.contextLimitSourceManual')
+                                                                : t('routeHealth.autoStrategy.contextLimitSourceLearned'),
+                                                        })}
+                                                    >
+                                                        {t('routeHealth.autoStrategy.contextLimitBadge', { size: formatContextLimit(ai.context_limit_tokens) })}
+                                                    </span>
+                                                )}
+                                                {softTotal > 0 && (
+                                                    <span
+                                                        className="shrink-0 rounded border border-amber-500/50 bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+                                                        title={t('routeHealth.autoStrategy.softSignalsHint', {
+                                                            fake: ai.fake_stream_count ?? 0,
+                                                            empty: ai.empty_output_count ?? 0,
+                                                            terminal: ai.missing_terminal_count ?? 0,
+                                                            truncated: ai.truncated_count ?? 0,
+                                                            samples: ai.soft_sample_count ?? 0,
+                                                            score: (ai.soft_score ?? 1).toFixed(2),
+                                                        })}
+                                                    >
+                                                        {t('routeHealth.autoStrategy.softSignalsBadge', { count: softTotal })}
+                                                    </span>
+                                                )}
+                                                {mismatchRate !== null && ai.upstream_model_mismatch > 0 && (
+                                                    <span
+                                                        className="shrink-0 rounded border border-amber-500/50 bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+                                                        title={t('routeHealth.autoStrategy.modelMismatchHint', {
+                                                            mismatch: ai.upstream_model_mismatch,
+                                                            total: ai.upstream_model_samples,
+                                                        })}
+                                                    >
+                                                        {t('routeHealth.autoStrategy.modelMismatchBadge', { rate: mismatchRate.toFixed(0) })}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {ai.last_decision_reason && (
+                                                <div
+                                                    className="truncate text-[10px] text-muted-foreground"
+                                                    title={`${ai.last_decision_reason}${ai.last_decision_at ? ` @ ${formatUnixTime(ai.last_decision_at)}` : ''}`}
+                                                >
+                                                    {t('routeHealth.autoStrategy.lastDecision')}: {ai.last_decision_reason}
+                                                </div>
+                                            )}
                                         </div>
                                         <div className="flex shrink-0 items-center gap-2">
                                             <span className={cn('font-semibold', successRateClass(tone))}>
