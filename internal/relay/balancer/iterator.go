@@ -279,8 +279,10 @@ func (it *Iterator) SkipCircuitBreak(channelID, channelKeyID int, channelName, m
 	if remaining > 0 {
 		msg = fmt.Sprintf("circuit breaker tripped, remaining cooldown: %ds", int(remaining.Seconds()))
 	}
+	if it == nil {
+		return true
+	}
 	it.mu.Lock()
-	defer it.mu.Unlock()
 	it.count++
 	it.appendSkipAttemptLocked(model.ChannelAttempt{
 		ChannelID:    channelID,
@@ -292,6 +294,14 @@ func (it *Iterator) SkipCircuitBreak(channelID, channelKeyID int, channelName, m
 		Sticky:       it.isStickyLocked(),
 		Msg:          msg,
 	})
+	it.mu.Unlock()
+	// v2.9.0：熔断跳过与普通 Skip 同口径写入渠道×模型画像的「最近决策原因」。
+	// 条目模型为空时退回请求级模型名（与统计键口径一致）。
+	attemptModel := strings.TrimSpace(modelName)
+	if attemptModel == "" {
+		attemptModel = it.modelName
+	}
+	RecordAutoDecisionReason(channelID, attemptModel, msg)
 	return true
 }
 

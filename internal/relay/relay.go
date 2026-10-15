@@ -1903,10 +1903,14 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 			if err != nil {
 				log.Warnf("failed to get channel %d: %v", item.ChannelID, err)
 				routeIter.Skip(item.ChannelID, 0, buildChannelName(item.ChannelID), fmt.Sprintf("channel not found: %v", err))
+				// v2.9.0 候选闸门：全候选被排除时把最后一条原因带进 exhausted
+				// （日志/metrics 可见；对客户端仍是通用 502，不泄漏内部细节）。
+				lastErr = fmt.Errorf("channel %d not found: %v", item.ChannelID, err)
 				continue
 			}
 			if !channel.Enabled {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel disabled")
+				lastErr = fmt.Errorf("channel %s disabled", channel.Name)
 				continue
 			}
 
@@ -1916,6 +1920,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 			resolvedModelName := resolveCandidateModelName(mappedModel, item)
 			if strings.TrimSpace(resolvedModelName) == "" {
 				routeIter.Skip(channel.ID, 0, channel.Name, "resolved upstream model is empty")
+				lastErr = fmt.Errorf("channel %s resolved upstream model is empty", channel.Name)
 				continue
 			}
 
@@ -1941,18 +1946,22 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 			}
 			if len(attemptTypes) == 0 || outbound.Get(attemptTypes[0]) == nil {
 				routeIter.Skip(channel.ID, 0, channel.Name, fmt.Sprintf("unsupported channel type: %d", channel.Type))
+				lastErr = fmt.Errorf("channel %s unsupported channel type: %d", channel.Name, channel.Type)
 				continue
 			}
 			if channel.ConnectionConfig == nil && req.internalRequest.IsEmbeddingRequest() && !outbound.IsEmbeddingChannelType(channel.Type) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not compatible with embedding request")
+				lastErr = fmt.Errorf("channel %s type not compatible with embedding request", channel.Name)
 				continue
 			}
 			if channel.ConnectionConfig == nil && req.internalRequest.IsChatRequest() && !outbound.IsChatChannelType(channel.Type) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not compatible with chat request")
+				lastErr = fmt.Errorf("channel %s type not compatible with chat request", channel.Name)
 				continue
 			}
 			if channel.ConnectionConfig == nil && !isZenCandidateChannelAllowed(requestModel, channel.Type, req.internalRequest.IsEmbeddingRequest()) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel type not preferred for zen model prefix")
+				lastErr = fmt.Errorf("channel %s type not preferred for zen model prefix", channel.Name)
 				continue
 			}
 			if rateLimited, remaining := balancer.IsChannelRateLimited(channel.ID, resolvedModelName); rateLimited {
