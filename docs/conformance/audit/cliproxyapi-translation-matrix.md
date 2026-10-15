@@ -22,10 +22,15 @@
   - `levelToBudgetMap`：`none→0`、`auto→-1`、`minimal→512`、`low→1024`、`medium→8192`、`high→24576`、`xhigh→32768`、`max→128000`；
   - `ConvertBudgetToLevel` 用阈值分段回映（1–512→minimal，513–1024→low，1025–8192→medium，8193–24576→high，>24576→xhigh）；
   - `MapToClaudeEffort`：`minimal→low`，`low/medium/high` 原样，`xhigh/max→max(不支持则high)`，`auto→high`。
-- 当前行为（我们）：`internal/transformer/outbound/anthropic/messages.go:getThinkingBudget` 固定表（low=1024/medium=8192/high=32768/xhigh=65536/max=128000）；Gemini 出站有独立家族表（`outbound/gemini/budget.go`，含逐家族钳制）。
+- 当前行为（我们，v2.9.2 fix-p2 C-1 之前）：`internal/transformer/outbound/anthropic/messages.go:getThinkingBudget` 固定表（low=1024/medium=8192/high=32768/xhigh=65536/max=128000）；Gemini 出站有独立家族表（`outbound/gemini/budget.go`，含逐家族钳制）。
 - 目标行为：把「effort↔budget」收敛为一张共享表（或以我们的家族表为准，把 anthropic/其他出站对齐），避免各出站各写一套导致同一请求跨出站换算不一致。
 - 优先级：P2（无已知线上缺陷；统一化收益是长期一致性）。
-- triage：**挂起**——等协议层第二阶段做「出站换算统一」时一并处理，届时用对拍样本回归。
+- triage：**已修（C-1）**——v2.9.2 fix-p2：
+  - 新增 `internal/transformer/thinking/levels.go`（单一表 + `NormalizeEffort`/`EffortToBudget`/`BudgetToEffort`），Anthropic 与 Gemini 出站改用它；取值对齐本审计记录的 `levelToBudgetMap`。
+  - Anthropic 出站 high 32768→24576、xhigh 65536→32768；入站 budget→effort 阈值改为 512/1024/8192/24576，并删除死表 `defaultReasoningEffortMapping`（新增 `xhigh`/`max` 识别）。
+  - Gemini 出站 medium 4096→8192；`xhigh`/`max` 原先在 3.x 上静默退化成「动态」，现落 high（Gemini 无更高档），2.5 系保留 `minimal→0` 家族语义。
+  - 顺带修 Claude adaptive：`output_config.effort` 只接受 `max/xhigh/high/medium/low`，客户端发 `minimal` 会被上游 400；现按本审计 `MapToClaudeEffort` 口径映射 low。
+  - 对拍样本 `scenario-thinking-effort-minimal`（run 38771078827 校准）：我方与 axonhub 逐字段一致（adaptive + effort=low），CLIProxyAPI 走 enabled+budget_tokens=512——**换算结论一致，只是表达风格不同**（登记 no-change）。
 
 ### 2. thinking budget 与 max_tokens 的联动钳制 [fix-p1]
 
@@ -39,11 +44,15 @@
 ### 3. 模型名后缀语法（请求级覆写 thinking） [fix-p2]
 
 - 样本/出处：`internal/thinking/suffix.go`（`model(value)`，如 `claude-sonnet-4-5(16384)`、`gpt-5.2(high)`、`...(...none/auto/-1)`）；new-api 另有 `-high` 链与 `@thinking:on` 修饰符（见其审计）
-- 源行为：后缀优先于请求体配置；解析优先级 special(none/auto/-1) → level → numeric budget。
-- 当前行为（我们）：无后缀语法；thinking 只由请求体字段与分组配置决定。
+- 源行为：后缀优先于请求体配置；解析优先级 special(none/auto/-1) → level → numeric budget（`apply.go` 的 `ParseSuffix` 调用序列）。
+- 当前行为（我们，C-2 之前）：无后缀语法；thinking 只由请求体字段与分组配置决定。
 - 目标行为：（可选）支持 `model(effort|budget)` 覆写，便于用户不改客户端配置做 A/B。
 - 优先级：P2（体验增强，非缺陷；两个参考实现都做了，说明有真实需求）。
-- triage：**挂起**——等用户确认是否需要；实现成本中等（inbound 解析 + 出站透传链路都要认这个语法）。
+- triage：**已修（C-2）**——v2.9.2 fix-p2：
+  - 新增 `internal/transformer/thinking/suffix.go`（`ParseModelSuffix`：取最后一个括号组，识别 level → special(none/auto/-1) → numeric budget；未识别一律不改写，避免误伤 `foo(experimental)` 这类合法模型名）+ 表驱动单测。
+  - 接线在 `internal/relay/request_thinking_suffix.go`，于 `relay.Handler` 解析请求体之后、分组匹配之前：后缀转成请求级推理覆盖（level→ReasoningEffort，numeric/0/-1→ReasoningBudget）并置 `ReasoningExplicit`，**模型名剥离后再进路由与上报上游**。
+  - 与源行为的差异（no-change）：源的解析优先级是 special→level→numeric；我们的实现顺序是 level→special→numeric，但三类值域互不相交（level 全是字母，special 是 none/auto/-1，numeric 是纯数字），解析结果逐值一致。
+  - 覆写语义：后缀优先于请求体里的 reasoning 字段，且不会被分组默认档位覆盖（与源「后缀优先」一致）。
 
 ### 4. per-model thinking 能力表 [暂不做]
 
@@ -61,8 +70,8 @@
 
 | # | 主题 | 优先级 | 结论 |
 | --- | --- | --- | --- |
-| 1 | level↔budget 表统一 | P2 | 挂起（与出站换算统一一起做） |
+| 1 | level↔budget 表统一 | P2 | **已修**（v2.9.2 fix-p2 C-1） |
 | 2 | budget 与 max_tokens 联动钳制 | P1 | **已修**（v2.9.1 fix-p1） |
-| 3 | 模型名后缀语法 | P2 | 挂起（等用户确认） |
+| 3 | 模型名后缀语法 | P2 | **已修**（v2.9.2 fix-p2 C-2） |
 | 4 | per-model 能力表 | — | 不做（归渠道能力学习立项） |
 | 5 | 矩阵缺口 | — | no-change（登记为 unsupported） |

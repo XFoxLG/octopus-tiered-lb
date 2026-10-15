@@ -76,4 +76,28 @@ func TestConvertToAnthropicRequest_NoEffortOmitsThinking(t *testing.T) {
 	}
 }
 
+// TestConvertToAnthropicRequest_NonPositiveBudgetOmitsThinking pins the
+// disable/dynamic semantics: Anthropic's enabled thinking cannot express
+// budget 0 or -1 (the schema requires 1024 ≤ budget < max_tokens), so instead
+// of clamping "disable" up to an unwanted 1024-token thinking block the field
+// is omitted entirely. This is the path a `model(none)` suffix takes.
+func TestConvertToAnthropicRequest_NonPositiveBudgetOmitsThinking(t *testing.T) {
+	for _, budget := range []int64{0, -1} {
+		got := convertToAnthropicRequest(&model.InternalLLMRequest{
+			Model:           "claude-sonnet-4-6",
+			ReasoningBudget: &budget,
+			Messages: []model.Message{{
+				Role:    "user",
+				Content: model.MessageContent{Content: strPtr("hi")},
+			}},
+		})
+		if got.Thinking != nil {
+			t.Fatalf("budget=%d: expected thinking omitted, got %#v", budget, got.Thinking)
+		}
+		if got.OutputConfig != nil {
+			t.Fatalf("budget=%d: expected no output_config, got %#v", budget, got.OutputConfig)
+		}
+	}
+}
+
 func strPtr(s string) *string { return &s }
