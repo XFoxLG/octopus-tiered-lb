@@ -158,6 +158,19 @@ func listLog(c *gin.Context) {
 			return
 		}
 	}
+	if v := c.Query("has_image"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1":
+			b := true
+			filter.HasImage = &b
+		case "false", "0":
+			b := false
+			filter.HasImage = &b
+		default:
+			resp.Error(c, http.StatusBadRequest, "invalid has_image (must be 'true' or 'false')")
+			return
+		}
+	}
 
 	logs, err := relaylog.RelayLogList(c.Request.Context(), filter, page, pageSize)
 	if err != nil {

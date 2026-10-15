@@ -289,7 +289,10 @@ func normalizeMessageForOpenAICompat(msg *model.Message) {
 			msg.Content = model.MessageContent{
 				Content: &text,
 			}
-		} else if msg.Role == "tool" {
+		} else if msg.Role == "tool" && !hasImageContentPart(msg.Content.MultipleContent) {
+			// v2.8.14：tool 消息里的图片必须保留（image_url 数组，与 axonhub 一致）。
+			// 其余非文本部件（audio/file 等）维持原有扁平化兼容策略，避免对严格
+			// OpenAI-compat 上游引入新风险。
 			text := flattenTextContent(msg.Content.MultipleContent)
 			msg.Content = model.MessageContent{
 				Content: &text,
@@ -301,6 +304,15 @@ func normalizeMessageForOpenAICompat(msg *model.Message) {
 		empty := ""
 		msg.Content.Content = &empty
 	}
+}
+
+func hasImageContentPart(parts []model.MessageContentPart) bool {
+	for _, part := range parts {
+		if part.Type == "image_url" && part.ImageURL != nil && part.ImageURL.URL != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func flattenTextOnlyContent(parts []model.MessageContentPart) (string, bool) {

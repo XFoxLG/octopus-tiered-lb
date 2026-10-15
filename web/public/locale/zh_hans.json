@@ -2781,6 +2781,9 @@
       "allLogs": "全部日志",
       "testOnly": "仅测试",
       "nonTest": "仅正式",
+      "allImages": "全部图片",
+      "withImages": "含图",
+      "withoutImages": "无图",
       "clear": "清除"
     },
     "viewOptions": {
@@ -2851,6 +2854,8 @@
       "requestType": "请求类型",
       "channelFallback": "渠道 #{id}",
       "testLog": "测试",
+      "imageBadge": "含图 ×{count}",
+      "imageBadgeHint": "请求内包含图片（按客户端请求的 image_url 计数，历史日志不回溯）",
       "requestTypeLabels": {
         "chat": "对话",
         "streamingChat": "流式对话",

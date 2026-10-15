@@ -2781,6 +2781,9 @@
       "allLogs": "全部日誌",
       "testOnly": "僅測試",
       "nonTest": "僅正式",
+      "allImages": "全部圖片",
+      "withImages": "含圖",
+      "withoutImages": "無圖",
       "clear": "清除"
     },
     "viewOptions": {
@@ -2851,6 +2854,8 @@
       "requestType": "請求類型",
       "channelFallback": "渠道 #{id}",
       "testLog": "測試",
+      "imageBadge": "含圖 ×{count}",
+      "imageBadgeHint": "請求內包含圖片（依客戶端請求的 image_url 計數，歷史日誌不回溯）",
       "requestTypeLabels": {
         "chat": "對話",
         "streamingChat": "串流對話",

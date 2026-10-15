@@ -2825,6 +2825,9 @@
       "allLogs": "All logs",
       "testOnly": "Test only",
       "nonTest": "Non-test",
+      "allImages": "All images",
+      "withImages": "With images",
+      "withoutImages": "No images",
       "clear": "Clear"
     },
     "viewOptions": {
@@ -2895,6 +2898,8 @@
       "requestType": "Request Type",
       "channelFallback": "Channel #{id}",
       "testLog": "Test",
+      "imageBadge": "Images ×{count}",
+      "imageBadgeHint": "Request contains images (counted from client image_url parts; not backfilled for older logs)",
       "requestTypeLabels": {
         "chat": "Chat",
         "streamingChat": "Streaming Chat",

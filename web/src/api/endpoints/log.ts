@@ -60,6 +60,7 @@ export interface RelayLog {
     output_tokens: number;       // 输出Token
     input_tokens_est?: number;   // 输入 Token 估算（仅上游漏报时 >0；0/缺失=未估算，v2.8.13）
     output_tokens_est?: number;  // 输出 Token 估算（仅上游漏报时 >0；0/缺失=未估算，v2.8.13）
+    image_count?: number;        // 客户端请求内的图片数量（0/缺失=无图；v2.8.14 含图标注）
     semantic_cache_hit?: boolean;// 语义缓存命中
     cache_read_tokens?: number;  // 提供方提示缓存命中 Token
     reasoning_effort?: string;   // 出站最终思考强度
@@ -207,6 +208,8 @@ export interface LogFilter {
     include_attempts?: boolean;
     // 测试日志过滤：undefined=全部, true=仅测试, false=仅非测试（issue #82）
     is_test?: boolean;
+    // 含图过滤：undefined=全部, true=仅含图, false=仅无图（v2.8.14）
+    has_image?: boolean;
 }
 
 /**
@@ -322,6 +325,7 @@ async function fetchLogsPage(pageSize: number, filter: LogFilter, page: number, 
     if (filter.end_time != null) params.set('end_time', String(filter.end_time));
     if (filter.include_attempts != null) params.set('include_attempts', String(filter.include_attempts));
     if (filter.is_test != null) params.set('is_test', String(filter.is_test));
+    if (filter.has_image != null) params.set('has_image', String(filter.has_image));
     const result = await apiClient.get<RelayLog[] | null>(`/api/v1/log/list?${params.toString()}`, undefined, true, signal);
     return (result ?? []).map(withExactId);
 }
@@ -381,6 +385,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
         filter.end_time,
         filter.include_attempts,
         filter.is_test,
+        filter.has_image,
     ]);
 
     const { refresh, isRefreshing } = useLogRefresh(pageSize, stableFilter);
@@ -465,7 +470,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
                 }, delayMs);
             });
 
-        const hasActiveFilter = !!(stableFilter.model || (stableFilter.models && stableFilter.models.length > 0) || stableFilter.channel_id != null || stableFilter.api_key_id != null || stableFilter.endpoint_type || stableFilter.status || stableFilter.start_time != null || stableFilter.end_time != null || stableFilter.include_attempts != null || stableFilter.is_test != null);
+        const hasActiveFilter = !!(stableFilter.model || (stableFilter.models && stableFilter.models.length > 0) || stableFilter.channel_id != null || stableFilter.api_key_id != null || stableFilter.endpoint_type || stableFilter.status || stableFilter.start_time != null || stableFilter.end_time != null || stableFilter.include_attempts != null || stableFilter.is_test != null || stableFilter.has_image != null);
 
         const mergeIncomingLog = (log: RelayLog) => {
             // Let the server apply the full filter (including attempts and exclusions).
@@ -617,7 +622,8 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
         logs,
         liveRequests: liveRequests.filter(entry => {
             if (logs.some(log => log.trace_id === entry.trace_id)) return false;
-            if (stableFilter.status || stableFilter.is_test === true) return false;
+            // has_image 同样排除实时条目：LiveRequest 不携带图片计数，无法判定。
+            if (stableFilter.status || stableFilter.is_test === true || stableFilter.has_image != null) return false;
             if (stableFilter.endpoint_type && stableFilter.endpoint_type !== entry.endpoint_type) return false;
             if (stableFilter.channel_id != null && entry.channel_id !== stableFilter.channel_id) return false;
             if (stableFilter.api_key_id != null && entry.api_key_id !== stableFilter.api_key_id) return false;

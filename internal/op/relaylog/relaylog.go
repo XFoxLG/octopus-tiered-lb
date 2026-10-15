@@ -1040,6 +1040,8 @@ type LogFilter struct {
 	IncludeAttempts bool
 	// IsTest 控制"测试日志"过滤：nil=全部, true=仅测试, false=仅非测试（issue #82）。
 	IsTest *bool
+	// HasImage 控制"含图"过滤：nil=全部, true=仅含图（image_count>0）, false=仅无图（v2.8.14）。
+	HasImage *bool
 }
 
 // logHasFailedAttempt 报告该日志是否存在任意一次失败的渠道尝试。
@@ -1073,7 +1075,7 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 	hasFilter := filter.StartTime != nil || filter.EndTime != nil ||
 		filter.Model != "" || len(filter.Models) > 0 || filter.ChannelID != nil ||
 		filter.APIKeyID != nil || filter.EndpointType != "" || filter.HasError != nil ||
-		filter.IsTest != nil
+		filter.IsTest != nil || filter.HasImage != nil
 	// modelsLower 预计算 Models 的 小写集合，供缓存路径与 DB 路径共用。
 	modelsLower := make(map[string]struct{}, len(filter.Models))
 	for _, m := range filter.Models {
@@ -1151,6 +1153,9 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 		if filter.IsTest != nil && log.IsTest != *filter.IsTest {
 			return false
 		}
+		if filter.HasImage != nil && (log.ImageCount > 0) != *filter.HasImage {
+			return false
+		}
 		return true
 	}
 
@@ -1215,6 +1220,7 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 					"client_ip", "reported_client_ip", "reported_client_ip_source",
 					"endpoint_type", "channel_id", "channel_name", "actual_model_name",
 					"input_tokens", "output_tokens", "input_tokens_est", "output_tokens_est",
+					"image_count",
 					"semantic_cache_hit", "cache_read_tokens",
 					"reasoning_effort", "reasoning_tokens", "reasoning_chars", "usage_state",
 					"ftut", "use_time",
@@ -1298,6 +1304,13 @@ func RelayLogList(ctx context.Context, filter LogFilter, page, pageSize int) ([]
 					query = query.Where("is_test = true")
 				} else {
 					query = query.Where("is_test = false OR is_test IS NULL")
+				}
+			}
+			if filter.HasImage != nil {
+				if *filter.HasImage {
+					query = query.Where("image_count > 0")
+				} else {
+					query = query.Where("image_count = 0 OR image_count IS NULL")
 				}
 			}
 			// 缓存里的日志通常也已经落库。DB 只补缓存之外的行，避免跨页时

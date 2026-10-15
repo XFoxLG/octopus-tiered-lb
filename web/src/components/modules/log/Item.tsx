@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useMemo, useState } from 'react';
-import { Clock, Cpu, Gauge, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, JapaneseYen, ArrowRight, ArrowDown, Percent, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound, Globe, TestTube2, Sigma, Brain, Type } from 'lucide-react';
+import { Clock, Cpu, Gauge, Zap, AlertCircle, ArrowDownToLine, ArrowUpFromLine, DollarSign, JapaneseYen, ArrowRight, ArrowDown, Percent, RotateCw, ChevronDown, ChevronUp, Pin, KeyRound, Globe, TestTube2, Sigma, Brain, Type, Image as ImageIcon } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from 'next-themes';
@@ -410,6 +410,16 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                         {t('testLog')}
                                     </Badge>
                                 )}
+                                {(log.image_count ?? 0) > 0 && (
+                                    <Badge
+                                        variant="outline"
+                                        className="shrink-0 text-xs px-1.5 py-0 border-violet-400/50 text-violet-500 dark:text-violet-400"
+                                        title={t('imageBadgeHint')}
+                                    >
+                                        <ImageIcon className="size-3 mr-1" />
+                                        {t('imageBadge', { count: log.image_count ?? 0 })}
+                                    </Badge>
+                                )}
                                 {vis.endpointType && displayEndpointType && (
                                     <Badge
                                         variant="secondary"
@@ -631,6 +641,16 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 >
                                     <TestTube2 className="size-3 mr-1" />
                                     {t('testLog')}
+                                </Badge>
+                            )}
+                            {(log.image_count ?? 0) > 0 && (
+                                <Badge
+                                    variant="outline"
+                                    className="shrink-0 text-xs px-1.5 py-0 border-violet-400/50 text-violet-500 dark:text-violet-400"
+                                    title={t('imageBadgeHint')}
+                                >
+                                    <ImageIcon className="size-3 mr-1" />
+                                    {t('imageBadge', { count: log.image_count ?? 0 })}
                                 </Badge>
                             )}
                             <ArrowRight className="size-3.5 text-muted-foreground/50" />

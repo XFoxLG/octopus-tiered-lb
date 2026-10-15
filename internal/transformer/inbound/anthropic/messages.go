@@ -196,14 +196,23 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 										i.inputToken += int64(tokenizer.CountTokens(*contentBlock.Text, chatReq.Model))
 									}
 								case "image":
-									if contentBlock.Source != nil && contentBlock.Source.Type == "base64" {
-										imageURL := fmt.Sprintf("data:%s;base64,%s", contentBlock.Source.MediaType, contentBlock.Source.Data)
-										toolContentParts = append(toolContentParts, model.MessageContentPart{
+									// v2.8.14：工具结果内的图片必须完整保留（base64 与 URL 两种
+									// source，与普通 content 图片同一套归一化），此前 URL 变体被
+									// 静默丢弃导致 tool content 为空。
+									if contentBlock.Source != nil {
+										part := model.MessageContentPart{
 											Type: "image_url",
-											ImageURL: &model.ImageURL{
-												URL: imageURL,
-											},
-										})
+										}
+										if contentBlock.Source.Type == "base64" {
+											part.ImageURL = &model.ImageURL{
+												URL: fmt.Sprintf("data:%s;base64,%s", contentBlock.Source.MediaType, contentBlock.Source.Data),
+											}
+										} else {
+											part.ImageURL = &model.ImageURL{
+												URL: contentBlock.Source.URL,
+											}
+										}
+										toolContentParts = append(toolContentParts, part)
 									}
 								default:
 									// Preserve unknown content types as-is for forward compatibility
