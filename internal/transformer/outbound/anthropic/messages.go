@@ -13,6 +13,7 @@ import (
 
 	anthropicModel "github.com/lingyuins/octopus/internal/transformer/inbound/anthropic"
 	"github.com/lingyuins/octopus/internal/transformer/model"
+	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
@@ -344,9 +345,23 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 	// 2) 有 reasoning effort（含 AdaptiveThinking / OpenAI reasoning_effort）→
 	//    与 Claude Code 一致：adaptive + output_config.effort 原样透传，不再猜 budget
 	if req.ReasoningBudget != nil {
+		// 手动 thinking 必须满足 budget_tokens ∈ [1024, max_tokens)，
+		// 违反约束的组合在上游是 400；出站前按 new-api 口径钳制（v2.9.1 fix-p1）。
+		budgetTokens := getThinkingBudget(req.ReasoningEffort, req.ReasoningBudget)
+		if budgetTokens != nil {
+			clampedBudget, clampedMaxTokens, adjusted := clampThinkingBudget(*budgetTokens, result.MaxTokens)
+			if adjusted {
+				log.Warnf(
+					"anthropic thinking budget clamped: model=%s budget_tokens %d -> %d, max_tokens %d -> %d",
+					req.Model, *budgetTokens, clampedBudget, result.MaxTokens, clampedMaxTokens,
+				)
+				result.MaxTokens = clampedMaxTokens
+				budgetTokens = &clampedBudget
+			}
+		}
 		result.Thinking = &anthropicModel.Thinking{
 			Type:         anthropicModel.ThinkingTypeEnabled,
-			BudgetTokens: getThinkingBudget(req.ReasoningEffort, req.ReasoningBudget),
+			BudgetTokens: budgetTokens,
 		}
 	} else if effort := strings.TrimSpace(req.ReasoningEffort); effort != "" {
 		result.Thinking = &anthropicModel.Thinking{

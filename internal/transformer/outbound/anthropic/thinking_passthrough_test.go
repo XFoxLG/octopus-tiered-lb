@@ -33,6 +33,7 @@ func TestConvertToAnthropicRequest_ExplicitBudgetKeepsEnabledBudget(t *testing.T
 	budget := int64(12345)
 	got := convertToAnthropicRequest(&model.InternalLLMRequest{
 		Model:           "claude-sonnet-4-6",
+		MaxTokens:       int64Ptr(20000), // > budget，合法组合：本用例只验证透传形状
 		ReasoningEffort: "max",
 		ReasoningBudget: &budget,
 		Messages: []model.Message{{

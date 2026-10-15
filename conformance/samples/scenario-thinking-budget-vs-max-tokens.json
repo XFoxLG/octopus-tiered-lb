@@ -1,0 +1,26 @@
+{
+  "id": "scenario-thinking-budget-vs-max-tokens",
+  "class": "thinking-budget-vs-max-tokens",
+  "side": "request",
+  "inbound": "anthropic",
+  "outbound": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "stream": false,
+  "source": {
+    "kind": "audit",
+    "ref": "new-api relaykit/relayconvert/reasoning/claude.go（claude_budget_adjusted）与 claude_default_max_tokens_test.go",
+    "url": "https://github.com/Calcium-Ion/new-api",
+    "note": "Anthropic 手动 thinking 硬约束：1024 ≤ budget_tokens < max_tokens。客户端给出 budget_tokens == max_tokens（或更小/更大的越界组合）时，原样转发必被上游 400；样本取「budget 与 max_tokens 相等」这一最常见形态，期望出站 budget_tokens 被钳到 max_tokens-1。"
+  },
+  "request": {
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 4096,
+    "thinking": {
+      "type": "enabled",
+      "budget_tokens": 4096
+    },
+    "messages": [
+      {"role": "user", "content": "Think briefly, then answer with the single word: OK"}
+    ]
+  }
+}
