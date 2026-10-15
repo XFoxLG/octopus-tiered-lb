@@ -481,7 +481,7 @@ func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest 
 		ServiceTier:       req.ServiceTier,
 		User:              req.User,
 		Metadata:          req.Metadata,
-		MaxOutputTokens:   req.MaxCompletionTokens,
+		MaxOutputTokens:   req.EffectiveMaxTokens(),
 		ParallelToolCalls: req.ParallelToolCalls,
 	}
 

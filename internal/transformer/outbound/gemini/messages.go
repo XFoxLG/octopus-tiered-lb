@@ -322,8 +322,8 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 	config := &model.GeminiGenerationConfig{}
 	hasConfig := false
 
-	if request.MaxTokens != nil {
-		config.MaxOutputTokens = int(*request.MaxTokens)
+	if maxTokens := request.EffectiveMaxTokens(); maxTokens != nil {
+		config.MaxOutputTokens = int(*maxTokens)
 		hasConfig = true
 	}
 	if request.Temperature != nil {

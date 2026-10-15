@@ -120,3 +120,41 @@ func TestResponseOutboundTransformStreamPreservesFailure(t *testing.T) {
 		t.Fatalf("failure detail = %q, want upstream failed", internalResponse.Termination.Detail)
 	}
 }
+
+// v2.8.15 协议层 fix-p1：chat/anthropic 入站的 max_tokens 落在 MaxTokens；
+// responses 出站此前只读 MaxCompletionTokens，导致 max_output_tokens 丢失
+// （对拍 diff：/max_output_tokens|only_oracle）。
+func TestConvertToResponsesRequestFallsBackToMaxTokens(t *testing.T) {
+	limit := int64(64)
+	got := ConvertToResponsesRequest(&model.InternalLLMRequest{
+		Model:     "gpt-5-nano",
+		MaxTokens: &limit,
+	})
+	if got.MaxOutputTokens == nil || *got.MaxOutputTokens != 64 {
+		t.Fatalf("max_output_tokens = %v, want 64（MaxTokens 回退）", got.MaxOutputTokens)
+	}
+}
+
+func TestConvertToResponsesRequestPrefersMaxTokensWhenBothSet(t *testing.T) {
+	maxTokens := int64(64)
+	maxCompletion := int64(512)
+	got := ConvertToResponsesRequest(&model.InternalLLMRequest{
+		Model:               "gpt-5-nano",
+		MaxTokens:           &maxTokens,
+		MaxCompletionTokens: &maxCompletion,
+	})
+	if got.MaxOutputTokens == nil || *got.MaxOutputTokens != 64 {
+		t.Fatalf("max_output_tokens = %v, want 64（MaxTokens 优先）", got.MaxOutputTokens)
+	}
+}
+
+func TestConvertToResponsesRequestUsesMaxCompletionTokens(t *testing.T) {
+	limit := int64(256)
+	got := ConvertToResponsesRequest(&model.InternalLLMRequest{
+		Model:               "gpt-5-nano",
+		MaxCompletionTokens: &limit,
+	})
+	if got.MaxOutputTokens == nil || *got.MaxOutputTokens != 256 {
+		t.Fatalf("max_output_tokens = %v, want 256", got.MaxOutputTokens)
+	}
+}

@@ -419,6 +419,21 @@ func (r *InternalLLMRequest) IsImageGenerationRequest() bool {
 	return len(r.Modalities) > 0 && slices.Contains(r.Modalities, "image")
 }
 
+// EffectiveMaxTokens 统一 max_tokens 与 max_completion_tokens/max_output_tokens
+// 这两支同义字段（v2.8.15 协议层 fix-p1）：chat/anthropic 入站落在 MaxTokens，
+// responses 入站（max_output_tokens）与 param_override 落在 MaxCompletionTokens；
+// 出站只读一支会丢掉另一支的输出上限。
+// 优先级沿用 anthropic 出站既有口径：MaxTokens > MaxCompletionTokens。
+func (r *InternalLLMRequest) EffectiveMaxTokens() *int64 {
+	if r == nil {
+		return nil
+	}
+	if r.MaxTokens != nil {
+		return r.MaxTokens
+	}
+	return r.MaxCompletionTokens
+}
+
 type TransformOptions struct {
 	// ArrayInputs specifies whether the original input was an array.
 	ArrayInputs *bool `json:"-"`
