@@ -218,7 +218,17 @@ func TestHandlerUncommittedStreamFailureReturnsJSON(testContext *testing.T) {
 				return response, nil
 			})
 			originalTimeout := relayUpstreamTimeout
-			relayUpstreamTimeout = 50 * time.Millisecond
+			if operationTimeout {
+				// 真超时子用例：body 永不产出，deadline 必须抢先触发。
+				relayUpstreamTimeout = 50 * time.Millisecond
+			} else {
+				// 非超时子用例：失败体必须先于 deadline 被读到。原先两个
+				// 子用例共用 50ms，race 插桩 + CI 负载下调度延迟会让
+				// deadline 抢先触发，把 502 假报成 504（2026-10-15 主分支
+				// run 38702888340 / 38723227449 两次复现）；2s 留 40× 余量，
+				// 行为仍是「deadline 已配置但未到」。
+				relayUpstreamTimeout = 2 * time.Second
+			}
 			testContext.Cleanup(func() { relayUpstreamTimeout = originalTimeout })
 			recorder := serveIndependentFixtureRequest(`{"model":"creative-fixture","messages":[{"role":"user","content":"Continue the story"}],"stream":true}`)
 			expectedStatus := http.StatusBadGateway
