@@ -273,8 +273,10 @@ func RecordOverflow(ctx context.Context, channelID int, modelName string, estima
 				maxTokens = estimatedTokens
 			}
 			learnedWritten = true
-		} else {
-			source = model.ChannelModelLimitSourceLearned
+		} else if !exists {
+			// 未达阈值且此前无记录：本次估算不得生效（0=未声明），只累计
+			// 独立证据；达阈值时再写入「观察到的最小失败估算」。
+			maxTokens = 0
 		}
 	}
 

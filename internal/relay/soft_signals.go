@@ -101,6 +101,10 @@ func isMissingTerminalError(err error) bool {
 
 // responseIsEffectivelyEmpty 判定成功响应是否「没有任何可见输出」。
 // 内容过滤类终态（content_filter/refusal 等）由上游主动拒绝输出，不算渠道软信号。
+//
+// 注意：这里不能复用 responseEstimateText——那是 token 估算口径，会把 message.role
+// 也计入文本，导致「有 message 对象但正文为空」被误判为非空输出，空输出软信号
+// 永远不会命中；可见性判定统一走 messageHasVisibleContent（reasoning 不算可见）。
 func responseIsEffectivelyEmpty(metrics *RelayMetrics) bool {
 	if metrics == nil {
 		return false
@@ -113,7 +117,22 @@ func responseIsEffectivelyEmpty(metrics *RelayMetrics) bool {
 			return false
 		}
 	}
-	return responseEstimateText(metrics.InternalResponse) == ""
+	return !responseHasVisibleContent(metrics.InternalResponse)
+}
+
+// responseHasVisibleContent 判定响应（Message 或 Delta）是否包含对客户端可见的
+// 内容（正文、多模态、工具调用、音频）。
+func responseHasVisibleContent(resp *transformerModel.InternalLLMResponse) bool {
+	if resp == nil {
+		return false
+	}
+	for i := range resp.Choices {
+		choice := &resp.Choices[i]
+		if messageHasVisibleContent(choice.Message) || messageHasVisibleContent(choice.Delta) {
+			return true
+		}
+	}
+	return false
 }
 
 // responseHitLengthLimit 判定响应是否触达长度上限（finish_reason=length）。

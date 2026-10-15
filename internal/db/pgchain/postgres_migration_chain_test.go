@@ -25,7 +25,7 @@ import (
 
 // latestAfterMigrationVersion 是最新的 after-migration 版本号。新增迁移时同步
 // 上调即可；它同时用来证明 after 链确实执行过（而不是空跑通过）。
-const latestAfterMigrationVersion = 77
+const latestAfterMigrationVersion = 79
 
 func TestFullMigrationChainOnFreshPostgres(t *testing.T) {
 	dsn := os.Getenv("OCTOPUS_TEST_POSTGRES_DSN")
