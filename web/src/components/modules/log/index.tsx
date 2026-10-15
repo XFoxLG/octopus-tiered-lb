@@ -53,6 +53,7 @@ function LogFilterBar({
         filter.endpoint_type ||
         filter.status ||
         filter.is_test != null ||
+        filter.has_image != null ||
         (filter.models && filter.models.length > 0)
     );
 
@@ -209,6 +210,29 @@ function LogFilterBar({
                     <SelectItem value="__all__">{t('allLogs')}</SelectItem>
                     <SelectItem value="true">{t('testOnly')}</SelectItem>
                     <SelectItem value="false">{t('nonTest')}</SelectItem>
+                </SelectContent>
+            </Select>
+            <Select
+                value={filter.has_image != null ? String(filter.has_image) : ''}
+                onValueChange={(v) => {
+                    const next = { ...filter };
+                    if (v === 'true') {
+                        next.has_image = true;
+                    } else if (v === 'false') {
+                        next.has_image = false;
+                    } else {
+                        delete next.has_image;
+                    }
+                    onChange(next);
+                }}
+            >
+                <SelectTrigger size="sm" className="h-7 text-xs min-w-[6rem]">
+                    <SelectValue placeholder={t('allImages')} />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="__all__">{t('allImages')}</SelectItem>
+                    <SelectItem value="true">{t('withImages')}</SelectItem>
+                    <SelectItem value="false">{t('withoutImages')}</SelectItem>
                 </SelectContent>
             </Select>
             <Popover

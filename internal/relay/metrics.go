@@ -390,6 +390,10 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 	// 不参与计费、统计聚合与 usage_state 判定，见 usage_estimate.go）。
 	applyUsageEstimate(&relayLog, m, actualModel)
 
+	// v2.8.14：客户端请求内的图片数量（日志「含图 ×N」标注与 has_image 筛选，
+	// 与内容留存开关无关，见 metrics_image_count.go）。
+	relayLog.ImageCount = countRequestImages(m.InternalRequest)
+
 	// 出站最终思考强度：以 InternalRequest 当前值为准（出站 sanitize/normalize 后写回）。
 	if m.InternalRequest != nil {
 		relayLog.ReasoningEffort = strings.TrimSpace(m.InternalRequest.ReasoningEffort)

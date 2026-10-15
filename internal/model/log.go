@@ -54,6 +54,7 @@ type RelayLog struct {
 	OutputTokens           int    `json:"output_tokens" gorm:"column:output_tokens"`                                      // 输出 Token
 	InputTokensEst         int    `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est;not null;default:0"`   // 输入 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
 	OutputTokensEst        int    `json:"output_tokens_est,omitempty" gorm:"column:output_tokens_est;not null;default:0"` // 输出 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
+	ImageCount             int    `json:"image_count,omitempty" gorm:"column:image_count;not null;default:0"`             // 客户端请求内的图片数量（0=无图，v2.8.14 含图标注）
 	SemanticCacheHit       bool   `json:"semantic_cache_hit" gorm:"column:semantic_cache_hit"`                            // 语义缓存命中（写入时落库，避免列表查询重解析大字段）
 	CacheReadTokens        int    `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`                              // 提供方提示缓存命中 Token（写入时落库）
 	ReasoningEffort        string `json:"reasoning_effort" gorm:"column:reasoning_effort"`                                // 出站最终思考强度（effective）
@@ -110,6 +111,7 @@ type RelayLogListItem struct {
 	OutputTokens              int              `json:"output_tokens" gorm:"column:output_tokens"`
 	InputTokensEst            int              `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est"`
 	OutputTokensEst           int              `json:"output_tokens_est,omitempty" gorm:"column:output_tokens_est"`
+	ImageCount                int              `json:"image_count,omitempty" gorm:"column:image_count"`
 	SemanticCacheHit          bool             `json:"semantic_cache_hit" gorm:"column:semantic_cache_hit"`
 	CacheReadTokens           int              `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`
 	ReasoningEffort           string           `json:"reasoning_effort" gorm:"column:reasoning_effort"`
@@ -192,6 +194,7 @@ func (r *RelayLog) ToListItem() RelayLogListItem {
 		OutputTokens:              r.OutputTokens,
 		InputTokensEst:            r.InputTokensEst,
 		OutputTokensEst:           r.OutputTokensEst,
+		ImageCount:                r.ImageCount,
 		SemanticCacheHit:          r.SemanticCacheHit,
 		CacheReadTokens:           r.CacheReadTokens,
 		ReasoningEffort:           r.ReasoningEffort,

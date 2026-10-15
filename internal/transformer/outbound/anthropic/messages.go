@@ -544,6 +544,12 @@ func convertToolResultBlock(msg model.Message) anthropicModel.MessageContentBloc
 					Type: "text",
 					Text: part.Text,
 				})
+			} else if part.Type == "image_url" {
+				// v2.8.14：工具结果内的图片转回 Anthropic image 块（base64/URL），
+				// 此前只保留 text 部件会把图片静默丢弃。
+				if imageBlock := convertImageURLToBlock(part); imageBlock != nil {
+					blocks = append(blocks, *imageBlock)
+				}
 			}
 		}
 		block.Content = &anthropicModel.MessageContent{

@@ -306,10 +306,9 @@
       "oracle": "axonhub",
       "outcome": "diff",
       "diff_paths": [
-        "/messages/1/tool_calls/0/function/arguments|value_diff",
-        "/messages/2/content|value_diff"
+        "/messages/1/tool_calls/0/function/arguments|value_diff"
       ],
-      "note": "工具结果图片（base64）被我方丢弃（tool content 为空），axonhub 保留 image_url 数组。[fix-p0：已在 v2.8.14 计划内] 另 arguments JSON 空白（内部序列化再压缩）为无害差异。"
+      "note": "v2.8.14 已修复：tool content 保留 image_url 数组（与 axonhub 一致，base64 场景不再丢图）。剩余差异仅为 arguments JSON 空白（我方保留原始文本、axonhub 重新序列化），无害。"
     },
     {
       "sample": "scenario-tool-result-image-base64",
@@ -319,17 +318,16 @@
         "/messages|length_diff",
         "/stream|only_oracle"
       ],
-      "note": "CLIProxyAPI 把工具结果图片改写为后续 user 消息（tool content 换占位文本）；我方的修复方向（v2.8.14）是在 tool content 中保留 image_url 数组（同 axonhub）。[no-change 记录策略差异]"
+      "note": "CLIProxyAPI 把工具结果图片改写为后续 user 消息（tool content 换占位文本）；我方自 v2.8.14 起在 tool content 中保留 image_url 数组（同 axonhub），不改用外提策略。[no-change 记录策略差异]"
     },
     {
       "sample": "scenario-tool-result-image-url",
       "oracle": "axonhub",
       "outcome": "diff",
       "diff_paths": [
-        "/messages/1/tool_calls/0/function/arguments|value_diff",
-        "/messages/2/content|value_diff"
+        "/messages/1/tool_calls/0/function/arguments|value_diff"
       ],
-      "note": "工具结果图片（URL）被我方丢弃（tool content 为空），axonhub 保留 image_url 数组。[fix-p0：已在 v2.8.14 计划内] 另 arguments JSON 空白为无害差异。"
+      "note": "v2.8.14 已修复：tool content 保留 image_url 数组（与 axonhub 一致，URL 场景不再丢图；入站补充了 source.type=url 分支）。剩余差异仅为 arguments JSON 空白，无害。"
     },
     {
       "sample": "scenario-tool-result-image-url",
@@ -339,7 +337,7 @@
         "/messages|length_diff",
         "/stream|only_oracle"
       ],
-      "note": "同 base64：CLIProxyAPI 用后续 user 消息承载图片。[no-change 记录策略差异]"
+      "note": "同 base64：CLIProxyAPI 用后续 user 消息承载图片；我方保留在 tool content 的 image_url 数组（v2.8.14 已修）。[no-change 记录策略差异]"
     },
     {
       "sample": "scenario-trailing-reasoning-item",
