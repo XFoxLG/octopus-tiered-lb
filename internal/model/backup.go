@@ -7,14 +7,19 @@ const (
 	ImportModeFull        = "full"        // delete all then insert
 )
 
-// DBDump is a full-database JSON export format for Octopus.
+// DBDump is a versioned application-data backup, not a database schema snapshot.
+// Deployment-owned authentication/cache credentials and migration records are
+// deliberately outside this format; use a database backup for those.
 //
 // Version history:
 //   - v1: original format.
 //   - v2 (2026-09-11): relay log family split — relay_log_attempts /
 //     relay_log_content_refs / relay_log_content_blobs travel alongside
 //     relay_logs.
-//   - v3 (current): sensitive fields (api_keys.api_key,
+//   - v4: proxy/model/pricing configuration, protocol evidence, detailed daily
+//     statistics and error logs are preserved. Full v1-v3 restores preserve
+//     these newer tables when they are absent from the historical dump.
+//   - v3: sensitive fields (api_keys.api_key,
 //     channel_keys.channel_key, api_credential_profiles.api_key) are exported
 //     as plaintext and idempotently re-encrypted with the importing
 //     instance's crypto key (empty values and already-enc: values pass
@@ -39,18 +44,32 @@ type DBDump struct {
 	Users         []User         `json:"users,omitempty"`
 	Settings      []Setting      `json:"settings,omitempty"`
 
+	ProxyConfigurations      []ProxyConfiguration     `json:"proxy_configurations,omitempty"`
+	ModelMappings            []ModelMapping           `json:"model_mappings,omitempty"`
+	ModelPriceCategories     []ModelPriceCategory     `json:"model_price_categories,omitempty"`
+	ModelPriceSchedules      []ModelPriceSchedule     `json:"model_price_schedules,omitempty"`
+	ChannelModelCapabilities []ChannelModelCapability `json:"channel_model_capabilities,omitempty"`
+	ChannelModelLimits       []ChannelModelLimit      `json:"channel_model_limits,omitempty"`
+	ChannelProbeRuns         []ChannelProbeRun        `json:"channel_probe_runs,omitempty"`
+	ChannelProbeResults      []ChannelProbeResult     `json:"channel_probe_results,omitempty"`
+
 	Notifications []Notification `json:"notifications,omitempty"`
 
+	ErrorLogs            []ErrorLog            `json:"error_logs,omitempty"`
 	AuditLogs            []AuditLog            `json:"audit_logs,omitempty"`
 	RuntimeStates        []AutoStrategyState   `json:"runtime_states,omitempty"`
 	CircuitBreakerStates []CircuitBreakerState `json:"circuit_breaker_states,omitempty"`
 
-	StatsTotal   []StatsTotal   `json:"stats_total,omitempty"`
-	StatsDaily   []StatsDaily   `json:"stats_daily,omitempty"`
-	StatsHourly  []StatsHourly  `json:"stats_hourly,omitempty"`
-	StatsModel   []StatsModel   `json:"stats_model,omitempty"`
-	StatsChannel []StatsChannel `json:"stats_channel,omitempty"`
-	StatsAPIKey  []StatsAPIKey  `json:"stats_api_key,omitempty"`
+	StatsTotal             []StatsTotal             `json:"stats_total,omitempty"`
+	StatsDaily             []StatsDaily             `json:"stats_daily,omitempty"`
+	StatsHourly            []StatsHourly            `json:"stats_hourly,omitempty"`
+	StatsModel             []StatsModel             `json:"stats_model,omitempty"`
+	StatsChannel           []StatsChannel           `json:"stats_channel,omitempty"`
+	StatsAPIKey            []StatsAPIKey            `json:"stats_api_key,omitempty"`
+	StatsDailyChannel      []StatsDailyChannel      `json:"stats_daily_channel,omitempty"`
+	StatsDailyModel        []StatsDailyModel        `json:"stats_daily_model,omitempty"`
+	StatsDailyAPIKey       []StatsDailyAPIKey       `json:"stats_daily_api_key,omitempty"`
+	StatsDailyChannelModel []StatsDailyChannelModel `json:"stats_daily_channel_model,omitempty"`
 
 	RelayLogs            []RelayLog                `json:"relay_logs,omitempty"`
 	RelayLogAttempts     []RelayLogAttempt         `json:"relay_log_attempts,omitempty"`

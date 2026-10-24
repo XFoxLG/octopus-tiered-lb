@@ -27,13 +27,14 @@ import (
 // dbDumpVersion 是 DBDump 的格式版本（本 fork 编号）。
 //   - v1：原始格式。
 //   - v2：relay 日志家族拆分（relay_log_attempts / content_refs / blobs）。
-//   - v3（当前，上游 0fa706fb / issue #247）：敏感字段（api_keys.api_key、
+//   - v4（当前）：补齐代理/模型/价格配置、协议证据、逐日统计与错误日志。
+//   - v3（上游 0fa706fb / issue #247）：敏感字段（api_keys.api_key、
 //     channel_keys.channel_key、api_credential_profiles.api_key）导出为
 //     **明文**，导入侧按目标实例的 crypto key 幂等重加密。
 //
 // v1/v2 的 dump 中这些字段是源实例的 enc: 密文，跨实例导入不可用；
 // 导入侧对 enc: 值原样保留，同实例旧备份仍可恢复。
-const dbDumpVersion = 3
+const dbDumpVersion = 4
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
 const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（外层上限，内层按 SQL 变量预算再收）
@@ -89,6 +90,10 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 		return nil, fmt.Errorf("export settings: %w", err)
 	}
 
+	if err := exportExtendedConfiguration(conn, d); err != nil {
+		return nil, err
+	}
+
 	// Notifications
 	if err := conn.Find(&d.Notifications).Error; err != nil {
 		return nil, fmt.Errorf("export notifications: %w", err)
@@ -103,6 +108,9 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	}
 
 	if includeStats {
+		if err := exportDetailedStats(conn, d); err != nil {
+			return nil, err
+		}
 		if err := conn.Find(&d.StatsTotal).Error; err != nil {
 			return nil, fmt.Errorf("export stats_total: %w", err)
 		}
@@ -124,6 +132,9 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	}
 
 	if includeLogs {
+		if err := conn.Order("id DESC").Limit(maxAuditLogsExport).Find(&d.ErrorLogs).Error; err != nil {
+			return nil, fmt.Errorf("export error_logs: %w", err)
+		}
 		if err := conn.Order("id DESC").Limit(maxAuditLogsExport).Find(&d.AuditLogs).Error; err != nil {
 			return nil, fmt.Errorf("export audit_logs: %w", err)
 		}
@@ -620,6 +631,12 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	if target == nil {
 		return nil, fmt.Errorf("target database is nil")
 	}
+	if mode != model.ImportModeFull && mode != model.ImportModeIncremental {
+		return nil, fmt.Errorf("unsupported import mode")
+	}
+	if dump.Version < 0 || dump.Version > dbDumpVersion {
+		return nil, fmt.Errorf("unsupported backup version %d", dump.Version)
+	}
 	// 敏感字段幂等加密：明文（v3 dump）→ 用本实例 key 加密；已带 enc: 前缀的
 	// （v1/v2 dump 同实例恢复）或空值原样保留，避免双重加密。
 	// api_keys 明文的 api_key_hash 一并补算（sha256 hex，见 encryptDumpSecrets）。
@@ -670,6 +687,9 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			// application data, and must survive a restore.
 			// service_cache_configs is also deliberately absent: deployment
 			// credentials must neither travel in app backups nor be reset by one.
+			if err := deleteExtendedTables(cfg, dump); err != nil {
+				return err
+			}
 			deleteOrder := []string{
 				"stats_api_keys", "stats_channels", "stats_models",
 				"stats_hourlies", "stats_dailies", "stats_totals",
@@ -707,6 +727,10 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 					return fmt.Errorf("full import: delete %s: %w", table, err)
 				}
 			}
+		}
+
+		if err := importExtendedConfiguration(cfg, dump); err != nil {
+			return err
 		}
 
 		// Import channels / keys / groups / items — skip existing
@@ -772,8 +796,20 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			}
 		}
 
+		if err := importProbeEvidence(cfg, dump); err != nil {
+			return err
+		}
+		if dump.IncludeLogs {
+			if err := cfg.doNothing("error_logs", &dump.ErrorLogs, len(dump.ErrorLogs)); err != nil {
+				return err
+			}
+		}
+
 		// Stats
 		if dump.IncludeStats {
+			if err := importDetailedStats(cfg, dump); err != nil {
+				return err
+			}
 			if err := cfg.upsertAll("stats_totals", &dump.StatsTotal, len(dump.StatsTotal), []clause.Column{{Name: "id"}}); err != nil {
 				return err
 			}
@@ -809,7 +845,7 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			}
 		}
 
-		return nil
+		return synchronizeImportedSequences(cfg)
 	})
 	if err != nil {
 		return nil, err
