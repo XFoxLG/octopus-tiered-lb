@@ -86,7 +86,11 @@ func TestFullMigrationChainOnFreshPostgres(t *testing.T) {
 		"channel_probe_results": {"protocol", "request_stream", "request_budget_ms", "request_fingerprint"},
 	} {
 		for _, column := range columns {
-			if !db.GetDB().Migrator().HasColumn(table, column) {
+			var count int64
+			if err := db.GetDB().Raw("SELECT count(*) FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ?", schema, table, column).Scan(&count).Error; err != nil {
+				t.Fatal(err)
+			}
+			if count != 1 {
 				t.Fatalf("missing %s.%s after full chain", table, column)
 			}
 		}
