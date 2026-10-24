@@ -229,6 +229,7 @@ func (c *Channel) ResolveConnectionPlans(r *tm.InternalLLMRequest, groupFormat s
 }
 func (c *Channel) WithConnectionPlan(p ConnectionPlan) *Channel {
 	clone := *c
+	clone.SelectedConnectionPlan = &p
 	if p.Endpoint != nil {
 		clone.SelectedEndpointID = p.Endpoint.ID
 		clone.Type = p.AdapterType
@@ -236,6 +237,9 @@ func (c *Channel) WithConnectionPlan(p ConnectionPlan) *Channel {
 	return &clone
 }
 func (c *Channel) ConnectionPlanFor(t outbound.OutboundType) (ConnectionPlan, error) {
+	if c.SelectedConnectionPlan != nil && c.SelectedConnectionPlan.AdapterType == t {
+		return *c.SelectedConnectionPlan, nil
+	}
 	if c.ConnectionConfig == nil {
 		return ConnectionPlan{AdapterType: t}, nil
 	}

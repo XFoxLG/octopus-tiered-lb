@@ -82,7 +82,10 @@ func TestAnthropicTerminationForStopReason(t *testing.T) {
 	}
 }
 
-func TestMessageOutboundTransformStreamPreservesPauseTurn(t *testing.T) {
+// message_delta 只承载 stop_reason / usage，不是 Anthropic 的消息终态。这里断言
+// 它仍保留 pause_turn 终止元数据，但不得置 SawTerminalEvent——否则
+// 「message_delta 之后上游被截断、message_stop 未到达」会被误判为正常完成。
+func TestMessageOutboundTransformStreamMessageDeltaPreservesPauseTurnWithoutTerminal(t *testing.T) {
 	outbound := &MessageOutbound{}
 	internalResponse, err := outbound.TransformStream(context.Background(), []byte(`{
 		"type":"message_delta",
@@ -91,8 +94,11 @@ func TestMessageOutboundTransformStreamPreservesPauseTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("transform message delta: %v", err)
 	}
-	if internalResponse == nil || !internalResponse.SawTerminalEvent {
-		t.Fatalf("terminal response = %#v, want terminal response", internalResponse)
+	if internalResponse == nil {
+		t.Fatalf("transform message delta returned nil response")
+	}
+	if internalResponse.SawTerminalEvent {
+		t.Fatalf("message_delta must not be marked terminal: %#v", internalResponse)
 	}
 	if len(internalResponse.Choices) != 1 {
 		t.Fatalf("choice count = %d, want 1", len(internalResponse.Choices))

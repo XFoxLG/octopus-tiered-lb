@@ -40,6 +40,9 @@ func isLegacyHashedAPIKey(v string) bool {
 }
 
 func Create(key *model.APIKey, ctx context.Context) error {
+	if key.RequestTimeoutSeconds < 0 || key.RequestTimeoutSeconds > 86400 {
+		return fmt.Errorf("request timeout must be between 0 and 86400 seconds")
+	}
 	raw := strings.TrimSpace(key.APIKey)
 	if raw == "" {
 		return fmt.Errorf("api key value is empty")
@@ -63,6 +66,9 @@ func Create(key *model.APIKey, ctx context.Context) error {
 }
 
 func Update(key *model.APIKey, ctx context.Context) error {
+	if key.RequestTimeoutSeconds < 0 || key.RequestTimeoutSeconds > 86400 {
+		return fmt.Errorf("request timeout must be between 0 and 86400 seconds")
+	}
 	existing, ok := keyCache.Get(key.ID)
 	if !ok {
 		return fmt.Errorf("API key not found")

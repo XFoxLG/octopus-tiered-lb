@@ -24,6 +24,7 @@ import (
 	"github.com/lingyuins/octopus/internal/relay/condition"
 	"github.com/lingyuins/octopus/internal/server/resp"
 	"github.com/lingyuins/octopus/internal/transformer/inbound"
+	inopenai "github.com/lingyuins/octopus/internal/transformer/inbound/openai"
 	"github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/transformer/rewrite"
@@ -209,60 +210,11 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	var streamSessionOwned bool
 	var lastErr error
 
-	if conversationID, sessionHash, ok := resolveRelayStreamSessionIdentity(endpointType, int(inboundType), apiKeyID, internalRequest); ok {
-		session, created, err := acquireRelayStreamSession(conversationID, apiKeyID, sessionHash)
-		if err != nil {
-			statusCode := http.StatusConflict
-			if !errors.Is(err, errRelayConversationBusy) {
-				statusCode = http.StatusInternalServerError
-			}
-			resp.Error(c, statusCode, err.Error())
-			return
-		}
-		streamSession = session
-		streamSessionOwned = created
-		if !created {
-			replayStartedAt := time.Now()
-			replayReportedIP := reportedClientIPFromContext(c)
-			req := &relayRequest{
-				c:               c,
-				clientCtx:       c.Request.Context(),
-				internalRequest: internalRequest,
-				apiKeyID:        apiKeyID,
-				requestModel:    requestModel,
-				streamSession:   streamSession,
-			}
-			serveRelayStreamSession(c, req)
-			if replayTrace := relayRequestTraceFromContext(c); replayTrace != nil {
-				replayTrace.stageRelayLog(dbmodel.RelayLog{
-					Time:                   replayStartedAt.Unix(),
-					RequestModelName:       requestModel,
-					RequestAPIKeyID:        apiKeyID,
-					ClientIP:               c.ClientIP(),
-					ReportedClientIP:       replayReportedIP.IP,
-					ReportedClientIPSource: string(replayReportedIP.Source),
-					UserAgent:              c.Request.UserAgent(),
-					EndpointType:           resolveRelayLogEndpointType(endpointType, endpointType),
-					ActualModelName:        requestModel,
-					UseTime:                int(time.Since(replayStartedAt).Milliseconds()),
-					GenerationOutcome:      dbmodel.RelayLogGenerationReplay,
-					UpstreamOutcome:        dbmodel.RelayLogUpstreamNone,
-				})
-			}
-			return
-		}
-		defer func() {
-			if streamSession == nil || !streamSessionOwned || streamSession.IsDone() {
-				return
-			}
-			if lastErr == nil {
-				lastErr = errors.New("relay stream ended without a terminal result")
-			}
-			streamSession.Finish(lastErr)
-		}()
+	receivedAt := time.Now()
+	if trace := relayRequestTraceFromContext(c); trace != nil {
+		receivedAt = trace.startedAt
 	}
-
-	operationCtx, cancel := newRelayOperationContext()
+	operationCtx, cancel := newRelayOperationContext(c.Request.Context())
 	defer cancel()
 
 	// 获取通道分组
@@ -285,6 +237,15 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	if !apiKeyAllowsGroupCategory(c.GetString("allowed_group_categories"), group.Category) {
 		lastErr = fmt.Errorf("group category not allowed for api key: category=%s", group.Category)
 		resp.Error(c, http.StatusBadRequest, "model not supported")
+		return
+	}
+	operationCtx, budgetCancel, deadlineSource := withRelayRequestBudget(operationCtx, receivedAt, group.RequestTimeoutSeconds, c.GetInt("request_timeout_seconds"))
+	defer budgetCancel()
+	if trace := relayRequestTraceFromContext(c); trace != nil {
+		trace.setOperationDeadline(operationCtx, deadlineSource)
+	}
+	if err := operationCtx.Err(); err != nil {
+		resp.Error(c, http.StatusGatewayTimeout, "relay operation timed out")
 		return
 	}
 
@@ -312,6 +273,50 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		return
 	}
 
+	previousWriter := c.Writer
+	c.Set("relay_stream_error_renderer", inAdapter)
+	writer := installRelayResponseWriter(c)
+	defer func() {
+		writer.close()
+		c.Writer = previousWriter
+	}()
+	if internalRequest.Stream != nil && *internalRequest.Stream && group.StreamKeepaliveEnabled {
+		stopKeepalive := writer.keepalive(c.Request.Context())
+		defer stopKeepalive()
+	}
+
+	// Explicit replay is admitted only after authentication and routing preflight.
+	// Ordinary requests keep the actual HTTP context for their entire lifecycle.
+	if conversationID, sessionHash, ok := resolveRelayStreamSessionIdentity(endpointType, int(inboundType), apiKeyID, internalRequest); ok {
+		session, created, sessionErr := acquireRelayStreamSession(conversationID, apiKeyID, sessionHash)
+		if sessionErr != nil {
+			resp.Error(c, http.StatusConflict, sessionErr.Error())
+			return
+		}
+		streamSession, streamSessionOwned = session, created
+		if !created {
+			replayReq := &relayRequest{c: c, clientCtx: c.Request.Context(), operationCtx: operationCtx, internalRequest: internalRequest, apiKeyID: apiKeyID, requestModel: requestModel, streamSession: session, group: &group}
+			serveRelayStreamSession(c, replayReq)
+			if trace := relayRequestTraceFromContext(c); trace != nil {
+				trace.stageRelayLog(dbmodel.RelayLog{Time: receivedAt.Unix(), RequestModelName: requestModel, RequestAPIKeyID: apiKeyID, ClientIP: c.ClientIP(), EndpointType: group.EndpointType, ActualModelName: requestModel, UseTime: int(time.Since(receivedAt).Milliseconds()), GenerationOutcome: dbmodel.RelayLogGenerationReplay, UpstreamOutcome: dbmodel.RelayLogUpstreamNone})
+			}
+			return
+		}
+		var replayCancel context.CancelCauseFunc
+		var replayDeadlineCancel context.CancelFunc
+		operationCtx, replayCancel, replayDeadlineCancel = newRelayReplayOperationContext(operationCtx)
+		defer replayDeadlineCancel()
+		defer replayCancel(nil)
+		session.bindOperation(replayCancel)
+		stopClientCancel := context.AfterFunc(c.Request.Context(), session.MarkClientGone)
+		defer stopClientCancel()
+		defer func() {
+			if streamSessionOwned && !session.IsDone() {
+				session.Finish(lastErr)
+			}
+		}()
+	}
+
 	// 根据分组端点提供方做请求兼容改写
 	internalRequest = rewriteConversationRequestByProvider(group, internalRequest)
 
@@ -323,6 +328,10 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 	metrics.ReportedClientIP = reportedIP.IP
 	metrics.ReportedClientIPSource = string(reportedIP.Source)
 	metrics.SetRequestTrace(relayRequestTraceFromContext(c))
+	metrics.OperationContext = operationCtx
+	if trace := metrics.RequestTrace; trace != nil {
+		trace.setOperationDeadline(operationCtx, deadlineSource)
+	}
 
 	// 请求级上下文
 	req := &relayRequest{
@@ -382,6 +391,9 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// 转发请求
 	statusCode, fwdErr, selectedSpan := ra.forwardWithOptionalHedge(span)
 	span = selectedSpan
+	if fwdErr != nil && ra.streamSession == nil && isClientDisconnected(ra.clientCtx) {
+		fwdErr = errClientDisconnected
+	}
 
 	// Client disconnected —— 不记失败统计、不记熔断、不写 failure hint。
 	// 客户端是自己选择停止的，不是渠道出了问题。
@@ -608,6 +620,14 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 
 	requestForOutbound := ra.internalRequest
+	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+		trace.startDiagnosticAttempt(ra.logAttemptNumber, ra.channel.ID, ra.adapterType.String(), ctx)
+	}
+	defer func() {
+		if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+			trace.endDiagnosticAttempt(ra.logAttemptNumber, ctx, ra.streamSawTerminalEvent)
+		}
+	}()
 	effectiveRewrite := (*rewrite.EffectiveConfig)(nil)
 	// passthrough / raw（原始穿透）都要求原样转发客户端请求体，
 	// 跳过 param_override 与改写引擎，避免请求体被二次加工。
@@ -650,6 +670,8 @@ func (ra *relayAttempt) forward() (int, error) {
 		return 0, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer response.Body.Close()
+	stopBodyCancel := context.AfterFunc(ctx, func() { _ = response.Body.Close() })
+	defer stopBodyCancel()
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
 		trace.wrapUpstreamResponse(
 			ra.logAttemptNumber,
@@ -733,7 +755,23 @@ func clientErrorType(statusCode int) string {
 //  3. 没有可用 body → 合成最小 OpenAI 兼容错误；
 //  4. 非 HTTP 错误 / 无效状态 → 回退 BadGateway。
 func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelType outbound.OutboundType, statusCode int, err error) {
-	if c == nil || c.Writer.Written() {
+	if c == nil || relaySemanticWritten(c) {
+		return
+	}
+	if c.Writer.Written() {
+		if adapter, exists := c.Get("relay_stream_error_renderer"); exists {
+			if renderer, ok := adapter.(streamInterruptionRenderer); ok {
+				payload, renderErr := renderer.TransformStreamInterruption(c.Request.Context(), err)
+				if renderErr == nil && len(payload) > 0 {
+					_, _ = c.Writer.Write(payload)
+					c.Writer.Flush()
+					return
+				}
+			}
+		}
+		payload, _ := jsonAPI.Marshal(map[string]any{"error": map[string]any{"message": err.Error(), "type": clientErrorType(statusCode), "code": statusCode}})
+		_, _ = c.Writer.Write([]byte("event: error\ndata: " + string(payload) + "\n\n"))
+		c.Writer.Flush()
 		return
 	}
 	if termination, ok := terminalCauseFromError(err); ok && termination.Cause.IsProviderRefusal() {
@@ -880,6 +918,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	// Canceling the reader goroutine alone cannot unblock a pending Body.Read.
 	defer response.Body.Close()
 	hasDownstreamOutput := false // Payload committed to a client or replay session.
+	if ra.streamSession != nil && ra.canPassthroughStream() {
+		ra.streamSession.mu.Lock()
+		ra.streamSession.preserveWire = true
+		ra.streamSession.mu.Unlock()
+	}
 
 	// 安全网：确保 stream session 在所有退出路径上都被关闭，
 	// 避免外层 defer 产生 "relay stream ended without a terminal result"。
@@ -930,10 +973,22 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	// 直接 return 会吞掉客户端期待的流终止帧。收尾由下一轮循环顶部的
 	// sawDoneMarker 分支完成。
 	sawDoneMarker := false
+	// Chat finish chunks precede an optional usage-only tail. Preserve that
+	// tail when present, but never wait for transport EOF indefinitely.
+	var terminalTailTimer *time.Timer
+	var terminalTailC <-chan time.Time
+	defer func() {
+		if terminalTailTimer != nil {
+			terminalTailTimer.Stop()
+		}
+	}()
 	strategy := getReasoningBufferStrategy(ra.channel, ra.group)
 	shouldBuffer := (strategy == "buffer") // buffer=暂存; immediate=立即发送
-	var reasoningBuffer [][]byte           // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
-	var reasoningBufferBytes int           // reasoningBuffer 累计字节数，用于软上限判定（见 maxReasoningBufferBytes）
+	if ra.canPassthroughStream() {
+		shouldBuffer = false
+	}
+	var reasoningBuffer [][]byte // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
+	var reasoningBufferBytes int // reasoningBuffer 累计字节数，用于软上限判定（见 maxReasoningBufferBytes）
 	clientDone := ra.clientCtx.Done()
 	clientDisconnected := false
 	clientDisconnectLogged := false
@@ -985,7 +1040,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			streamFailureEventWritten = true
 			if !clientDisconnected {
 				for _, event := range sessionEvents {
-					if _, err := ra.c.Writer.Write(formatRelaySSEEvent(event.Sequence, event.Payload)); err != nil {
+					if _, err := ra.c.Writer.Write(ra.streamSession.formatEvent(event)); err != nil {
 						markClientDisconnected()
 						logClientDisconnected()
 						break
@@ -1012,8 +1067,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 
 	type sseReadResult struct {
-		data string
-		err  error
+		data  string
+		frame []byte
+		err   error
 	}
 	results := make(chan sseReadResult, 1)
 	go func() {
@@ -1023,6 +1079,24 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			}
 		}()
 		defer close(results)
+		if ra.canPassthroughStream() {
+			scanner := rawSSEScanner(response.Body)
+			for scanner.Scan() {
+				frame := append([]byte(nil), scanner.Bytes()...)
+				select {
+				case results <- sseReadResult{data: rawSSEData(frame), frame: frame}:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				select {
+				case results <- sseReadResult{err: err}:
+				case <-ctx.Done():
+				}
+			}
+			return
+		}
 		readCfg := &sse.ReadConfig{MaxEventSize: maxSSEEventSize}
 		for ev, err := range sse.Read(response.Body, readCfg) {
 			select {
@@ -1206,6 +1280,20 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		}
 		reasoningBuffer = nil
 		reasoningBufferBytes = 0
+		// Native protocols have their own final event. Chat consumers also need
+		// exactly one [DONE], including conversions from message_stop/completed.
+		if !sawDoneMarker && !ra.canPassthroughStream() {
+			if _, chat := ra.inAdapter.(*inopenai.ChatInbound); chat {
+				payload, err := ra.inAdapter.TransformStream(ctx, &model.InternalLLMResponse{Object: "[DONE]", SawTerminalEvent: true})
+				if err != nil {
+					return err
+				}
+				writeReasoningBuffer(ra, [][]byte{payload}, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+				if clientDisconnected && ra.streamSession == nil {
+					return errClientDisconnected
+				}
+			}
+		}
 
 		if ra.streamSession != nil {
 			ra.streamSession.Finish(nil)
@@ -1233,7 +1321,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		// 与 EOF 收尾共用 finishAcceptedTerminal（见其定义处注释），两条路径语义一致：
 		// 空输出重试（issue #106/#155）、reasoningBuffer 释放、stream session Finish
 		// 都不因终止方式不同而产生分叉。
-		if sawDoneMarker {
+		if sawDoneMarker || (ra.streamSawExplicitTerminalEvent && !ra.hasUnfinishedObservedStreamChoices()) {
 			return finishAcceptedTerminal()
 		}
 		var (
@@ -1243,6 +1331,8 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		)
 
 		select {
+		case <-terminalTailC:
+			return finishAcceptedTerminal()
 		case <-noticeTimerC:
 			flushNotice()
 			if clientDisconnected && ra.streamSession == nil {
@@ -1394,11 +1484,28 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		}
 		resetStreamIdleTimer()
 
-		data, chunkHasVisible, err := ra.transformStreamData(ctx, r.data)
+		var data []byte
+		var chunkHasVisible bool
+		var err error
+		if ra.canPassthroughStream() && !rawSSEHasData(r.frame) {
+			data = r.frame
+		} else {
+			data, chunkHasVisible, err = ra.transformStreamData(ctx, r.data)
+			if ra.canPassthroughStream() {
+				data = r.frame
+				// Raw forwarding is byte preserving even for unknown extension
+				// frames; missing terminal evidence remains diagnostic at EOF.
+				err = nil
+			}
+		}
 		if err != nil {
 			transformErr := fmt.Errorf("failed to transform stream event: %w", err)
 			emitStreamInterruption(transformErr, false)
 			return transformErr
+		}
+		if !ra.canPassthroughStream() && ra.adapterEndpointProtocol() == "chat" && ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && terminalTailTimer == nil {
+			terminalTailTimer = time.NewTimer(time.Second)
+			terminalTailC = terminalTailTimer.C
 		}
 		// 上游流终止标记：记下但不在这里 return。[DONE] 仍要走完下方正常的
 		// chunk 写入（buffer flush / stream session AddPayload / Write+Flush），
@@ -1434,7 +1541,10 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			stopFirstVisibleOutputTimer()
 			startStreamIdleTimer()
 		}
-		shouldHoldNotice := noticeBuffer.observe(ra.streamAnswerText, ra.streamAnswerBypass)
+		shouldHoldNotice := false
+		if !ra.canPassthroughStream() {
+			shouldHoldNotice = noticeBuffer.observe(ra.streamAnswerText, ra.streamAnswerBypass)
+		}
 		if ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && noticeBuffer.blocked() {
 			return blockNotice()
 		}
@@ -1470,12 +1580,6 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 		// 同协议直通：上游适配器已按原格式解析，出站直通透传。字节不再二次序列化，
 		// 直接把原 SSE data 封装写回客户端；visible/状态记录仍复用原有 chunk 解析。
-		if ra.canPassthroughStream() && len(data) > 0 {
-			rawFrame := passthroughStreamEvent(r.data)
-			if len(rawFrame) > 0 {
-				data = rawFrame
-			}
-		}
 
 		// 可见内容到达，先 flush 暂存的 reasoning buffer
 		if len(reasoningBuffer) > 0 {
@@ -1491,6 +1595,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		}
 		if chunkHasVisible {
 			hasVisibleContent = true
+			if writer, ok := ra.c.Writer.(*relayResponseWriter); ok {
+				writer.markVisible()
+			}
 		}
 
 		ra.hedgeVisibleChunk = chunkHasVisible
@@ -1503,7 +1610,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				logClientDisconnected()
 			} else {
 				for _, event := range sessionEvents {
-					if _, err := ra.c.Writer.Write(formatRelaySSEEvent(event.Sequence, event.Payload)); err != nil {
+					if _, err := ra.c.Writer.Write(ra.streamSession.formatEvent(event)); err != nil {
 						markClientDisconnected()
 						logClientDisconnected()
 						break
@@ -1533,7 +1640,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			logClientDisconnected()
 			return errClientDisconnected
 		}
-		markStreamOutputCommitted()
+		if !sseCommentOnly(data) {
+			markStreamOutputCommitted()
+		}
 		ra.c.Writer.Flush()
 		if chunkHasVisible {
 			ra.metrics.SetClientFirstFlushTime(time.Now())
@@ -1564,7 +1673,7 @@ func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected 
 				continue
 			}
 			for _, event := range sessionEvents {
-				if _, err := ra.c.Writer.Write(formatRelaySSEEvent(event.Sequence, event.Payload)); err != nil {
+				if _, err := ra.c.Writer.Write(ra.streamSession.formatEvent(event)); err != nil {
 					markClientDisconnected()
 					logClientDisconnected()
 					// The payload is already safely stored in the session. Continue
@@ -1603,11 +1712,33 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		return nil, false, nil
 	}
 
-	ra.extractLeadingInlineReasoningStream(internalStream)
+	if !ra.canPassthroughStream() {
+		ra.extractLeadingInlineReasoningStream(internalStream)
+	}
 	hasVisible := streamChunkHasVisibleContent(internalStream)
 	ra.streamAnswerText, ra.streamAnswerBypass = answerText(internalStream, true)
 
 	ra.recordStreamTermination(internalStream)
+	if ra.canPassthroughStream() {
+		// Aggregation is observational; the inbound renderer cannot rewrite raw frames.
+		_, _ = ra.inAdapter.TransformStream(ctx, internalStream)
+		return nil, hasVisible, nil
+	}
+	if ra.adapterEndpointProtocol() == "messages" {
+		// message_delta carries stop metadata but does not complete the native
+		// message. Defer the converted terminal until message_stop also arrives.
+		copy := *internalStream
+		copy.Choices = append([]model.Choice(nil), internalStream.Choices...)
+		if !internalStream.SawTerminalEvent {
+			for i := range copy.Choices {
+				copy.Choices[i].FinishReason = nil
+				copy.Choices[i].Termination = model.TerminationMetadata{}
+			}
+		} else if len(copy.Choices) == 0 && ra.streamTermination.HasCause() {
+			copy.Termination = ra.streamTermination
+		}
+		internalStream = &copy
+	}
 
 	inStream, err := ra.inAdapter.TransformStream(ctx, internalStream)
 	if err != nil {
@@ -1645,7 +1776,11 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 
 		if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
 			ra.streamFinishReason = strings.TrimSpace(*choice.FinishReason)
-			ra.streamSawTerminalEvent = true
+			// Messages stop_reason only finishes a choice; message_stop is the
+			// required stream-wide terminal event.
+			if ra.adapterEndpointProtocol() != "messages" {
+				ra.streamSawTerminalEvent = true
+			}
 			if ra.streamFinishedChoiceIndexes == nil {
 				ra.streamFinishedChoiceIndexes = make(map[int]struct{})
 			}
@@ -1662,6 +1797,12 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 			ra.streamTermination = terminationForChoice(choice)
 		}
 	}
+	if internalStream.SawTerminalEvent && ra.adapterEndpointProtocol() == "gemini" && !ra.hasUnfinishedObservedStreamChoices() {
+		ra.streamSawExplicitTerminalEvent = true
+	}
+	if ra.adapterEndpointProtocol() == "chat" && internalStream.Usage != nil && len(internalStream.Choices) == 0 && ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() {
+		ra.streamSawExplicitTerminalEvent = true
+	}
 }
 
 func (ra *relayAttempt) hasUnfinishedObservedStreamChoices() bool {
@@ -1671,6 +1812,17 @@ func (ra *relayAttempt) hasUnfinishedObservedStreamChoices() bool {
 
 	for choiceIndex := range ra.streamObservedChoiceIndexes {
 		if _, finished := ra.streamFinishedChoiceIndexes[choiceIndex]; !finished {
+			return true
+		}
+	}
+	if ra.adapterEndpointProtocol() == "chat" && ra.relayRequest != nil && ra.internalRequest != nil {
+		var request struct {
+			N int `json:"n"`
+		}
+		if len(ra.internalRequest.RawRequest) > 0 {
+			_ = jsonAPI.Unmarshal(ra.internalRequest.RawRequest, &request)
+		}
+		if request.N > len(ra.streamFinishedChoiceIndexes) {
 			return true
 		}
 	}
@@ -1866,7 +2018,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 	contextPrecheck := prepareContextPrecheck(req)
 
 	for routeRound := 1; routeRound <= maxRouteRetries; routeRound++ {
-		if isClientDisconnected(req.clientCtx) {
+		if req.clientCancelled() {
 			return handleClientDisconnect(req, allAttempts)
 		}
 		if err := req.operationCtx.Err(); err != nil {
@@ -1897,7 +2049,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
 				goto exhausted
 			}
-			if isClientDisconnected(req.clientCtx) {
+			if req.clientCancelled() {
 				return handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
 			}
 			if err := req.operationCtx.Err(); err != nil {
@@ -1947,7 +2099,10 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					channel.ID, resolvedModelName, contextPrecheck.estimatedInput, limit, source))
 			}
 
-			plans := channel.ResolveConnectionPlans(req.internalRequest, group.OutboundFormat)
+			plans, conflicts := channel.ResolveRelayConnectionPlans(req.internalRequest, group.OutboundFormat, group.ForwardMode)
+			if trace := relayRequestTraceFromContext(req.c); trace != nil {
+				trace.recordRoutingConflicts(conflicts)
+			}
 			attemptTypes := make([]outbound.OutboundType, len(plans))
 			for i, plan := range plans {
 				attemptTypes[i] = plan.AdapterType
@@ -2020,7 +2175,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
 					goto exhausted
 				}
-				if isClientDisconnected(req.clientCtx) {
+				if req.clientCancelled() {
 					return handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
 				}
 				if err := req.operationCtx.Err(); err != nil {
@@ -2076,7 +2231,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
 						goto exhausted
 					}
-					if isClientDisconnected(req.clientCtx) {
+					if req.clientCancelled() {
 						return handleClientDisconnect(req, append(allAttempts, routeIter.Attempts()...))
 					}
 					if err := req.operationCtx.Err(); err != nil {
@@ -2251,7 +2406,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 							stopClientCancellation()
 							cancelHold()
 							if !waitCompleted {
-								if isClientDisconnected(req.clientCtx) {
+								if req.clientCancelled() {
 									return handleClientDisconnect(req, currentAttempts)
 								}
 								lastErr = req.operationCtx.Err()
@@ -2303,14 +2458,14 @@ exhausted:
 		req.internalRequest.RawAPIFormat, requestModel, len(allAttempts), lastErr)
 	// 对外返回通用文案，避免把上游内部错误体（可能含上游实现细节）回显给客户端；
 	// 完整错误已写入上方日志与 relay_log。
-	if !req.c.Writer.Written() {
+	if !relaySemanticWritten(req.c) {
 		if errors.Is(req.operationCtx.Err(), context.DeadlineExceeded) {
-			resp.Error(req.c, http.StatusGatewayTimeout, "relay operation timed out")
+			writeClientTerminalError(req.c, nil, outbound.OutboundTypeOpenAIChat, http.StatusGatewayTimeout, errors.New("relay operation timed out"))
 		} else {
 			// 走到这里说明所有候选渠道都已尝试且失败(自愈未成功)。按三级分级
 			// 的「全部渠道不可用」给出面向下游的友好文案;具体上游错误已入日志。
-			resp.Error(req.c, http.StatusBadGateway,
-				clientErrorMessageForClass(ErrorClassUnavailable, http.StatusBadGateway))
+			writeClientTerminalError(req.c, nil, outbound.OutboundTypeOpenAIChat, http.StatusBadGateway,
+				errors.New(clientErrorMessageForClass(ErrorClassUnavailable, http.StatusBadGateway)))
 		}
 	}
 	if lastErr != nil {

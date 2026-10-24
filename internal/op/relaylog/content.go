@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -274,13 +275,23 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 				contentState = model.RelayLogContentStateReady
 			}
 			relayLog.ContentState = contentState
+			updates := map[string]any{
+				"content_state":             contentState,
+				"content_unavailable_error": relayLog.ContentUnavailableError,
+				"persistence_state":         model.RelayLogPersistenceReady,
+			}
+			if relayLog.Diagnostics != nil {
+				diagnostics := *relayLog.Diagnostics
+				diagnostics.PersistenceState = model.RelayLogPersistenceReady
+				payload, err := json.Marshal(diagnostics)
+				if err != nil {
+					return err
+				}
+				updates["diagnostics"] = string(payload)
+			}
 			if err := transaction.Model(&model.RelayLog{}).
 				Where("id = ?", relayLog.ID).
-				Updates(map[string]any{
-					"content_state":             contentState,
-					"content_unavailable_error": relayLog.ContentUnavailableError,
-					"persistence_state":         model.RelayLogPersistenceReady,
-				}).Error; err != nil {
+				Updates(updates).Error; err != nil {
 				return err
 			}
 		}

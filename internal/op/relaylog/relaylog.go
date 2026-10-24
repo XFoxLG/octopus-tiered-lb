@@ -10,6 +10,7 @@ import (
 	"github.com/lingyuins/octopus/internal/utils/json"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -493,6 +494,9 @@ func relayLogFlushToDB(ctx context.Context) error {
 	}
 	for _, record := range batch {
 		record.PersistenceState = model.RelayLogPersistenceReady
+		if record.TraceID != "" {
+			UpdateLiveRequest(record.TraceID, func(entry *LiveRequest) { entry.State = "recorded"; entry.LogID = strconv.FormatInt(record.ID, 10) })
+		}
 		select {
 		case notifyCh <- record.ToListItem():
 		default:

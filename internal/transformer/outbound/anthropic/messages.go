@@ -251,9 +251,9 @@ func (o *MessageOutbound) TransformStream(ctx context.Context, eventData []byte)
 		}
 
 	case "message_delta":
-		// message_delta is Anthropic's protocol-level terminal update. It is
-		// terminal even when a non-conforming upstream omitted stop_reason.
-		resp.SawTerminalEvent = true
+		// message_delta 只承载 stop_reason / usage，不是 Anthropic 的消息终态；
+		// 只有随后的 message_stop 才是。提前置 SawTerminalEvent 会把
+		// 「message_delta 之后上游被截断、message_stop 未到达」误判为正常完成。
 
 		if streamEvent.Usage != nil {
 			usage := convertAnthropicUsage(streamEvent.Usage)

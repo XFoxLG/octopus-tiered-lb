@@ -29,6 +29,12 @@ type Group struct {
 	// 覆盖整个转发过程（HTTP 请求 + 响应读取），流式和非流式均生效。
 	// 超时后自动视为错误，按现有重试策略切换到下一个渠道。
 	AttemptTimeOut int `json:"attempt_time_out" gorm:"column:attempt_time_out;default:0"`
+	// The whole request budget includes queueing, retries and response delivery.
+	// Zero inherits the Key/client/global deadlines.
+	RequestTimeoutSeconds  int    `json:"request_timeout_seconds" gorm:"not null;default:0"`
+	StreamKeepaliveEnabled bool   `json:"stream_keepalive_enabled" gorm:"not null;default:false"`
+	AssistantPrefillCompat bool   `json:"assistant_prefill_compat" gorm:"not null;default:false"`
+	ForwardMode            string `json:"forward_mode" gorm:"size:16;not null;default:inherit"`
 	// StreamIdleTimeout is the maximum allowed silence after visible streaming
 	// output begins. Zero disables the watchdog for backwards compatibility.
 	StreamIdleTimeout int         `json:"stream_idle_timeout" gorm:"column:stream_idle_timeout;default:0"`
@@ -115,6 +121,10 @@ type GroupUpdateRequest struct {
 	FirstTokenTimeOut       *int                     `json:"first_token_time_out,omitempty"` // 仅在超时变更时发送(秒)
 	AttemptTimeOut          *int                     `json:"attempt_time_out,omitempty"`     // 仅在转发超时变更时发送(秒)
 	StreamIdleTimeout       *int                     `json:"stream_idle_timeout,omitempty"`
+	RequestTimeoutSeconds   *int                     `json:"request_timeout_seconds,omitempty"`
+	StreamKeepaliveEnabled  *bool                    `json:"stream_keepalive_enabled,omitempty"`
+	AssistantPrefillCompat  *bool                    `json:"assistant_prefill_compat,omitempty"`
+	ForwardMode             *string                  `json:"forward_mode,omitempty"`
 	HedgeEnabled            *bool                    `json:"hedge_enabled,omitempty"`
 	HedgeDelayMs            *int                     `json:"hedge_delay_ms,omitempty"`            // Delay before the backup attempt, in milliseconds.
 	SessionKeepTime         *int                     `json:"session_keep_time,omitempty"`         // 仅在会话保持时间变更时发送(秒)

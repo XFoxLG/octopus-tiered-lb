@@ -147,9 +147,29 @@ export interface LiveRequest {
     attempt: number;
     http_status: number;
     log_id?: string;
+    sequence?: number;
+    persistence_state?: string;
 }
 
 export interface RelayLogDetail extends RelayLog {
+    diagnostics?: {
+        version: number;
+        request_id?: string;
+        instance_id?: string;
+        received_at?: number;
+        deadline_at?: number;
+        deadline_source?: string;
+        cancelled_at?: number;
+        cancel_reason?: string;
+        terminal_at?: number;
+        terminal_source?: string;
+        writer_accepted_bytes?: number;
+        semantic_bytes?: number;
+        control_bytes?: number;
+        persistence_state?: string;
+        routing_conflicts?: string[];
+        attempts?: Array<{ attempt: number; channel_id?: number; protocol?: string; started_at?: number; ended_at?: number; deadline_at?: number; terminal_source?: string; cancel_reason?: string }>;
+    };
     request_content?: string;
     response_content?: string;
     client_write_error?: string;
@@ -544,11 +564,11 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
                             if (event === 'request') {
                                 const incoming = payload as LiveRequest;
                                 setLiveRequests(previous => mergeLiveRequest(previous, incoming));
-                                if (incoming.state === 'recorded') scheduleRefresh();
+                                if (incoming.persistence_state === 'stored' || incoming.state === 'recorded') scheduleRefresh();
                                 return;
                             }
                             const log = withExactId(payload as RelayLog);
-                            if (log.trace_id) setLiveRequests(previous => previous.filter(item => item.trace_id !== log.trace_id));
+                            if (log.trace_id) setLiveRequests(previous => previous.map(item => item.trace_id === log.trace_id ? { ...item, state: 'completed', persistence_state: 'stored' } : item));
                             mergeIncomingLog(log);
                         } catch (e) {
                             logger.error('解析日志数据失败:', e);
@@ -622,6 +642,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
     return {
         logs,
         liveRequests: liveRequests.filter(entry => {
+            if (['completed', 'recorded', 'unavailable'].includes(entry.state)) return false;
             if (logs.some(log => log.trace_id === entry.trace_id)) return false;
             // has_image 同样排除实时条目：LiveRequest 不携带图片计数，无法判定。
             if (stableFilter.status || stableFilter.is_test === true || stableFilter.has_image != null) return false;

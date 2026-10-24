@@ -147,6 +147,12 @@ func assertMigrateGroupEndpointNameUniqueIndexAllowsSameNameAcrossEndpoints(t *t
 	if err := addGroupHedgeConfig(db); err != nil {
 		t.Fatalf("addGroupHedgeConfig: %v", err)
 	}
+	if err := migrateRelayRequestLifecycle(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateGroupForwardMode(db); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := db.Create(&model.Group{Name: "shared-model", EndpointType: model.EndpointTypeEmbeddings, Mode: model.GroupModeRoundRobin}).Error; err != nil {
 		t.Fatalf("create same-name different endpoint group after migration: %v", err)

@@ -13,6 +13,7 @@ type APIKey struct {
 	AllowedGroupCategories string  `json:"allowed_group_categories,omitempty" gorm:"column:allowed_group_categories"` // 逗号分隔的允许分组分类，空表示全部
 	RateLimitRPM           int     `json:"rate_limit_rpm,omitempty" gorm:"default:0"`
 	RateLimitTPM           int     `json:"rate_limit_tpm,omitempty" gorm:"default:0"`
+	RequestTimeoutSeconds  int     `json:"request_timeout_seconds" gorm:"not null;default:0"`
 	PerModelQuotaJSON      string  `json:"per_model_quota_json,omitempty" gorm:"column:per_model_quota_json"`
 	AllowedIPs             string  `json:"allowed_ips,omitempty" gorm:"column:allowed_ips"`             // 逗号分隔的允许 IP/CIDR 列表
 	Tags                   string  `json:"tags,omitempty" gorm:"column:tags"`                           // 逗号分隔的标签，用于分类与快速检索

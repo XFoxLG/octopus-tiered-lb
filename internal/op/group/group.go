@@ -657,6 +657,16 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 	if group.StreamIdleTimeout < 0 {
 		return fmt.Errorf("stream idle timeout must be non-negative")
 	}
+	if group.RequestTimeoutSeconds < 0 || group.RequestTimeoutSeconds > 86400 {
+		return fmt.Errorf("request timeout must be between 0 and 86400 seconds")
+	}
+	group.ForwardMode = strings.ToLower(strings.TrimSpace(group.ForwardMode))
+	if group.ForwardMode == "" {
+		group.ForwardMode = "inherit"
+	}
+	if !validGroupForwardMode(group.ForwardMode) {
+		return fmt.Errorf("invalid group forward mode")
+	}
 	if group.ParamOverride != nil {
 		if err := validateGroupParamOverride(*group.ParamOverride); err != nil {
 			return err
@@ -796,6 +806,32 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		}
 		selectFields = append(selectFields, "stream_idle_timeout")
 		updates.StreamIdleTimeout = *req.StreamIdleTimeout
+	}
+	if req.RequestTimeoutSeconds != nil {
+		if *req.RequestTimeoutSeconds < 0 || *req.RequestTimeoutSeconds > 86400 {
+			return nil, fmt.Errorf("request timeout must be between 0 and 86400 seconds")
+		}
+		selectFields = append(selectFields, "request_timeout_seconds")
+		updates.RequestTimeoutSeconds = *req.RequestTimeoutSeconds
+	}
+	if req.StreamKeepaliveEnabled != nil {
+		selectFields = append(selectFields, "stream_keepalive_enabled")
+		updates.StreamKeepaliveEnabled = *req.StreamKeepaliveEnabled
+	}
+	if req.AssistantPrefillCompat != nil {
+		selectFields = append(selectFields, "assistant_prefill_compat")
+		updates.AssistantPrefillCompat = *req.AssistantPrefillCompat
+	}
+	if req.ForwardMode != nil {
+		mode := strings.ToLower(strings.TrimSpace(*req.ForwardMode))
+		if mode == "" {
+			mode = "inherit"
+		}
+		if !validGroupForwardMode(mode) {
+			return nil, fmt.Errorf("invalid group forward mode")
+		}
+		selectFields = append(selectFields, "forward_mode")
+		updates.ForwardMode = mode
 	}
 	if req.SessionKeepTime != nil {
 		selectFields = append(selectFields, "session_keep_time")

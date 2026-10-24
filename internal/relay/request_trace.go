@@ -261,6 +261,7 @@ type relayRequestTrace struct {
 	capturedContents        []model.RelayLogCapturedContent
 	declaredContents        []model.RelayLogCapturedContent
 	stagedRelayLog          *model.RelayLog
+	diagnostics             *model.RelayDiagnostics
 }
 
 func newRelayRequestTrace(request *http.Request, captureContent bool) *relayRequestTrace {
@@ -447,6 +448,13 @@ func (trace *relayRequestTrace) recordClientWrite(payload []byte, writeCount int
 	}
 	trace.mutex.Lock()
 	trace.clientWriteBytes += int64(writeCount)
+	if trace.diagnostics != nil {
+		if sseCommentOnly(payload) {
+			trace.diagnostics.ControlBytes += int64(writeCount)
+		} else {
+			trace.diagnostics.SemanticBytes += int64(writeCount)
+		}
+	}
 	if writeCount < len(payload) && writeErr == nil {
 		writeErr = io.ErrShortWrite
 	}
@@ -854,6 +862,7 @@ func saveUnclaimedRelayTrace(ginContext *gin.Context, trace *relayRequestTrace) 
 	relayLog.PersistenceState = model.RelayLogPersistencePending
 	relayLog.ClientDeliveryState = relayLogClientDeliveryState(clientWriteBytes, clientWriteComplete, clientWriteError)
 	relayLog.Attempts = trace.annotateAttempts(relayLog.Attempts)
+	relayLog.Diagnostics = trace.diagnosticsSnapshot()
 	if relayLog.GenerationOutcome == "" || relayLog.UpstreamOutcome == "" {
 		generationOutcome, upstreamOutcome := relayLogOutcomes(relayLog)
 		if relayLog.GenerationOutcome == "" {
@@ -873,6 +882,10 @@ func saveUnclaimedRelayTrace(ginContext *gin.Context, trace *relayRequestTrace) 
 	relayLogID, err := relaylog.RelayLogAdd(persistenceContext, relayLog)
 	if err != nil {
 		log.Warnf("failed to save request trace without upstream attempt: %v", err)
+		relaylog.UpdateLiveRequest(trace.id, func(entry *relaylog.LiveRequest) {
+			entry.State = "completed"
+			entry.PersistenceState = model.RelayLogPersistenceUnavailable
+		})
 		return
 	}
 	trace.markLogPersisted(relayLogID)

@@ -434,7 +434,7 @@ func (ra *relayAttempt) streamOutputWasCommitted() bool {
 	if ra == nil {
 		return false
 	}
-	return ra.streamOutputCommitted || (ra.c != nil && ra.c.Writer.Written())
+	return ra.streamOutputCommitted || relaySemanticWritten(ra.c)
 }
 
 // adapterEndpointProtocol 把本次尝试实际使用的 adapter 映射成 base URL 协议绑定
@@ -447,6 +447,15 @@ func (ra *relayAttempt) streamOutputWasCommitted() bool {
 func (ra *relayAttempt) adapterEndpointProtocol() string {
 	if ra == nil {
 		return ""
+	}
+	if (ra.adapterType == outbound.OutboundTypeRaw || ra.adapterType == outbound.OutboundTypePassthrough) && ra.relayRequest != nil {
+		return dbmodel.ProtocolForRequest(ra.internalRequest)
+	}
+	if ra.adapterType == outbound.OutboundTypeGemini {
+		return "gemini"
+	}
+	if ra.adapterType == outbound.OutboundTypeMimo {
+		return "chat"
 	}
 	return outbound.EndpointProtocolForAdapter(ra.adapterType)
 }
@@ -544,9 +553,8 @@ func shouldRecordChannelFailure(decision RetryDecision) bool {
 
 // markClientCancelIfGone 在客户端已断开时把 decision 标记为「不计入渠道故障」。
 //
-// clientCtx 必须是真正承载客户端连接生命周期的 context（gin 的 c.Request.Context()），
-// 不能是 newRelayOperationContext() 派生的 operationCtx——后者基于 context.Background()，
-// 与客户端断连完全解耦（见 context.go）。
+// clientCtx carries the actual HTTP connection, including when explicit replay
+// has detached the operation from that connection.
 // err 为 nil 时不做任何处理：成功路径不该被打上失败豁免标记。
 func markClientCancelIfGone(decision *RetryDecision, clientCtx context.Context, err error) {
 	if decision == nil || err == nil || clientCtx == nil {

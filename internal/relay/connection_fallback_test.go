@@ -6,6 +6,7 @@ import (
 	"github.com/lingyuins/octopus/internal/client"
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/channel"
+	"github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"net/http"
 	"strings"
@@ -40,6 +41,12 @@ func TestHandlerConnectionFallbackDoesNotPoisonSharedKey(t *testing.T) {
 	}
 	ch.ConnectionConfig = &appmodel.ConnectionConfig{Version: 1, Selection: "same_protocol", Endpoints: []appmodel.ChannelEndpoint{{ID: "chat", Protocol: "chat", URL: "http://192.0.2.1/v1", URLMode: "base", Auth: "default"}, {ID: "response", Protocol: "responses", URL: "http://192.0.2.1/v1", URLMode: "base", Auth: "default"}}, Catalog: appmodel.ModelCatalog{Format: "manual"}}
 	channel.GetCache().Set(id, *ch)
+	// Protocol fallback requires an unconstrained group; chat_only now applies
+	// equally to legacy channels and ConnectionConfig endpoints.
+	g, _ := group.GetCache().Get(id)
+	g.OutboundFormat = ""
+	group.GetCache().Set(id, g)
+	group.RebuildIndexes()
 	if err := setting.SetString(appmodel.SettingKeyRelayMaxTotalAttempts, "4"); err != nil {
 		t.Fatal(err)
 	}

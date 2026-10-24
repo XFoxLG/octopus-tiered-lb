@@ -164,6 +164,10 @@ function EditDialogContent({
                             first_token_time_out: group.first_token_time_out ?? 0,
                             attempt_time_out: group.attempt_time_out ?? 0,
                             stream_idle_timeout: group.stream_idle_timeout ?? 0,
+                            request_timeout_seconds: group.request_timeout_seconds ?? 0,
+                            stream_keepalive_enabled: group.stream_keepalive_enabled ?? false,
+                            assistant_prefill_compat: group.assistant_prefill_compat ?? false,
+                            forward_mode: group.forward_mode ?? 'inherit',
                             hedge_enabled: group.hedge_enabled ?? false,
                             hedge_delay_ms: group.hedge_delay_ms ?? 300,
                             session_keep_time: group.session_keep_time ?? 0,
@@ -609,6 +613,10 @@ export function GroupListItem({ group }: { group: Group }) {
             const nextCondition = values.condition.trim();
             const nextFirstTokenTimeOut =
                 values.first_token_time_out ?? 0;
+            if (values.request_timeout_seconds !== undefined && values.request_timeout_seconds !== (group.request_timeout_seconds ?? 0)) payload.request_timeout_seconds = values.request_timeout_seconds;
+            if (values.stream_keepalive_enabled !== undefined && values.stream_keepalive_enabled !== (group.stream_keepalive_enabled ?? false)) payload.stream_keepalive_enabled = values.stream_keepalive_enabled;
+            if (values.assistant_prefill_compat !== undefined && values.assistant_prefill_compat !== (group.assistant_prefill_compat ?? false)) payload.assistant_prefill_compat = values.assistant_prefill_compat;
+            if (values.forward_mode !== undefined && values.forward_mode !== (group.forward_mode ?? 'inherit')) payload.forward_mode = values.forward_mode;
             const nextAttemptTimeOut =
                 values.attempt_time_out ?? 0;
             const nextStreamIdleTimeout =
@@ -725,7 +733,7 @@ export function GroupListItem({ group }: { group: Group }) {
             group.param_override,
             group.reasoning_force_override,
             group.reasoning_buffer_strategy,
-            group.stream_idle_timeout,
+            group.request_timeout_seconds, group.stream_keepalive_enabled, group.assistant_prefill_compat, group.forward_mode, group.stream_idle_timeout,
             group.hedge_enabled,
             group.hedge_delay_ms,
             group.session_keep_time,
@@ -800,6 +808,10 @@ export function GroupListItem({ group }: { group: Group }) {
             first_token_time_out: group.first_token_time_out ?? 0,
             attempt_time_out: group.attempt_time_out ?? 0,
             stream_idle_timeout: group.stream_idle_timeout ?? 0,
+            request_timeout_seconds: group.request_timeout_seconds ?? 0,
+            stream_keepalive_enabled: group.stream_keepalive_enabled ?? false,
+            assistant_prefill_compat: group.assistant_prefill_compat ?? false,
+            forward_mode: group.forward_mode ?? 'inherit',
             hedge_enabled: group.hedge_enabled ?? false,
             hedge_delay_ms: group.hedge_delay_ms ?? 300,
             session_keep_time: group.session_keep_time ?? 0,
@@ -819,7 +831,7 @@ export function GroupListItem({ group }: { group: Group }) {
         group.endpoint_type,
         group.first_token_time_out,
         group.attempt_time_out,
-        group.stream_idle_timeout,
+        group.request_timeout_seconds, group.stream_keepalive_enabled, group.assistant_prefill_compat, group.forward_mode, group.stream_idle_timeout,
         group.hedge_enabled,
         group.hedge_delay_ms,
         group.id,

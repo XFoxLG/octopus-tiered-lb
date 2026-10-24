@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +20,11 @@ import (
 	"github.com/lingyuins/octopus/internal/server/router"
 	"github.com/samber/lo"
 )
+
+// errInvalidRequestTimeoutPayload 表示 request_timeout_seconds 字段虽然存在，
+// 但不是合法的 JSON 数字。ShouldBindJSON 对 int 字段的类型不匹配会直接报错，
+// 但本字段以 RawMessage 绑定（用于区分「缺失」与「显式 0」），所以在此单独判定。
+var errInvalidRequestTimeoutPayload = errors.New("invalid request_timeout_seconds payload")
 
 func init() {
 	router.NewGroupRouter("/api/v1/apikey").
@@ -58,6 +66,10 @@ func createAPIKey(c *gin.Context) {
 	var req apiKeyRequestPayload
 	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Error(c, http.StatusBadRequest, resp.ErrInvalidJSON)
+		return
+	}
+	if _, err := req.requestTimeoutSeconds(); err != nil {
+		resp.Error(c, http.StatusBadRequest, "request_timeout_seconds must be an integer")
 		return
 	}
 	apiKey := req.toModel()
@@ -103,6 +115,15 @@ func updateAPIKey(c *gin.Context) {
 		return
 	}
 	apiKey := req.toModel()
+	// request_timeout_seconds 采用三态语义：缺失保留旧值、显式 0 清空预算、
+	// 1..86400 覆盖为新预算。Update 走 Save，若不在此处补齐旧值，
+	// 缺失字段绑定的零值会把 Key 已配置的预算悄悄清掉。
+	timeout, err := req.resolveRequestTimeoutSeconds(c.Request.Context())
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, "request_timeout_seconds must be an integer")
+		return
+	}
+	apiKey.RequestTimeoutSeconds = timeout
 	// Normalize custom key prefix if a new key value is provided.
 	if strings.TrimSpace(apiKey.APIKey) != "" {
 		apiKey.APIKey = normalizeAPIKeyPrefix(apiKey.APIKey)
@@ -202,13 +223,19 @@ type apiKeyRequestPayload struct {
 	AllowedGroupCategories string  `json:"allowed_group_categories,omitempty"`
 	RateLimitRPM           int     `json:"rate_limit_rpm,omitempty"`
 	RateLimitTPM           int     `json:"rate_limit_tpm,omitempty"`
-	PerModelQuotaJSON      string  `json:"per_model_quota_json,omitempty"`
-	AllowedIPs             string  `json:"allowed_ips,omitempty"`
-	Tags                   string  `json:"tags,omitempty"`
-	ExcludedChannels       string  `json:"excluded_channels,omitempty"`
+	// RequestTimeoutSecondsRaw 用 json.RawMessage 绑定，仅为在 Update 路径区分
+	// 「字段缺失」与「显式 0」；解析出的整数值通过 toModel 落到 model.APIKey。
+	RequestTimeoutSecondsRaw json.RawMessage `json:"request_timeout_seconds"`
+	PerModelQuotaJSON        string          `json:"per_model_quota_json,omitempty"`
+	AllowedIPs               string          `json:"allowed_ips,omitempty"`
+	Tags                     string          `json:"tags,omitempty"`
+	ExcludedChannels         string          `json:"excluded_channels,omitempty"`
 }
 
 func (p apiKeyRequestPayload) toModel() model.APIKey {
+	// 调用方（createAPIKey/updateAPIKey）已先行校验该字段，这里忽略错误即可；
+	// 缺失值落到 0，Update 路径随后用 resolveRequestTimeoutSeconds 补齐旧值。
+	timeout, _ := p.requestTimeoutSeconds()
 	return model.APIKey{
 		ID:                     p.ID,
 		Name:                   p.Name,
@@ -221,11 +248,46 @@ func (p apiKeyRequestPayload) toModel() model.APIKey {
 		AllowedGroupCategories: p.AllowedGroupCategories,
 		RateLimitRPM:           p.RateLimitRPM,
 		RateLimitTPM:           p.RateLimitTPM,
+		RequestTimeoutSeconds:  timeout,
 		PerModelQuotaJSON:      p.PerModelQuotaJSON,
 		AllowedIPs:             p.AllowedIPs,
 		Tags:                   p.Tags,
 		ExcludedChannels:       p.ExcludedChannels,
 	}
+}
+
+// requestTimeoutSeconds 解析请求体里的 request_timeout_seconds。
+// 字段缺失时返回 0（Create 的默认预算；Update 会另行补齐旧值），
+// 字段存在但不是合法整数时返回 errInvalidRequestTimeoutPayload。
+func (p apiKeyRequestPayload) requestTimeoutSeconds() (int, error) {
+	if len(p.RequestTimeoutSecondsRaw) == 0 {
+		return 0, nil
+	}
+	if strings.TrimSpace(string(p.RequestTimeoutSecondsRaw)) == "null" {
+		return 0, errInvalidRequestTimeoutPayload
+	}
+	var value int
+	if err := json.Unmarshal(p.RequestTimeoutSecondsRaw, &value); err != nil {
+		return 0, errInvalidRequestTimeoutPayload
+	}
+	return value, nil
+}
+
+func (p apiKeyRequestPayload) hasRequestTimeoutSeconds() bool {
+	return len(p.RequestTimeoutSecondsRaw) > 0
+}
+
+// resolveRequestTimeoutSeconds 返回 Update 路径应写入的预算值：
+// 字段缺失时读取旧 Key 的预算（读取失败沿用 0，最终由 apikey.Update 返回 not found），
+// 字段存在时优先使用请求值，保证显式 0 可以清空预算。
+func (p apiKeyRequestPayload) resolveRequestTimeoutSeconds(ctx context.Context) (int, error) {
+	if p.hasRequestTimeoutSeconds() {
+		return p.requestTimeoutSeconds()
+	}
+	if existing, err := apikey.Get(p.ID, ctx); err == nil {
+		return existing.RequestTimeoutSeconds, nil
+	}
+	return 0, nil
 }
 
 func classifyAPIKeyMutationError(err error) (int, string, bool) {
@@ -235,6 +297,8 @@ func classifyAPIKeyMutationError(err error) (int, string, bool) {
 
 	msg := strings.ToLower(err.Error())
 	switch {
+	case strings.Contains(msg, "request timeout must"):
+		return http.StatusBadRequest, err.Error(), true
 	case strings.Contains(msg, "api key not found"):
 		return http.StatusNotFound, "API key not found", true
 	case strings.Contains(msg, "unique constraint failed") ||

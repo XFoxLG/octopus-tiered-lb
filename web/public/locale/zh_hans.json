@@ -1752,6 +1752,8 @@
       "add": "添加密钥",
       "loadFailed": "加载失败",
       "form": {
+        "requestTimeout": "整请求时限（秒）",
+        "requestTimeoutHint": "包含排队、重试和流式输出；0 继承其他限制，最短期限优先。",
         "name": "名称",
         "customKey": "自定义密钥",
         "optional": "可选",
@@ -2426,6 +2428,10 @@
       }
     },
     "form": {
+      "requestTimeout": {"label":"整请求超时（秒）","hint":"包含排队、全部尝试和流式交付。0 继承其它期限；多个期限取最短值。"},
+      "streamKeepalive": {"label":"流式保活","hint":"等待时每 15 秒发送 SSE comment，无模型内容，也不能延长客户端的硬期限。"},
+      "assistantPrefill": {"label":"Assistant 预填兼容","hint":"转换请求以 assistant 文本结束时，追加一次继续生成的 user 指令；原始穿透保持原文。"},
+      "forwardMode": {"label":"转发模式","hint":"跟随接口设置、转换协议，或要求同协议穿透；协议冲突会排除并记录。","inherit":"跟随接口设置","convert":"协议转换","passthrough":"同协议穿透","raw":"原路径和正文穿透"},
       "name": "分组名称",
       "category": "分组分类",
       "categoryPlaceholder": "如 premium、budget，可留空",

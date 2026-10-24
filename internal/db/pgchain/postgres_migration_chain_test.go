@@ -25,7 +25,7 @@ import (
 
 // latestAfterMigrationVersion 是最新的 after-migration 版本号。新增迁移时同步
 // 上调即可；它同时用来证明 after 链确实执行过（而不是空跑通过）。
-const latestAfterMigrationVersion = 79
+const latestAfterMigrationVersion = 82
 
 func TestFullMigrationChainOnFreshPostgres(t *testing.T) {
 	dsn := os.Getenv("OCTOPUS_TEST_POSTGRES_DSN")
@@ -78,5 +78,17 @@ func TestFullMigrationChainOnFreshPostgres(t *testing.T) {
 	}
 	if record.Status != 1 {
 		t.Fatalf("after-migration %d status = %d, want success(1)", latestAfterMigrationVersion, record.Status)
+	}
+	for table, columns := range map[string][]string{
+		"groups":                {"request_timeout_seconds", "stream_keepalive_enabled", "assistant_prefill_compat", "forward_mode"},
+		"api_keys":              {"request_timeout_seconds"},
+		"relay_logs":            {"diagnostics"},
+		"channel_probe_results": {"protocol", "request_stream", "request_budget_ms", "request_fingerprint"},
+	} {
+		for _, column := range columns {
+			if !db.GetDB().Migrator().HasColumn(table, column) {
+				t.Fatalf("missing %s.%s after full chain", table, column)
+			}
+		}
 	}
 }

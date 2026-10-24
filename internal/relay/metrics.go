@@ -52,6 +52,7 @@ type RelayMetrics struct {
 	InternalRequest  *transformerModel.InternalLLMRequest
 	InternalResponse *transformerModel.InternalLLMResponse
 	RequestTrace     *relayRequestTrace
+	OperationContext context.Context
 
 	// 统计指标
 	ActualModel string
@@ -145,7 +146,11 @@ func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMRes
 
 func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAttempt) {
 	if m.RequestTrace != nil {
-		relaylog.UpdateLiveRequest(m.RequestTrace.id, func(entry *relaylog.LiveRequest) { entry.State = "completed" })
+		source := "gateway_error"
+		if success {
+			source = "upstream_terminal"
+		}
+		m.RequestTrace.markRuntimeTerminal(m.OperationContext, source, err)
 	}
 	ctx, cancel := newRelayPersistenceContext()
 	defer cancel()
