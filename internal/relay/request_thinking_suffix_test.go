@@ -131,3 +131,20 @@ func TestApplyModelThinkingSuffix_BeatsGroupDefault(t *testing.T) {
 		t.Fatalf("plain effort = %q, want group default medium", plain.ReasoningEffort)
 	}
 }
+
+func TestModelSuffixClearsBodyControlsAndBeatsForcedDefault(t *testing.T) {
+	group := &appmodel.Group{DefaultReasoningEffort: "high", ReasoningForceOverride: true}
+	for _, suffix := range []string{"none", "auto", "4096", "low"} {
+		t.Run(suffix, func(t *testing.T) {
+			request := &transmodel.InternalLLMRequest{Model: "model(" + suffix + ")", EnableThinking: boolPtr(false), AdaptiveThinking: true, ReasoningEffort: "max"}
+			applyModelThinkingSuffix(request)
+			applyReasoningPolicy(group, request)
+			if !request.ReasoningFromModelSuffix || request.EnableThinking != nil || request.AdaptiveThinking {
+				t.Fatal("lower-precedence body controls survived suffix")
+			}
+			if suffix == "none" && (request.ReasoningBudget == nil || *request.ReasoningBudget != 0 || request.ReasoningEffort != "") {
+				t.Fatal("force overrode suffix opt-out")
+			}
+		})
+	}
+}

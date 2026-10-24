@@ -3267,7 +3267,7 @@
       },
       "testDialog": {
         "title": "測試渠道",
-        "description": "模型回應、協定與能力、逐 Key 檢查合併在這一個彈窗裡；每一段都需要手動點擊執行。"
+        "description": "按需執行模型回應、協定與能力、逐 Key 檢查。三類檢查的測試範圍不同。"
       }
     },
     "create": {
@@ -3566,7 +3566,7 @@
     },
     "test": {
       "title": "測試渠道",
-      "description": "一個入口跑三類檢查：模型回應、協定與能力、逐 Key 檢查。全部手動觸發；探測結果需要點「套用結果」才會寫回設定。",
+      "description": "按需執行模型回應、協定與能力、逐 Key 檢查。三類檢查的測試範圍不同。",
       "resultsLabel": "測試結果",
       "sections": {
         "model": "模型回應",
@@ -3582,7 +3582,20 @@
       "diagnosticOnly": "該供應源已使用新的介面設定，探測只用於診斷，不會寫回設定。",
       "noKeys": "該供應源沒有可檢查的 Key。",
       "cancelWait": "停止等待",
-      "footerHint": "模型回應與逐 Key 檢查會消耗供應源 Key 額度；協定與能力探測會向該模型發真實請求。全部只在手動點擊時執行，沒有背景定時。"
+      "footerHint": "模型回應與逐 Key 檢查會消耗供應源 Key 額度；協定與能力探測會向該模型發真實請求。全部只在手動點擊時執行，沒有背景定時。",
+      "modelScope": "依渠道路由規則測試，可能重試或回退到其他介面。回應成功只證明實際回應的介面可用。",
+      "probeScope": "對每個介面分別發送非串流請求。結論只對應本次模型、Key 和協定，不能據此判斷串流相容性。",
+      "keysScope": "使用渠道已儲存的測試模型檢查啟用的 Key，可能與上方選中的模型不同。",
+      "actualProtocol": "回應協定：{protocol}",
+      "testedModel": "測試模型：{model}",
+      "probeKey": "Key ID：{key}",
+      "catalogProbe": "模型目錄（獨立於生成介面）",
+      "protocolUnrecorded": "此結果未記錄實際協定",
+      "interfaceId": "介面 ID：{id}",
+      "protocolVerification": "協定：{protocol}",
+      "responseDetail": "回應詳情",
+      "detailRedacted": "上游回應，憑據已去識別化",
+      "detailTruncated": "已儲存的回應片段被截斷；此記錄無法恢復缺失部分。"
     },
     "probe": {
       "cancel": "停止探測",

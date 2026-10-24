@@ -3,12 +3,17 @@ package helper
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
@@ -24,7 +29,9 @@ const capabilityProbeTimeout = 25 * time.Second
 const capabilityProbeMaxBody = 64 * 1024
 
 // capabilityProbeMaxDetail 是落库的脱敏回显片段上限。
-const capabilityProbeMaxDetail = 512
+const capabilityProbeMaxDetail = capabilityProbeMaxBody
+
+const capabilityProbeMaxSummary = 512
 
 // capabilityProbeSemaphore 限制并发探测数。公益站普遍对并发敏感，
 // 串行执行比"快"更重要。
@@ -145,31 +152,139 @@ func redactProbeDetail(body string, secrets ...string) string {
 	}
 	redacted = redactBearerTokens(redacted)
 	redacted = strings.TrimSpace(redacted)
-	if len(redacted) > capabilityProbeMaxDetail {
-		redacted = redacted[:capabilityProbeMaxDetail] + "…"
-	}
-	return redacted
+	return truncateProbeText(redacted, capabilityProbeMaxDetail)
 }
 
 // redactBearerTokens 抹掉文本里形如 "sk-xxxxx" 的密钥片段。
+var probeBearerTokenPattern = regexp.MustCompile(`(?i)\bBearer[ \t]+[A-Za-z0-9._~+/-]+=*`)
+var probeSKTokenPattern = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{9,}`)
+
 func redactBearerTokens(text string) string {
-	fields := strings.Fields(text)
-	for index, field := range fields {
-		candidate := strings.Trim(field, `"',;:()[]{}`)
-		if strings.HasPrefix(candidate, "sk-") && len(candidate) >= 12 {
-			fields[index] = strings.Replace(field, candidate, "[redacted-key]", 1)
-		}
+	text = probeBearerTokenPattern.ReplaceAllString(text, "Bearer [redacted-token]")
+	return probeSKTokenPattern.ReplaceAllString(text, "[redacted-key]")
+}
+
+// truncateProbeText preserves UTF-8 and marks bounded diagnostic fragments.
+func truncateProbeText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
 	}
-	return strings.Join(fields, " ")
+	end := limit - len("…")
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[:end] + "…"
+}
+
+// probeKeyScope 是本次探测使用的渠道 Key 的审计标识。
+//
+// 只保留下标与 Key ID 范围，**绝不携带 Key 本身**：落库的
+// ChannelProbeResult.KeyScope 就是它的字符串形式。
+// Index < 0 表示调用方不知道位置（例如临时构造的 Key）。
+type probeKeyScope struct {
+	Index int
+	KeyID int
+	NoKey bool
+}
+
+func (s probeKeyScope) String() string {
+	if s.NoKey {
+		return "none"
+	}
+	parts := make([]string, 0, 2)
+	if s.Index >= 0 {
+		parts = append(parts, fmt.Sprintf("key_index:%d", s.Index))
+	}
+	if s.KeyID > 0 {
+		parts = append(parts, fmt.Sprintf("key_id:%d", s.KeyID))
+	}
+	if len(parts) == 0 {
+		return "unknown"
+	}
+	return strings.Join(parts, ",")
 }
 
 // probeRequestOutcome 是单次 HTTP 探测的统一结果。
+//
+// 除判定结论外，它还携带「这次到底怎么发的」：实际协议、接口、去掉凭据的地址、
+// Key 范围、stream/budget 与请求体指纹。这些字段直接落库（迁移 082），
+// 让两次对照可以证明端点/协议/模型/Key/正文/stream/budget 一致。
 type probeRequestOutcome struct {
-	StatusCode int
-	Body       string
-	Verdict    appmodel.ProbeVerdict
-	LatencyMS  int64
-	Summary    string
+	Protocol           string
+	EndpointID         string
+	EndpointURL        string
+	KeyScope           string
+	RequestStream      *bool
+	RequestBudgetMS    *int64
+	RequestFingerprint string
+	StatusCode         int
+	Body               string
+	Verdict            appmodel.ProbeVerdict
+	LatencyMS          int64
+	Summary            string
+}
+
+// probeRequestFingerprintMaxBody 是指纹覆盖的正文上限。超过上限就不给指纹，
+// 而不是拿一个被截断的 hash 冒充完整请求体（对照结论必须是可复现的）。
+const probeRequestFingerprintMaxBody = 1 << 20
+
+// probeFingerprint 计算方法 + 路径 + 正文的 SHA-256。刻意不含 URL query 与任何
+// header：Gemini legacy 把 Key 放在 `?key=`，header 里也总有 Authorization。
+func probeFingerprint(req *http.Request, body []byte) string {
+	if req == nil {
+		return ""
+	}
+	path := ""
+	if req.URL != nil {
+		path = req.URL.EscapedPath()
+	}
+	digest := sha256.New()
+	digest.Write([]byte(req.Method))
+	digest.Write([]byte{'\n'})
+	digest.Write([]byte(path))
+	digest.Write([]byte{'\n'})
+	digest.Write(body)
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+// captureProbeRequestBody 读出请求体用于指纹，再把正文原样放回，调用方仍能正常发送。
+// 第二个返回值为 false 表示正文读取失败或超出指纹上限（此时不产生指纹）。
+func captureProbeRequestBody(req *http.Request) ([]byte, bool) {
+	if req == nil || req.Body == nil {
+		return nil, true
+	}
+	original := req.Body
+	head, err := io.ReadAll(io.LimitReader(original, probeRequestFingerprintMaxBody+1))
+	if err != nil {
+		// 读取中断：把已读到的部分与剩余流拼回去，绝不丢字节。
+		req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(head), original))
+		req.ContentLength = -1
+		req.GetBody = nil
+		return nil, false
+	}
+	if len(head) > probeRequestFingerprintMaxBody {
+		req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(head), original))
+		return nil, false
+	}
+	req.Body = io.NopCloser(bytes.NewReader(head))
+	req.ContentLength = int64(len(head))
+	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(head)), nil }
+	return head, true
+}
+
+// auditProbeEndpointURL 把实际请求地址压成可落库的形式：去掉 userinfo 与 query
+// （凭据可能藏在两者里），并按当前 Key 再做一次脱敏兜底。
+func auditProbeEndpointURL(u *url.URL, key string) string {
+	if u == nil {
+		return ""
+	}
+	sanitized := *u
+	sanitized.User = nil
+	sanitized.RawQuery = ""
+	sanitized.ForceQuery = false
+	sanitized.Fragment = ""
+	sanitized.RawFragment = ""
+	return truncateProbeText(redactProbeDetail(sanitized.String(), key), 512)
 }
 
 // sendProbeRequest 用给定 adapter 发一次真实探测请求，并把结果归一成判定结论。
@@ -180,11 +295,18 @@ func sendProbeRequest(
 	ctx context.Context,
 	channel *appmodel.Channel,
 	key string,
+	scope probeKeyScope,
 	adapterType outbound.OutboundType,
 	request *transmodel.InternalLLMRequest,
 	capability ...string,
 ) *probeRequestOutcome {
-	outcome := &probeRequestOutcome{Verdict: appmodel.ProbeVerdictUnknown}
+	outcome := &probeRequestOutcome{Verdict: appmodel.ProbeVerdictUnknown, KeyScope: scope.String()}
+	budgetMS := capabilityProbeTimeout.Milliseconds()
+	outcome.RequestBudgetMS = &budgetMS
+	if request != nil && request.Stream != nil {
+		stream := *request.Stream
+		outcome.RequestStream = &stream
+	}
 	if channel == nil {
 		outcome.Summary = "channel is nil"
 		return outcome
@@ -193,6 +315,12 @@ func sendProbeRequest(
 	if planErr != nil {
 		outcome.Summary = planErr.Error()
 		return outcome
+	}
+	if plan.Endpoint != nil {
+		outcome.Protocol = plan.Endpoint.Protocol
+		outcome.EndpointID = plan.Endpoint.ID
+	} else {
+		outcome.Protocol = probeProtocolForAdapter(plan.AdapterType)
 	}
 	adapter := plan.Adapter()
 	if adapter == nil {
@@ -215,8 +343,8 @@ func sendProbeRequest(
 	}
 	if len(capability) > 0 && capability[0] == appmodel.ProbeItemWebSearch {
 		if adapterType != outbound.OutboundTypeOpenAIResponse && adapterType != outbound.OutboundTypeGemini {
-			outcome.Verdict = appmodel.ProbeVerdictUnsupported
-			outcome.Summary = "No native search probe for this protocol"
+			outcome.Verdict = appmodel.ProbeVerdictUnknown
+			outcome.Summary = "No native search probe is implemented for this protocol; upstream support was not tested"
 			return outcome
 		}
 		var body map[string]any
@@ -241,6 +369,11 @@ func sendProbeRequest(
 		httpRequest.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(encoded)), nil }
 	}
 	channel.ApplyConnectionHeaders(httpRequest, plan, strings.TrimSpace(key))
+	// 记录「这次实际打向哪里、发的什么正文」——地址与指纹都不含凭据。
+	outcome.EndpointURL = auditProbeEndpointURL(httpRequest.URL, key)
+	if body, ok := captureProbeRequestBody(httpRequest); ok {
+		outcome.RequestFingerprint = probeFingerprint(httpRequest, body)
+	}
 
 	httpClient, err := ChannelHttpClient(channel)
 	if err != nil {
@@ -289,10 +422,7 @@ func sendProbeRequest(
 
 func truncateProbeSummary(text string) string {
 	trimmed := strings.TrimSpace(text)
-	if len(trimmed) > capabilityProbeMaxDetail {
-		return trimmed[:capabilityProbeMaxDetail] + "…"
-	}
-	return trimmed
+	return truncateProbeText(trimmed, capabilityProbeMaxSummary)
 }
 
 // ===== 协议层探测 =====
@@ -462,8 +592,8 @@ func buildCapabilityProbeRequest(item, modelName string) (*transmodel.InternalLL
 	case appmodel.ProbeItemWebSearch:
 		// 联网搜索没有跨厂商统一的请求形状：OpenAI 侧是内建 web_search 工具，
 		// Google 侧是 grounding。这里用"要求模型检索一条近期新闻"作为通用探针，
-		// 由上游自行决定是否启用其检索能力；判据是响应里出现可识别的检索痕迹
-		// 或非空正文（见 judgeCapabilityResponse）。
+		// 出站时补原生搜索工具，判据是响应里出现可识别的检索证据；
+		// 普通正文不算搜索通过（见 judgeCapabilityResponse）。
 		return &transmodel.InternalLLMRequest{
 			Model:        modelName,
 			RawAPIFormat: transmodel.APIFormatOpenAIChatCompletion,
@@ -487,76 +617,194 @@ type capabilityResponseSignals struct {
 	RefusalDetected bool
 }
 
-// collectCapabilitySignals 解析上游响应体，提取各类能力信号。
-//
-// 解析刻意宽松：不同上游对同一能力的字段命名差异很大（OpenAI 的 tool_calls、
-// Anthropic 的 tool_use、Gemini 的 functionCall 等）。这里只看"有没有出现
-// 对应结构"，不做严格校验——严格校验会把兼容实现误判为不支持。
+// collectCapabilitySignals reads answer envelopes, never metadata or echoed requests.
+// A tool probe must call the requested verify_tool with parseable arguments.
+// Structured output must be the answer itself, with no Markdown fence, extra
+// property, or surrounding prose.
 func collectCapabilitySignals(rawBody string) capabilityResponseSignals {
 	signals := capabilityResponseSignals{}
-	if strings.TrimSpace(rawBody) == "" {
+	var root map[string]any
+	if json.Unmarshal([]byte(rawBody), &root) != nil {
 		return signals
 	}
-	var decoded any
-	if err := json.Unmarshal([]byte(rawBody), &decoded); err != nil {
-		// 非 JSON 响应：只能判断"有正文"。
-		signals.HasVisibleText = strings.TrimSpace(rawBody) != ""
-		return signals
+	if len(root) == 1 && root["ok"] == true {
+		signals.HasStructuredOK = true
 	}
-	walkCapabilitySignals(decoded, &signals)
+	collectProbeEnvelope(root, &signals)
 	return signals
 }
 
-func walkCapabilitySignals(node any, signals *capabilityResponseSignals) {
-	switch typed := node.(type) {
-	case map[string]any:
-		for key, value := range typed {
-			switch strings.ToLower(key) {
-			case "tool_calls", "tool_use", "functioncall", "function_call":
-				if !isEmptyJSONValue(value) {
-					signals.HasToolCall = true
-				}
-			case "type":
-				// Anthropic 的工具调用是 "type": "tool_use" 而不是独立的 tool_use 键；
-				// Gemini 部分实现同理。只认键名会漏掉这些协议。
-				if marker, ok := value.(string); ok {
-					switch strings.ToLower(strings.TrimSpace(marker)) {
-					case "tool_use", "function_call", "tool_call":
-						signals.HasToolCall = true
-					case "web_search_call", "google_search_call", "grounding":
-						signals.HasSearchTrace = true
-					}
-				}
-			case "citations", "groundingmetadata", "annotations", "web_search_call", "search_results":
-				if !isEmptyJSONValue(value) {
-					signals.HasSearchTrace = true
-				}
-			case "refusal":
-				if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
-					signals.RefusalDetected = true
-				}
-			case "content", "text", "output_text", "completion":
-				if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
-					signals.HasVisibleText = true
-					var object map[string]any
-					if json.Unmarshal([]byte(text), &object) == nil && len(object) == 1 && object["ok"] == true {
-						signals.HasStructuredOK = true
-					}
-				}
-			case "ok":
-				if boolean, ok := value.(bool); ok && boolean {
-					signals.HasStructuredOK = true
+func collectProbeEnvelope(root map[string]any, signals *capabilityResponseSignals) {
+	if choices, ok := root["choices"].([]any); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]any); ok {
+			if message, ok := choice["message"].(map[string]any); ok {
+				collectProbeAnswer(message, signals)
+				collectProbeTools(message["tool_calls"], signals)
+				if call, ok := message["function_call"].(map[string]any); ok {
+					collectProbeTool(call, signals)
 				}
 			}
-			walkCapabilitySignals(value, signals)
 		}
-	case []any:
-		for _, item := range typed {
-			walkCapabilitySignals(item, signals)
+	}
+	if output, ok := root["output"].([]any); ok {
+		for _, entry := range output {
+			if item, ok := entry.(map[string]any); ok {
+				switch item["type"] {
+				case "message":
+					collectProbeAnswer(item, signals)
+				case "function_call":
+					collectProbeTool(item, signals)
+				case "web_search_call":
+					signals.HasSearchTrace = true
+				}
+			}
+		}
+	}
+	if _, ok := root["content"]; ok {
+		collectProbeAnswer(root, signals)
+	}
+	if candidates, ok := root["candidates"].([]any); ok && len(candidates) > 0 {
+		if candidate, ok := candidates[0].(map[string]any); ok {
+			if content, ok := candidate["content"].(map[string]any); ok {
+				collectProbeAnswer(map[string]any{"content": content["parts"]}, signals)
+			}
+			signals.HasSearchTrace = signals.HasSearchTrace || !isEmptyJSONValue(candidate["groundingMetadata"])
+			if reason, ok := candidate["finishReason"].(string); ok && (reason == "SAFETY" || reason == "PROHIBITED_CONTENT" || reason == "BLOCKLIST") {
+				signals.RefusalDetected = true
+			}
+		}
+	}
+	if feedback, ok := root["promptFeedback"].(map[string]any); ok && !isEmptyJSONValue(feedback["blockReason"]) {
+		signals.RefusalDetected = true
+	}
+	if root["stop_reason"] == "refusal" {
+		signals.RefusalDetected = true
+	}
+	signals.HasSearchTrace = signals.HasSearchTrace || !isEmptyJSONValue(root["citations"])
+	if text, ok := root["output_text"].(string); ok {
+		collectProbeText(text, signals)
+	}
+	if result, ok := root["result"].(map[string]any); ok {
+		if text, ok := result["response"].(string); ok {
+			collectProbeText(text, signals)
+		}
+		if _, ok := result["choices"]; ok {
+			collectProbeEnvelope(result, signals)
 		}
 	}
 }
 
+func collectProbeAnswer(message map[string]any, signals *capabilityResponseSignals) {
+	if refusal, ok := message["refusal"].(string); ok && strings.TrimSpace(refusal) != "" {
+		signals.RefusalDetected = true
+	}
+	if text, ok := message["content"].(string); ok {
+		collectProbeText(text, signals)
+		return
+	}
+	parts, _ := message["content"].([]any)
+	var text strings.Builder
+	for _, value := range parts {
+		part, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if part["type"] == "refusal" {
+			signals.RefusalDetected = true
+		}
+		if refusal, ok := part["refusal"].(string); ok && strings.TrimSpace(refusal) != "" {
+			signals.RefusalDetected = true
+		}
+		// Thinking blocks are not the generated answer.
+		if part["thought"] == true {
+			continue
+		}
+		if part["type"] == nil || part["type"] == "text" || part["type"] == "output_text" {
+			if value, ok := part["text"].(string); ok {
+				text.WriteString(value)
+			}
+		}
+		if part["type"] == "tool_use" {
+			collectProbeTool(part, signals)
+		}
+		if call, ok := part["functionCall"].(map[string]any); ok {
+			collectProbeTool(call, signals)
+		}
+		if !isEmptyJSONValue(part["annotations"]) {
+			signals.HasSearchTrace = true
+		}
+	}
+	collectProbeText(text.String(), signals)
+}
+
+func collectProbeText(text string, signals *capabilityResponseSignals) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	signals.HasVisibleText = true
+	var object map[string]any
+	if json.Unmarshal([]byte(text), &object) == nil && len(object) == 1 && object["ok"] == true {
+		signals.HasStructuredOK = true
+	}
+}
+
+func collectProbeTools(value any, signals *capabilityResponseSignals) {
+	calls, _ := value.([]any)
+	for _, value := range calls {
+		call, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if function, ok := call["function"].(map[string]any); ok {
+			collectProbeTool(function, signals)
+		}
+	}
+}
+
+// collectProbeTool 只在工具名与参数都成立时记为一次有效工具调用。
+//
+// 名称必须是探测要求的那一个；参数必须是可解析的 JSON 对象。各家字段名不同
+// （OpenAI 用 arguments，Anthropic 用 input，Gemini 用 args）。探测 schema 没有
+// 任何必填属性，所以空对象（或空字符串）算符合；参数缺失、不是对象、解析失败
+// 都不构成「工具调用可用」的证据。
+func collectProbeTool(call map[string]any, signals *capabilityResponseSignals) {
+	if call["name"] != "verify_tool" {
+		return
+	}
+	if _, ok := probeToolArguments(call); !ok {
+		return
+	}
+	signals.HasToolCall = true
+}
+
+func probeToolArguments(call map[string]any) (map[string]any, bool) {
+	value, ok := call["arguments"]
+	if !ok {
+		value, ok = call["input"]
+	}
+	if !ok {
+		value, ok = call["args"]
+	}
+	if !ok {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed, true
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			// 无参工具被序列化成空字符串：等价于空对象，仍符合探测 schema。
+			return map[string]any{}, true
+		}
+		var object map[string]any
+		if json.Unmarshal([]byte(typed), &object) != nil || object == nil {
+			return nil, false
+		}
+		return object, true
+	default:
+		return nil, false
+	}
+}
 func isEmptyJSONValue(value any) bool {
 	switch typed := value.(type) {
 	case nil:
@@ -581,34 +829,46 @@ func judgeCapabilityResponse(item string, outcome *probeRequestOutcome) appmodel
 		return appmodel.ProbeVerdictUnknown
 	}
 	if outcome.Verdict != appmodel.ProbeVerdictPass {
+		if outcome.StatusCode >= 400 && strings.TrimSpace(outcome.Body) != "" {
+			outcome.Summary = outcome.Summary + ": " + outcome.Body
+		}
 		return outcome.Verdict
 	}
 	signals := collectCapabilitySignals(outcome.Body)
+	if signals.RefusalDetected {
+		outcome.Summary = "Upstream refused this probe; capability support remains unverified"
+		return appmodel.ProbeVerdictUnknown
+	}
 	switch item {
 	case appmodel.ProbeItemTextGeneration:
 		// 只要拿到可见正文就算通过；具体文案不强制（不同上游会加前后缀、
 		// 或把 "OK" 包在 markdown 里，强制相等会把可用渠道误判为失败）。
 		if signals.HasVisibleText {
+			outcome.Summary = "Received visible answer text"
 			return appmodel.ProbeVerdictPass
 		}
+		outcome.Summary = "No visible answer text was returned"
 		return appmodel.ProbeVerdictFail
 	case appmodel.ProbeItemToolCalling:
 		if signals.HasToolCall {
+			outcome.Summary = "Received a verify_tool call"
 			return appmodel.ProbeVerdictPass
 		}
-		if signals.RefusalDetected {
-			return appmodel.ProbeVerdictUnsupported
-		}
+		outcome.Summary = "verify_tool was not called; this probe did not verify tool support"
 		return appmodel.ProbeVerdictFail
 	case appmodel.ProbeItemStructuredOutput:
 		if signals.HasStructuredOK {
+			outcome.Summary = "Answer matches the requested JSON object {ok:true}"
 			return appmodel.ProbeVerdictPass
 		}
+		outcome.Summary = "Expected a plain JSON object {ok:true}; Markdown fences, extra fields, or prose do not satisfy this probe"
 		return appmodel.ProbeVerdictFail
 	case appmodel.ProbeItemWebSearch:
 		if signals.HasSearchTrace {
+			outcome.Summary = "Received native search evidence"
 			return appmodel.ProbeVerdictPass
 		}
+		outcome.Summary = "No native search evidence was returned; search support remains unverified"
 		// 没有检索痕迹但有正文：模型可能只是"凭记忆回答"。
 		// 这种证据不足以判定支持，也不足以判定不支持 → Unknown（不写入）。
 		return appmodel.ProbeVerdictUnknown
@@ -636,8 +896,7 @@ func buildCapabilityProbeAdapter(channelType outbound.OutboundType) outbound.Out
 }
 
 // capabilityProbeSupportedForChannel 报告某项能力探测对该渠道类型是否有意义。
-// 例如联网搜索对 Anthropic 原生渠道没有统一入口，直接标 Unsupported 比
-// 发一个注定失败的请求更诚实也更省额度。
+// 没有实现原生探针时只记录 Unknown，不把探针缺失写成上游不支持。
 func capabilityProbeSupportedForChannel(item string, channelType outbound.OutboundType) bool {
 	if !outbound.IsChatChannelType(channelType) {
 		return false

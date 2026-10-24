@@ -24,6 +24,9 @@ func applyModelThinkingSuffix(req *model.InternalLLMRequest) {
 	}
 	req.Model = cfg.ModelName
 	req.ReasoningExplicit = true
+	req.ReasoningFromModelSuffix = true
+	req.EnableThinking = nil
+	req.AdaptiveThinking = false
 	if cfg.Effort != "" {
 		// Level suffix: let each outbound protocol translate the semantic tier.
 		req.ReasoningEffort = cfg.Effort

@@ -713,8 +713,8 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
               与"确认删除"这类短确认弹窗的交互模型不同。
             */}
             <Dialog open={isTestDialogOpen} onOpenChange={setIsTestDialogOpen}>
-                <DialogContent className="max-h-[85vh] overflow-y-auto rounded-xl sm:max-w-2xl">
-                    <DialogHeader>
+                <DialogContent className="flex h-[min(85dvh,52rem)] min-w-0 flex-col overflow-hidden [@media(max-height:600px)]:overflow-y-auto rounded-xl p-4 sm:max-w-4xl sm:p-6">
+                    <DialogHeader className="min-w-0 shrink-0 pr-8 text-left">
                         <DialogTitle>{t('testDialog.title')}</DialogTitle>
                         <DialogDescription>{t('testDialog.description')}</DialogDescription>
                     </DialogHeader>

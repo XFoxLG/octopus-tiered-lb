@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -73,9 +74,14 @@ func testGroupUpdateStability(t *testing.T, ctx context.Context) {
 	if err := RefreshCacheByID(group.ID, ctx); err != nil {
 		t.Fatal(err)
 	}
+	// CFG-02 三态语义：nil Raw=保持，[]byte("null")=清空，[]byte("2")=设置。
+	// 旧测试直接填 Override 指针（相当于"提交值"），改用 Raw 精确表达三态。
 	zero, two := 0, 2
 	for _, values := range [][]*int{{nil, nil}, {&zero, &two}, {nil, &zero}} {
-		request := &model.GroupUpdateRequest{ID: group.ID, ItemsToUpdate: []model.GroupItemUpdateRequest{{ID: items[0].ID, Priority: 2, Weight: 1, RelayRetryCountOverride: values[0]}, {ID: items[1].ID, Priority: 1, Weight: 1, RelayRetryCountOverride: values[1]}}}
+		request := &model.GroupUpdateRequest{ID: group.ID, ItemsToUpdate: []model.GroupItemUpdateRequest{
+			{ID: items[0].ID, Priority: 2, Weight: 1, RelayRetryCountOverrideRaw: marshalOverrideValue(values[0])},
+			{ID: items[1].ID, Priority: 1, Weight: 1, RelayRetryCountOverrideRaw: marshalOverrideValue(values[1])},
+		}}
 		if _, err := GroupUpdate(request, ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -115,4 +121,12 @@ func testGroupUpdateStability(t *testing.T, ctx context.Context) {
 	if count != 2 || sqlDB.Stats().InUse != 0 {
 		t.Fatalf("lost item or leaked connection: count=%d stats=%+v", count, sqlDB.Stats())
 	}
+}
+
+// marshalOverrideValue 把指针转成 CFG-02 的 Raw 语义：nil→"null"（显式清空），非 nil→数值。
+func marshalOverrideValue(value *int) []byte {
+	if value == nil {
+		return []byte("null")
+	}
+	return []byte(strconv.Itoa(*value))
 }

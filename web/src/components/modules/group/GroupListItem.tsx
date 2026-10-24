@@ -439,6 +439,7 @@ export function GroupListItem({ group }: { group: Group }) {
                         origPriority !== newPriority
                     );
                 })
+                // CFG-03：只改排序时省略 relay_retry_count_override，后端三态语义会保持原值。
                 .map(({ member, newPriority }) => ({
                     id: member.item_id!,
                     priority: newPriority,

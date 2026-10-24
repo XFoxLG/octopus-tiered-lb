@@ -634,9 +634,9 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                 <MorphingDialogContainer>
                     <MorphingDialogContent className="relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl bg-card px-6 py-4 text-card-foreground md:w-[95vw] md:max-w-7xl">
                         <MorphingDialogClose className="top-4 right-5 text-muted-foreground hover:text-foreground transition-colors" />
-                        <MorphingDialogTitle className="flex items-center gap-2 mb-3 text-sm">
+                        <MorphingDialogTitle className="flex items-center gap-2 mb-3 pr-12 text-sm">
                             <ModelAvatar size={28} />
-                            <span className="font-semibold text-card-foreground">{displayRequestModelName}</span>
+                            <span className="min-w-0 shrink truncate font-semibold text-card-foreground" title={displayRequestModelName}>{displayRequestModelName}</span>
                             {log.is_test && (
                                 <Badge
                                     variant="outline"

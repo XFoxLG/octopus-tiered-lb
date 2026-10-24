@@ -1,12 +1,34 @@
 package relay
 
 import (
+	"reflect"
 	"testing"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
+
+func TestPrepareRewriteOwnsNestedRequestReferences(t *testing.T) {
+	strict := true
+	source := &transmodel.InternalLLMRequest{Model: "model", Tools: []transmodel.Tool{{Type: "function", Function: transmodel.Function{Name: "tool", Parameters: []byte(`{"type":"object"}`), Strict: &strict}}}, Metadata: map[string]string{"tag": "source"}}
+	before := transmodel.CloneForAttempt(source)
+	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat, RequestRewrite: &appmodel.RequestRewriteConfig{Enabled: true, Profile: appmodel.RequestRewriteProfileOpenAIChatCompat}}
+	first, _, err := prepareInternalRequestForOutbound(channel, source, "chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := prepareInternalRequestForOutbound(channel, source, "chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Tools[0].Function.Parameters[0] = 'X'
+	*first.Tools[0].Function.Strict = false
+	first.Metadata["tag"] = "changed"
+	if !reflect.DeepEqual(source, before) || second.Tools[0].Function.Parameters[0] == 'X' || !*second.Tools[0].Function.Strict {
+		t.Fatal("rewrite path aliased a shared request")
+	}
+}
 
 func TestPrepareInternalRequestForOutbound_IsScopedPerChannelAttempt(t *testing.T) {
 	first := "first"

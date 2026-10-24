@@ -3311,7 +3311,7 @@
       },
       "testDialog": {
         "title": "Test channel",
-        "description": "Model response, protocol capabilities and per-key checks are merged into this single dialog; each section runs only when you click it."
+        "description": "Run model response, protocol and capability, or per-key checks on demand. Each check has a different scope."
       }
     },
     "create": {
@@ -3610,7 +3610,7 @@
     },
     "test": {
       "title": "Test channel",
-      "description": "Three checks in one place: model response, protocol and capabilities, then per-key connectivity. Everything runs only when you click; probe results are written back only after you press Apply.",
+      "description": "Run model response, protocol and capability, or per-key checks on demand. Each check has a different scope.",
       "resultsLabel": "Test results",
       "sections": {
         "model": "Model response",
@@ -3626,7 +3626,20 @@
       "diagnosticOnly": "This channel already uses the new connection config, so the probe is diagnostic only and will not be written back.",
       "noKeys": "This channel has no keys to check.",
       "cancelWait": "Stop waiting",
-      "footerHint": "Model response and per-key checks consume the channel key quota; the probe sends real requests. Everything runs only on manual click, with no background schedule."
+      "footerHint": "Model response and per-key checks consume the channel key quota; the probe sends real requests. Everything runs only on manual click, with no background schedule.",
+      "modelScope": "Uses the channel routing rules and may retry or fall back to another interface. A successful answer verifies only the interface that answered.",
+      "probeScope": "Checks each interface separately using non-streaming requests. Results apply to this model, key and protocol; they do not verify streaming.",
+      "keysScope": "Checks enabled keys with the saved channel test model, which can differ from the model selected above.",
+      "actualProtocol": "Answer protocol: {protocol}",
+      "testedModel": "Tested model: {model}",
+      "probeKey": "Key ID: {key}",
+      "catalogProbe": "Model catalog (separate from generation)",
+      "protocolUnrecorded": "Protocol not recorded in this result",
+      "interfaceId": "Interface ID: {id}",
+      "protocolVerification": "Protocol: {protocol}",
+      "responseDetail": "Response details",
+      "detailRedacted": "Upstream response, with credentials redacted",
+      "detailTruncated": "Saved response was truncated; the missing part cannot be recovered from this record."
     },
     "probe": {
       "cancel": "Stop probe",

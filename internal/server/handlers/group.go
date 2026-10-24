@@ -352,23 +352,32 @@ func purgeUnavailableGroupItems(c *gin.Context) {
 // }
 
 type groupListResponseItem struct {
-	ID                int               `json:"id"`
-	Name              string            `json:"name"`
-	EndpointType      string            `json:"endpoint_type"`
-	EndpointProvider  string            `json:"endpoint_provider,omitempty"`
-	OutboundFormat    string            `json:"outbound_format,omitempty"`
-	Mode              model.GroupMode   `json:"mode"`
-	MatchRegex        string            `json:"match_regex"`
-	FirstTokenTimeOut int               `json:"first_token_time_out"`
-	AttemptTimeOut    int               `json:"attempt_time_out"`
-	StreamIdleTimeout int               `json:"stream_idle_timeout"`
-	HedgeEnabled      bool              `json:"hedge_enabled"`
-	HedgeDelayMs      int               `json:"hedge_delay_ms"`
-	SessionKeepTime   int               `json:"session_keep_time"`
-	Condition         string            `json:"condition,omitempty"`
-	Items             []model.GroupItem `json:"items"`
-	LastTestPassed    *bool             `json:"last_test_passed,omitempty"`
-	LastTestAt        int64             `json:"last_test_at,omitempty"`
+	ID                      int                  `json:"id"`
+	Name                    string               `json:"name"`
+	Category                string               `json:"category"`
+	EndpointType            string               `json:"endpoint_type"`
+	EndpointProvider        string               `json:"endpoint_provider"`
+	OutboundFormat          string               `json:"outbound_format"`
+	Mode                    model.GroupMode      `json:"mode"`
+	MatchRegex              string               `json:"match_regex"`
+	Condition               string               `json:"condition"`
+	FirstTokenTimeOut       int                  `json:"first_token_time_out"`
+	AttemptTimeOut          int                  `json:"attempt_time_out"`
+	StreamIdleTimeout       int                  `json:"stream_idle_timeout"`
+	HedgeEnabled            bool                 `json:"hedge_enabled"`
+	HedgeDelayMs            int                  `json:"hedge_delay_ms"`
+	SessionKeepTime         int                  `json:"session_keep_time"`
+	ReasoningBufferStrategy string               `json:"reasoning_buffer_strategy"`
+	ParamOverride           *string              `json:"param_override"`
+	DefaultReasoningEffort  string               `json:"default_reasoning_effort"`
+	ReasoningForceOverride  bool                 `json:"reasoning_force_override"`
+	RelayRetryCount         int                  `json:"relay_retry_count"`
+	RelayRouteRetries       int                  `json:"relay_route_retries"`
+	CustomHeader            []model.CustomHeader `json:"custom_header"`
+	Items                   []model.GroupItem    `json:"items"`
+	LastTestPassed          *bool                `json:"last_test_passed,omitempty"`
+	LastTestAllFailed       *bool                `json:"last_test_all_failed"`
+	LastTestAt              int64                `json:"last_test_at,omitempty"`
 }
 
 func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
@@ -383,22 +392,32 @@ func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
 			groupItems = make([]model.GroupItem, 0)
 		}
 		items[i] = groupListResponseItem{
-			ID:                group.ID,
-			Name:              group.Name,
-			EndpointType:      group.EndpointType,
-			EndpointProvider:  group.EndpointProvider,
-			OutboundFormat:    group.OutboundFormat,
-			Mode:              group.Mode,
-			MatchRegex:        group.MatchRegex,
-			FirstTokenTimeOut: group.FirstTokenTimeOut,
-			AttemptTimeOut:    group.AttemptTimeOut,
-			StreamIdleTimeout: group.StreamIdleTimeout,
-			HedgeEnabled:      group.HedgeEnabled,
-			HedgeDelayMs:      group.HedgeDelayMs,
-			SessionKeepTime:   group.SessionKeepTime,
-			Items:             groupItems,
-			LastTestPassed:    group.LastTestPassed,
-			LastTestAt:        group.LastTestAt,
+			ID:                      group.ID,
+			Name:                    group.Name,
+			Category:                group.Category,
+			EndpointType:            group.EndpointType,
+			EndpointProvider:        group.EndpointProvider,
+			OutboundFormat:          group.OutboundFormat,
+			Mode:                    group.Mode,
+			MatchRegex:              group.MatchRegex,
+			Condition:               group.Condition,
+			FirstTokenTimeOut:       group.FirstTokenTimeOut,
+			AttemptTimeOut:          group.AttemptTimeOut,
+			StreamIdleTimeout:       group.StreamIdleTimeout,
+			HedgeEnabled:            group.HedgeEnabled,
+			HedgeDelayMs:            group.HedgeDelayMs,
+			SessionKeepTime:         group.SessionKeepTime,
+			ReasoningBufferStrategy: group.ReasoningBufferStrategy,
+			ParamOverride:           group.ParamOverride,
+			DefaultReasoningEffort:  group.DefaultReasoningEffort,
+			ReasoningForceOverride:  group.ReasoningForceOverride,
+			RelayRetryCount:         group.RelayRetryCount,
+			RelayRouteRetries:       group.RelayRouteRetries,
+			CustomHeader:            group.CustomHeader,
+			Items:                   groupItems,
+			LastTestPassed:          group.LastTestPassed,
+			LastTestAllFailed:       group.LastTestAllFailed,
+			LastTestAt:              group.LastTestAt,
 		}
 	}
 	return items

@@ -177,6 +177,8 @@ export interface Group {
 }
 
 export interface GroupTestResult {
+    endpoint_id?: string;
+    protocol?: import('./channel').EndpointProtocol;
     client_id?: string;
     item_id: number;
     channel_id: number;

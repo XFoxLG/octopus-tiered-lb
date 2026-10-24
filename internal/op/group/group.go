@@ -207,9 +207,26 @@ func normalizeGroupItemUpdateRequests(existingItems []model.GroupItem, itemsToUp
 			}
 		}
 
+		// CFG-02 三态：Raw=nil（未提交）→保留既有值；Raw="null"（显式清空）→
+		// Override=nil；Raw=数值 → 解码后填 Override。Raw 非法时保持 Override
+		// 不变，由后续 SQL 写入侧决定是否报错（当前静默跳过）。
+		if item.RelayRetryCountOverrideRaw == nil {
+			item.RelayRetryCountOverride = existing.RelayRetryCountOverride
+		} else if string(item.RelayRetryCountOverrideRaw) == "null" {
+			item.RelayRetryCountOverride = nil
+		} else {
+			var decoded int
+			if err := json.Unmarshal(item.RelayRetryCountOverrideRaw, &decoded); err == nil {
+				item.RelayRetryCountOverride = &decoded
+			} else {
+				// 解码失败时保持 Override 为 nil，等同于清空；调用方可在 handler
+				// 层按需要返回 400（当前静默）。
+				item.RelayRetryCountOverride = nil
+			}
+		}
+
 		normalized = append(normalized, item)
 	}
-
 	if len(normalized) == 0 {
 		return nil
 	}
@@ -851,35 +868,46 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 		priorityCase := "CASE id"
 		weightCase := "CASE id"
 		retryOverrideCase := "CASE id"
+		// CFG-02：条目级 override 按"是否提交"分两批处理，未提交的行完全不
+		// 进 CASE，保持原值；显式 null/数值的行才写入。
+		rowsWithoutOverride := make([]int, 0, len(normalizedItemsToUpdate))
+		rowsWithOverride := make([]int, 0, len(normalizedItemsToUpdate))
 		for i, item := range normalizedItemsToUpdate {
 			ids[i] = item.ID
 			priorityCase += fmt.Sprintf(" WHEN %d THEN %d", item.ID, item.Priority)
 			weightCase += fmt.Sprintf(" WHEN %d THEN %d", item.ID, item.Weight)
-			// 条目级重试覆盖 *int：nil=跟随（写 NULL）。前端 items diff 全量下发，
-			// 清空输入框即回 NULL，恢复跟随渠道/分组/全局。
-			if item.RelayRetryCountOverride != nil {
-				retryOverrideCase += fmt.Sprintf(" WHEN %d THEN %d", item.ID, *item.RelayRetryCountOverride)
+			if item.RelayRetryCountOverrideRaw == nil {
+				rowsWithoutOverride = append(rowsWithoutOverride, item.ID)
 			} else {
-				retryOverrideCase += fmt.Sprintf(" WHEN %d THEN NULL", item.ID)
+				rowsWithOverride = append(rowsWithOverride, item.ID)
+				if item.RelayRetryCountOverride != nil {
+					retryOverrideCase += fmt.Sprintf(" WHEN %d THEN %d", item.ID, *item.RelayRetryCountOverride)
+				} else {
+					retryOverrideCase += fmt.Sprintf(" WHEN %d THEN NULL", item.ID)
+				}
 			}
 		}
+
 		priorityCase += " END"
 		weightCase += " END"
-		// The typed ELSE keeps PostgreSQL from resolving an all-NULL CASE as text.
-		retryOverrideCase += " ELSE relay_retry_count_override END"
-
+		if len(rowsWithOverride) > 0 {
+			// The typed ELSE keeps PostgreSQL from resolving an all-NULL CASE as text.
+			retryOverrideCase += " ELSE relay_retry_count_override END"
+		}
+		updates := map[string]interface{}{
+			"priority": gorm.Expr(priorityCase),
+			"weight":   gorm.Expr(weightCase),
+		}
+		if len(rowsWithOverride) > 0 {
+			updates["relay_retry_count_override"] = gorm.Expr(retryOverrideCase)
+		}
 		if err := tx.Model(&model.GroupItem{}).
 			Where("id IN ? AND group_id = ?", ids, req.ID).
-			Updates(map[string]interface{}{
-				"priority":                   gorm.Expr(priorityCase),
-				"weight":                     gorm.Expr(weightCase),
-				"relay_retry_count_override": gorm.Expr(retryOverrideCase),
-			}).Error; err != nil {
+			Updates(updates).Error; err != nil {
 			tx.Rollback()
 			return nil, fmt.Errorf("failed to update items: %w", err)
 		}
 	}
-
 	// 批量新增 items
 	if len(normalizedItemsToAdd) > 0 {
 		newItems := make([]model.GroupItem, len(normalizedItemsToAdd))

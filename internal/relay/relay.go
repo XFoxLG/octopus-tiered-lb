@@ -584,6 +584,10 @@ func parseRequest(inboundType inbound.InboundType, c *gin.Context) (*model.Inter
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return nil, nil, err
 	}
+	if err := model.ValidateClientReasoningControls(internalRequest); err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return nil, nil, err
+	}
 
 	populateRelayRequestSessionFields(c, internalRequest, body)
 

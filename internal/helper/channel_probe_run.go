@@ -95,7 +95,7 @@ func RunChannelCapabilityProbe(
 	results := make([]appmodel.ChannelProbeResult, 0, 8)
 	passedAdapters := make(map[outbound.OutboundType]bool)
 	if channel.ConnectionConfig != nil {
-		results = runConfiguredConnectionProbe(ctx, channel, run, selectedKey.Key.ChannelKey, modelName)
+		results = runConfiguredConnectionProbe(ctx, channel, run, selectedKey.Key.ChannelKey, probeScopeForSelection(selectedKey), modelName)
 	} else {
 
 		// ---- 协议层：逐条验证可用端点 ----
@@ -103,7 +103,7 @@ func RunChannelCapabilityProbe(
 			if ctx.Err() != nil {
 				break
 			}
-			outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, target.AdapterType, target.Request)
+			outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, probeScopeForSelection(selectedKey), target.AdapterType, target.Request)
 			passedAdapters[target.AdapterType] = outcome.Verdict == appmodel.ProbeVerdictPass
 			results = append(results, buildProbeResult(run, appmodel.ProbeKindProtocol, target.Item, outcome, selectedKey.Key.ChannelKey))
 		}
@@ -137,8 +137,8 @@ func RunChannelCapabilityProbe(
 					ModelName: modelName,
 					Kind:      appmodel.ProbeKindCapability,
 					Item:      item,
-					Verdict:   appmodel.ProbeVerdictUnsupported,
-					Summary:   "该渠道类型没有统一的探测入口",
+					Verdict:   appmodel.ProbeVerdictUnknown,
+					Summary:   "No native probe is implemented for this channel type; upstream support was not tested",
 				})
 				continue
 			}
@@ -168,7 +168,7 @@ func RunChannelCapabilityProbe(
 			if item == appmodel.ProbeItemWebSearch && passedAdapters[outbound.OutboundTypeOpenAIResponse] {
 				probeAdapter = outbound.OutboundTypeOpenAIResponse
 			}
-			outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, probeAdapter, probeRequest, item)
+			outcome := sendProbeRequest(ctx, channel, selectedKey.Key.ChannelKey, probeScopeForSelection(selectedKey), probeAdapter, probeRequest, item)
 			outcome.Verdict = judgeCapabilityResponse(item, outcome)
 			results = append(results, buildProbeResult(run, appmodel.ProbeKindCapability, item, outcome, selectedKey.Key.ChannelKey))
 		}
@@ -187,7 +187,7 @@ func RunChannelCapabilityProbe(
 		}
 	}
 	for i := range results {
-		results[i].Summary = redactProbeDetail(results[i].Summary, secrets...)
+		results[i].Summary = truncateProbeSummary(redactProbeDetail(results[i].Summary, secrets...))
 		results[i].Detail = redactProbeDetail(results[i].Detail, secrets...)
 	}
 	run.Summary = summarizeProbeRun(results)
@@ -215,12 +215,28 @@ func buildProbeResult(
 		result.Summary = "probe produced no outcome"
 		return result
 	}
+	result.Protocol = outcome.Protocol
+	result.EndpointID = outcome.EndpointID
+	result.EndpointURL = outcome.EndpointURL
+	result.KeyScope = outcome.KeyScope
+	result.RequestStream = outcome.RequestStream
+	result.RequestBudgetMS = outcome.RequestBudgetMS
+	result.RequestFingerprint = outcome.RequestFingerprint
 	result.Verdict = outcome.Verdict
 	result.StatusCode = outcome.StatusCode
 	result.LatencyMS = outcome.LatencyMS
+	// The run redacts all configured headers before applying the summary limit.
 	result.Summary = redactProbeDetail(outcome.Summary, secret)
 	result.Detail = redactProbeDetail(outcome.Body, secret)
 	return result
+}
+
+// probeScopeForSelection 把选中的渠道 Key 转成不含凭据的审计标识。
+func probeScopeForSelection(selected probeChannelKey) probeKeyScope {
+	if selected.NoKey {
+		return probeKeyScope{NoKey: true}
+	}
+	return probeKeyScope{Index: selected.Index, KeyID: selected.Key.ID}
 }
 
 // summarizeProbeRun 生成一行人类可读的整体结论（纯展示，不参与决策）。
@@ -272,7 +288,7 @@ func probeChannelModelList(
 		// fetchChannelModelIDs 把状态码语义丢掉了，这里保守判 Unknown：
 		// 拿不到列表不代表渠道不可用，绝不据此改写配置。
 		result.Verdict = appmodel.ProbeVerdictUnknown
-		result.Summary = redactProbeDetail(err.Error(), key)
+		result.Summary = truncateProbeSummary(redactProbeDetail(err.Error(), key))
 		return result
 	}
 	if len(models) == 0 {
