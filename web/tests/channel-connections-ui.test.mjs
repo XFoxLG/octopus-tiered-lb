@@ -126,7 +126,7 @@ test('URL previews preserve custom prefixes and do not show query credentials', 
 
 const CHANNEL_TYPES = { OpenAIEmbedding: 3 };
 
-function testDialogFixture({ locale = 'en', overrides = {} } = {}) {
+function testDialogFixture({ locale = 'en', overrides = {}, probeRun = null } = {}) {
     const messages = JSON.parse(read(`../public/locale/${locale}.json`));
     const translateFor = (namespace) => createTranslator({
         locale: locale.replace('_', '-'),
@@ -136,9 +136,10 @@ function testDialogFixture({ locale = 'en', overrides = {} } = {}) {
         onError: (error) => { throw error; },
     });
     const noopMutation = { isPending: false, mutate: () => {}, mutateAsync: async () => ({}) };
+    let stateIndex = 0;
     const { TestDialog } = load('../src/components/modules/channel/TestDialog.tsx', {
         react: {
-            useState: (initial) => [initial, () => {}],
+            useState: (initial) => [stateIndex++ === 4 ? probeRun : initial, () => {}],
             useEffect: (effect) => { effect(); },
             useMemo: (factory) => factory(),
             useRef: (initial) => ({ current: initial }),
@@ -155,6 +156,8 @@ function testDialogFixture({ locale = 'en', overrides = {} } = {}) {
         '@/api/endpoints/group': { useGroupTestProgress: () => ({ data: undefined }) },
         '@/components/ui/button': { Button: 'button' },
         '@/components/ui/input': { Input: 'input' },
+        './probe-results': load('../src/components/modules/channel/probe-results.ts'),
+        '@/components/common/CopyButton': { CopyIconButton: ({ text }) => require('react').createElement('button', { type: 'button', 'aria-label': 'Copy response', 'data-copy-text': text }, 'Copy') },
         '@/components/common/Toast': { toast: { error: () => {}, success: () => {}, warning: () => {} } },
         '@/lib/utils': { cn: (...values) => values.filter(Boolean).join(' ') },
     });
@@ -225,4 +228,60 @@ test('channel detail keeps a single test entry and drops the retired parallel bu
     assert.doesNotMatch(card, /ProbeDialog/);
     assert.doesNotMatch(card, /testModel\.probe|actions\.checkKeys/);
     assert.equal(fs.existsSync(new URL('../src/components/modules/channel/ProbeDialog.tsx', import.meta.url)), false);
+});
+
+const mixedProbe = {
+    id: 11, model_name: 'robin-3.1-pro', channel_id: 7, key_id: 1, applied: false,
+    results: [
+        { endpoint_id: 'gemini-one', kind: 'protocol', item: 'protocol_gemini', verdict: 'pass', status_code: 200 },
+        { endpoint_id: 'gemini-one', kind: 'capability', item: 'tool_calling', verdict: 'fail', status_code: 200, summary: 'verify_tool was not called', detail: '{"candidates":[{"content":{"parts":[{"text":"Cannot fulfill this request"}]}}]}' },
+        { endpoint_id: 'chat-two', kind: 'protocol', item: 'protocol_chat', verdict: 'pass', status_code: 200 },
+        { endpoint_id: 'chat-two', kind: 'capability', item: 'tool_calling', verdict: 'pass', status_code: 200, detail: '{"choices":[{"message":{"tool_calls":[{"function":{"name":"verify_tool","arguments":"{}"}}]}}]}' },
+    ],
+};
+test('mixed protocol results stay in their own named interface groups after reordering', () => {
+    const { markup } = testDialogFixture({ probeRun: mixedProbe, overrides: { connection_config: {
+        endpoints: [
+            { id: 'chat-two', protocol: 'chat', url: 'https://example.com/v1', url_mode: 'base' },
+            { id: 'gemini-one', protocol: 'gemini', url: 'https://example.com/v1beta', url_mode: 'base' },
+        ], catalog: { format: 'manual' },
+    } } });
+    assert.match(markup, /data-probe-endpoint="gemini-one"/);
+    assert.match(markup, /data-probe-endpoint="chat-two"/);
+    assert.match(markup, /Gemini generateContent/);
+    assert.match(markup, /Chat Completions/);
+    assert.match(markup, /robin-3.1-pro/);
+    assert.doesNotMatch(markup, /[12] · Capability/);
+    assert.match(markup, /<details/);
+});
+test('a long response cannot impose a minimum width on the test dialog', () => {
+    const { markup } = testDialogFixture({ probeRun: { ...mixedProbe, results: [{
+        ...mixedProbe.results[1], detail: 'x'.repeat(5000),
+    }] } });
+    assert.match(markup, /min-w-0/);
+    assert.match(markup, /\[overflow-wrap:anywhere\]/);
+    const card = read('../src/components/modules/channel/CardContent.tsx');
+    assert.match(card, /h-\[min\(85dvh,52rem\)\]/);
+    assert.match(card, /overflow-hidden/);
+});
+
+test('older capability history is not assigned a protocol by guessing the channel default', () => {
+    const group = load('../src/components/modules/channel/probe-results.ts').groupProbeResults;
+    const result=group([{kind:'protocol',item:'protocol_responses',verdict:'pass'},{kind:'capability',item:'tool_calling',verdict:'pass'},{kind:'capability',item:'models',verdict:'pass'}]);
+    assert.equal(result.length,3);
+    assert.equal(result[0].protocol,'responses');
+    assert.equal(result[1].protocol,undefined);
+    assert.equal(result[2].catalog,true);
+});
+
+test('new legacy results retain the actual protocol chosen for each capability', () => {
+    const group = load('../src/components/modules/channel/probe-results.ts').groupProbeResults;
+    const result=group([{kind:'protocol',item:'protocol_chat',verdict:'pass',protocol:'chat'},{kind:'capability',item:'tool_calling',verdict:'pass',protocol:'chat'},{kind:'capability',item:'web_search',verdict:'pass',protocol:'responses'}]);
+    assert.equal(result[0].rows.length,2);
+    assert.equal(result[1].protocol,'responses');
+});
+
+test('actual protocol metadata takes precedence over a retained legacy protocol item', () => {
+    const group=load('../src/components/modules/channel/probe-results.ts').groupProbeResults;
+    assert.equal(group([{endpoint_id:'cf',protocol:'cloudflare',kind:'protocol',item:'protocol_chat',verdict:'pass'}])[0].protocol,'cloudflare');
 });

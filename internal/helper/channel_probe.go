@@ -16,6 +16,8 @@ import (
 )
 
 type ChannelTestResult struct {
+	Protocol     string `json:"protocol,omitempty"`
+	ModelName    string `json:"model_name,omitempty"`
 	EndpointID   string `json:"endpoint_id,omitempty"`
 	BaseURL      string `json:"base_url"`
 	KeyRemark    string `json:"key_remark,omitempty"`

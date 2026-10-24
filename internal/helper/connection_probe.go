@@ -40,7 +40,7 @@ func prepareConnectionProbeRequest(ctx context.Context, ch *m.Channel, plan m.Co
 	return &cloned, err
 }
 
-func runConfiguredConnectionProbe(ctx context.Context, ch *m.Channel, run *m.ChannelProbeRun, key, modelName string) []m.ChannelProbeResult {
+func runConfiguredConnectionProbe(ctx context.Context, ch *m.Channel, run *m.ChannelProbeRun, key string, scope probeKeyScope, modelName string) []m.ChannelProbeResult {
 	results := []m.ChannelProbeResult{}
 	if err := ch.ConnectionConfig.Validate(); err != nil {
 		return []m.ChannelProbeResult{{Kind: m.ProbeKindProtocol, Verdict: m.ProbeVerdictFail, Summary: err.Error()}}
@@ -67,7 +67,7 @@ func runConfiguredConnectionProbe(ctx context.Context, ch *m.Channel, run *m.Cha
 			item = "protocol_embeddings"
 			request, _ = buildGroupProbeRequest(m.EndpointTypeEmbeddings, modelName)
 		}
-		outcome := sendProbeRequest(ctx, selected, key, plan.AdapterType, request)
+		outcome := sendProbeRequest(ctx, selected, key, scope, plan.AdapterType, request)
 		result := buildProbeResult(run, m.ProbeKindProtocol, item, outcome, key)
 		result.EndpointID = endpoint.ID
 		results = append(results, result)
@@ -79,14 +79,16 @@ func runConfiguredConnectionProbe(ctx context.Context, ch *m.Channel, run *m.Cha
 				break
 			}
 			if outcome.Verdict != m.ProbeVerdictPass {
-				results = append(results, m.ChannelProbeResult{ChannelID: ch.ID, ModelName: modelName, Kind: m.ProbeKindCapability, Item: capability, EndpointID: endpoint.ID, Verdict: m.ProbeVerdictUnknown, Summary: "Endpoint has not passed protocol verification"})
+				// 这一行没有真的发请求：只标出它属于哪个接口，不写协议、
+				// 地址或指纹，避免把「未验证的接口声明」记成实际证据。
+				results = append(results, m.ChannelProbeResult{ChannelID: ch.ID, RunID: run.ID, ModelName: modelName, Kind: m.ProbeKindCapability, Item: capability, EndpointID: endpoint.ID, Verdict: m.ProbeVerdictUnknown, Summary: "Endpoint has not passed protocol verification"})
 				continue
 			}
 			request, err := buildCapabilityProbeRequest(capability, modelName)
 			if err != nil {
 				continue
 			}
-			tested := sendProbeRequest(ctx, selected, key, plan.AdapterType, request, capability)
+			tested := sendProbeRequest(ctx, selected, key, scope, plan.AdapterType, request, capability)
 			tested.Verdict = judgeCapabilityResponse(capability, tested)
 			row := buildProbeResult(run, m.ProbeKindCapability, capability, tested, key)
 			row.EndpointID = endpoint.ID
@@ -114,7 +116,7 @@ func testConfiguredChannel(ctx context.Context, ch m.Channel) (*ChannelTestSumma
 	for i := range ch.ConnectionConfig.Endpoints {
 		endpoint := &ch.ConnectionConfig.Endpoints[i]
 		plan := m.ConnectionPlan{Endpoint: endpoint, AdapterType: endpoint.AdapterType()}
-		for _, key := range ch.Keys {
+		for index, key := range ch.Keys {
 			if !key.Enabled || strings.TrimSpace(key.ChannelKey) == "" {
 				continue
 			}
@@ -129,7 +131,7 @@ func testConfiguredChannel(ctx context.Context, ch m.Channel) (*ChannelTestSumma
 			if endpoint.Protocol == "embeddings" {
 				request, _ = buildGroupProbeRequest(m.EndpointTypeEmbeddings, name)
 			}
-			outcome := sendProbeRequest(ctx, ch.WithConnectionPlan(plan), key.ChannelKey, plan.AdapterType, request)
+			outcome := sendProbeRequest(ctx, ch.WithConnectionPlan(plan), key.ChannelKey, probeKeyScope{Index: index, KeyID: key.ID}, plan.AdapterType, request)
 			secrets := []string{key.ChannelKey}
 			for _, h := range ch.CustomHeader {
 				secrets = append(secrets, h.HeaderValue)
@@ -139,7 +141,7 @@ func testConfiguredChannel(ctx context.Context, ch m.Channel) (*ChannelTestSumma
 					secrets = append(secrets, h.HeaderValue)
 				}
 			}
-			row := ChannelTestResult{EndpointID: endpoint.ID, BaseURL: redactProbeDetail(endpoint.URL, secrets...), KeyRemark: key.Remark, KeyMasked: maskSecret(key.ChannelKey), StatusCode: outcome.StatusCode, Passed: outcome.Verdict == m.ProbeVerdictPass, LatencyMS: time.Since(start).Milliseconds(), Message: redactProbeDetail(outcome.Summary, secrets...), ResponseBody: redactProbeDetail(outcome.Body, secrets...)}
+			row := ChannelTestResult{EndpointID: endpoint.ID, Protocol: endpoint.Protocol, ModelName: name, BaseURL: redactProbeDetail(endpoint.URL, secrets...), KeyRemark: key.Remark, KeyMasked: maskSecret(key.ChannelKey), StatusCode: outcome.StatusCode, Passed: outcome.Verdict == m.ProbeVerdictPass, LatencyMS: time.Since(start).Milliseconds(), Message: redactProbeDetail(outcome.Summary, secrets...), ResponseBody: redactProbeDetail(outcome.Body, secrets...)}
 			if row.StatusCode == http.StatusTooManyRequests {
 				row.Passed = false
 			}

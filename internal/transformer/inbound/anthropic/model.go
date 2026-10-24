@@ -158,7 +158,13 @@ type Thinking struct {
 }
 
 type OutputConfig struct {
-	Effort string `json:"effort,omitempty" validate:"omitempty,oneof=max xhigh high medium low"`
+	Effort string        `json:"effort,omitempty" validate:"omitempty,oneof=max xhigh high medium low"`
+	Format *OutputFormat `json:"format,omitempty"`
+}
+
+type OutputFormat struct {
+	Type   string                 `json:"type"`
+	Schema transformer.RawMessage `json:"schema"`
 }
 
 type ToolChoice struct {

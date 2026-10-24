@@ -33,9 +33,18 @@ func (i *ChatInbound) TransformRequest(ctx context.Context, body []byte) (*model
 	// expressed any reasoning intent (including "none").
 	var reasoningProbe struct {
 		ReasoningEffort *string `json:"reasoning_effort"`
+		EnableThinking  *bool   `json:"enable_thinking"`
 	}
-	if err := transformer.Unmarshal(body, &reasoningProbe); err == nil && reasoningProbe.ReasoningEffort != nil {
-		request.ReasoningExplicit = true
+	if err := transformer.Unmarshal(body, &reasoningProbe); err == nil {
+		if reasoningProbe.ReasoningEffort != nil {
+			request.ReasoningExplicit = true
+		}
+		// REQ-01: an explicit enable_thinking value is also a reasoning intent.
+		// Without this probe, "enable_thinking": false would look like a silent
+		// client and a group default effort would override the user's opt-out.
+		if reasoningProbe.EnableThinking != nil {
+			request.ReasoningExplicit = true
+		}
 	}
 	return &request, nil
 }

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
-	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
+	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
 // 五态语义：未配 / 已配+沉默 / 已配+显式关 / 已配+显式关+强制 / 已配+已有档位。
@@ -112,8 +112,58 @@ func TestApplyReasoningPolicy(t *testing.T) {
 	}
 }
 
+// REQ-01 矛盾控制：客户端显式 enable_thinking=false 时，
+// 无 force 必须不注入；有 force 注入时不得同时保留 thinking disabled。
+func TestApplyReasoningPolicyEnableThinkingFalse(t *testing.T) {
+	group := &appmodel.Group{DefaultReasoningEffort: "high"}
+
+	silent := &transmodel.InternalLLMRequest{EnableThinking: boolPtr(false)}
+	applyReasoningPolicy(group, silent)
+	if silent.ReasoningEffort != "" {
+		t.Fatalf("explicit off without force: ReasoningEffort = %q, want empty", silent.ReasoningEffort)
+	}
+	if silent.EnableThinking == nil || *silent.EnableThinking {
+		t.Fatalf("explicit off without force: EnableThinking must stay false")
+	}
+
+	forced := &transmodel.InternalLLMRequest{EnableThinking: boolPtr(false)}
+	forcedGroup := &appmodel.Group{DefaultReasoningEffort: "high", ReasoningForceOverride: true}
+	applyReasoningPolicy(forcedGroup, forced)
+	if forced.ReasoningEffort != "high" {
+		t.Fatalf("force override: ReasoningEffort = %q, want high", forced.ReasoningEffort)
+	}
+	if forced.EnableThinking != nil && !*forced.EnableThinking {
+		t.Fatalf("force override: EnableThinking still false alongside injected effort")
+	}
+}
+
+// REQ-01 回归：enable_thinking=true 是显式「开」，属于客户端显式意图层，
+// 优先级高于分组默认；因此不再叠加分组档位（force 只覆盖显式关）。
+func TestApplyReasoningPolicyEnableThinkingTrueBlocksDefault(t *testing.T) {
+	group := &appmodel.Group{DefaultReasoningEffort: "medium"}
+	request := &transmodel.InternalLLMRequest{EnableThinking: boolPtr(true)}
+	applyReasoningPolicy(group, request)
+	if request.ReasoningEffort != "" {
+		t.Fatalf("ReasoningEffort = %q, want empty (explicit on must block the group default)", request.ReasoningEffort)
+	}
+	if request.EnableThinking == nil || !*request.EnableThinking {
+		t.Fatalf("explicit on must be preserved")
+	}
+
+	// force 只覆盖显式关，不得覆盖显式开。
+	forced := &transmodel.InternalLLMRequest{EnableThinking: boolPtr(true)}
+	applyReasoningPolicy(&appmodel.Group{DefaultReasoningEffort: "medium", ReasoningForceOverride: true}, forced)
+	if forced.ReasoningEffort != "" {
+		t.Fatalf("force must not override explicit on: ReasoningEffort = %q, want empty", forced.ReasoningEffort)
+	}
+}
+
 func int64Ptr(value int64) *int64 {
 	return &value
+}
+
+func boolPtr(b bool) *bool {
+	return &b
 }
 
 // prepareInternalRequestForOutbound 层面验证：注入发生在 param_override 之后，

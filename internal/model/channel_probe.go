@@ -82,7 +82,6 @@ func (ChannelProbeRun) TableName() string { return "channel_probe_runs" }
 
 // ChannelProbeResult 是一次探测里的单行结果（一个协议或一项能力）。
 type ChannelProbeResult struct {
-	EndpointID string       `json:"endpoint_id,omitempty" gorm:"size:64"`
 	ID         int64        `json:"id" gorm:"primaryKey;autoIncrement"`
 	RunID      int64        `json:"run_id" gorm:"not null;index"`
 	ChannelID  int          `json:"channel_id" gorm:"not null;index"`
@@ -92,6 +91,32 @@ type ChannelProbeResult struct {
 	Verdict    ProbeVerdict `json:"verdict" gorm:"not null;size:16"`
 	StatusCode int          `json:"status_code,omitempty"`
 	LatencyMS  int64        `json:"latency_ms,omitempty"`
+
+	// 协议与请求指纹元数据（迁移 082 新增，全部可空）。
+	//
+	// 历史行没有这些值 → NULL，界面显示「未记录」。绝不按渠道默认协议回填猜测：
+	// 一条旧记录当时用了哪个接口、哪个 Key、什么请求体，事后无法还原。
+	// 这些列只描述「这次探测实际怎么发的」，用于把两次对照固定在同一个变量上
+	// （同一 endpoint/protocol/model/Key/body/stream/budget）。
+	//
+	// Protocol 是实际生效的连接协议（配置化接口取接口声明；旧式渠道取 adapter 协议）。
+	Protocol string `json:"protocol,omitempty" gorm:"size:32"`
+	// EndpointID 是配置化连接里的接口 ID；旧式渠道为空。列已存在于 069。
+	EndpointID string `json:"endpoint_id,omitempty" gorm:"size:64"`
+	// EndpointURL 是实际调用的地址（已去掉 userinfo 与 query，避免 `?key=` 泄密），
+	// 不是配置原样。
+	EndpointURL string `json:"endpoint_url,omitempty" gorm:"size:512"`
+	// KeyScope 是本次探测使用的渠道 Key 审计标识（形如 `key_index:0,key_id:12`），
+	// 只记录下标与 ID 范围，**绝不存 Key token 本身**。
+	KeyScope string `json:"key_scope,omitempty" gorm:"size:64"`
+	// RequestStream 是探测请求是否要求流式；指针以区分「未记录」与 false。
+	RequestStream *bool `json:"request_stream,omitempty"`
+	// RequestBudgetMS 是本次探测的请求超时预算（毫秒）；指针以区分「未记录」与 0。
+	RequestBudgetMS *int64 `json:"request_budget_ms,omitempty"`
+	// RequestFingerprint 是探测请求体的 SHA-256（方法 + 路径 + 正文，不含任何凭据），
+	// 用来证明两次对照发的是同一个请求体。
+	RequestFingerprint string `json:"request_fingerprint,omitempty" gorm:"size:64"`
+
 	// Summary 是给界面看的短句（已脱敏）。
 	Summary string `json:"summary,omitempty" gorm:"size:512"`
 	// Detail 是截断后的上游回显片段，**必须**经脱敏函数处理，绝不包含密钥。

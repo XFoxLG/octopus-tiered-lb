@@ -1,5 +1,7 @@
 package model
 
+import "encoding/json"
+
 type GroupMode int
 
 const (
@@ -135,12 +137,22 @@ type GroupItemAddRequest struct {
 	RelayRetryCountOverride *int   `json:"relay_retry_count_override,omitempty"`
 }
 
-// GroupItemUpdateRequest 更新 item 请求
+// GroupItemUpdateRequest 更新 item 请求。
+// RelayRetryCountOverride 使用三态语义（CFG-02）：
+//   - 字段缺失（JSON 里没有该 key）：保持现有值，不改动。
+//   - 字段存在且为 null：清空 override，恢复"跟随渠道/分组/全局"。
+//   - 字段存在且为数值：设置 override。
+//
+// 缺失/存在由 json.RawMessage 判空决定；数值是否为 nil 由指针判空决定。
+// 前端只改排序/权重时必须省略 relay_retry_count_override，而不是发送 null。
 type GroupItemUpdateRequest struct {
-	ID                      int  `json:"id" binding:"required"`
-	Priority                int  `json:"priority,omitempty"`
-	Weight                  int  `json:"weight,omitempty"`
-	RelayRetryCountOverride *int `json:"relay_retry_count_override,omitempty"`
+	ID       int `json:"id" binding:"required"`
+	Priority int `json:"priority,omitempty"`
+	Weight   int `json:"weight,omitempty"`
+	// RelayRetryCountOverrideRaw 保留原始 JSON：nil=未提交（保持），[]byte("null")=显式 null（清空），其它=设置。
+	RelayRetryCountOverrideRaw json.RawMessage `json:"relay_retry_count_override,omitempty"`
+	// RelayRetryCountOverride 由解码后二次填充（见 decodeGroupItemUpdateRequest）：仅当 Raw 存在且不是 "null" 时非 nil。
+	RelayRetryCountOverride *int `json:"-"`
 }
 
 // GroupIDAndLLMName is a DTO for batch operations.

@@ -47,6 +47,8 @@ type GroupModelDraftTestRequest struct {
 }
 
 type GroupModelTestResult struct {
+	EndpointID   string `json:"endpoint_id,omitempty"`
+	Protocol     string `json:"protocol,omitempty"`
 	ClientID     string `json:"client_id,omitempty"`
 	ItemID       int    `json:"item_id"`
 	ChannelID    int    `json:"channel_id"`
@@ -465,6 +467,11 @@ probeAdapters:
 			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, adapterType, channel.WithConnectionPlan(plan), usedKey.ChannelKey, endpointType, item.ModelName)
 			attemptDuration := int(time.Since(attemptStart).Milliseconds())
 
+			result.Protocol = probeProtocolForAdapter(adapterType)
+			if plan.Endpoint != nil {
+				result.EndpointID = plan.Endpoint.ID
+				result.Protocol = plan.Endpoint.Protocol
+			}
 			result.StatusCode = statusCode
 			result.ResponseText = responseText
 			if internalResp != nil {

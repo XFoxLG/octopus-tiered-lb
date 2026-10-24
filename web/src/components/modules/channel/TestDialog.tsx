@@ -30,6 +30,8 @@ import { useGroupTestProgress } from '@/api/endpoints/group';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/common/Toast';
+import { CopyIconButton } from '@/components/common/CopyButton';
+import { formatProbeDetail, groupProbeResults, TEST_PROTOCOL_NAMES } from './probe-results';
 import { cn } from '@/lib/utils';
 
 /** 判定 → 图标与配色。三态之外还有 unknown（证据不足，不写入）。 */
@@ -133,8 +135,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
     const apply = useApplyChannelProbe();
 
     const probeResults = useMemo(() => probeRun?.results ?? [], [probeRun]);
-    const protocolRows = useMemo(() => probeResults.filter((row) => row.kind === 'protocol'), [probeResults]);
-    const capabilityRows = useMemo(() => probeResults.filter((row) => row.kind === 'capability'), [probeResults]);
+    const probeGroups = useMemo(() => groupProbeResults(probeResults), [probeResults]);
     const isProbing = probe.isPending;
 
     const startProbe = (skipConfirmed: boolean) => {
@@ -230,6 +231,17 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
         onClose();
     };
 
+    const renderDetail = (detail: string) => (
+        <details className="group mt-1 min-w-0 rounded-lg border border-border/40 bg-muted/30">
+            <summary className="cursor-pointer rounded-lg px-2 py-1.5 text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t('responseDetail')}</summary>
+            <div className="flex min-w-0 items-center justify-between gap-2 px-2 text-xs text-muted-foreground">
+                <span className="min-w-0 [overflow-wrap:anywhere]">{detail.endsWith('…') ? t('detailTruncated') : t('detailRedacted')}</span>
+                <CopyIconButton text={detail} className="shrink-0 rounded-md p-2 focus-visible:ring-2 focus-visible:ring-ring" copyIconClassName="size-3.5" checkIconClassName="size-3.5" />
+            </div>
+            <pre className="m-2 max-h-64 min-w-0 overflow-auto whitespace-pre-wrap rounded bg-muted/50 p-2 text-[11px] leading-4 text-muted-foreground [overflow-wrap:anywhere]">{formatProbeDetail(detail)}</pre>
+        </details>
+    );
+
     const renderProbeRow = (row: ChannelProbeResult) => {
         const { Icon, className } = verdictPresentation(row.verdict);
         const latency = formatLatency(row.latency_ms);
@@ -238,9 +250,8 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                 <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', className)} aria-hidden />
                 <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                        <span className="text-sm text-foreground">
-                            {row.endpoint_id ? `${channel.connection_config?.endpoints.findIndex((e) => e.id === row.endpoint_id) !== -1 ? (channel.connection_config?.endpoints.findIndex((e) => e.id === row.endpoint_id) ?? 0) + 1 : row.endpoint_id} · ` : ''}
-                            {row.item === 'protocol_embeddings' ? 'Embeddings' : tProbe(`item.${row.item}` as never)}
+                        <span className="text-sm text-foreground [overflow-wrap:anywhere]">
+                            {row.kind === 'protocol' && row.protocol ? t('protocolVerification', { protocol: TEST_PROTOCOL_NAMES[row.protocol] ?? row.protocol }) : row.item === 'protocol_embeddings' ? 'Embeddings' : tProbe(`item.${row.item}` as never)}
                         </span>
                         <span className={cn('text-xs font-medium', className)}>
                             {tProbe(`verdict.${row.verdict}` as never)}
@@ -249,13 +260,9 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                         {row.status_code ? <span className="text-xs text-muted-foreground">HTTP {row.status_code}</span> : null}
                     </div>
                     {row.summary ? (
-                        <p className="mt-0.5 break-words text-xs leading-5 text-muted-foreground">{row.summary}</p>
+                        <p className="mt-0.5 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">{row.summary}</p>
                     ) : null}
-                    {row.detail ? (
-                        <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 text-[11px] leading-4 text-muted-foreground">
-                            {row.detail}
-                        </pre>
-                    ) : null}
+                    {row.detail ? renderDetail(row.detail) : null}
                 </div>
             </div>
         );
@@ -276,8 +283,8 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
     const anyRunning = isTestingModel || isProbing || checkChannelKeys.isPending;
 
     return (
-        <div className="space-y-3">
-            <div className="space-y-1.5">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden [@media(max-height:600px)]:min-h-[28rem]">
+            <div className="min-w-0 shrink-0 space-y-1.5">
                 <label htmlFor="channel-test-model" className="text-sm font-medium text-card-foreground">
                     {tProbe('modelLabel')}
                 </label>
@@ -288,7 +295,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                     onChange={(event) => setModelName(event.target.value)}
                     placeholder={tProbe('modelPlaceholder')}
                     disabled={anyRunning}
-                    className="rounded-lg"
+                    className="min-w-0 rounded-lg"
                 />
                 <datalist id="channel-test-model-options">
                     {availableModels.map((model) => (
@@ -300,19 +307,20 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
 
             {/* 三段共用的滚动结果区 */}
             <div
-                className="min-h-40 max-h-80 space-y-3 overflow-y-auto rounded-lg border border-border/40 bg-muted/20 p-3"
+                className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto overscroll-contain rounded-lg border border-border/40 bg-muted/20 p-3"
                 role="region"
                 aria-label={t('resultsLabel')}
                 aria-busy={anyRunning}
                 tabIndex={0}
             >
                 {/* ① 模型应答 */}
-                <section>
+                <section className="min-w-0">
                     <div className="mb-1 flex items-center gap-2">
                         <FlaskConical className="size-3.5 text-muted-foreground" aria-hidden />
                         <p className="text-xs font-medium text-muted-foreground">{t('sections.model')}</p>
                         {isTestingModel && <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />}
                     </div>
+                    <p className="mb-2 text-xs leading-5 text-muted-foreground">{t('modelScope')}</p>
                     {modelCancelled && <p role="status" className="text-xs text-muted-foreground">{t('modelCancelled')}</p>}
                     {modelResult && testProgress?.done ? (
                         <div className={cn(
@@ -330,6 +338,9 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                                     {modelResult.status_code !== 0 && <span className="text-muted-foreground">HTTP {modelResult.status_code}</span>}
                                     {modelResult.attempts > 1 && <span className="text-muted-foreground">{tModel('attempts', { count: modelResult.attempts })}</span>}
                                 </div>
+                                {modelResult.protocol && <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">{t('actualProtocol', { protocol: TEST_PROTOCOL_NAMES[modelResult.protocol] ?? modelResult.protocol })}{modelResult.endpoint_id ? ' · ' + modelResult.endpoint_id : ''}</p>}
+                                {modelResult.model_name && <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">{t('testedModel', { model: modelResult.model_name })}</p>}
+                                {modelResult.response_text && renderDetail(modelResult.response_text)}
                                 {modelResult.message && modelResult.message !== 'ok' && (
                                     <p className="mt-1 break-words opacity-80">{modelResult.message}</p>
                                 )}
@@ -342,7 +353,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                 </section>
 
                 {/* ② 协议与能力 */}
-                <section>
+                <section className="min-w-0">
                     <div className="mb-1 flex items-center gap-2">
                         <ShieldCheck className="size-3.5 text-muted-foreground" aria-hidden />
                         <p className="text-xs font-medium text-muted-foreground">{t('sections.probe')}</p>
@@ -358,18 +369,15 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                             {tProbe('running')}
                         </p>
                     ) : null}
-                    {protocolRows.length > 0 ? (
-                        <div className="mb-2">
-                            <p className="mb-1 text-xs font-medium text-muted-foreground">{tProbe('sectionProtocol')}</p>
-                            {protocolRows.map(renderProbeRow)}
+                    <p className="mb-2 text-xs leading-5 text-muted-foreground">{t('probeScope')}</p>
+                    {probeRun && <p className="mb-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('testedModel', { model: probeRun.model_name })} · {t('probeKey', { key: probeRun.key_id || '—' })}</p>}
+                    {probeGroups.map((group, index) => (
+                        <div key={group.catalog ? 'catalog' : group.endpointId ?? group.protocol ?? index} data-probe-endpoint={group.endpointId} className="mb-3 min-w-0 rounded-lg border border-border/40 p-2.5">
+                            <p className="text-sm font-medium text-foreground [overflow-wrap:anywhere]">{group.catalog ? t('catalogProbe') : group.protocol ? TEST_PROTOCOL_NAMES[group.protocol] ?? group.protocol : t('protocolUnrecorded')}</p>
+                            {group.endpointId && <p className="mt-0.5 text-[11px] text-muted-foreground [overflow-wrap:anywhere]">{t('interfaceId', { id: group.endpointId })}</p>}
+                            {group.rows.map(renderProbeRow)}
                         </div>
-                    ) : null}
-                    {capabilityRows.length > 0 ? (
-                        <div>
-                            <p className="mb-1 text-xs font-medium text-muted-foreground">{tProbe('sectionCapability')}</p>
-                            {capabilityRows.map(renderProbeRow)}
-                        </div>
-                    ) : null}
+                    ))}
                     {probeRun?.summary ? (
                         <p className="text-xs text-muted-foreground">{tProbe('summary', { summary: probeRun.summary })}</p>
                     ) : null}
@@ -379,23 +387,26 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                 </section>
 
                 {/* ③ 逐 Key 检查 */}
-                <section>
+                <section className="min-w-0">
                     <div className="mb-1 flex items-center gap-2">
                         <Stethoscope className="size-3.5 text-muted-foreground" aria-hidden />
                         <p className="text-xs font-medium text-muted-foreground">{t('sections.keys')}</p>
                         {checkChannelKeys.isPending && <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />}
                     </div>
+                    <p className="mb-2 text-xs leading-5 text-muted-foreground">{t('keysScope')}</p>
                     {channel.keys.length === 0 ? (
                         <p className="text-xs leading-5 text-muted-foreground">{t('noKeys')}</p>
                     ) : null}
                     {checkCancelled && <p role="status" className="text-xs text-muted-foreground">{t('keysCancelled')}</p>}
                     {checkResult && (
-                        <div className="space-y-1">
+                        <div className="min-w-0 space-y-2">
                             <p className={cn('text-xs font-medium', checkResult.passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive')}>
                                 {checkSummary}
                             </p>
                             {checkResult.results.map((row, index) => (
-                                <div key={`${row.base_url}-${index}`} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+                                <div key={(row.endpoint_id || row.base_url) + index} className="min-w-0 rounded-lg border border-border/40 p-2">
+                                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+                                    {row.protocol && <span className="text-foreground">{TEST_PROTOCOL_NAMES[row.protocol] ?? row.protocol}</span>}
                                     {row.passed
                                         ? <CheckCircle2 className="size-3.5 shrink-0 text-emerald-500" aria-hidden />
                                         : <XCircle className="size-3.5 shrink-0 text-destructive" aria-hidden />}
@@ -405,7 +416,10 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                                     )}
                                     {row.status_code ? <span className="text-muted-foreground">HTTP {row.status_code}</span> : null}
                                     {formatLatency(row.latency_ms) ? <span className="text-muted-foreground">{formatLatency(row.latency_ms)}</span> : null}
-                                    {row.message ? <span className="break-words text-muted-foreground">{row.message}</span> : null}
+                                    {row.message ? <span className="text-muted-foreground [overflow-wrap:anywhere]">{row.message}</span> : null}
+                                    </div>
+                                    {row.model_name && <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('testedModel', { model: row.model_name })}</p>}
+                                    {row.response_body && renderDetail(row.response_body)}
                                 </div>
                             ))}
                         </div>
@@ -416,6 +430,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                 </section>
             </div>
 
+            <div className="min-w-0 shrink-0 space-y-2">
             {channel.skip_model_test ? (
                 <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
                     <p className="flex items-start gap-2 text-xs leading-5 text-amber-600 dark:text-amber-500">
@@ -453,7 +468,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                 <Button
                     type="button"
                     variant="outline"
-                    className="rounded-lg"
+                    className="h-auto min-h-9 min-w-0 flex-1 basis-[calc(50%-0.25rem)] whitespace-normal rounded-lg px-2 py-2 text-xs sm:flex-none sm:basis-auto sm:text-sm"
                     onClick={startModelTest}
                     disabled={anyRunning || !modelName.trim()}
                 >
@@ -463,7 +478,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                 <Button
                     type="button"
                     variant="outline"
-                    className="rounded-lg"
+                    className="h-auto min-h-9 min-w-0 flex-1 basis-[calc(50%-0.25rem)] whitespace-normal rounded-lg px-2 py-2 text-xs sm:flex-none sm:basis-auto sm:text-sm"
                     onClick={() => { setProbeRun(null); startProbe(allowSkipModelTest); }}
                     disabled={anyRunning || !modelName.trim()}
                 >
@@ -473,7 +488,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                 <Button
                     type="button"
                     variant="outline"
-                    className="rounded-lg"
+                    className="h-auto min-h-9 min-w-0 flex-1 basis-[calc(50%-0.25rem)] whitespace-normal rounded-lg px-2 py-2 text-xs sm:flex-none sm:basis-auto sm:text-sm"
                     onClick={startCheckKeys}
                     disabled={anyRunning || channel.keys.length === 0}
                 >
@@ -483,7 +498,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                 {!channel.connection_config && (
                     <Button
                         type="button"
-                        className="rounded-lg"
+                        className="h-auto min-h-9 min-w-0 whitespace-normal rounded-lg px-2 py-2 text-xs sm:text-sm"
                         onClick={applyProbeResults}
                         disabled={anyRunning || !probeRun?.id || probeRun.applied || apply.isPending}
                     >
@@ -495,7 +510,8 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                     {tProbe('close')}
                 </Button>
             </div>
-            <p className="text-right text-xs leading-5 text-muted-foreground">{t('footerHint')}</p>
+            <p className="text-xs leading-4 text-muted-foreground [overflow-wrap:anywhere]">{t('footerHint')}</p>
+            </div>
         </div>
     );
 }

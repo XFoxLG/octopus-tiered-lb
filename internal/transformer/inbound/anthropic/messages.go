@@ -324,6 +324,27 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 		chatReq.Tools = tools
 	}
 
+	if choice := anthropicReq.ToolChoice; choice != nil {
+		if choice.Type == "tool" && choice.Name != nil {
+			chatReq.ToolChoice = &model.ToolChoice{NamedToolChoice: &model.NamedToolChoice{Type: "function", Function: model.ToolFunction{Name: *choice.Name}}}
+		} else {
+			mode := choice.Type
+			if mode == "any" {
+				mode = "required"
+			}
+			if mode == "auto" || mode == "none" || mode == "required" {
+				chatReq.ToolChoice = &model.ToolChoice{ToolChoice: &mode}
+			}
+		}
+		if choice.DisableParallelToolUse != nil {
+			parallel := !*choice.DisableParallelToolUse
+			chatReq.ParallelToolCalls = &parallel
+		}
+	}
+	if cfg := anthropicReq.OutputConfig; cfg != nil && cfg.Format != nil && cfg.Format.Type == "json_schema" {
+		chatReq.ResponseFormat = &model.ResponseFormat{Type: "json_schema", JSONSchema: &model.ResponseFormatJSONSchema{Name: "response_schema", Schema: cfg.Format.Schema}}
+	}
+
 	// Convert stop sequences
 	if len(anthropicReq.StopSequences) > 0 {
 		if len(anthropicReq.StopSequences) == 1 {

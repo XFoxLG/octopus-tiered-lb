@@ -107,7 +107,7 @@ func TestConnectionEmbeddingProbeAndNoCrossEndpointCapabilityApply(t *testing.T)
 	ch := configuredTestChannel(srv.URL)
 	ch.ConnectionConfig.Endpoints[0].Protocol = "embeddings"
 	r, _ := buildGroupProbeRequest(m.EndpointTypeEmbeddings, "m")
-	out := sendProbeRequest(context.Background(), &ch, "test-secret", outbound.OutboundTypeOpenAIEmbedding, r)
+	out := sendProbeRequest(context.Background(), &ch, "test-secret", probeKeyScope{Index: 0}, outbound.OutboundTypeOpenAIEmbedding, r)
 	if out.Verdict != m.ProbeVerdictPass {
 		t.Fatalf("embedding rejected %+v", out)
 	}

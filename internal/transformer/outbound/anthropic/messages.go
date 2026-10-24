@@ -334,6 +334,11 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 	if len(req.Tools) > 0 {
 		result.Tools = convertTools(req.Tools)
 	}
+	result.ToolChoice = convertToolChoice(req.ToolChoice)
+	if result.ToolChoice != nil && req.ParallelToolCalls != nil {
+		disable := !*req.ParallelToolCalls
+		result.ToolChoice.DisableParallelToolUse = &disable
+	}
 
 	// Convert stop sequences
 	if req.Stop != nil {
@@ -379,7 +384,34 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 		}
 	}
 
+	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_schema" && req.ResponseFormat.JSONSchema != nil {
+		if result.OutputConfig == nil {
+			result.OutputConfig = &anthropicModel.OutputConfig{}
+		}
+		result.OutputConfig.Format = &anthropicModel.OutputFormat{Type: "json_schema", Schema: req.ResponseFormat.JSONSchema.Schema}
+	}
+
 	return result
+}
+
+func convertToolChoice(choice *model.ToolChoice) *anthropicModel.ToolChoice {
+	if choice == nil {
+		return nil
+	}
+	if choice.NamedToolChoice != nil {
+		name := choice.NamedToolChoice.Function.Name
+		return &anthropicModel.ToolChoice{Type: "tool", Name: &name}
+	}
+	if choice.ToolChoice != nil {
+		mode := *choice.ToolChoice
+		if mode == "required" {
+			mode = "any"
+		}
+		if mode == "auto" || mode == "any" || mode == "none" {
+			return &anthropicModel.ToolChoice{Type: mode}
+		}
+	}
+	return nil
 }
 
 // normalizeAnthropicEffort maps a cross-protocol effort keyword onto the set

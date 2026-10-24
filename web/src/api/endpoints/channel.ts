@@ -343,6 +343,8 @@ export type FetchModelRequest = {
 
 export type TestChannelResult = {
     endpoint_id?: string;
+    protocol?: EndpointProtocol;
+    model_name?: string;
     base_url: string;
     key_remark?: string;
     key_masked?: string;
@@ -704,6 +706,8 @@ export type ProbeKind = 'protocol' | 'capability';
 
 export type ChannelProbeResult = {
     endpoint_id?: string;
+    /** Actual protocol for a new run; older history may not contain it. */
+    protocol?: EndpointProtocol;
     id: number;
     run_id: number;
     channel_id: number;

@@ -407,6 +407,7 @@ type ResponsesTextFormat struct {
 	Type   string                 `json:"type,omitempty"`
 	Name   string                 `json:"name,omitempty"`
 	Schema transformer.RawMessage `json:"schema,omitempty"`
+	Strict *bool                  `json:"strict,omitempty"`
 }
 
 type ResponsesReasoning struct {
@@ -415,15 +416,15 @@ type ResponsesReasoning struct {
 
 // ResponsesResponse represents the OpenAI Responses API response format.
 type ResponsesResponse struct {
-	Object            string                       `json:"object"`
-	ID                string                       `json:"id"`
-	Model             string                       `json:"model"`
-	CreatedAt         int64                        `json:"created_at"`
-	Output            []ResponsesItem              `json:"output"`
-	Status            *string                      `json:"status,omitempty"`
-	IncompleteDetails *ResponsesIncompleteDetails  `json:"incomplete_details,omitempty"`
-	Usage             *ResponsesUsage              `json:"usage,omitempty"`
-	Error             *ResponsesError              `json:"error,omitempty"`
+	Object            string                      `json:"object"`
+	ID                string                      `json:"id"`
+	Model             string                      `json:"model"`
+	CreatedAt         int64                       `json:"created_at"`
+	Output            []ResponsesItem             `json:"output"`
+	Status            *string                     `json:"status,omitempty"`
+	IncompleteDetails *ResponsesIncompleteDetails `json:"incomplete_details,omitempty"`
+	Usage             *ResponsesUsage             `json:"usage,omitempty"`
+	Error             *ResponsesError             `json:"error,omitempty"`
 }
 
 // ResponsesIncompleteDetails explains why a Responses API result ended before
@@ -507,6 +508,11 @@ func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest 
 			Format: &ResponsesTextFormat{
 				Type: req.ResponseFormat.Type,
 			},
+		}
+		if schema := req.ResponseFormat.JSONSchema; schema != nil {
+			result.Text.Format.Name = schema.Name
+			result.Text.Format.Schema = schema.Schema
+			result.Text.Format.Strict = schema.Strict
 		}
 	}
 

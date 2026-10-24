@@ -52,7 +52,7 @@ func TestReviewProtocolProbeRejectsFalseSuccess(t *testing.T) {
 			defer srv.Close()
 			ch := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []appmodel.BaseUrl{{URL: srv.URL}}}
 			target := buildProtocolProbeTargets(ch.Type, "test-model")[0]
-			got := sendProbeRequest(context.Background(), ch, "sk-test-key", target.AdapterType, target.Request)
+			got := sendProbeRequest(context.Background(), ch, "sk-test-key", probeKeyScope{Index: -1}, target.AdapterType, target.Request)
 			t.Logf("status=%d verdict=%s body=%q", got.StatusCode, got.Verdict, got.Body)
 			if tc.status == 200 && got.Verdict == appmodel.ProbeVerdictPass {
 				t.Error("invalid upstream response marked as supported protocol")

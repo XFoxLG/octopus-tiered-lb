@@ -3267,7 +3267,7 @@
       },
       "testDialog": {
         "title": "测试渠道",
-        "description": "模型应答、协议与能力、逐 Key 检查合并在这一个弹窗里；每一段都需要手动点击运行。"
+        "description": "按需运行模型应答、协议与能力、逐 Key 检查。三类检查的测试范围不同。"
       }
     },
     "create": {
@@ -3566,7 +3566,7 @@
     },
     "test": {
       "title": "测试渠道",
-      "description": "一个入口跑三类检查：模型应答、协议与能力、逐 Key 检查。全部手动触发；探测结果需要点「应用结果」才会写回配置。",
+      "description": "按需运行模型应答、协议与能力、逐 Key 检查。三类检查的测试范围不同。",
       "resultsLabel": "测试结果",
       "sections": {
         "model": "模型应答",
@@ -3582,7 +3582,20 @@
       "diagnosticOnly": "该渠道已使用新的接口配置，探测只用于诊断，不会写回配置。",
       "noKeys": "该渠道没有可检查的 Key。",
       "cancelWait": "停止等待",
-      "footerHint": "模型应答与逐 Key 检查会消耗渠道 Key 额度；协议与能力探测会向该模型发真实请求。全部只在手动点击时执行，没有后台定时。"
+      "footerHint": "模型应答与逐 Key 检查会消耗渠道 Key 额度；协议与能力探测会向该模型发真实请求。全部只在手动点击时执行，没有后台定时。",
+      "modelScope": "按渠道路由规则测试，可能重试或回退到其他接口。应答成功只证明实际应答的接口可用。",
+      "probeScope": "按每个接口分别发送非流式请求。结论只对应本次模型、Key 和协议，不能据此判断流式兼容性。",
+      "keysScope": "使用渠道已保存的测试模型检查启用的 Key，可能与上方选中的模型不同。",
+      "actualProtocol": "应答协议：{protocol}",
+      "testedModel": "测试模型：{model}",
+      "probeKey": "Key ID：{key}",
+      "catalogProbe": "模型目录（独立于生成接口）",
+      "protocolUnrecorded": "此结果未记录实际协议",
+      "interfaceId": "接口 ID：{id}",
+      "protocolVerification": "协议：{protocol}",
+      "responseDetail": "响应详情",
+      "detailRedacted": "上游响应，凭据已脱敏",
+      "detailTruncated": "已保存的响应片段被截断；此记录无法恢复缺失部分。"
     },
     "probe": {
       "cancel": "停止探测",

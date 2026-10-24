@@ -123,11 +123,12 @@ func TestJudgeCapabilityResponseToolCalling(t *testing.T) {
 		body string
 		want appmodel.ProbeVerdict
 	}{
-		{name: "openai tool_calls", body: `{"choices":[{"message":{"tool_calls":[{"id":"1","function":{"name":"verify_tool"}}]}}]}`, want: appmodel.ProbeVerdictPass},
-		{name: "anthropic tool_use", body: `{"content":[{"type":"tool_use","name":"verify_tool"}]}`, want: appmodel.ProbeVerdictPass},
-		{name: "gemini functionCall", body: `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"verify_tool"}}]}}]}`, want: appmodel.ProbeVerdictPass},
+		{name: "openai tool_calls", body: `{"choices":[{"message":{"tool_calls":[{"id":"1","function":{"name":"verify_tool","arguments":"{}"}}]}}]}`, want: appmodel.ProbeVerdictPass},
+		{name: "anthropic tool_use", body: `{"content":[{"type":"tool_use","name":"verify_tool","input":{}}]}`, want: appmodel.ProbeVerdictPass},
+		{name: "gemini functionCall", body: `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"verify_tool","args":{}}}]}}]}`, want: appmodel.ProbeVerdictPass},
+		{name: "missing arguments", body: `{"choices":[{"message":{"tool_calls":[{"function":{"name":"verify_tool"}}]}}]}`, want: appmodel.ProbeVerdictFail},
 		{name: "empty tool_calls array is not a call", body: `{"choices":[{"message":{"tool_calls":[]}}]}`, want: appmodel.ProbeVerdictFail},
-		{name: "refusal", body: `{"choices":[{"message":{"refusal":"I cannot call tools."}}]}`, want: appmodel.ProbeVerdictUnsupported},
+		{name: "refusal", body: `{"choices":[{"message":{"refusal":"I cannot call tools."}}]}`, want: appmodel.ProbeVerdictUnknown},
 		{name: "plain text answer", body: `{"choices":[{"message":{"content":"hello"}}]}`, want: appmodel.ProbeVerdictFail},
 	}
 	for _, testCase := range cases {

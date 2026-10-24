@@ -189,6 +189,9 @@ type InternalLLMRequest struct {
 	// fill with a group default) from "client explicitly turned thinking off"
 	// (must be respected unless a group forces otherwise).
 	ReasoningExplicit bool `json:"-"`
+	// A model suffix is a higher-priority override than client-body controls and
+	// group defaults, including a group's forced opt-out override.
+	ReasoningFromModelSuffix bool `json:"-"`
 
 	// Reasoning budget for reasoning models.
 	// Help fields， will not be sent to the llm service.
