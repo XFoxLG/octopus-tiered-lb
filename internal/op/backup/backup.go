@@ -468,9 +468,17 @@ func (c *importConfig) upsertAll(table string, rows any, count int, conflictColu
 // batchInsert 将大批量数据分批插入，避免单次事务过大导致超时或内存溢出。
 // rows 必须是指向切片的指针（如 *[]model.Channel）。
 //
-// 注意：Channel.Enabled / ChannelKey.Enabled 去掉了 gorm:"default:true"
-// tag（issue #199），因此 GORM Create 会把 enabled=false 原样写入 INSERT，
-// 而不再因零值替换 + DB 默认值把禁用渠道恢复成启用状态。
+// 两个已知的 GORM 默认值陷阱：
+//   - Channel.Enabled / ChannelKey.Enabled 去掉了 gorm:"default:true"
+//     tag（issue #199），因此 GORM Create 会把 enabled=false 原样写入 INSERT。
+//   - 但仍有其它带 gorm:"default:..." tag 的列（APIKey.Enabled 默认 true、
+//     Group.HedgeDelayMs 默认 300、Group.RelayRetryCount/-RouteRetries 默认 -1、
+//     Channel.ProxyMode 默认 direct 等）会在 struct 批量插入时被 GORM 用
+//     DefaultValueInterface 覆盖：备份里显式保存的 false/0/"" 会被替换成默认值，
+//     于是「禁用 Key」「零延迟竞速」这类配置在恢复后静默改变语义。
+//
+// 因此这里对带 gorm:"default:" tag 的列也走 map 精确值路径：GORM 只在
+// struct/slice 反射分支做默认值替换，map 分支直接使用读取到的列值。
 func (c *importConfig) batchInsert(table string, rows any, count int, conflict clause.OnConflict, mode string) error {
 	if count == 0 {
 		return nil
@@ -487,13 +495,23 @@ func (c *importConfig) batchInsert(table string, rows any, count int, conflict c
 		return nil
 	}
 
+	// 解析模型 schema：既用于每批行数的变量预算，也用于判断该表是否存在
+	// 会被 GORM 零值替换影响的列。解析失败时回退到旧的 struct 插入路径。
+	var modelSchema *schema.Schema
+	element := reflect.New(slice.Type().Elem()).Interface()
+	if parsed, err := schema.Parse(element, &batchSchemaCache, c.conn.NamingStrategy); err == nil {
+		modelSchema = parsed
+	}
+	if modelSchema != nil && hasZeroValueDefaultColumns(modelSchema) {
+		return c.batchInsertExactValues(table, slice, modelSchema, conflict, mode)
+	}
+
 	// 每批行数按 SQL 变量预算自适应：batchInsertSize 是外层上限，
 	// 内层 = maxSQLVariablesPerStatement / 列数（列数用 GORM schema 解析，
 	// serializer:json 等嵌套结构已展开为实际数据库列）。解析失败回退保守值
 	// （batchInsertSize 不变时维持旧行为，但可能在大表上报变量超限）。
 	rowsPerBatch := batchInsertSize
-	element := reflect.New(slice.Type().Elem()).Interface()
-	if modelSchema, err := schema.Parse(element, &batchSchemaCache, c.conn.NamingStrategy); err == nil {
+	if modelSchema != nil {
 		if columnCount := len(modelSchema.DBNames); columnCount > 0 {
 			if budgeted := maxSQLVariablesPerStatement / columnCount; budgeted > 0 && budgeted < rowsPerBatch {
 				rowsPerBatch = budgeted
@@ -510,6 +528,80 @@ func (c *importConfig) batchInsert(table string, rows any, count int, conflict c
 		batch := slice.Slice(offset, end).Interface()
 
 		result := c.conn.Table(table).Clauses(conflict).Create(batch)
+		if result.Error != nil {
+			appendStep(c.res, table, mode, totalAffected, result.Error)
+			return fmt.Errorf("%s: batch [%d:%d]: %w", table, offset, end, result.Error)
+		}
+		totalAffected += result.RowsAffected
+	}
+
+	appendStep(c.res, table, mode, totalAffected, nil)
+	return nil
+}
+
+// hasZeroValueDefaultColumns 判断模型是否存在「GORM 会用 DefaultValueInterface
+// 覆盖零值」的标量列（bool/int/uint/float/string 且带 default: tag）。
+//
+// 这些列在 struct 批量插入时无法区分「备份里真的是零值」与「字段未设置」，
+// GORM 一律按默认值写入。命中任意一列就整表改走 map 精确值路径，避免同一行
+// 内部分列走默认值、部分列走原值造成更难排查的混合状态。
+func hasZeroValueDefaultColumns(modelSchema *schema.Schema) bool {
+	for _, field := range modelSchema.Fields {
+		if field == nil || field.DefaultValueInterface == nil || field.HasDefaultValue == false {
+			continue
+		}
+		if field.Serializer != nil {
+			continue
+		}
+		switch field.DataType {
+		case schema.Bool, schema.Int, schema.Uint, schema.Float, schema.String, schema.Time:
+			return true
+		}
+	}
+	return false
+}
+
+// batchInsertExactValues 用 map 形式按行写入数据库列的真实值。
+//
+// 与 extended.go 的 insertExactValues 保持同一思路：逐列调用 field.ValueOf
+// 取原始值（serializer 字段会得到可序列化的 valuer，由 GORM 正常编码），
+// 再由 GORM 的 map 分支拼 INSERT——该分支不做 DefaultValueInterface 替换。
+func (c *importConfig) batchInsertExactValues(table string, slice reflect.Value, modelSchema *schema.Schema, conflict clause.OnConflict, mode string) error {
+	columnCount := len(modelSchema.DBNames)
+	if columnCount == 0 {
+		return fmt.Errorf("%s: model has no database columns", table)
+	}
+	rowsPerBatch := batchInsertSize
+	if budgeted := maxSQLVariablesPerStatement / columnCount; budgeted > 0 && budgeted < rowsPerBatch {
+		rowsPerBatch = budgeted
+	}
+	if rowsPerBatch < 1 {
+		rowsPerBatch = 1
+	}
+
+	var totalAffected int64
+	for offset := 0; offset < slice.Len(); offset += rowsPerBatch {
+		end := offset + rowsPerBatch
+		if end > slice.Len() {
+			end = slice.Len()
+		}
+		batch := make([]map[string]any, 0, end-offset)
+		for index := offset; index < end; index++ {
+			values := make(map[string]any, columnCount)
+			for _, name := range modelSchema.DBNames {
+				field := modelSchema.FieldsByDBName[name]
+				value, isZero := field.ValueOf(c.conn.Statement.Context, slice.Index(index))
+				// 与 GORM struct 分支保持同一语义：带数据库级默认值（自增主键、
+				// DB default）且当前为零值的列不出现在 INSERT 里，交由数据库分配；
+				// 备份中的显式非零 ID 仍然按原值写入，不会被丢弃。
+				if field.HasDefaultValue && field.DefaultValueInterface == nil && isZero {
+					continue
+				}
+				values[name] = value
+			}
+			batch = append(batch, values)
+		}
+		result := c.conn.Table(table).Clauses(conflict).Create(&batch)
 		if result.Error != nil {
 			appendStep(c.res, table, mode, totalAffected, result.Error)
 			return fmt.Errorf("%s: batch [%d:%d]: %w", table, offset, end, result.Error)
