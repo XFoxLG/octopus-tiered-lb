@@ -973,8 +973,8 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	// 直接 return 会吞掉客户端期待的流终止帧。收尾由下一轮循环顶部的
 	// sawDoneMarker 分支完成。
 	sawDoneMarker := false
-	// Chat finish chunks precede an optional usage-only tail. Preserve that
-	// tail when present, but never wait for transport EOF indefinitely.
+	// Confirmed Chat finish chunks precede an optional usage-only tail. A stop
+	// attached to continued content is only a hint and must not arm this timer.
 	var terminalTailTimer *time.Timer
 	var terminalTailC <-chan time.Time
 	defer func() {
@@ -1280,6 +1280,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		}
 		reasoningBuffer = nil
 		reasoningBufferBytes = 0
+		if payload, err := ra.flushChatFinishHints(ctx); err != nil {
+			return err
+		} else if len(payload) > 0 {
+			writeReasoningBuffer(ra, [][]byte{payload}, &clientDisconnected, markClientDisconnected, logClientDisconnected)
+		}
 		// Native protocols have their own final event. Chat consumers also need
 		// exactly one [DONE], including conversions from message_stop/completed.
 		if !sawDoneMarker && !ra.canPassthroughStream() {
@@ -1332,7 +1337,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 		select {
 		case <-terminalTailC:
-			return finishAcceptedTerminal()
+			// Continued content already read by the upstream reader wins over the
+			// tail timer, just as it does over the idle/first-visible watchdogs.
+			select {
+			case r, ok = <-results:
+			default:
+				return finishAcceptedTerminal()
+			}
 		case <-noticeTimerC:
 			flushNotice()
 			if clientDisconnected && ra.streamSession == nil {
@@ -1434,6 +1445,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				return interruptedErr
 			}
 			logClientDisconnected()
+			// EOF confirms a final content-bearing stop hint; a timeout or read
+			// failure above does not. Keep incomplete choices on the error path.
+			if ra.hasCompleteChatFinishHints() {
+				ra.recordStreamTermination(ra.chatFinishHintsTerminal())
+			}
 
 			// A clean HTTP EOF without any formal provider terminal marker is
 			// not a successful completion. It is safe to retry only before any
@@ -1502,6 +1518,15 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			transformErr := fmt.Errorf("failed to transform stream event: %w", err)
 			emitStreamInterruption(transformErr, false)
 			return transformErr
+		}
+		if terminalTailTimer != nil && (!ra.streamSawTerminalEvent || ra.hasUnfinishedObservedStreamChoices()) {
+			if !terminalTailTimer.Stop() {
+				select {
+				case <-terminalTailTimer.C:
+				default:
+				}
+			}
+			terminalTailTimer, terminalTailC = nil, nil
 		}
 		if !ra.canPassthroughStream() && ra.adapterEndpointProtocol() == "chat" && ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && terminalTailTimer == nil {
 			terminalTailTimer = time.NewTimer(time.Second)
@@ -1711,6 +1736,14 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	if internalStream == nil {
 		return nil, false, nil
 	}
+	var finishPayload []byte
+	if ra.adapterEndpointProtocol() == "chat" && (internalStream.Object == "[DONE]" || (internalStream.Usage != nil && len(internalStream.Choices) == 0 && ra.hasCompleteChatFinishHints())) {
+		finishPayload, err = ra.flushChatFinishHints(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	internalStream = ra.deferChatFinishHints(internalStream)
 
 	if !ra.canPassthroughStream() {
 		ra.extractLeadingInlineReasoningStream(internalStream)
@@ -1750,7 +1783,7 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		ra.collectResponse()
 		return nil, false, providerTerminalFailureError(termination)
 	}
-	return inStream, hasVisible, nil
+	return append(finishPayload, inStream...), hasVisible, nil
 }
 
 func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLLMResponse) {
