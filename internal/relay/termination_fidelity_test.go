@@ -12,7 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	dbmodel "github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/transformer/inbound"
 	"github.com/lingyuins/octopus/internal/transformer/model"
+	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
 type terminationFidelityTestOutbound struct {
@@ -373,30 +375,21 @@ func TestHandleStreamResponseReportsPostOutputReadError(t *testing.T) {
 }
 
 func TestHandleStreamResponseIgnoresReadErrorAfterAcceptedTerminal(t *testing.T) {
-	finishReason := "stop"
-	visibleText := "complete output"
-	internalStream := &model.InternalLLMResponse{
-		Object: "chat.completion.chunk",
-		Choices: []model.Choice{{
-			Index:        0,
-			FinishReason: &finishReason,
-			Delta: &model.Message{
-				Role: "assistant",
-				Content: model.MessageContent{
-					Content: &visibleText,
-				},
-			},
-		}},
-	}
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, internalStream, []byte("data: complete output\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(recorder, nil, nil)
+	attempt.adapterType = outbound.OutboundTypeOpenAIChat
+	attempt.outAdapter = outbound.Get(attempt.adapterType)
+	attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
 	readError := errors.New("socket closed after terminal event")
 
 	err := attempt.handleStreamResponse(context.Background(), &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     make(http.Header),
 		Body: &terminationFidelityErrorReadCloser{
-			reader:        strings.NewReader("data: upstream terminal\n\n"),
+			reader: strings.NewReader(
+				"data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"complete output\"},\"finish_reason\":\"stop\"}]}\n\n" +
+					"data: [DONE]\n\n",
+			),
 			terminalError: readError,
 		},
 	})

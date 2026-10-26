@@ -92,8 +92,10 @@ func TestChatFinishTailBoundedAndMultipleChoices(t *testing.T) {
 		defer writer.Close()
 		go func() {
 			_, _ = io.WriteString(writer, "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"one\"},\"finish_reason\":\"stop\"}]}\n\n")
+			_, _ = io.WriteString(writer, "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
 			time.Sleep(2 * time.Second)
 			_, _ = io.WriteString(writer, "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":1,\"delta\":{\"content\":\"two\"},\"finish_reason\":\"stop\"}]}\n\n")
+			_, _ = io.WriteString(writer, "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":1,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
 		}()
 		done := make(chan error, 1)
 		go func() {

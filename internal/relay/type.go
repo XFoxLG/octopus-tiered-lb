@@ -414,6 +414,7 @@ type relayAttempt struct {
 	// provided a finish reason before the upstream closed.
 	streamObservedChoiceIndexes map[int]struct{}
 	streamFinishedChoiceIndexes map[int]struct{}
+	chatPendingFinishChoices    map[int]model.Choice
 
 	// streamTermination records the most recent terminal cause decoded from the
 	// upstream stream. It is internal-only and never serialized to clients.
