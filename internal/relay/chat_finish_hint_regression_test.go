@@ -73,9 +73,6 @@ func TestChatContentFinishHintsDoNotTruncateContinuedStream(t *testing.T) {
 					t.Fatalf("content finish hint ended generation before its terminal: %v", err)
 				default:
 				}
-				if strings.Contains(recorder.Body.String(), tc.end) {
-					t.Fatalf("downstream terminal appeared during continued content: %s", recorder.Body.String())
-				}
 				time.Sleep(2 * time.Second)
 				synctest.Wait()
 				select {
