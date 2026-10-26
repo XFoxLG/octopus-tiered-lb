@@ -114,6 +114,7 @@ func APIKeyAuth() gin.HandlerFunc {
 		c.Set("allowed_group_categories", apiKeyObj.AllowedGroupCategories)
 		c.Set("api_key_id", apiKeyObj.ID)
 		c.Set("excluded_channels", apiKeyObj.ExcludedChannels)
+		c.Set("request_timeout_seconds", apiKeyObj.RequestTimeoutSeconds)
 		c.Next()
 	}
 }

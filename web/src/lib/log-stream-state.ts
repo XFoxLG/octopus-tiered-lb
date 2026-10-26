@@ -5,9 +5,14 @@ export function mergeLogPages<T extends { id: string | number }>(pages: T[][], i
     return [[incoming, ...(pages[0] ?? [])].slice(0, 500), ...pages.slice(1)];
 }
 
-export function mergeLiveRequest<T extends { trace_id: string; state: string }>(entries: T[], incoming: T): T[] {
-    const remaining = entries.filter(entry => entry.trace_id !== incoming.trace_id);
-    return incoming.state === 'recorded' ? remaining : [incoming, ...remaining].slice(0, 256);
+export function mergeLiveRequest<T extends { trace_id: string; state: string; instance_id?: string; sequence?: number }>(entries: T[], incoming: T): T[] {
+    const previous = entries.find(entry => entry.trace_id === incoming.trace_id && entry.instance_id === incoming.instance_id);
+    if (previous && (incoming.sequence ?? 0) < (previous.sequence ?? 0)) return entries;
+    const terminal = (state: string) => ['completed', 'recorded', 'unavailable'].includes(state);
+    if (previous && terminal(previous.state) && !terminal(incoming.state)) return entries;
+    const remaining = entries.filter(entry => entry.trace_id !== incoming.trace_id || entry.instance_id !== incoming.instance_id);
+    // Keep bounded tombstones for out-of-order SSE events; the view only shows active entries.
+    return [incoming, ...remaining].slice(0, 256);
 }
 
 // Refresh the server's newest window without refetching loaded history. Entries

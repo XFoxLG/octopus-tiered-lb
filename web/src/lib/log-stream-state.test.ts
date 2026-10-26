@@ -16,9 +16,16 @@ test('live request becomes one final record; memory remains bounded', () => {
     const received = {trace_id:'trace',state:'received'};
     const streaming = mergeLiveRequest([received], {...received,state:'streaming'});
     assert.deepEqual(streaming,[{trace_id:'trace',state:'streaming'}]);
-    assert.deepEqual(mergeLiveRequest(streaming,{...received,state:'recorded'}),[]);
+    assert.deepEqual(mergeLiveRequest(streaming,{...received,state:'recorded'}),[{...received,state:'recorded'}]);
     const many = Array.from({length:256}, (_,index) => ({trace_id:String(index),state:'waiting'}));
     assert.equal(mergeLiveRequest(many,received).length,256);
+});
+
+test('terminal state and sequence reject late events without merging instances', () => {
+    const completed = { trace_id: 'trace', instance_id: 'a', sequence: 5, state: 'completed' };
+    assert.deepEqual(mergeLiveRequest([completed], { ...completed, sequence: 4, state: 'attempt' }), [completed]);
+    assert.deepEqual(mergeLiveRequest([completed], { ...completed, sequence: 6, state: 'attempt' }), [completed]);
+    assert.equal(mergeLiveRequest([completed], { ...completed, instance_id: 'b', sequence: 1, state: 'attempt' }).length, 2);
 });
 
 

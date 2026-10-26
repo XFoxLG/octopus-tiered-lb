@@ -93,7 +93,7 @@ func TestRelayExhaustedFailsClosedWithReason(t *testing.T) {
 
 	// (2) 对外通用文案：exhausted 的客户端响应固定走 ErrorClassUnavailable 文案，
 	// 不复用 lastErr（防泄漏上游内部细节）。
-	const respPrefix = "resp.Error(req.c, http.StatusBadGateway,"
+	const respPrefix = "writeClientTerminalError(req.c, nil, outbound.OutboundTypeOpenAIChat, http.StatusBadGateway,"
 	const respMsg = "clientErrorMessageForClass(ErrorClassUnavailable, http.StatusBadGateway)"
 	respIdx := strings.Index(src, respPrefix)
 	if respIdx < 0 {

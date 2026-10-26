@@ -1796,6 +1796,8 @@
       "add": "Add Key",
       "loadFailed": "Failed to load",
       "form": {
+        "requestTimeout": "Whole request timeout (seconds)",
+        "requestTimeoutHint": "Includes queueing, retries and streaming. Zero inherits other limits; the shortest deadline wins.",
         "name": "Name",
         "customKey": "Custom Key",
         "optional": "Optional",
@@ -2470,6 +2472,10 @@
       }
     },
     "form": {
+      "requestTimeout": {"label":"Whole request timeout (seconds)","hint":"Includes queueing, attempts and streaming. Zero inherits other limits; the shortest deadline wins."},
+      "streamKeepalive": {"label":"Stream keepalive","hint":"Send an SSE comment every 15 seconds while waiting. It carries no model content and cannot extend a client deadline."},
+      "assistantPrefill": {"label":"Assistant prefill compatibility","hint":"On converted requests ending with assistant text, append a user instruction to continue. Raw forwarding is preserved."},
+      "forwardMode": {"label":"Forwarding mode","hint":"Follow endpoint settings, convert formats, or require the same protocol for passthrough/raw. Protocol conflicts are excluded.","inherit":"Follow endpoint settings","convert":"Convert","passthrough":"Passthrough","raw":"Raw path and body"},
       "name": "Group Name",
       "category": "Group Category",
       "categoryPlaceholder": "e.g. premium or budget; optional",

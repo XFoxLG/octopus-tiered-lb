@@ -41,6 +41,7 @@ func prepareInternalRequestForOutbound(channel *appmodel.Channel, request *trans
 	applyParamOverride(channel, group, target)
 	applyReasoningPolicy(group, target)
 	attachRelayGroupEndpointMetadata(target, groupEndpointType, group)
+	applyAssistantPrefillCompatibility(target, group)
 	return target, effectiveRewrite, nil
 }
 

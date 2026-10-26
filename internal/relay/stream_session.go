@@ -148,6 +148,10 @@ type relayStreamSession struct {
 	bufferBytes      int
 	events           []relayStreamEvent
 	subscribers      map[chan struct{}]struct{}
+	operationCancel  context.CancelCauseFunc
+	clientGoneTimer  *time.Timer
+	ownerGone        bool
+	preserveWire     bool
 }
 
 type relayStreamSessionStore struct {
@@ -404,11 +408,41 @@ func (s *relayStreamSession) MarkClientGone() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.clientGoneActive || s.done {
+	s.ownerGone = true
+	if s.clientGoneActive || s.done || len(s.subscribers) > 0 {
 		return
 	}
 	s.clientGoneActive = true
 	s.clientGoneAt = time.Now()
+	s.startClientGoneTimerLocked()
+}
+
+func (s *relayStreamSession) bindOperation(cancel context.CancelCauseFunc) {
+	s.mu.Lock()
+	s.operationCancel = cancel
+	if s.clientGoneActive {
+		s.startClientGoneTimerLocked()
+	}
+	s.mu.Unlock()
+}
+
+func (s *relayStreamSession) startClientGoneTimerLocked() {
+	if s.clientGoneTimer != nil {
+		s.clientGoneTimer.Stop()
+	}
+	s.clientGoneTimer = time.AfterFunc(max(time.Until(s.clientGoneAt.Add(relayStreamClientGoneGrace)), 0), func() {
+		s.mu.Lock()
+		if s.done || !s.clientGoneActive || len(s.subscribers) > 0 {
+			s.mu.Unlock()
+			return
+		}
+		cancel := s.operationCancel
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel(errRelayStreamClientGone)
+		}
+		s.Finish(errRelayStreamClientGone)
+	})
 }
 
 // HasSubscribers 报告当前是否有读取者订阅该会话（即客户端是否已重连回来读）。
@@ -440,7 +474,13 @@ func (s *relayStreamSession) AddPayload(payload []byte) []relayStreamEvent {
 		return nil
 	}
 
+	s.mu.RLock()
+	preserveWire := s.preserveWire
+	s.mu.RUnlock()
 	frames := splitRelaySSEPayload(payload)
+	if preserveWire {
+		frames = [][]byte{append([]byte(nil), payload...)}
+	}
 	if len(frames) == 0 {
 		return nil
 	}
@@ -448,6 +488,10 @@ func (s *relayStreamSession) AddPayload(payload []byte) []relayStreamEvent {
 	events := make([]relayStreamEvent, 0, len(frames))
 
 	s.mu.Lock()
+	if s.done {
+		s.mu.Unlock()
+		return nil
+	}
 	for _, frame := range frames {
 		s.nextSeq++
 		event := relayStreamEvent{
@@ -543,6 +587,10 @@ func (s *relayStreamSession) Subscribe() (<-chan struct{}, func()) {
 	// （原请求的 context 早已 Done，无法自行感知重连）。
 	s.clientGoneActive = false
 	s.clientGoneAt = time.Time{}
+	if s.clientGoneTimer != nil {
+		s.clientGoneTimer.Stop()
+		s.clientGoneTimer = nil
+	}
 	s.mu.Unlock()
 
 	var once sync.Once
@@ -552,6 +600,11 @@ func (s *relayStreamSession) Subscribe() (<-chan struct{}, func()) {
 			if _, ok := s.subscribers[ch]; ok {
 				delete(s.subscribers, ch)
 				close(ch)
+			}
+			if !s.done && s.ownerGone && len(s.subscribers) == 0 && !s.clientGoneActive {
+				s.clientGoneActive = true
+				s.clientGoneAt = time.Now()
+				s.startClientGoneTimerLocked()
 			}
 			s.mu.Unlock()
 		})
@@ -571,7 +624,12 @@ func (s *relayStreamSession) Finish(err error) {
 		return
 	}
 	s.done = true
+	if s.clientGoneTimer != nil {
+		s.clientGoneTimer.Stop()
+		s.clientGoneTimer = nil
+	}
 	s.err = err
+	cancel := s.operationCancel
 	s.updatedAt = time.Now()
 
 	// 根据设置决定是否清空 events：关闭重连重放功能可立即释放大缓冲，
@@ -598,6 +656,9 @@ func (s *relayStreamSession) Finish(err error) {
 		close(ch)
 	}
 	s.mu.Unlock()
+	if err != nil && cancel != nil {
+		cancel(err)
+	}
 
 	s.store.mu.Lock()
 	if activeKey, ok := s.store.activeByConversation[s.conversationScope]; ok && activeKey == s.key {
@@ -651,6 +712,16 @@ func formatRelaySSEEvent(sequence int64, payload []byte) []byte {
 	return frame
 }
 
+func (s *relayStreamSession) formatEvent(event relayStreamEvent) []byte {
+	s.mu.RLock()
+	raw := s.preserveWire
+	s.mu.RUnlock()
+	if raw {
+		return event.Payload
+	}
+	return formatRelaySSEEvent(event.Sequence, event.Payload)
+}
+
 func writeSSEErrorEvent(w io.Writer, message string) {
 	data, _ := jsonAPI.Marshal(map[string]string{"error": message})
 	fmt.Fprintf(w, "event: error\ndata: %s\n\n", data)
@@ -681,7 +752,7 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 	writeEvents := func(events []relayStreamEvent) bool {
 		for _, event := range events {
 			writeHeaders()
-			if _, err := c.Writer.Write(formatRelaySSEEvent(event.Sequence, event.Payload)); err != nil {
+			if _, err := c.Writer.Write(req.streamSession.formatEvent(event)); err != nil {
 				return false
 			}
 			c.Writer.Flush()

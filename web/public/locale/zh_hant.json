@@ -1752,6 +1752,8 @@
       "add": "新增金鑰",
       "loadFailed": "載入失敗",
       "form": {
+        "requestTimeout": "整個請求時限（秒）",
+        "requestTimeoutHint": "包含排隊、重試與串流；0 繼承其他限制，最短時限優先。",
         "name": "名稱",
         "customKey": "自訂金鑰",
         "optional": "選填",
@@ -2419,6 +2421,10 @@
       }
     },
     "form": {
+      "requestTimeout": {"label":"整個請求時限（秒）","hint":"包含排隊、重試與串流；0 繼承其他限制，最短時限優先。"},
+      "streamKeepalive": {"label":"串流保活","hint":"等待期間每 15 秒傳送 SSE 註解，不包含模型內容，也不能延長用戶端時限。"},
+      "assistantPrefill": {"label":"Assistant 預填相容","hint":"轉換請求以 assistant 純文字結尾時，加入續寫指令。原始轉送保持原樣。"},
+      "forwardMode": {"label":"轉送模式","hint":"繼承端點設定、轉換格式，或要求 passthrough/raw 使用相同協議。協議衝突會排除候選。","inherit":"繼承端點設定","convert":"轉換","passthrough":"透傳","raw":"原始路徑與正文"},
       "name": "分組名稱",
       "category": "分組分類",
       "categoryPlaceholder": "如 premium、budget，可留空",

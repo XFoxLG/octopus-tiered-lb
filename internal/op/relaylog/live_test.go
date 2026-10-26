@@ -13,12 +13,19 @@ func TestLiveRequestsLifecycleAndBounds(t *testing.T) {
 	for _, state := range []string{"received", "waiting", "attempt", "streaming", "completed", "recorded"} {
 		store.update("trace", func(entry *LiveRequest) { entry.State = state; entry.RequestModel = strings.Repeat("x", 1000) })
 		got := <-subscriber
-		if got.State != state || got.TraceID != "trace" || len(got.RequestModel) > 256 || got.InstanceID == "" {
+		wantState := state
+		if state == "recorded" {
+			wantState = "completed"
+		}
+		if got.State != wantState || got.TraceID != "trace" || len(got.RequestModel) > 256 || got.InstanceID == "" || got.Sequence == 0 {
 			t.Fatalf("invalid state: %+v", got)
 		}
+		if state == "recorded" && got.PersistenceState != "stored" {
+			t.Fatal("persistence revived live state")
+		}
 	}
-	if len(store.requests) != 0 {
-		t.Fatal("final trace retained in in-flight set")
+	if entry := store.requests["trace"]; entry.State != "completed" || entry.PersistenceState != "stored" {
+		t.Fatal("terminal tombstone was not retained")
 	}
 	for index := 0; index < liveRequestLimit+10; index++ {
 		store.update(fmt.Sprint(index), func(entry *LiveRequest) { entry.State = "waiting" })
@@ -28,6 +35,18 @@ func TestLiveRequestsLifecycleAndBounds(t *testing.T) {
 	}
 	if len(store.subscribers) != 0 {
 		t.Fatal("slow subscriber was not disconnected for resync")
+	}
+}
+
+func TestLiveTerminalStateRejectsLateAttempt(t *testing.T) {
+	store := newLiveRequestStore()
+	store.update("trace", func(entry *LiveRequest) { entry.State = "completed" })
+	store.update("trace", func(entry *LiveRequest) { entry.State = "recorded" })
+	sequence := store.requests["trace"].Sequence
+	store.update("trace", func(entry *LiveRequest) { entry.State = "attempt"; entry.Attempt = 2 })
+	entry := store.requests["trace"]
+	if entry.State != "completed" || entry.Sequence <= sequence || entry.PersistenceState != "stored" {
+		t.Fatalf("late update revived terminal state: %+v", entry)
 	}
 }
 

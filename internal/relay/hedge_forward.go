@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"reflect"
 	"strings"
 	"time"
 
@@ -75,94 +74,9 @@ func (w *relayHedgeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func (w *relayHedgeWriter) CloseNotify() <-chan bool { return nil }
 func (w *relayHedgeWriter) Pusher() http.Pusher      { return nil }
 
-// Reflection here preserves help fields marked json:"-", pointer presence and
-// raw bytes. It runs only for opted-in hedges. Unsupported opaque fields cause
-// a serial fallback rather than a partial clone or semantic change.
-// Gemini and provider-specific adapters remain serial until their inbound
-// protocol state can be cloned and their native terminal semantics are covered.
+// Hedge lanes use the same isolated working copy as serial attempts.
 func cloneHedgeRequest(request *model.InternalLLMRequest) (*model.InternalLLMRequest, error) {
-	var clone func(reflect.Value) (reflect.Value, error)
-	clone = func(value reflect.Value) (reflect.Value, error) {
-		if !value.IsValid() {
-			return value, nil
-		}
-		result := reflect.New(value.Type()).Elem()
-		switch value.Kind() {
-		case reflect.Pointer:
-			if value.IsNil() {
-				return result, nil
-			}
-			inner, err := clone(value.Elem())
-			if err != nil {
-				return result, err
-			}
-			result.Set(reflect.New(value.Type().Elem()))
-			result.Elem().Set(inner)
-		case reflect.Interface:
-			if value.IsNil() {
-				return result, nil
-			}
-			inner, err := clone(value.Elem())
-			if err != nil {
-				return result, err
-			}
-			result.Set(inner)
-		case reflect.Slice:
-			if value.IsNil() {
-				return result, nil
-			}
-			result = reflect.MakeSlice(value.Type(), value.Len(), value.Len())
-			for i := 0; i < value.Len(); i++ {
-				inner, err := clone(value.Index(i))
-				if err != nil {
-					return result, err
-				}
-				result.Index(i).Set(inner)
-			}
-		case reflect.Map:
-			if value.IsNil() {
-				return result, nil
-			}
-			result = reflect.MakeMapWithSize(value.Type(), value.Len())
-			iter := value.MapRange()
-			for iter.Next() {
-				inner, err := clone(iter.Value())
-				if err != nil {
-					return result, err
-				}
-				result.SetMapIndex(iter.Key(), inner)
-			}
-		case reflect.Struct:
-			for i := 0; i < value.NumField(); i++ {
-				if !result.Field(i).CanSet() {
-					return result, fmt.Errorf("opaque request field %s", value.Type().Field(i).Name)
-				}
-				inner, err := clone(value.Field(i))
-				if err != nil {
-					return result, err
-				}
-				result.Field(i).Set(inner)
-			}
-		case reflect.Array:
-			for i := 0; i < value.Len(); i++ {
-				inner, err := clone(value.Index(i))
-				if err != nil {
-					return result, err
-				}
-				result.Index(i).Set(inner)
-			}
-		case reflect.Chan, reflect.Func, reflect.UnsafePointer:
-			return result, fmt.Errorf("unsupported request field %s", value.Type())
-		default:
-			result.Set(value)
-		}
-		return result, nil
-	}
-	copied, err := clone(reflect.ValueOf(request))
-	if err != nil {
-		return nil, err
-	}
-	return copied.Interface().(*model.InternalLLMRequest), nil
+	return model.CloneForAttempt(request), nil
 }
 
 func newHedgeInbound(original model.Inbound, request *model.InternalLLMRequest) (model.Inbound, error) {
@@ -311,7 +225,10 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 		if limited, _ := balancer.IsChannelRateLimited(channel.ID, modelName); limited {
 			return nil
 		}
-		plans := channel.ResolveConnectionPlans(req.internalRequest, req.group.OutboundFormat)
+		plans, conflicts := channel.ResolveRelayConnectionPlans(req.internalRequest, req.group.OutboundFormat, req.group.ForwardMode)
+		if trace := relayRequestTraceFromContext(req.c); trace != nil {
+			trace.recordRoutingConflicts(conflicts)
+		}
 		if len(plans) == 0 || !supportsHedgeAdapter(plans[0].AdapterType) || plans[0].Adapter() == nil {
 			return nil
 		}
@@ -383,6 +300,9 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 			return errClientDisconnected
 		}
 		req.c.Writer.Flush()
+		if writer, ok := req.c.Writer.(*relayResponseWriter); ok {
+			writer.markVisible()
+		}
 		winner = index
 		return nil
 	})

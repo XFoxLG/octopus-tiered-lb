@@ -85,6 +85,11 @@ func WriteJSON(ctx context.Context, destination io.Writer, includeLogs bool, inc
 	}
 
 	mainConnection := db.GetDB().WithContext(ctx)
+	if err := writeGORMJSONArray(bufferedWriter, "error_logs", mainConnection.Model(&model.ErrorLog{}).Order("id DESC").Limit(maxAuditLogsExport), mainConnection, func(row model.ErrorLog) any {
+		return row
+	}); err != nil {
+		return fmt.Errorf("stream error_logs: %w", err)
+	}
 	if err := writeGORMJSONArray(bufferedWriter, "audit_logs", mainConnection.Model(&model.AuditLog{}).Order("id DESC").Limit(maxAuditLogsExport), mainConnection, func(row model.AuditLog) any {
 		return row
 	}); err != nil {

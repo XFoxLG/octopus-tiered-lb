@@ -364,6 +364,10 @@ type groupListResponseItem struct {
 	FirstTokenTimeOut       int                  `json:"first_token_time_out"`
 	AttemptTimeOut          int                  `json:"attempt_time_out"`
 	StreamIdleTimeout       int                  `json:"stream_idle_timeout"`
+	RequestTimeoutSeconds   int                  `json:"request_timeout_seconds"`
+	StreamKeepaliveEnabled  bool                 `json:"stream_keepalive_enabled"`
+	AssistantPrefillCompat  bool                 `json:"assistant_prefill_compat"`
+	ForwardMode             string               `json:"forward_mode"`
 	HedgeEnabled            bool                 `json:"hedge_enabled"`
 	HedgeDelayMs            int                  `json:"hedge_delay_ms"`
 	SessionKeepTime         int                  `json:"session_keep_time"`
@@ -404,6 +408,10 @@ func normalizeGroupListResponse(groups []model.Group) []groupListResponseItem {
 			FirstTokenTimeOut:       group.FirstTokenTimeOut,
 			AttemptTimeOut:          group.AttemptTimeOut,
 			StreamIdleTimeout:       group.StreamIdleTimeout,
+			RequestTimeoutSeconds:   group.RequestTimeoutSeconds,
+			StreamKeepaliveEnabled:  group.StreamKeepaliveEnabled,
+			AssistantPrefillCompat:  group.AssistantPrefillCompat,
+			ForwardMode:             group.ForwardMode,
 			HedgeEnabled:            group.HedgeEnabled,
 			HedgeDelayMs:            group.HedgeDelayMs,
 			SessionKeepTime:         group.SessionKeepTime,

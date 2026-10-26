@@ -34,6 +34,10 @@ export type GroupEditorValues = {
     first_token_time_out: number;
     attempt_time_out: number;
     stream_idle_timeout: number;
+    request_timeout_seconds?: number;
+    stream_keepalive_enabled?: boolean;
+    assistant_prefill_compat?: boolean;
+    forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
     hedge_enabled: boolean;
     hedge_delay_ms: number;
     session_keep_time: number;
@@ -316,6 +320,10 @@ export function GroupEditor({
     const [firstTokenTimeOut, setFirstTokenTimeOut] = useState<number>(initial?.first_token_time_out ?? 0);
     const [attemptTimeOut, setAttemptTimeOut] = useState<number>(initial?.attempt_time_out ?? 0);
     const [streamIdleTimeout, setStreamIdleTimeout] = useState<number>(initial?.stream_idle_timeout ?? 0);
+    const [requestTimeout, setRequestTimeout] = useState(initial?.request_timeout_seconds ?? 0);
+    const [streamKeepalive, setStreamKeepalive] = useState(initial?.stream_keepalive_enabled ?? false);
+    const [assistantPrefill, setAssistantPrefill] = useState(initial?.assistant_prefill_compat ?? false);
+    const [forwardMode, setForwardMode] = useState<GroupEditorValues['forward_mode']>(initial?.forward_mode ?? 'inherit');
     const [hedgeEnabled, setHedgeEnabled] = useState<boolean>(initial?.hedge_enabled ?? false);
     const [hedgeDelayMs, setHedgeDelayMs] = useState<number>(Math.min(30000, Math.max(0, initial?.hedge_delay_ms ?? 300)));
     const [sessionKeepTime, setSessionKeepTime] = useState<number>(initial?.session_keep_time ?? 0);
@@ -422,6 +430,10 @@ export function GroupEditor({
             first_token_time_out: firstTokenTimeOut,
             attempt_time_out: attemptTimeOut,
             stream_idle_timeout: streamIdleTimeout,
+            request_timeout_seconds: requestTimeout,
+            stream_keepalive_enabled: streamKeepalive,
+            assistant_prefill_compat: assistantPrefill,
+            forward_mode: forwardMode,
             hedge_enabled: hedgeEnabled,
             hedge_delay_ms: hedgeDelayMs,
             session_keep_time: sessionKeepTime,
@@ -735,6 +747,26 @@ export function GroupEditor({
                                         }}
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="group-request-timeout">{t('form.requestTimeout.label')}<Hint text={t('form.requestTimeout.hint')} /></FieldLabel>
+                                    <Input id="group-request-timeout" type="number" min={0} max={86400} step={1} value={requestTimeout}
+                                        onChange={(event) => setRequestTimeout(Math.min(86400, Math.max(0, Number.parseInt(event.target.value, 10) || 0)))} />
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="group-forward-mode">{t('form.forwardMode.label')}<Hint text={t('form.forwardMode.hint')} /></FieldLabel>
+                                    <select id="group-forward-mode" value={forwardMode} onChange={(event) => setForwardMode(event.target.value as GroupEditorValues['forward_mode'])}
+                                        className="h-10 w-full min-w-0 rounded-lg border border-border/40 bg-card px-3 text-sm">
+                                        {(['inherit', 'convert', 'passthrough', 'raw'] as const).map((value) => <option key={value} value={value}>{t(`form.forwardMode.${value}`)}</option>)}
+                                    </select>
+                                </Field>
+                                <Field className="col-span-full">
+                                    <FieldLabel htmlFor="group-stream-keepalive">{t('form.streamKeepalive.label')}<Hint text={t('form.streamKeepalive.hint')} /></FieldLabel>
+                                    <Switch id="group-stream-keepalive" checked={streamKeepalive} onCheckedChange={setStreamKeepalive} />
+                                </Field>
+                                <Field className="col-span-full">
+                                    <FieldLabel htmlFor="group-assistant-prefill">{t('form.assistantPrefill.label')}<Hint text={t('form.assistantPrefill.hint')} /></FieldLabel>
+                                    <Switch id="group-assistant-prefill" checked={assistantPrefill} onCheckedChange={setAssistantPrefill} />
                                 </Field>
                                 <p className="col-span-full text-xs leading-5 text-muted-foreground">
                                     {t('form.channelOverrideNotice')}

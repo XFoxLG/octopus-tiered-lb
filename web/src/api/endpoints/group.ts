@@ -158,6 +158,10 @@ export interface Group {
     // Optional during mixed-version rollout: an older backend may not expose
     // the new per-group watchdog setting yet. Callers normalize it to zero.
     stream_idle_timeout?: number;
+    request_timeout_seconds?: number;
+    stream_keepalive_enabled?: boolean;
+    assistant_prefill_compat?: boolean;
+    forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
     hedge_enabled?: boolean;
     hedge_delay_ms?: number;
     session_keep_time: number;
@@ -503,6 +507,10 @@ export interface CreateGroupRequest {
     first_token_time_out: number;
     attempt_time_out: number;
     stream_idle_timeout: number;
+    request_timeout_seconds?: number;
+    stream_keepalive_enabled?: boolean;
+    assistant_prefill_compat?: boolean;
+    forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
     hedge_enabled?: boolean;
     hedge_delay_ms?: number;
     session_keep_time: number;
@@ -531,6 +539,10 @@ export interface GroupUpdateRequest {
     first_token_time_out?: number;
     attempt_time_out?: number;
     stream_idle_timeout?: number;
+    request_timeout_seconds?: number;
+    stream_keepalive_enabled?: boolean;
+    assistant_prefill_compat?: boolean;
+    forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
     hedge_enabled?: boolean;
     hedge_delay_ms?: number;
     session_keep_time?: number;

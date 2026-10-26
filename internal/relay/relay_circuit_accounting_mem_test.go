@@ -174,7 +174,7 @@ func TestRelayGoHandlesSSEDoneMarkerViaSharedFinalize(t *testing.T) {
 		t.Fatal("relay.go 缺少 sawDoneMarker 标记；[DONE] 必须让该 chunk 走完正常写入" +
 			"（客户端要收到入站适配器渲染的终止帧）再收尾，不能当场 return")
 	}
-	if !strings.Contains(src, "if sawDoneMarker {") {
+	if !strings.Contains(src, "if sawDoneMarker ||") {
 		t.Fatal("relay.go 缺少 `if sawDoneMarker` 早退分支；[DONE] 之后的请求仍会阻塞等 EOF")
 	}
 

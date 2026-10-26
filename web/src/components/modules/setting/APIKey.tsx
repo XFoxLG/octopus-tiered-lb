@@ -266,6 +266,7 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
         expire_at: apiKey?.expire_at,
         max_cost: apiKey?.max_cost,
         max_tokens: apiKey?.max_tokens,
+        request_timeout_seconds: apiKey?.request_timeout_seconds ?? 0,
         supported_models: apiKey?.supported_models,
         allowed_group_categories: apiKey?.allowed_group_categories,
         allowed_ips: apiKey?.allowed_ips ?? '',
@@ -417,6 +418,17 @@ export function APIKeyForm({ apiKey, isPending, submitLabel, tagSuggestions = []
                     onChange={(next) => updateForm({ tags: next })}
                 />
             </div>
+
+            <label className="grid gap-1 text-xs text-muted-foreground @lg:col-span-2">
+                <span className="flex items-center gap-1.5">
+                    {t('apiKey.form.requestTimeout')}
+                    <Hint text={t('apiKey.form.requestTimeoutHint')} />
+                </span>
+                <Input type="number" min={0} max={86400} step={1} disabled={isPending}
+                    value={form.request_timeout_seconds ?? 0}
+                    onChange={(e) => updateForm({ request_timeout_seconds: Number(e.target.value) })}
+                    className="h-9 text-sm rounded-xl" />
+            </label>
 
             <div className="grid gap-1 text-xs text-muted-foreground @lg:col-span-2">
                 {t('apiKey.form.maxCost')}

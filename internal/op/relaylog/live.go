@@ -12,20 +12,22 @@ import (
 const liveRequestLimit = 256
 
 type LiveRequest struct {
-	EndpointType string `json:"endpoint_type"`
-	TraceID      string `json:"trace_id"`
-	InstanceID   string `json:"instance_id"`
-	StartedAt    int64  `json:"started_at"`
-	UpdatedAt    int64  `json:"updated_at"`
-	State        string `json:"state"`
-	RequestModel string `json:"request_model"`
-	ActualModel  string `json:"actual_model"`
-	ChannelID    int    `json:"channel_id"`
-	ChannelName  string `json:"channel_name"`
-	APIKeyID     int    `json:"api_key_id"`
-	Attempt      int    `json:"attempt"`
-	HTTPStatus   int    `json:"http_status"`
-	LogID        string `json:"log_id,omitempty"`
+	EndpointType     string `json:"endpoint_type"`
+	TraceID          string `json:"trace_id"`
+	InstanceID       string `json:"instance_id"`
+	StartedAt        int64  `json:"started_at"`
+	UpdatedAt        int64  `json:"updated_at"`
+	State            string `json:"state"`
+	RequestModel     string `json:"request_model"`
+	ActualModel      string `json:"actual_model"`
+	ChannelID        int    `json:"channel_id"`
+	ChannelName      string `json:"channel_name"`
+	APIKeyID         int    `json:"api_key_id"`
+	Attempt          int    `json:"attempt"`
+	HTTPStatus       int    `json:"http_status"`
+	LogID            string `json:"log_id,omitempty"`
+	Sequence         uint64 `json:"sequence"`
+	PersistenceState string `json:"persistence_state,omitempty"`
 }
 
 type liveRequestStore struct {
@@ -40,6 +42,8 @@ func newLiveRequestStore() *liveRequestStore {
 }
 
 var liveRequests = newLiveRequestStore()
+
+func LiveInstanceID() string { return liveRequests.instance }
 
 func liveLabel(value string) string {
 	if len(value) > 256 {
@@ -64,6 +68,14 @@ func (store *liveRequestStore) update(traceID string, update func(*LiveRequest))
 	}
 	previous := entry
 	update(&entry)
+	recorded := entry.State == "recorded"
+	if recorded {
+		entry.State = "completed"
+		entry.PersistenceState = "stored"
+	}
+	if previous.State == "completed" || previous.State == "unavailable" {
+		entry.State = previous.State
+	}
 	entry.RequestModel = liveLabel(entry.RequestModel)
 	entry.ActualModel = liveLabel(entry.ActualModel)
 	entry.ChannelName = liveLabel(entry.ChannelName)
@@ -71,6 +83,7 @@ func (store *liveRequestStore) update(traceID string, update func(*LiveRequest))
 		return
 	}
 	entry.UpdatedAt = now
+	entry.Sequence = previous.Sequence + 1
 	for key, candidate := range store.requests {
 		if now-candidate.UpdatedAt > int64(10*time.Minute/time.Millisecond) && (candidate.State == "unavailable" || candidate.State == "completed") {
 			delete(store.requests, key)
@@ -94,9 +107,8 @@ func (store *liveRequestStore) update(traceID string, update func(*LiveRequest))
 			delete(store.subscribers, subscriber)
 		}
 	}
-	if entry.State == "recorded" {
-		delete(store.requests, traceID)
-	}
+	// Retain a bounded terminal tombstone so late persistence/attempt updates
+	// cannot recreate an active request or reset its sequence.
 }
 
 func SubscribeLiveRequests() (chan LiveRequest, []LiveRequest, func()) {

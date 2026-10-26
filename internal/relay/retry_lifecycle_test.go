@@ -59,9 +59,9 @@ func TestHandlerRetryStartsWithFreshProtocolState(testContext *testing.T) {
 			channel.GetKeyCache().Set(secondKey.ID, secondKey)
 			testContext.Cleanup(func() { channel.GetKeyCache().Del(secondKey.ID) })
 			for settingKey, settingValue := range map[appmodel.SettingKey]string{
-				appmodel.SettingKeyRelayRetryCount:        "1",
-				appmodel.SettingKeyRelayMaxTotalAttempts:  "2",
-				appmodel.SettingKeyRetryEmptyOutput:       "true",
+				appmodel.SettingKeyRelayRetryCount:         "1",
+				appmodel.SettingKeyRelayMaxTotalAttempts:   "2",
+				appmodel.SettingKeyRetryEmptyOutput:        "true",
 				appmodel.SettingKeyReasoningBufferStrategy: "buffer",
 			} {
 				if err := setting.SetString(settingKey, settingValue); err != nil {
@@ -152,7 +152,9 @@ func TestHandlerOperationTimeoutReturnsErrorAndRetainsAttempts(testContext *test
 		return nil, request.Context().Err()
 	})
 	originalTimeout := relayUpstreamTimeout
-	relayUpstreamTimeout = 50 * time.Millisecond
+	// This fixture proves cancellation after dispatch, not a 50ms scheduler
+	// race during setup. Exact deadline boundaries use synctest separately.
+	relayUpstreamTimeout = 500 * time.Millisecond
 	testContext.Cleanup(func() { relayUpstreamTimeout = originalTimeout })
 	for settingKey, value := range map[appmodel.SettingKey]string{
 		appmodel.SettingKeyRelayRouteRetries:     "2",
@@ -261,10 +263,10 @@ func TestHandlerRateLimitHoldStopsAtBudgetOrOperationDeadline(testContext *testi
 				return newIndependentFixtureResponse(request, http.StatusTooManyRequests, `{"error":{"message":"fixture key limit"}}`), nil
 			})
 			for settingKey, value := range map[appmodel.SettingKey]string{
-				appmodel.SettingKeyRelayMaxTotalAttempts:   fmt.Sprint(maximumAttempts),
-				appmodel.SettingKeyRateLimitHoldEnabled:    "true",
-				appmodel.SettingKeyRateLimitHoldInterval:   "10",
-				appmodel.SettingKeyRateLimitHoldMaxWait:    "20",
+				appmodel.SettingKeyRelayMaxTotalAttempts: fmt.Sprint(maximumAttempts),
+				appmodel.SettingKeyRateLimitHoldEnabled:  "true",
+				appmodel.SettingKeyRateLimitHoldInterval: "10",
+				appmodel.SettingKeyRateLimitHoldMaxWait:  "20",
 			} {
 				if err := setting.SetString(settingKey, value); err != nil {
 					testContext.Fatal(err)

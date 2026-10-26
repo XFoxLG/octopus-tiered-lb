@@ -147,8 +147,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		return
 	}
 
-	operationCtx, cancel := newRelayOperationContext()
+	operationCtx, cancel := newRelayOperationContext(c.Request.Context())
 	defer cancel()
+	operationCtx, budgetCancel, _ := withRelayRequestBudget(operationCtx, startTime, group.RequestTimeoutSeconds, c.GetInt("request_timeout_seconds"))
+	defer budgetCancel()
 
 	maxRouteRetries := getMaxRouteRetries(&group)
 	ratelimitCooldown := getRatelimitCooldown()

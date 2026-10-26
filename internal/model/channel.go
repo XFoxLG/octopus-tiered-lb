@@ -291,6 +291,7 @@ type Channel struct {
 	ReasoningBufferStrategy string            `json:"reasoning_buffer_strategy,omitempty" gorm:"column:reasoning_buffer_strategy;type:varchar(20);not null;default:''"`
 	ConnectionConfig        *ConnectionConfig `json:"connection_config,omitempty" gorm:"serializer:json;type:text"`
 	SelectedEndpointID      string            `json:"-" gorm:"-"`
+	SelectedConnectionPlan  *ConnectionPlan   `json:"-" gorm:"-"`
 }
 
 type BaseUrl struct {

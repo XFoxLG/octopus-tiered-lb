@@ -65,6 +65,13 @@ func resetRelayStreamSessionsForTest(t *testing.T) {
 	t.Helper()
 	relayStreamEvictWG.Wait()
 	relayStreamSessions.mu.Lock()
+	for _, session := range relayStreamSessions.byKey {
+		session.mu.Lock()
+		if session.clientGoneTimer != nil {
+			session.clientGoneTimer.Stop()
+		}
+		session.mu.Unlock()
+	}
 	relayStreamSessions.byKey = make(map[string]*relayStreamSession)
 	relayStreamSessions.activeByConversation = make(map[string]string)
 	relayStreamSessions.mu.Unlock()

@@ -94,6 +94,7 @@ func TestGetGroupListReturnsFullConfigContract(t *testing.T) {
 		"relay_retry_count",
 		"relay_route_retries",
 		"last_test_all_failed",
+		"stream_idle_timeout", "request_timeout_seconds", "stream_keepalive_enabled", "assistant_prefill_compat", "forward_mode",
 	}
 	first := response.Data[0]
 	for _, field := range requiredFields {

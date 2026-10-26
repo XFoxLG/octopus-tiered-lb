@@ -109,11 +109,11 @@ func TestExportDecryptsSensitiveFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
-	if dump.Version != 3 {
-		t.Fatalf("dump version = %d, want 3 (plaintext secrets, issue #247)", dump.Version)
+	if dump.Version != dbDumpVersion {
+		t.Fatalf("dump version = %d, want %d", dump.Version, dbDumpVersion)
 	}
-	if dbDumpVersion != 3 {
-		t.Fatalf("dbDumpVersion = %d, want 3", dbDumpVersion)
+	if dbDumpVersion < 3 {
+		t.Fatalf("dbDumpVersion = %d does not support portable secrets", dbDumpVersion)
 	}
 
 	assertPlain := func(field, got, want string) {

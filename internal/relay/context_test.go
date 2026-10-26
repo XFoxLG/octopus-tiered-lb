@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestNewRelayOperationContextDoesNotTrackRequestCancel(t *testing.T) {
+func TestNewRelayOperationContextTracksRequestCancel(t *testing.T) {
 	originalTimeout := relayUpstreamTimeout
 	relayUpstreamTimeout = 0
 	defer func() {
@@ -17,15 +17,18 @@ func TestNewRelayOperationContextDoesNotTrackRequestCancel(t *testing.T) {
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
 	defer cancelRequest()
 
-	ctx, cancel := newRelayOperationContext()
+	ctx, cancel := newRelayOperationContext(requestCtx)
 	defer cancel()
 
 	cancelRequest()
 
 	select {
 	case <-ctx.Done():
-		t.Fatalf("newRelayOperationContext() err = %v, want request cancellation to be ignored", ctx.Err())
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatalf("operation did not inherit client cancellation: %v", ctx.Err())
+		}
 	case <-time.After(50 * time.Millisecond):
+		t.Fatal("operation ignored client cancellation")
 	}
 
 	if !errors.Is(requestCtx.Err(), context.Canceled) {
@@ -40,7 +43,7 @@ func TestNewRelayOperationContextCancelFuncCancelsContext(t *testing.T) {
 		relayUpstreamTimeout = originalTimeout
 	}()
 
-	ctx, cancel := newRelayOperationContext()
+	ctx, cancel := newRelayOperationContext(context.Background())
 	cancel()
 
 	select {
@@ -60,7 +63,7 @@ func TestNewRelayOperationContextAppliesIndependentTimeout(t *testing.T) {
 		relayUpstreamTimeout = originalTimeout
 	}()
 
-	ctx, cancel := newRelayOperationContext()
+	ctx, cancel := newRelayOperationContext(context.Background())
 	defer cancel()
 
 	select {

@@ -20,6 +20,7 @@ export interface APIKey {
     expire_at?: number; // Unix 时间戳（秒），不传表示永不过期
     max_cost?: number; // 不传表示无限制
     max_tokens?: number; // Token 用量上限，0 或不传表示不限制（issue #108）
+    request_timeout_seconds?: number; // 整请求预算，0 继承其他期限
     supported_models?: string; // 不传表示支持所有模型
     allowed_group_categories?: string; // 逗号分隔的允许分组分类，空表示支持所有分类
     rate_limit_rpm?: number; // 每分钟请求数限制，0 表示无限制

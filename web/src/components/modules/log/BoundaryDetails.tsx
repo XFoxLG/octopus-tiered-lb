@@ -211,6 +211,7 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
             <details onToggle={event => setShowDiagnostics(event.currentTarget.open)} className="rounded-lg border border-border/50 p-3">
                 <summary className="cursor-pointer rounded text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">{t('diagnostics')}</summary>
                 {showDiagnostics && <div className="mt-3 space-y-3">
+                    {detail.diagnostics ? <pre tabIndex={0} aria-label={t('diagnostics')} className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/30 p-3 font-mono text-xs">{JSON.stringify(detail.diagnostics, null, 2)}</pre> : null}
             <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-5">
                 <StatusAxis label={t('axes.generation')} value={detail.generation_outcome} />
                 <StatusAxis label={t('axes.upstream')} value={detail.upstream_outcome} />

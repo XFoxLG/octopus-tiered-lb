@@ -80,6 +80,7 @@ type RelayLog struct {
 	ClientDeliveryState       string                    `json:"client_delivery_state,omitempty" gorm:"column:client_delivery_state;size:24"`
 	ClientWriteError          string                    `json:"client_write_error,omitempty" gorm:"column:client_write_error"`
 	TerminationCause          string                    `json:"termination_cause,omitempty" gorm:"column:termination_cause;size:32"`
+	Diagnostics               *RelayDiagnostics         `json:"diagnostics,omitempty" gorm:"serializer:json;type:text"`
 	ProviderTerminationReason string                    `json:"provider_termination_reason,omitempty" gorm:"column:provider_termination_reason"`
 	ClientWriteBytes          int64                     `json:"client_write_bytes,omitempty" gorm:"column:client_write_bytes"` // 服务端 writer 实际接受的字节数
 	ClientWriteComplete       bool                      `json:"client_write_complete" gorm:"column:client_write_complete"`     // handler 正常返回且 writer 未报告错误
