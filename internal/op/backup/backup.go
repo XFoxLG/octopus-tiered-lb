@@ -27,14 +27,16 @@ import (
 // dbDumpVersion 是 DBDump 的格式版本（本 fork 编号）。
 //   - v1：原始格式。
 //   - v2：relay 日志家族拆分（relay_log_attempts / content_refs / blobs）。
-//   - v4（当前）：补齐代理/模型/价格配置、协议证据、逐日统计与错误日志。
+//   - v4：补齐代理/模型/价格配置、协议证据、逐日统计与错误日志。
+//   - v5（当前）：新增分组健康快照/明细与 AI 路由任务；full 恢复时对这三类
+//     表权威清空重建，v1-v4 历史备份不触碰目标中的这些新表数据。
 //   - v3（上游 0fa706fb / issue #247）：敏感字段（api_keys.api_key、
 //     channel_keys.channel_key、api_credential_profiles.api_key）导出为
 //     **明文**，导入侧按目标实例的 crypto key 幂等重加密。
 //
 // v1/v2 的 dump 中这些字段是源实例的 enc: 密文，跨实例导入不可用；
 // 导入侧对 enc: 值原样保留，同实例旧备份仍可恢复。
-const dbDumpVersion = 4
+const dbDumpVersion = 5
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
 const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（外层上限，内层按 SQL 变量预算再收）
@@ -97,6 +99,10 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	// Notifications
 	if err := conn.Find(&d.Notifications).Error; err != nil {
 		return nil, fmt.Errorf("export notifications: %w", err)
+	}
+
+	if err := exportGroupHealthAndRouteTasks(conn, d); err != nil {
+		return nil, err
 	}
 
 	// Runtime
@@ -824,6 +830,9 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 		if err := importExtendedConfiguration(cfg, dump); err != nil {
 			return err
 		}
+		if err := importGroupHealthAndRouteTasks(cfg, dump); err != nil {
+			return err
+		}
 
 		// Import channels / keys / groups / items — skip existing
 		if err := cfg.doNothing("channels", &dump.Channels, len(dump.Channels)); err != nil {
@@ -955,12 +964,17 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 			return nil, fmt.Errorf("reopen log db before import: %w", err)
 		}
 		if logConn := db.GetLogDB(); logConn != nil {
+			logRes := &model.DBImportResult{RowsAffected: map[string]int64{}}
 			if err := logConn.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
-				logCfg := &importConfig{conn: transaction, res: res, isFull: isFull, version: dump.Version}
-				return importRelayLogFamily(logCfg, dump)
+				logCfg := &importConfig{conn: transaction, res: logRes, isFull: isFull, version: dump.Version}
+				if err := importRelayLogFamily(logCfg, dump); err != nil {
+					return err
+				}
+				return synchronizeImportedSequences(logCfg)
 			}); err != nil {
 				return nil, err
 			}
+			res.Progress = append(res.Progress, logRes.Progress...)
 		}
 	}
 

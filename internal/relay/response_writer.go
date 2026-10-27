@@ -34,6 +34,8 @@ type relayResponseWriter struct {
 	commands chan relayWriteCommand
 	finished chan struct{}
 	stopOnce sync.Once
+	closeMu  sync.Mutex
+	accepted bool
 	semantic bool // owned by the writer goroutine
 	visible  bool
 }
@@ -50,14 +52,31 @@ func newRelayResponseWriter(base gin.ResponseWriter) *relayResponseWriter {
 }
 func (w *relayResponseWriter) call(run func(gin.ResponseWriter) relayWriteResult) relayWriteResult {
 	cmd := relayWriteCommand{run: run, done: make(chan relayWriteResult, 1)}
+	// close() may fire concurrently; reject commands once it has started so a
+	// send can never race the channel close and panic.
+	w.closeMu.Lock()
+	if w.accepted {
+		w.closeMu.Unlock()
+		return relayWriteResult{err: io.ErrClosedPipe}
+	}
 	select {
 	case w.commands <- cmd:
+		w.closeMu.Unlock()
 		return <-cmd.done
 	case <-w.finished:
+		w.closeMu.Unlock()
 		return relayWriteResult{err: io.ErrClosedPipe}
 	}
 }
-func (w *relayResponseWriter) close()              { w.stopOnce.Do(func() { close(w.commands); <-w.finished }) }
+func (w *relayResponseWriter) close() {
+	w.stopOnce.Do(func() {
+		w.closeMu.Lock()
+		defer w.closeMu.Unlock()
+		w.accepted = true
+		close(w.commands)
+		<-w.finished
+	})
+}
 func (w *relayResponseWriter) Header() http.Header { return w.header }
 func applyWriterHeaders(base gin.ResponseWriter, headers http.Header) {
 	if base.Written() {
