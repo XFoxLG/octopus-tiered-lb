@@ -90,6 +90,30 @@ func exportDetailedStats(conn *gorm.DB, dump *model.DBDump) error {
 	return nil
 }
 
+// exportGroupHealthAndRouteTasks 导出分组健康快照/明细与 AI 路由任务。配置类
+// 数据始终随备份导出，不受「保留统计」开关影响。
+func exportGroupHealthAndRouteTasks(conn *gorm.DB, dump *model.DBDump) error {
+	for _, row := range []struct {
+		name  string
+		model any
+		dest  any
+	}{
+		{"group_health_snapshots", &model.GroupHealthSnapshot{}, &dump.GroupHealthSnapshots},
+		{"group_health_attempts", &model.GroupHealthAttempt{}, &dump.GroupHealthAttempts},
+		{"ai_route_tasks", &model.AIRouteTask{}, &dump.AIRouteTasks},
+	} {
+		// Partial-schema tests and older forks can initialize a database without
+		// these optional evidence tables. A normal Octopus deployment has them.
+		if !conn.Migrator().HasTable(row.model) {
+			continue
+		}
+		if err := conn.Find(row.dest).Error; err != nil {
+			return fmt.Errorf("export %s: %w", row.name, err)
+		}
+	}
+	return nil
+}
+
 func deleteExtendedTables(cfg *importConfig, dump *model.DBDump) error {
 	// A historical dump cannot authoritatively replace tables it never exported.
 	// v4 covers all these tables, including intentionally empty configuration.
@@ -121,8 +145,51 @@ func deleteExtendedTables(cfg *importConfig, dump *model.DBDump) error {
 			}
 		}
 	}
+	// v5 full import owns these tables. Historical dumps (v1-v4) never carried
+	// them and must keep target data for manual/cleanup paths.
+	if dump.Version >= 5 {
+		// attempts reference snapshots; ai_route_tasks is independent.
+		for _, row := range []struct {
+			name  string
+			model any
+		}{
+			{"group_health_attempts", &model.GroupHealthAttempt{}},
+			{"group_health_snapshots", &model.GroupHealthSnapshot{}},
+			{"ai_route_tasks", &model.AIRouteTask{}},
+		} {
+			if !cfg.conn.Migrator().HasTable(row.model) {
+				continue
+			}
+			if err := cfg.deleteAll(row.name); err != nil {
+				return fmt.Errorf("full import: delete %s: %w", row.name, err)
+			}
+		}
+	}
 	if dump.IncludeLogs && dump.Version >= 4 {
 		return cfg.deleteAll("error_logs")
+	}
+	return nil
+}
+
+func importGroupHealthAndRouteTasks(cfg *importConfig, dump *model.DBDump) error {
+	if dump.Version < 5 {
+		return nil
+	}
+	for _, row := range []struct {
+		name  string
+		model any
+		rows  any
+	}{
+		{"group_health_snapshots", &model.GroupHealthSnapshot{}, &dump.GroupHealthSnapshots},
+		{"group_health_attempts", &model.GroupHealthAttempt{}, &dump.GroupHealthAttempts},
+		{"ai_route_tasks", &model.AIRouteTask{}, &dump.AIRouteTasks},
+	} {
+		if !cfg.conn.Migrator().HasTable(row.model) {
+			continue
+		}
+		if err := cfg.insertExactValues(row.name, row.rows, clause.OnConflict{DoNothing: true}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

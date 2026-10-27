@@ -39,6 +39,8 @@ jobs:
       - name: PostgreSQL full migration chain (fresh schema)
         # -v 让日志里留下 --- PASS / --- SKIP，避免「静默跳过」被误读成通过。
         run: go test -count=1 -v -p 1 ./internal/db/pgchain/...
+      - name: PostgreSQL backup sequence synchronization
+        run: go test -count=1 -v -run '^TestSynchronizeImportedSequencesPostgres$' ./internal/op/backup
   build-and-test:
     runs-on: ubuntu-latest
     env:

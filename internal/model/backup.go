@@ -28,6 +28,11 @@ const (
 //     instance's enc: ciphertext and stay restorable on the same instance
 //     (issue #247). **Backup files now contain plaintext secrets — store
 //     them accordingly.**
+//   - v5 (2026-10-28): group health snapshots/attempts (group_health_snapshots,
+//     group_health_attempts) and AI route tasks (ai_route_tasks) are exported
+//     and restored. Full v1-v4 restores preserve target rows in these tables
+//     when the historical dump has no data for them; full v5 restores delete
+//     and rebuild them authoritatively.
 type DBDump struct {
 	Version      int       `json:"version"`
 	ExportedAt   time.Time `json:"exported_at"`
@@ -75,6 +80,10 @@ type DBDump struct {
 	RelayLogAttempts     []RelayLogAttempt         `json:"relay_log_attempts,omitempty"`
 	RelayLogContentRefs  []RelayLogContentRef      `json:"relay_log_content_refs,omitempty"`
 	RelayLogContentBlobs []RelayLogContentBlobDump `json:"relay_log_content_blobs,omitempty"`
+
+	GroupHealthSnapshots []GroupHealthSnapshot `json:"group_health_snapshots,omitempty"`
+	GroupHealthAttempts  []GroupHealthAttempt  `json:"group_health_attempts,omitempty"`
+	AIRouteTasks         []AIRouteTask         `json:"ai_route_tasks,omitempty"`
 
 	// API credential profiles (Tools: CLI credential verification/export)
 	APICredentialProfiles []APICredentialProfile `json:"api_credential_profiles,omitempty"`
