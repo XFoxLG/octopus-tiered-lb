@@ -2,12 +2,16 @@ package relay
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
+	"errors"
+	"io"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestKeepaliveCommitsHTTPWithoutSemanticOutput(t *testing.T) {
@@ -60,4 +64,101 @@ func TestKeepaliveStopsAtVisibleContentAndClientCancel(t *testing.T) {
 			t.Fatal("pre-visible heartbeat continued")
 		}
 	})
+}
+
+func TestRelayResponseWriterCallCloseRace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	w := installRelayResponseWriter(c)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := w.call(func(base gin.ResponseWriter) relayWriteResult {
+				return relayWriteResult{}
+			})
+			if r.err != nil && !errors.Is(r.err, io.ErrClosedPipe) {
+				t.Errorf("call() error = %v, want nil or io.ErrClosedPipe", r.err)
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		w.close()
+	}()
+	wg.Wait()
+}
+
+func TestRelayResponseWriterCallAfterClose(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	w := installRelayResponseWriter(c)
+	w.close()
+	r := w.call(func(base gin.ResponseWriter) relayWriteResult {
+		return relayWriteResult{}
+	})
+	if !errors.Is(r.err, io.ErrClosedPipe) {
+		t.Fatalf("call() after close error = %v, want io.ErrClosedPipe", r.err)
+	}
+}
+
+func TestRelayResponseWriterCloseWaitsForAcceptedCommand(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	w := installRelayResponseWriter(c)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	callDone := make(chan relayWriteResult, 1)
+	go func() {
+		callDone <- w.call(func(gin.ResponseWriter) relayWriteResult {
+			close(started)
+			<-release
+			return relayWriteResult{}
+		})
+	}()
+	<-started
+
+	closeDone := make(chan struct{})
+	go func() {
+		w.close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatal("close() returned while an accepted command was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	afterCloseDone := make(chan relayWriteResult, 1)
+	go func() {
+		afterCloseDone <- w.call(func(gin.ResponseWriter) relayWriteResult {
+			return relayWriteResult{}
+		})
+	}()
+	select {
+	case result := <-afterCloseDone:
+		t.Fatalf("call() started after close() returned early: %v", result.err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	if result := <-callDone; result.err != nil {
+		t.Fatalf("accepted call error = %v, want nil", result.err)
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("close() did not finish after accepted command completed")
+	}
+	if result := <-afterCloseDone; !errors.Is(result.err, io.ErrClosedPipe) {
+		t.Fatalf("call() after close error = %v, want io.ErrClosedPipe", result.err)
+	}
 }
