@@ -101,6 +101,37 @@ func TestApplyReasoningPolicy(t *testing.T) {
 			request:    &transmodel.InternalLLMRequest{},
 			wantEffort: "high",
 		},
+		{
+			name: "auto leaves the upstream default unset",
+			group: &appmodel.Group{
+				DefaultReasoningEffort: "auto",
+			},
+			request:    &transmodel.InternalLLMRequest{},
+			wantEffort: "",
+		},
+		{
+			name: "auto never overrides a concrete client level",
+			group: &appmodel.Group{
+				DefaultReasoningEffort: "auto",
+				ReasoningForceOverride: true,
+			},
+			request: &transmodel.InternalLLMRequest{
+				ReasoningEffort:   "low",
+				ReasoningExplicit: true,
+			},
+			wantEffort: "low",
+		},
+		{
+			name: "auto leaves explicit off disabled even with force",
+			group: &appmodel.Group{
+				DefaultReasoningEffort: "auto",
+				ReasoningForceOverride: true,
+			},
+			request: &transmodel.InternalLLMRequest{
+				EnableThinking: boolPtr(false),
+			},
+			wantEffort: "",
+		},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {

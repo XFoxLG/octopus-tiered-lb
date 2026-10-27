@@ -64,7 +64,7 @@ type Group struct {
 	ParamOverride *string `json:"param_override,omitempty"`
 	// DefaultReasoningEffort 分组默认思考档位（Sub2API 参考，本仓库裁剪版）。
 	// 非空时，客户端未表达任何思考意图的请求经 Octopus 补上该档位再转发；
-	// 合法值 minimal/low/medium/high/xhigh/max，空串 = 关闭（不注入）。
+	// 合法值 auto/minimal/low/medium/high/xhigh/max，空串 = 关闭（不注入）；auto = 不注入、仅作为 UI 标识由上游选择默认档位。
 	// 客户端显式发的档位一律尊重；显式关闭默认尊重，除非 ReasoningForceOverride。
 	DefaultReasoningEffort string `json:"default_reasoning_effort,omitempty" gorm:"column:default_reasoning_effort;type:varchar(20);not null;default:''"`
 	// ReasoningForceOverride 强制覆盖显式关闭（默认 false）。
@@ -130,7 +130,7 @@ type GroupUpdateRequest struct {
 	SessionKeepTime         *int                     `json:"session_keep_time,omitempty"`         // 仅在会话保持时间变更时发送(秒)
 	ReasoningBufferStrategy *string                  `json:"reasoning_buffer_strategy,omitempty"` // 仅在推理缓冲策略变更时发送
 	ParamOverride           *string                  `json:"param_override,omitempty"`            // 仅在参数覆盖变更时发送（JSON object 字符串）
-	DefaultReasoningEffort  *string                  `json:"default_reasoning_effort,omitempty"`  // 仅在默认思考档位变更时发送（空串=关闭注入）
+	DefaultReasoningEffort  *string                  `json:"default_reasoning_effort,omitempty"`  // 空串=不注入；auto=交由上游使用默认档位
 	ReasoningForceOverride  *bool                    `json:"reasoning_force_override,omitempty"`  // 仅在强制覆盖显式关闭变更时发送
 	CustomHeader            *[]CustomHeader          `json:"custom_header,omitempty"`             // 仅在自定义请求头变更时发送
 	ItemsToAdd              []GroupItemAddRequest    `json:"items_to_add,omitempty"`              // 新增的 items

@@ -42,7 +42,7 @@ export type GroupEditorValues = {
     hedge_delay_ms: number;
     session_keep_time: number;
     reasoning_buffer_strategy?: string; // "" | "buffer" | "immediate"
-    default_reasoning_effort?: string; // "" | minimal | low | medium | high | xhigh | max
+    default_reasoning_effort?: string; // "" | auto | minimal | low | medium | high | xhigh | max
     reasoning_force_override?: boolean;
     param_override?: string; // JSON object string
     custom_header?: { header_key: string; header_value: string }[];
@@ -862,6 +862,7 @@ export function GroupEditor({
                                         className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
                                     >
                                         <option value="">{t('form.defaultReasoningEffort.off')}</option>
+                                        <option value="auto">{t('form.defaultReasoningEffort.auto')}</option>
                                         <option value="minimal">{t('form.defaultReasoningEffort.minimal')}</option>
                                         <option value="low">{t('form.defaultReasoningEffort.low')}</option>
                                         <option value="medium">{t('form.defaultReasoningEffort.medium')}</option>

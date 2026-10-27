@@ -673,12 +673,11 @@ func GroupCreate(group *model.Group, ctx context.Context) error {
 		}
 	}
 	// 分组默认思考档位：归一化 + 白名单校验（空串=关闭注入）。
-	group.DefaultReasoningEffort = strings.ToLower(strings.TrimSpace(group.DefaultReasoningEffort))
-	switch group.DefaultReasoningEffort {
-	case "", "minimal", "low", "medium", "high", "xhigh", "max":
-	default:
-		return fmt.Errorf("invalid default reasoning effort: must be empty, minimal, low, medium, high, xhigh or max")
+	effort, err := normalizeGroupDefaultReasoningEffort(group.DefaultReasoningEffort)
+	if err != nil {
+		return err
 	}
+	group.DefaultReasoningEffort = effort
 	group.Category = strings.TrimSpace(group.Category)
 	group.EndpointType = model.NormalizeEndpointType(group.EndpointType)
 	group.EndpointProvider = strings.ToLower(strings.TrimSpace(group.EndpointProvider))
@@ -705,6 +704,16 @@ func validateGroupParamOverride(raw string) error {
 		return fmt.Errorf("param_override must be a valid JSON object: %w", err)
 	}
 	return nil
+}
+
+func normalizeGroupDefaultReasoningEffort(raw string) (string, error) {
+	effort := strings.ToLower(strings.TrimSpace(raw))
+	switch effort {
+	case "", "auto", "minimal", "low", "medium", "high", "xhigh", "max":
+		return effort, nil
+	default:
+		return "", fmt.Errorf("invalid default reasoning effort: must be empty, auto, minimal, low, medium, high, xhigh or max")
+	}
 }
 
 // ApplyToolsProbeResult 按证据层级把 tools 探测结论回填到 group_items（Seller 移植）。
@@ -858,11 +867,9 @@ func GroupUpdate(req *model.GroupUpdateRequest, ctx context.Context) (*model.Gro
 	}
 	if req.DefaultReasoningEffort != nil {
 		selectFields = append(selectFields, "default_reasoning_effort")
-		effort := strings.ToLower(strings.TrimSpace(*req.DefaultReasoningEffort))
-		switch effort {
-		case "", "minimal", "low", "medium", "high", "xhigh", "max":
-		default:
-			return nil, fmt.Errorf("invalid default reasoning effort: must be empty, minimal, low, medium, high, xhigh or max")
+		effort, err := normalizeGroupDefaultReasoningEffort(*req.DefaultReasoningEffort)
+		if err != nil {
+			return nil, err
 		}
 		updates.DefaultReasoningEffort = effort
 	}

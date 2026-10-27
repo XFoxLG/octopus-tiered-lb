@@ -897,8 +897,8 @@ func TestChatOutboundTransformRequest_MapsDeepSeekThinkingControls(t *testing.T)
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
-	if got.ReasoningEffort != "max" {
-		t.Fatalf("expected deepseek reasoning_effort max, got %q", got.ReasoningEffort)
+	if got.ReasoningEffort != "high" {
+		t.Fatalf("expected deepseek xhigh to map to high, got %q", got.ReasoningEffort)
 	}
 
 	if got.Thinking["type"] != "enabled" {
