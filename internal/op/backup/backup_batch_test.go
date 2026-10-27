@@ -146,6 +146,56 @@ func TestBatchInsertPartialConflict(t *testing.T) {
 	}
 }
 
+// TestBatchInsertExactValuesUpsertWithStringPrimaryKey covers the map insertion
+// path used when a model has default-valued columns. PostgreSQL needs the model
+// retained on the statement to render the LLMInfo string primary key in an
+// ON CONFLICT UPDATE; Table(...) plus a map alone produced
+// "model value required".
+func TestBatchInsertExactValuesUpsertWithStringPrimaryKey(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "pointer_path_test.db")
+	if err := db.InitDB("sqlite", dsn, false); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if conn := db.GetDB(); conn != nil {
+			sqlDB, _ := conn.DB()
+			if sqlDB != nil {
+				_ = sqlDB.Close()
+			}
+		}
+	})
+
+	rows := make([]model.LLMInfo, 1200)
+	for i := range rows {
+		rows[i] = model.LLMInfo{Name: fmt.Sprintf("model-%04d", i)}
+	}
+	cfg := &importConfig{
+		conn:    db.GetDB().WithContext(context.Background()),
+		res:     &model.DBImportResult{RowsAffected: map[string]int64{}},
+		version: dbDumpVersion,
+	}
+	if err := cfg.batchInsert(
+		"llm_infos",
+		&rows,
+		len(rows),
+		clause.OnConflict{
+			Columns:   []clause.Column{{Name: "name"}},
+			UpdateAll: true,
+		},
+		"upsert",
+	); err != nil {
+		t.Fatalf("batchInsert pointer path failed: %v", err)
+	}
+
+	var count int64
+	if err := db.GetDB().Model(&model.LLMInfo{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != int64(len(rows)) {
+		t.Fatalf("llm_infos count = %d, want %d", count, len(rows))
+	}
+}
+
 // TestBatchInsertEmptySlice 验证空切片不会导致错误
 func TestBatchInsertEmptySlice(t *testing.T) {
 	dsn := filepath.Join(t.TempDir(), "empty_test.db")

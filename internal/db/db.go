@@ -107,7 +107,27 @@ func InitDBWithOptions(dbType, dsn string, debug bool, opts SQLiteOptions) error
 	if err != nil {
 		return err
 	}
-	return Migrate(db)
+	if err := Migrate(db); err != nil {
+		_ = closeConn(db)
+		return err
+	}
+	// Migrate ends PostgreSQL migrations with DEALLOCATE ALL/DISCARD ALL to
+	// invalidate server-side plans after DDL. pgx also keeps a client-side
+	// statement cache per pooled connection, so reusing that pool can make the
+	// first post-migration statements fail with "prepared statement ... does
+	// not exist". Close and reopen only PostgreSQL after migrations; this both
+	// clears the client cache and guarantees the live server starts on fresh
+	// connections without repeating the one-shot migration registry.
+	if dbType == "postgres" || dbType == "postgresql" {
+		if err := closeConn(db); err != nil {
+			return fmt.Errorf("close post-migration database pool: %w", err)
+		}
+		db, err = OpenStandaloneWithOptions(dbType, dsn, debug, opts)
+		if err != nil {
+			return fmt.Errorf("reopen database after migrations: %w", err)
+		}
+	}
+	return nil
 }
 
 // InitLogDB 初始化独立日志库。logType/logPath 任一为空时视为「共用主库」，
