@@ -526,6 +526,34 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 		Choices: []model.Choice{},
 	}
 
+	// A Gemini error frame can arrive as the only content of a stream data
+	// event. It is a provider-declared failure terminal: the stream must close
+	// with a real failure cause instead of falling through to missing_terminal
+	// when the socket later ends cleanly.
+	if geminiResp.Error != nil {
+		providerReason := strings.TrimSpace(geminiResp.Error.Status)
+		if providerReason == "" && geminiResp.Error.Code != 0 {
+			providerReason = fmt.Sprintf("HTTP %d", geminiResp.Error.Code)
+		}
+		if providerReason == "" {
+			providerReason = "GEMINI_ERROR"
+		}
+		resp.Termination = model.TerminationMetadata{
+			Cause:          model.TerminationCauseError,
+			ProviderReason: providerReason,
+			Detail:         strings.TrimSpace(geminiResp.Error.Message),
+		}
+		resp.SawTerminalEvent = true
+		resp.Error = &model.ResponseError{
+			Detail: model.ErrorDetail{
+				Message: strings.TrimSpace(geminiResp.Error.Message),
+				Code:    fmt.Sprintf("%d", geminiResp.Error.Code),
+				Type:    geminiResp.Error.Status,
+			},
+		}
+		return resp
+	}
+
 	if isStream {
 		resp.Object = "chat.completion.chunk"
 	} else {

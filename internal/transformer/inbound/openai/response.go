@@ -90,9 +90,12 @@ func (i *ResponseInbound) TransformResponse(ctx context.Context, response *model
 }
 
 func (i *ResponseInbound) TransformStream(ctx context.Context, stream *model.InternalLLMResponse) ([]byte, error) {
-	// Handle [DONE] marker
+	// The Chat protocol's [DONE] marker is not part of the Responses
+	// streaming contract. Canonical Responses turns already emit
+	// response.completed / response.failed / response.incomplete, so
+	// re-emitting [DONE] here would only leak a foreign terminal frame.
 	if stream.Object == "[DONE]" {
-		return []byte("data: [DONE]\n\n"), nil
+		return nil, nil
 	}
 
 	// Store the chunk for aggregation

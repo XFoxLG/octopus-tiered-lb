@@ -47,6 +47,7 @@ const (
 	RelayLogUsageEmptyOutput      = "empty_output"        // 上游返回空输出，无用量可言
 	RelayLogUsageNotReported      = "not_reported"        // 请求成功但上游未回报 usage
 	RelayLogUsageFailedNoResponse = "failed_no_response"  // 请求失败（无成功响应），无用量
+	RelayLogUsageProviderFailed   = "provider_failed"     // 上游明确返回失败终态；即使附带 usage 也不可信
 	RelayLogUsageNotApplicable    = "not_applicable"      // 端点无 Token 概念（媒体生成等）
 )
 
