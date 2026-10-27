@@ -142,6 +142,16 @@ type GeminiGenerateContentResponse struct {
 	PromptFeedback *GeminiPromptFeedback `json:"promptFeedback,omitempty"`
 	UsageMetadata  *GeminiUsageMetadata  `json:"usageMetadata,omitempty"`
 	ModelVersion   string                `json:"modelVersion,omitempty"`
+	Error          *GeminiErrorEnvelope  `json:"error,omitempty"`
+}
+
+// GeminiErrorEnvelope represents a Gemini API error object. Both direct API
+// calls and Code Assist proxies use this shape, even inside otherwise 200 OK
+// SSE data frames.
+type GeminiErrorEnvelope struct {
+	Code    int    `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+	Status  string `json:"status,omitempty"`
 }
 
 // GeminiCandidate represents a generated response candidate

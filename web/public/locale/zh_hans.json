@@ -2986,6 +2986,7 @@
         "empty_output": "上游空输出",
         "not_reported": "上游未回报用量",
         "failed_no_response": "请求失败",
+        "provider_failed": "上游返回失败终态",
         "not_applicable": "不适用"
       },
       "reportedIPHint": "来自 {source} 转发头，仅作为来源线索展示；不保证是原始客户端，也不用于 IP 白名单或登录限流。",

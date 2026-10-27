@@ -79,6 +79,69 @@ func TestMessagesDeltaWithoutStopRemainsMissingTerminal(t *testing.T) {
 	}
 }
 
+func TestResponsesBareErrorFrameIsAProviderFailure(t *testing.T) {
+	attempt, recorder := newStreamTestAttempt(t, context.Background())
+	attempt.adapterType = outbound.OutboundTypeOpenAIResponse
+	attempt.outAdapter = outbound.Get(attempt.adapterType)
+	attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
+	attempt.group = &appmodel.Group{ReasoningBufferStrategy: "immediate"}
+
+	err := attempt.handleStreamResponse(context.Background(), &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"error\",\"code\":\"server_error\",\"message\":\"fixture failure\"}\n\n",
+		)),
+	})
+	termination, ok := terminalCauseFromError(err)
+	if !ok || !termination.Cause.IsProviderFailure() {
+		t.Fatalf("bare Responses error outcome = (%v, %v), want provider failure", termination, err)
+	}
+	if strings.Contains(recorder.Body.String(), "data: [DONE]") {
+		t.Fatalf("Responses failure leaked Chat [DONE]: %s", recorder.Body.String())
+	}
+}
+
+func TestNativeProtocolsWithoutTerminalRemainMissingTerminal(t *testing.T) {
+	cases := []struct {
+		name    string
+		adapter outbound.OutboundType
+		frame   string
+	}{
+		{
+			name:    "responses",
+			adapter: outbound.OutboundTypeOpenAIResponse,
+			frame:   `{"type":"response.output_text.delta","delta":"partial","output_index":0,"content_index":0}`,
+		},
+		{
+			name:    "gemini",
+			adapter: outbound.OutboundTypeGemini,
+			frame:   `{"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"partial"}]}}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			attempt, recorder := newStreamTestAttempt(t, context.Background())
+			attempt.adapterType = tc.adapter
+			attempt.outAdapter = outbound.Get(tc.adapter)
+			attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
+			attempt.group = &appmodel.Group{ReasoningBufferStrategy: "immediate"}
+
+			err := attempt.handleStreamResponse(context.Background(), &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader("data: " + tc.frame + "\n\n")),
+			})
+			if !errors.Is(err, errMissingStreamTerminal) {
+				t.Fatalf("missing-terminal outcome = %v, body=%s", err, recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), "data: [DONE]") {
+				t.Fatalf("incomplete native stream became a successful Chat completion: %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestChatFinishTailBoundedAndMultipleChoices(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		attempt, recorder := newStreamTestAttempt(t, context.Background())

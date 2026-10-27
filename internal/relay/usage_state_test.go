@@ -12,6 +12,11 @@ func TestResolveUsageState(t *testing.T) {
 	usage := &transformerModel.Usage{PromptTokens: 12, CompletionTokens: 34}
 	responseWithUsage := &transformerModel.InternalLLMResponse{Usage: usage}
 	responseWithoutUsage := &transformerModel.InternalLLMResponse{}
+	providerFailure := providerTerminalFailureError(transformerModel.TerminationMetadata{
+		Cause:          transformerModel.TerminationCauseError,
+		ProviderReason: "server_error",
+		Detail:         "upstream failed",
+	})
 
 	testCases := []struct {
 		name string
@@ -23,6 +28,10 @@ func TestResolveUsageState(t *testing.T) {
 		{"client disconnect with partial usage", responseWithUsage, errClientDisconnected, model.RelayLogUsageClientDisconnect},
 		{"missing stream terminal with partial usage", responseWithUsage, errMissingStreamTerminal, model.RelayLogUsageMissingTerminal},
 		{"empty output", responseWithUsage, errEmptyOutput, model.RelayLogUsageEmptyOutput},
+		{"provider failure with usage", responseWithUsage, providerFailure, model.RelayLogUsageProviderFailed},
+		{"unknown provider failure with usage", responseWithUsage, providerTerminalFailureError(transformerModel.TerminationMetadata{
+			Cause: transformerModel.TerminationCauseUnknown,
+		}), model.RelayLogUsageProviderFailed},
 		// 无成因时的正常判定。
 		{"reported", responseWithUsage, nil, model.RelayLogUsageReported},
 		{"not reported on success", responseWithoutUsage, nil, model.RelayLogUsageNotReported},

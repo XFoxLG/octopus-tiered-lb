@@ -526,6 +526,11 @@ func resolveUsageState(resp *transformerModel.InternalLLMResponse, relayErr erro
 	case errors.Is(relayErr, errEmptyOutput):
 		return model.RelayLogUsageEmptyOutput
 	}
+	if termination, ok := terminalCauseFromError(relayErr); ok && termination.Cause.IsProviderFailure() {
+		// A provider-declared failure is not a trustworthy successful usage
+		// report, even when the same terminal envelope includes token counts.
+		return model.RelayLogUsageProviderFailed
+	}
 	if resp != nil && resp.Usage != nil && resp.Usage.PromptTokens > 0 {
 		return model.RelayLogUsageReported
 	}

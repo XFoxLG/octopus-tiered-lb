@@ -245,3 +245,45 @@ func TestMessagesOutboundTransformStreamDistinguishesEmptyFrameAndTerminalMarker
 		t.Fatalf("terminal marker response = %#v, want terminal response", terminalResponse)
 	}
 }
+
+func TestConvertGeminiResponseMapsErrorFrameToFailureTerminal(t *testing.T) {
+	internalResponse := convertGeminiToLLMResponse(&model.GeminiGenerateContentResponse{
+		Error: &model.GeminiErrorEnvelope{
+			Code:    400,
+			Message: "contents is not specified",
+			Status:  "INVALID_ARGUMENT",
+		},
+	}, true)
+	if !internalResponse.SawTerminalEvent {
+		t.Fatal("Gemini error frame must mark the stream terminal")
+	}
+	if internalResponse.Termination.Cause != model.TerminationCauseError {
+		t.Fatalf("termination cause = %q, want %q", internalResponse.Termination.Cause, model.TerminationCauseError)
+	}
+	if internalResponse.Termination.ProviderReason != "INVALID_ARGUMENT" {
+		t.Fatalf("provider reason = %q, want INVALID_ARGUMENT", internalResponse.Termination.ProviderReason)
+	}
+	if internalResponse.Termination.Detail != "contents is not specified" {
+		t.Fatalf("termination detail = %q, want provider message", internalResponse.Termination.Detail)
+	}
+	if internalResponse.Error == nil || internalResponse.Error.Detail.Message != "contents is not specified" || internalResponse.Error.Detail.Code != "400" || internalResponse.Error.Detail.Type != "INVALID_ARGUMENT" {
+		t.Fatalf("error detail = %#v, want provider fields", internalResponse.Error)
+	}
+}
+
+func TestMessagesOutboundTransformStreamMapsErrorFrameToFailureTerminal(t *testing.T) {
+	outbound := &MessagesOutbound{}
+	internalResponse, err := outbound.TransformStream(context.Background(), []byte(`{"error":{"code":400,"message":"Invalid tool type: ","status":"INVALID_ARGUMENT"}}`))
+	if err != nil {
+		t.Fatalf("transform Gemini error frame: %v", err)
+	}
+	if internalResponse == nil || !internalResponse.SawTerminalEvent {
+		t.Fatalf("error frame response = %#v, want terminal response", internalResponse)
+	}
+	if internalResponse.Termination.Cause != model.TerminationCauseError || internalResponse.Termination.ProviderReason != "INVALID_ARGUMENT" {
+		t.Fatalf("termination = %#v, want provider error cause", internalResponse.Termination)
+	}
+	if internalResponse.Error == nil || internalResponse.Error.Detail.Message != "Invalid tool type:" {
+		t.Fatalf("error detail = %#v, want provider message", internalResponse.Error)
+	}
+}

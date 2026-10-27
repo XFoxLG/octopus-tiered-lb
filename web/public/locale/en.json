@@ -3030,6 +3030,7 @@
         "empty_output": "Upstream returned empty output",
         "not_reported": "Upstream did not report usage",
         "failed_no_response": "Request failed",
+        "provider_failed": "Upstream reported a failed terminal state",
         "not_applicable": "Not applicable"
       },
       "reportedIPHint": "Reported by the {source} header for display only. It may identify a proxy rather than the original client and is not used for IP allowlists or login rate limits.",

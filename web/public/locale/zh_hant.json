@@ -2986,6 +2986,7 @@
         "empty_output": "上游空輸出",
         "not_reported": "上游未回報用量",
         "failed_no_response": "請求失敗",
+        "provider_failed": "上游回傳失敗終態",
         "not_applicable": "不適用"
       },
       "reportedIPHint": "來自 {source} 轉發標頭，僅作為來源線索展示；不保證是原始用戶端，也不用於 IP 白名單或登入限流。",
