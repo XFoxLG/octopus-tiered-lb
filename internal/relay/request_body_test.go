@@ -3,14 +3,15 @@ package relay
 import (
 	"bytes"
 	"context"
-
 	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/conf"
@@ -38,6 +39,103 @@ func TestParseRequestRejectsOversizeBody(t *testing.T) {
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
 	}
+}
+
+func TestReadLimitedRequestBodyReturnsPromptlyOnCancel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	closed := make(chan struct{})
+	closer := &blockingCloseBody{
+		Reader: &blockingReader{unblock: closed},
+		closed: closed,
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	reqCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", closer).WithContext(reqCtx)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := readLimitedRequestBody(ctx, 64<<20)
+		done <- err
+	}()
+	// Give the reader goroutine a moment to block, then cancel.
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("readLimitedRequestBody() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("readLimitedRequestBody() did not return promptly after cancel")
+	}
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request body was not closed after cancellation")
+	}
+}
+
+func TestReadLimitedRequestBodyReadsNormally(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"ok":true}`))
+
+	body, err := readLimitedRequestBody(ctx, 1<<20)
+	if err != nil {
+		t.Fatalf("readLimitedRequestBody() error = %v", err)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("body = %q, want original payload", string(body))
+	}
+}
+
+func TestRejectRelayRequestBodySkipsCancelledClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/chat/completions",
+		strings.NewReader("{}"),
+	).WithContext(reqCtx)
+
+	rejectRelayRequestBody(ctx, context.Canceled)
+
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("cancelled client received response body %q", recorder.Body.String())
+	}
+	if recorder.Header().Get("Content-Type") != "" {
+		t.Fatalf("cancelled client received content type %q", recorder.Header().Get("Content-Type"))
+	}
+}
+
+// blockingReader returns zero bytes forever until its channel closes.
+type blockingReader struct {
+	unblock chan struct{}
+}
+
+func (r *blockingReader) Read([]byte) (int, error) {
+	<-r.unblock
+	return 0, io.EOF
+}
+
+// blockingCloseBody lets close() unblock a stalled reader exactly once.
+type blockingCloseBody struct {
+	io.Reader
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *blockingCloseBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
 }
 
 func TestExtractModelFromJSONRejectsOversizeBody(t *testing.T) {

@@ -101,13 +101,63 @@ func readRelayRequestBody(c *gin.Context, limit int64) ([]byte, error) {
 }
 
 func readLimitedRequestBody(c *gin.Context, limit int64) ([]byte, error) {
-	limitRequestBody(c, limit)
-
-	body, err := io.ReadAll(c.Request.Body)
+	if c != nil && c.Request != nil && c.Request.Body != nil {
+		limitRequestBody(c, limit)
+		select {
+		case <-c.Request.Context().Done():
+			// Close the request body so a blocked upstream read cannot
+			// keep this goroutine waiting after the client went away.
+			_ = c.Request.Body.Close()
+			return nil, normalizeRelayRequestBodyError(c.Request.Context().Err())
+		default:
+		}
+	}
+	body, err := readContextAware(c)
 	if err != nil {
 		return nil, normalizeRelayRequestBodyError(err)
 	}
 	return body, nil
+}
+
+// readContextAware reads the body while honoring request cancellation. The
+// read runs on its own goroutine and the body is closed exactly once by the
+// winner so a blocked reader cannot wedge the request.
+func readContextAware(c *gin.Context) ([]byte, error) {
+	if c == nil || c.Request == nil || c.Request.Body == nil {
+		return nil, nil
+	}
+	type readOutcome struct {
+		body []byte
+		err  error
+	}
+	done := make(chan readOutcome, 1)
+	ctx := c.Request.Context()
+	go func() {
+		body, err := io.ReadAll(c.Request.Body)
+		done <- readOutcome{body: body, err: err}
+	}()
+	// Prefer a completed read when completion and cancellation are observed at
+	// the same time. A successfully read body must not be discarded solely
+	// because the select saw ctx.Done first.
+	select {
+	case result := <-done:
+		return result.body, result.err
+	default:
+	}
+	select {
+	case result := <-done:
+		return result.body, result.err
+	case <-ctx.Done():
+		// Recheck completion before closing. This makes cancellation deterministic
+		// when both channels became ready between the first and second select.
+		select {
+		case result := <-done:
+			return result.body, result.err
+		default:
+		}
+		_ = c.Request.Body.Close()
+		return nil, ctx.Err()
+	}
 }
 
 func limitRequestBody(c *gin.Context, limit int64) {
@@ -155,6 +205,12 @@ func relayRequestBodyTooLargeSizes(err error) (actual int64, limit int64) {
 // itself), so "big request got stuck and produced no log anywhere" becomes
 // directly diagnosable from the management UI.
 func rejectRelayRequestBody(c *gin.Context, err error) {
+	// Once the client has gone away there is no peer to receive a 400. More
+	// importantly, writing one can make upper layers classify a client
+	// cancellation as a written 4xx and pollute retry/failure accounting.
+	if c != nil && c.Request != nil && isClientDisconnected(c.Request.Context()) {
+		return
+	}
 	status := relayRequestBodyErrorStatus(err)
 	resp.Error(c, status, err.Error())
 	if status != http.StatusRequestEntityTooLarge {
