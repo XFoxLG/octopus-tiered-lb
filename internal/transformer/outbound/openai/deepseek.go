@@ -73,6 +73,9 @@ func normalizeDeepSeekReasoningCompat(request *model.InternalLLMRequest, baseURL
 
 	thinkingType, hasThinkingType := extractDeepSeekThinkingType(request.ExtraBody)
 	normalizedEffort := normalizeDeepSeekReasoningEffort(request.ReasoningEffort)
+	if isProviderReasoningCompatRequest(baseURL, request, isMimoChannel, "mimo") {
+		normalizedEffort = normalizeMimoReasoningEffort(request.ReasoningEffort)
+	}
 	originalEffort := strings.ToLower(strings.TrimSpace(request.ReasoningEffort))
 
 	if hasThinkingType && thinkingType == "disabled" {
@@ -93,7 +96,25 @@ func normalizeDeepSeekReasoningCompat(request *model.InternalLLMRequest, baseURL
 
 func normalizeDeepSeekReasoningEffort(effort string) string {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "", "none":
+	case "", "none", "auto":
+		return ""
+	case "minimal", "low":
+		return "low"
+	case "medium", "high", "xhigh":
+		return "high"
+	case "max":
+		return "max"
+	default:
+		return strings.TrimSpace(effort)
+	}
+}
+
+// MiMo accepts low/high/max and treats xhigh as its strongest tier. Keep this
+// table separate from DeepSeek: DeepSeek maps xhigh to high, while existing
+// MiMo wire compatibility maps xhigh to max.
+func normalizeMimoReasoningEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "", "none", "auto":
 		return ""
 	case "low", "medium", "high":
 		return "high"

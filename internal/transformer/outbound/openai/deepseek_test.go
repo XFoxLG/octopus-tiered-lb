@@ -228,6 +228,44 @@ func TestDeepSeekReasoningEffortEnablesThinking(t *testing.T) {
 	}
 }
 
+func TestNormalizeDeepSeekReasoningEffortFollowsLevelTable(t *testing.T) {
+	tests := map[string]string{
+		"":        "",
+		"auto":    "",
+		"none":    "",
+		"minimal": "low",
+		"low":     "low",
+		"medium":  "high",
+		"high":    "high",
+		"xhigh":   "high",
+		"max":     "max",
+	}
+	for input, want := range tests {
+		if got := normalizeDeepSeekReasoningEffort(input); got != want {
+			t.Errorf("normalizeDeepSeekReasoningEffort(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestNormalizeMimoReasoningEffortKeepsProviderTable(t *testing.T) {
+	tests := map[string]string{
+		"":        "",
+		"auto":    "",
+		"none":    "",
+		"minimal": "minimal",
+		"low":     "high",
+		"medium":  "high",
+		"high":    "high",
+		"xhigh":   "max",
+		"max":     "max",
+	}
+	for input, want := range tests {
+		if got := normalizeMimoReasoningEffort(input); got != want {
+			t.Errorf("normalizeMimoReasoningEffort(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestDeepSeekNoThinkingWhenNotDetected(t *testing.T) {
 	// Test that reasoning is stripped when target is NOT DeepSeek
 	reasoningContent := "some reasoning"

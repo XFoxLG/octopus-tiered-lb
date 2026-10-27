@@ -144,6 +144,16 @@ func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMRes
 	m.Stats.OutputCost = float64(m.Stats.OutputToken) * modelPrice.Output * 1e-6
 }
 
+// SetOutboundRequest records the effective, attempt-private request used for
+// the current upstream dispatch. Sharing this pointer across attempts would
+// reintroduce reasoning-policy leakage between retries.
+func (m *RelayMetrics) SetOutboundRequest(req *transformerModel.InternalLLMRequest) {
+	if m == nil || req == nil {
+		return
+	}
+	m.InternalRequest = req
+}
+
 func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAttempt) {
 	if m.RequestTrace != nil {
 		source := "gateway_error"
@@ -404,7 +414,10 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 		relayLog.UpstreamModel = strings.TrimSpace(m.InternalResponse.Model)
 	}
 
-	// 出站最终思考强度：以 InternalRequest 当前值为准（出站 sanitize/normalize 后写回）。
+	// 有效思考强度：InternalRequest 由 relayAttempt.forward 在分组注入/改写后
+	// 指向本次 attempt 的私有副本，因此这里记录的是网关实际决定尝试的档位。
+	// 各出站适配器随后可能在独立克隆上做厂商映射（如 DeepSeek medium→high、
+	// MiMo xhigh→max）；日志保持配置意图口径，不冒充最终 wire 字节。
 	if m.InternalRequest != nil {
 		relayLog.ReasoningEffort = strings.TrimSpace(m.InternalRequest.ReasoningEffort)
 	}

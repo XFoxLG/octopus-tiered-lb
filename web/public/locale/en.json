@@ -1298,8 +1298,9 @@
       },
       "defaultReasoningEffort": {
         "label": "Default reasoning effort",
-        "hint": "When a client request carries no reasoning parameters at all, this group fills in the selected effort level. Levels and explicit 'off' choices sent by the client are always respected. Only applies to chat models that support reasoning.",
+        "hint": "Auto leaves the effort level unset and lets the upstream use its own default. For a concrete level, the group injects it only when the client sends no reasoning parameters. Client levels and explicit off choices take precedence.",
         "off": "Off (no injection)",
+        "auto": "Auto (upstream default)",
         "minimal": "minimal (cheapest)",
         "low": "low",
         "medium": "medium",
@@ -2507,8 +2508,9 @@
       },
       "defaultReasoningEffort": {
         "label": "Default reasoning effort",
-        "hint": "When a client request carries no reasoning parameters, this group fills in the selected effort level. Client levels are respected; explicit off is respected unless force override is enabled. Only applies to chat models that support reasoning.",
+        "hint": "Auto leaves the effort level unset and lets the upstream use its own default. For a concrete level, the group injects it only when the client sends no reasoning parameters. Client levels and explicit off choices take precedence.",
         "off": "Off (no injection)",
+        "auto": "Auto (upstream default)",
         "minimal": "minimal (cheapest)",
         "low": "low",
         "medium": "medium",

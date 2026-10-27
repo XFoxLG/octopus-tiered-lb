@@ -167,6 +167,12 @@ func applyReasoningPolicy(group *appmodel.Group, request *transmodel.InternalLLM
 	if defaultEffort == "" {
 		return
 	}
+	// Auto means "do not pin a level; let the upstream apply its own default".
+	// With no concrete level to inject there is nothing for force-override to
+	// enforce, so explicit client controls remain untouched.
+	if defaultEffort == "auto" {
+		return
+	}
 
 	switch transmodel.ReasoningIntentOf(request) {
 	case transmodel.ReasoningIntentLevel:

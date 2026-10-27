@@ -639,6 +639,11 @@ func (ra *relayAttempt) forward() (int, error) {
 			return 0, fmt.Errorf("failed to prepare outbound request data: %w", err)
 		}
 	}
+	// The attempt-private request is the effective request for this route. Group
+	// defaults, model rewrites and param overrides are applied to this clone.
+	// Retries overwrite it with the latest prepared attempt; hedge lanes each own
+	// a metrics snapshot and copy the selected lane back after coordination.
+	ra.metrics.SetOutboundRequest(requestForOutbound)
 
 	// 构建出站请求
 	// 地址按本次尝试实际选中的 adapter 所属协议来挑选：多协议渠道可以把不同
