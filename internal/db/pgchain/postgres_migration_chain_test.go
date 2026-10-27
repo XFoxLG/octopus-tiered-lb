@@ -12,6 +12,7 @@
 package pgchain
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -19,6 +20,8 @@ import (
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
+	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/backup"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -94,5 +97,31 @@ func TestFullMigrationChainOnFreshPostgres(t *testing.T) {
 				t.Fatalf("missing %s.%s after full chain", table, column)
 			}
 		}
+	}
+
+	// A PostgreSQL startup finishes migrations with DISCARD ALL. pgx also has a
+	// client-side statement cache, so InitDB must reopen the pool before serving
+	// traffic. Importing immediately in this same process exercises that boundary
+	// and the LLMInfo string-primary-key upsert (the exact combination that once
+	// failed with "prepared statement ... does not exist" followed by
+	// "model value required").
+	llmRows := make([]model.LLMInfo, 300)
+	for i := range llmRows {
+		llmRows[i] = model.LLMInfo{Name: fmt.Sprintf("pgchain-upsert-%03d", i)}
+	}
+	if _, err := backup.ImportWithModeToDB(
+		context.Background(),
+		db.GetDB(),
+		&model.DBDump{Version: 5, LLMInfos: llmRows},
+		model.ImportModeFull,
+	); err != nil {
+		t.Fatalf("first post-migration full import failed: %v", err)
+	}
+	var llmCount int64
+	if err := db.GetDB().Model(&model.LLMInfo{}).Count(&llmCount).Error; err != nil {
+		t.Fatalf("count imported LLM prices: %v", err)
+	}
+	if llmCount != int64(len(llmRows)) {
+		t.Fatalf("LLM price count = %d, want %d", llmCount, len(llmRows))
 	}
 }

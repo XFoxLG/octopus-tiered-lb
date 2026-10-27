@@ -531,9 +531,19 @@ func (c *importConfig) batchInsert(table string, rows any, count int, conflict c
 		if end > totalRows {
 			end = totalRows
 		}
-		batch := slice.Slice(offset, end).Interface()
+		// Create must receive a pointer to the batch. With a value slice,
+		// Table(...).Create(...) can fail to resolve Statement.Schema in newer
+		// GORM versions when generating RETURNING clauses (notably PostgreSQL
+		// llm_infos, whose primary key is the string name column).
+		batchValue := slice.Slice(offset, end)
+		batchPtr := reflect.New(batchValue.Type())
+		batchPtr.Elem().Set(batchValue)
 
-		result := c.conn.Table(table).Clauses(conflict).Create(batch)
+		// Keep the resolved model in Statement.Schema. PostgreSQL's Create
+		// callback emits a RETURNING clause for the primary key; Table(...)
+		// alone can leave Schema unset for models whose PK is a string column
+		// such as llm_infos.name, yielding GORM's "model value required".
+		result := c.conn.Model(element).Table(table).Clauses(conflict).Create(batchPtr.Interface())
 		if result.Error != nil {
 			appendStep(c.res, table, mode, totalAffected, result.Error)
 			return fmt.Errorf("%s: batch [%d:%d]: %w", table, offset, end, result.Error)
@@ -607,7 +617,8 @@ func (c *importConfig) batchInsertExactValues(table string, slice reflect.Value,
 			}
 			batch = append(batch, values)
 		}
-		result := c.conn.Table(table).Clauses(conflict).Create(&batch)
+		modelValue := reflect.New(slice.Type().Elem()).Interface()
+		result := c.conn.Model(modelValue).Table(table).Clauses(conflict).Create(&batch)
 		if result.Error != nil {
 			appendStep(c.res, table, mode, totalAffected, result.Error)
 			return fmt.Errorf("%s: batch [%d:%d]: %w", table, offset, end, result.Error)
