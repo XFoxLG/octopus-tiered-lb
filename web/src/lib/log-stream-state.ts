@@ -15,6 +15,10 @@ export function mergeLiveRequest<T extends { trace_id: string; state: string; in
     return [incoming, ...remaining].slice(0, 256);
 }
 
+export function visibleLiveRequests<T>(entries: T[], connected: boolean): T[] {
+    return connected ? entries : [];
+}
+
 // Refresh the server's newest window without refetching loaded history. Entries
 // that no longer match a filter inside that window must disappear as well.
 export function mergeLogHead<T extends { id: string | number; time: number }>(pages: T[][], incoming: T[], previousIds = new Set(pages.flat().map(entry => entry.id))): T[][] {

@@ -12,7 +12,10 @@ export function LiveRequests({ requests, connected }: { requests: LiveRequest[];
         const timer = window.setInterval(() => setNow(Date.now()), 1000);
         return () => window.clearInterval(timer);
     }, [requests.length]);
-    if (!requests.length) return null;
+    // SSE disconnects must not leave an old request looking live for minutes.
+    // The next connection replaces this view with the server's authoritative
+    // snapshot, so hiding the stale client-side copy is the honest state.
+    if (!connected || !requests.length) return null;
     return (
         <section className="shrink-0 rounded-lg border border-border/50 bg-card p-3" aria-label={translate('title')}>
             <p className="text-sm font-medium">{translate('title')} · {requests.length}</p>

@@ -6,7 +6,7 @@ import { logger } from '@/lib/logger';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuthStore } from './user';
 import { exactId, withExactId, compareExactIds } from '@/lib/exact-id';
-import { mergeLogPages, mergeLogHead, mergeLiveRequest } from '@/lib/log-stream-state';
+import { mergeLogPages, mergeLogHead, mergeLiveRequest, visibleLiveRequests } from '@/lib/log-stream-state';
 
 /**
  * 尝试状态
@@ -592,6 +592,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
                     if (cancelled) return;
 
                     setIsConnected(false);
+                    setLiveRequests([]);
                     setError(new Error('Log stream disconnected, reconnecting...'));
                     logger.warn('日志流连接已断开，准备重连');
                 } catch (e) {
@@ -601,6 +602,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
                     }
 
                     setIsConnected(false);
+                    setLiveRequests([]);
                     setError(e instanceof Error ? e : new Error('Log stream connection failed'));
                     logger.warn('日志流连接失败，准备重连:', e);
                 } finally {
@@ -624,6 +626,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
             abortRef.current?.abort();
             abortRef.current = null;
             setIsConnected(false);
+            setLiveRequests([]);
         };
     }, [active, pageSize, stableFilter, queryClient, token, refresh]);
 
@@ -641,7 +644,7 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
 
     return {
         logs,
-        liveRequests: liveRequests.filter(entry => {
+        liveRequests: visibleLiveRequests(liveRequests, isConnected).filter(entry => {
             if (['completed', 'recorded', 'unavailable'].includes(entry.state)) return false;
             if (logs.some(log => log.trace_id === entry.trace_id)) return false;
             // has_image 同样排除实时条目：LiveRequest 不携带图片计数，无法判定。
