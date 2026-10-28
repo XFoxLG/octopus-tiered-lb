@@ -49,6 +49,19 @@ test('stream read deadline aborts and rejects when heartbeats stop', async () =>
     assert.equal(timedOut, true);
 });
 
+test('abort rejections cannot mask the heartbeat timeout', async () => {
+    const controller = new AbortController();
+    const operation = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'));
+        }, { once: true });
+    });
+    await assert.rejects(
+        withIdleDeadline(operation, 10, () => controller.abort()),
+        /heartbeat timed out/,
+    );
+});
+
 
 test('head refresh keeps history and removes entries outside the newest filtered window', async () => {
     const { mergeLogHead } = await import('./log-stream-state.ts');

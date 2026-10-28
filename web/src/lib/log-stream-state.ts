@@ -30,8 +30,12 @@ export async function withIdleDeadline<T>(
             operation,
             new Promise<never>((_, reject) => {
                 timer = setTimeout(() => {
+                    const timeoutError = new Error(`Log stream heartbeat timed out after ${timeoutMs}ms`);
+                    // Settle the race as a heartbeat timeout before aborting the
+                    // underlying read. Otherwise its AbortError can win and the
+                    // hook wrongly treats the timeout like an intentional unmount.
+                    reject(timeoutError);
                     onTimeout();
-                    reject(new Error(`Log stream heartbeat timed out after ${timeoutMs}ms`));
                 }, timeoutMs);
             }),
         ]);
