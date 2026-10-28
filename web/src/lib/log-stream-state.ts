@@ -19,6 +19,27 @@ export function visibleLiveRequests<T>(entries: T[], connected: boolean): T[] {
     return connected ? entries : [];
 }
 
+export async function withIdleDeadline<T>(
+    operation: Promise<T>,
+    timeoutMs: number,
+    onTimeout: () => void,
+): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            operation,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                    onTimeout();
+                    reject(new Error(`Log stream heartbeat timed out after ${timeoutMs}ms`));
+                }, timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
+}
+
 // Refresh the server's newest window without refetching loaded history. Entries
 // that no longer match a filter inside that window must disappear as well.
 export function mergeLogHead<T extends { id: string | number; time: number }>(pages: T[][], incoming: T[], previousIds = new Set(pages.flat().map(entry => entry.id))): T[][] {

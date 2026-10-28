@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mergeLogPages, mergeLiveRequest, visibleLiveRequests } from './log-stream-state.ts';
+import { mergeLogPages, mergeLiveRequest, visibleLiveRequests, withIdleDeadline } from './log-stream-state.ts';
 import { withExactId } from './exact-id.ts';
 
 test('SSE replaces pending metadata without collapsing adjacent snowflake IDs', () => {
@@ -32,6 +32,21 @@ test('disconnected live stream never renders stale active requests', () => {
     const stale = [{ trace_id: 'old', state: 'streaming' }];
     assert.deepEqual(visibleLiveRequests(stale, false), []);
     assert.deepEqual(visibleLiveRequests(stale, true), stale);
+});
+
+test('stream read deadline skips the timeout when a heartbeat arrives', async () => {
+    let timedOut = false;
+    assert.equal(await withIdleDeadline(Promise.resolve('chunk'), 100, () => { timedOut = true; }), 'chunk');
+    assert.equal(timedOut, false);
+});
+
+test('stream read deadline aborts and rejects when heartbeats stop', async () => {
+    let timedOut = false;
+    await assert.rejects(
+        withIdleDeadline(new Promise<never>(() => {}), 10, () => { timedOut = true; }),
+        /heartbeat timed out/,
+    );
+    assert.equal(timedOut, true);
 });
 
 

@@ -6,7 +6,9 @@ import { logger } from '@/lib/logger';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useAuthStore } from './user';
 import { exactId, withExactId, compareExactIds } from '@/lib/exact-id';
-import { mergeLogPages, mergeLogHead, mergeLiveRequest, visibleLiveRequests } from '@/lib/log-stream-state';
+import { mergeLogPages, mergeLogHead, mergeLiveRequest, visibleLiveRequests, withIdleDeadline } from '@/lib/log-stream-state';
+
+const LOG_STREAM_HEARTBEAT_TIMEOUT_MS = 35_000;
 
 /**
  * 尝试状态
@@ -576,7 +578,11 @@ export function useLogs(options: { pageSize?: number; filter?: LogFilter; active
                     };
 
                     while (!cancelled) {
-                        const { value, done } = await reader.read();
+                        const { value, done } = await withIdleDeadline(
+                            reader.read(),
+                            LOG_STREAM_HEARTBEAT_TIMEOUT_MS,
+                            () => controller.abort(),
+                        );
                         if (done) break;
                         buffer += decoder.decode(value, { stream: true });
 
