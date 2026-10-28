@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mergeLogPages, mergeLiveRequest } from './log-stream-state.ts';
+import { mergeLogPages, mergeLiveRequest, visibleLiveRequests } from './log-stream-state.ts';
 import { withExactId } from './exact-id.ts';
 
 test('SSE replaces pending metadata without collapsing adjacent snowflake IDs', () => {
@@ -26,6 +26,12 @@ test('terminal state and sequence reject late events without merging instances',
     assert.deepEqual(mergeLiveRequest([completed], { ...completed, sequence: 4, state: 'attempt' }), [completed]);
     assert.deepEqual(mergeLiveRequest([completed], { ...completed, sequence: 6, state: 'attempt' }), [completed]);
     assert.equal(mergeLiveRequest([completed], { ...completed, instance_id: 'b', sequence: 1, state: 'attempt' }).length, 2);
+});
+
+test('disconnected live stream never renders stale active requests', () => {
+    const stale = [{ trace_id: 'old', state: 'streaming' }];
+    assert.deepEqual(visibleLiveRequests(stale, false), []);
+    assert.deepEqual(visibleLiveRequests(stale, true), stale);
 });
 
 
