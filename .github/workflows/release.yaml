@@ -16,26 +16,80 @@ permissions:
   packages: write
 
 jobs:
+  validate:
+    name: Validate release source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELEASE_TAG: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Validate tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Verify tag commit and checkout identity
+        id: source
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          TAG_COMMIT="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          [[ "$ACTUAL_SHA" = "$TAG_COMMIT" ]] || exit 1
+          test -z "$(git status --porcelain)"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$ACTUAL_SHA" >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: [validate]
+    uses: ./.github/workflows/ci.yml
+    with:
+      checkout-ref: ${{ needs.validate.outputs.sha }}
+
+  quality:
+    needs: [validate]
+    uses: ./.github/workflows/quality.yml
+    with:
+      checkout-ref: ${{ needs.validate.outputs.sha }}
+
   release:
     name: release
     runs-on: ubuntu-latest
+    needs: [validate, ci, quality]
+    timeout-minutes: 60
     env:
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_SHA: ${{ needs.validate.outputs.sha }}
       DOCKER_IMAGE: xfoxlg/octopus-tiered-lb
       GHCR_IMAGE: ghcr.io/${{ github.repository }}
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      RELEASE_TAG: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
     steps:
-      - name: Checkout
+      - name: Checkout exact release source
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ inputs.tag != '' && inputs.tag || github.ref }}
+          ref: ${{ needs.validate.outputs.sha }}
 
-      - name: Setup Go
+      - name: Setup Go 1.27.3
         uses: actions/setup-go@v6
         with:
-          go-version: 'stable'
+          go-version: '1.27.3'
+          cache: true
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -44,13 +98,43 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: '10.22.0'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'latest'
+          node-version: 22
           cache: 'pnpm'
           cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Verify release source and toolchain pins
+        id: toolchain
+        env:
+          EXPECTED_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" = "$EXPECTED_SHA" ]] || exit 1
+          test -z "$(git status --porcelain)"
+          [[ "$(go env GOVERSION)" = "go1.27.3" ]] || exit 1
+          [[ "$(node --version)" =~ ^v22\. ]] || exit 1
+          [[ "$(pnpm --version)" = "10.22.0" ]] || exit 1
+          echo "sha=$ACTUAL_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Use full commit SHA for release build
+        id: source
+        env:
+          EXPECTED_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" = "$EXPECTED_SHA" ]] || exit 1
+          git config core.abbrev 40
+          [[ "$(git rev-parse --short HEAD)" = "$ACTUAL_SHA" ]] || exit 1
+          echo "sha=$ACTUAL_SHA" >> "$GITHUB_OUTPUT"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build
         run: bash scripts/build.sh release
@@ -90,39 +174,33 @@ jobs:
       - name: Determine image list
         id: images
         run: |
-          images="ghcr.io/${{ github.repository }}"
-          if [ -n "${{ env.DOCKERHUB_USERNAME }}" ]; then
-            images="${{ env.DOCKER_IMAGE }},${{ env.GHCR_IMAGE }}"
+          images="$GHCR_IMAGE:$RELEASE_TAG,$GHCR_IMAGE:latest,$GHCR_IMAGE:sha-$RELEASE_SHA"
+          if [ -n "$DOCKERHUB_USERNAME" ]; then
+            images="$images,$DOCKER_IMAGE:$RELEASE_TAG,$DOCKER_IMAGE:latest,$DOCKER_IMAGE:sha-$RELEASE_SHA"
           fi
           echo "list=$images" >> "$GITHUB_OUTPUT"
-
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.images.outputs.list }}
-          tags: |
-            type=raw,value=${{ env.RELEASE_TAG }}
-            type=raw,value=latest
-            type=sha,prefix=sha-
-          flavor: |
-            latest=false
+          echo "tags=$images" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
+        id: docker
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.images.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.RELEASE_TAG }}
+            org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
+            org.opencontainers.image.created=${{ steps.build_time.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
             APP_VERSION=${{ env.RELEASE_TAG }}
-            GITHUB_REPO=https://github.com/XFoxLG/octopus-tiered-lb
-            GIT_COMMIT=${{ github.sha }}
+            GITHUB_REPO=${{ github.server_url }}/${{ github.repository }}
+            GIT_COMMIT=${{ env.RELEASE_SHA }}
             BUILD_TIME=${{ steps.build_time.outputs.value }}
 
       - name: Image digest
@@ -136,4 +214,102 @@ jobs:
             echo "| Docker Hub | ${{ env.DOCKER_IMAGE }} |" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Tags:** ${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Tags:** ${{ steps.images.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Digest:** ${{ steps.docker.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate release manifest
+        env:
+          RELEASE_SHA: ${{ needs.validate.outputs.sha }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          DOCKER_DIGEST: ${{ steps.docker.outputs.digest }}
+          DOCKER_TAGS: ${{ steps.images.outputs.tags }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOURCE_TREE: ${{ steps.source.outputs.tree }}
+          CI_GATE: ${{ needs.ci.result }}
+          QUALITY_GATE: ${{ needs.quality.result }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          def required_env(name: str) -> str:
+              value = os.environ.get(name, "").strip()
+              if not value:
+                  raise RuntimeError(f"missing required environment value: {name}")
+              return value
+
+          migration_versions = []
+          for path in Path("internal/db/migrate").glob("[0-9]*.go"):
+              if path.name.endswith("_test.go"):
+                  continue
+              match = re.match(r"(\d{3})", path.name)
+              if match:
+                  migration_versions.append(int(match.group(1)))
+          if not migration_versions:
+              raise RuntimeError("no migrations found")
+
+          archives = []
+          for path in sorted(Path("build/archives").glob("*")):
+              if path.is_file():
+                  archives.append({
+                      "name": path.name,
+                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                  })
+          if not archives:
+              raise RuntimeError("no release archives found")
+
+          docker_digest = os.environ.get("DOCKER_DIGEST", "").strip()
+          if docker_digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", docker_digest):
+              raise RuntimeError("invalid Docker digest")
+          docker_tags = [
+              tag.strip()
+              for tag in os.environ.get("DOCKER_TAGS", "").split(",")
+              if tag.strip()
+          ]
+
+          manifest = {
+              "schema_version": 1,
+              "source": {
+                  "repository": required_env("GITHUB_REPOSITORY"),
+                  "commit": required_env("RELEASE_SHA"),
+                  "tree": required_env("SOURCE_TREE"),
+                  "tag": required_env("RELEASE_TAG"),
+              },
+              "gates": {
+                  "ci": required_env("CI_GATE"),
+                  "quality": required_env("QUALITY_GATE"),
+              },
+              "run": {
+                  "id": required_env("GITHUB_RUN_ID"),
+                  "number": required_env("GITHUB_RUN_NUMBER"),
+                  "event": required_env("GITHUB_EVENT_NAME"),
+                  "actor": required_env("GITHUB_ACTOR"),
+                  "url": required_env("RUN_URL"),
+              },
+              "migration": {
+                  "max": max(migration_versions),
+                  "registered": len(migration_versions),
+              },
+              "archives": archives,
+              "docker": {
+                  "digest": docker_digest or None,
+                  "tags": docker_tags,
+              },
+          }
+          Path("release-manifest.json").write_text(
+              json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(manifest, sort_keys=True, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
