@@ -24,7 +24,10 @@ func TestConvertAssistantReasoningBecomesThoughtPart(t *testing.T) {
 		},
 	}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if len(got.Contents) != 3 {
 		t.Fatalf("contents 数 = %d, want 3", len(got.Contents))
 	}
@@ -56,7 +59,10 @@ func TestConvertTrailingReasoningOnlyProducesNonEmptyModelTurn(t *testing.T) {
 		},
 	}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if len(got.Contents) != 2 {
 		t.Fatalf("contents 数 = %d, want 2", len(got.Contents))
 	}
@@ -84,7 +90,10 @@ func TestConvertAssistantReasoningAltFieldBecomesThoughtPart(t *testing.T) {
 		},
 	}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if len(got.Contents) != 2 || len(got.Contents[1].Parts) != 1 {
 		t.Fatalf("contents = %+v, want 1 个 thought part 的 model turn", got.Contents)
 	}
@@ -107,7 +116,10 @@ func TestConvertReasoningSignatureNotForwardedToGemini(t *testing.T) {
 		},
 	}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if len(got.Contents) != 2 || len(got.Contents[1].Parts) != 1 {
 		t.Fatalf("contents = %+v, want 1 个 thought part 的 model turn", got.Contents)
 	}
@@ -127,7 +139,10 @@ func TestConvertEmptyAssistantTurnDropped(t *testing.T) {
 		},
 	}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if len(got.Contents) != 1 {
 		t.Fatalf("contents 数 = %d, want 1（空 model 回合被丢弃）", len(got.Contents))
 	}
@@ -152,7 +167,10 @@ func TestConvertAssistantToolCallsKeepSentinelUnchanged(t *testing.T) {
 		},
 	}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if len(got.Contents) != 2 {
 		t.Fatalf("contents 数 = %d, want 2", len(got.Contents))
 	}
@@ -162,5 +180,40 @@ func TestConvertAssistantToolCallsKeepSentinelUnchanged(t *testing.T) {
 	}
 	if parts[0].ThoughtSignature != "skip_thought_signature_validator" {
 		t.Fatalf("thoughtSignature = %q, want sentinel 保持", parts[0].ThoughtSignature)
+	}
+}
+
+func TestConvertAssistantTextArrayPreservesParts(t *testing.T) {
+	first := "first"
+	second := " second "
+	req := &model.InternalLLMRequest{
+		Model: "gemini-3.1-pro-preview",
+		Messages: []model.Message{
+			{Role: "user", Content: model.MessageContent{Content: thoughtStrPtr("hi")}},
+			{
+				Role: "assistant",
+				Content: model.MessageContent{
+					MultipleContent: []model.MessageContentPart{
+						{Type: "text", Text: &first},
+						{Type: "text", Text: &second},
+					},
+				},
+			},
+		},
+	}
+
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
+	if len(got.Contents) != 2 {
+		t.Fatalf("contents count = %d, want 2", len(got.Contents))
+	}
+	turn := got.Contents[1]
+	if turn.Role != "model" || len(turn.Parts) != 2 {
+		t.Fatalf("model turn = %+v, want two text parts", turn)
+	}
+	if turn.Parts[0].Text != first || turn.Parts[1].Text != second {
+		t.Fatalf("text parts = [%q, %q], want [%q, %q]", turn.Parts[0].Text, turn.Parts[1].Text, first, second)
 	}
 }

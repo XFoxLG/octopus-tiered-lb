@@ -27,7 +27,11 @@ func TestGeminiOutboundSystemInstructionWireShape(t *testing.T) {
 		},
 	}
 
-	body, err := transformer.Marshal(convertLLMToGeminiRequest(req))
+	geminiReq, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
+	body, err := transformer.Marshal(geminiReq)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -74,5 +78,70 @@ func TestGeminiOutboundSystemInstructionWireShape(t *testing.T) {
 	}
 	if role != "user" {
 		t.Fatalf("contents[0].role = %q, want user", role)
+	}
+}
+
+func TestGeminiOutboundPreservesSystemDeveloperTextArrayOrder(t *testing.T) {
+	first := "first"
+	second := " second "
+	developer := "developer rule"
+	req := &model.InternalLLMRequest{
+		Model: "gemini-3.1-pro-preview",
+		Messages: []model.Message{
+			{
+				Role: "system",
+				Content: model.MessageContent{
+					MultipleContent: []model.MessageContentPart{
+						{Type: "text", Text: &first},
+						{Type: "text", Text: &second},
+					},
+				},
+			},
+			{Role: "user", Content: model.MessageContent{Content: thoughtStrPtr("user")}},
+			{Role: "developer", Content: model.MessageContent{Content: &developer}},
+		},
+	}
+
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
+	if got.SystemInstruction == nil {
+		t.Fatal("systemInstruction = nil, want text parts")
+	}
+	if got.SystemInstruction.Role != "" {
+		t.Fatalf("systemInstruction role = %q, want omitted", got.SystemInstruction.Role)
+	}
+	if len(got.SystemInstruction.Parts) != 3 {
+		t.Fatalf("systemInstruction parts = %d, want 3", len(got.SystemInstruction.Parts))
+	}
+	want := []string{first, second, developer}
+	for i, part := range got.SystemInstruction.Parts {
+		if part.Text != want[i] {
+			t.Fatalf("systemInstruction parts[%d].Text = %q, want %q", i, part.Text, want[i])
+		}
+	}
+	if len(got.Contents) != 1 || got.Contents[0].Role != "user" {
+		t.Fatalf("contents = %+v, want one user turn", got.Contents)
+	}
+}
+
+func TestGeminiOutboundRejectsUnsupportedSystemContent(t *testing.T) {
+	req := &model.InternalLLMRequest{
+		Model: "gemini-3.1-pro-preview",
+		Messages: []model.Message{
+			{
+				Role: "system",
+				Content: model.MessageContent{
+					MultipleContent: []model.MessageContentPart{
+						{Type: "image_url", ImageURL: &model.ImageURL{URL: "https://example.com/image.png"}},
+					},
+				},
+			},
+		},
+	}
+
+	if _, err := convertLLMToGeminiRequest(req); err == nil {
+		t.Fatal("unsupported system image silently converted, want error")
 	}
 }

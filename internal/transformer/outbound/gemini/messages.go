@@ -29,8 +29,12 @@ func (o *MessagesOutbound) TransformRequest(ctx context.Context, request *model.
 		return transformCodeAssistRequest(ctx, request, baseUrl, cred)
 	}
 
-	// Convert internal request to Gemini format
-	geminiReq := convertLLMToGeminiRequest(request)
+	// Convert internal request to Gemini format. Conversion is explicit-fail:
+	// content that Gemini cannot represent must never be silently discarded.
+	geminiReq, err := convertLLMToGeminiRequest(request)
+	if err != nil {
+		return nil, err
+	}
 
 	body, err := transformer.Marshal(geminiReq)
 	if err != nil {
@@ -170,7 +174,7 @@ func audioTypeToMimeType(format string) string {
 	}
 }
 
-func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiGenerateContentRequest {
+func convertLLMToGeminiRequest(request *model.InternalLLMRequest) (*model.GeminiGenerateContentRequest, error) {
 	geminiReq := &model.GeminiGenerateContentRequest{
 		Contents: []*model.GeminiContent{},
 	}
@@ -202,10 +206,8 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 					Parts: []*model.GeminiPart{},
 				}
 			}
-			if msg.Content.Content != nil {
-				systemInstruction.Parts = append(systemInstruction.Parts, &model.GeminiPart{
-					Text: *msg.Content.Content,
-				})
+			if err := appendGeminiTextParts(systemInstruction, msg.Content, msg.Role); err != nil {
+				return nil, err
 			}
 
 		case "user":
@@ -213,55 +215,8 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 				Role:  "user",
 				Parts: []*model.GeminiPart{},
 			}
-			if msg.Content.Content != nil {
-				content.Parts = append(content.Parts, &model.GeminiPart{
-					Text: *msg.Content.Content,
-				})
-			}
-
-			if msg.Content.MultipleContent != nil {
-				for _, part := range msg.Content.MultipleContent {
-					switch part.Type {
-					case "text":
-						if part.Text != nil {
-							content.Parts = append(content.Parts, &model.GeminiPart{
-								Text: *part.Text,
-							})
-						}
-					case "image_url":
-						// get mime type from url extension
-						dataurl := xurl.ParseDataURL(part.ImageURL.URL)
-						if dataurl != nil && dataurl.IsBase64 {
-							content.Parts = append(content.Parts, &model.GeminiPart{
-								InlineData: &model.GeminiBlob{
-									MimeType: dataurl.MediaType,
-									Data:     dataurl.Data,
-								},
-							})
-						}
-					case "input_audio":
-						if part.Audio != nil {
-							content.Parts = append(content.Parts, &model.GeminiPart{
-								InlineData: &model.GeminiBlob{
-									MimeType: audioTypeToMimeType(part.Audio.Format),
-									Data:     part.Audio.Data,
-								},
-							})
-						}
-					case "file":
-						if part.File != nil {
-							dataurl := xurl.ParseDataURL(part.File.FileData)
-							if dataurl != nil && dataurl.IsBase64 {
-								content.Parts = append(content.Parts, &model.GeminiPart{
-									InlineData: &model.GeminiBlob{
-										MimeType: dataurl.MediaType,
-										Data:     dataurl.Data,
-									},
-								})
-							}
-						}
-					}
-				}
+			if err := appendGeminiUserParts(content, msg.Content); err != nil {
+				return nil, err
 			}
 
 			geminiReq.Contents = append(geminiReq.Contents, content)
@@ -288,6 +243,9 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 					Text: *msg.Content.Content,
 				})
 			}
+			if err := appendGeminiAssistantTextParts(content, msg.Content); err != nil {
+				return nil, err
+			}
 			// Handle tool calls
 			if len(msg.ToolCalls) > 0 {
 				for _, toolCall := range msg.ToolCalls {
@@ -310,6 +268,9 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 			}
 
 		case "tool":
+			if len(msg.Content.MultipleContent) > 0 {
+				return nil, fmt.Errorf("cannot convert tool message with %d multipart content parts to Gemini function response without changing its meaning", len(msg.Content.MultipleContent))
+			}
 			// Tool result
 			content := convertLLMToolResultToGeminiContent(&msg, toolCallIDToName)
 			geminiReq.Contents = append(geminiReq.Contents, content)
@@ -475,8 +436,93 @@ func convertLLMToGeminiRequest(request *model.InternalLLMRequest) *model.GeminiG
 		}
 	}
 
-	return geminiReq
+	return geminiReq, nil
 
+}
+
+func appendGeminiTextParts(target *model.GeminiContent, content model.MessageContent, role string) error {
+	if content.Content != nil {
+		target.Parts = append(target.Parts, &model.GeminiPart{Text: *content.Content})
+	}
+	for _, part := range content.MultipleContent {
+		if part.Type != "text" {
+			return fmt.Errorf("cannot convert %s content part type %q to Gemini system instruction", role, part.Type)
+		}
+		if part.Text == nil {
+			return fmt.Errorf("cannot convert %s text content part with nil text to Gemini system instruction", role)
+		}
+		target.Parts = append(target.Parts, &model.GeminiPart{Text: *part.Text})
+	}
+	return nil
+}
+
+func appendGeminiUserParts(target *model.GeminiContent, content model.MessageContent) error {
+	if content.Content != nil {
+		target.Parts = append(target.Parts, &model.GeminiPart{Text: *content.Content})
+	}
+	for _, part := range content.MultipleContent {
+		switch part.Type {
+		case "text":
+			if part.Text == nil {
+				return fmt.Errorf("cannot convert user text content part with nil text to Gemini content")
+			}
+			target.Parts = append(target.Parts, &model.GeminiPart{Text: *part.Text})
+		case "image_url":
+			if part.ImageURL == nil {
+				return fmt.Errorf("cannot convert user image_url content part with nil image to Gemini content")
+			}
+			dataurl := xurl.ParseDataURL(part.ImageURL.URL)
+			if dataurl == nil || !dataurl.IsBase64 {
+				return fmt.Errorf("cannot convert user image_url %q to Gemini inline image", part.ImageURL.URL)
+			}
+			target.Parts = append(target.Parts, &model.GeminiPart{
+				InlineData: &model.GeminiBlob{
+					MimeType: dataurl.MediaType,
+					Data:     dataurl.Data,
+				},
+			})
+		case "input_audio":
+			if part.Audio == nil {
+				return fmt.Errorf("cannot convert user input_audio content part with nil audio to Gemini content")
+			}
+			target.Parts = append(target.Parts, &model.GeminiPart{
+				InlineData: &model.GeminiBlob{
+					MimeType: audioTypeToMimeType(part.Audio.Format),
+					Data:     part.Audio.Data,
+				},
+			})
+		case "file":
+			if part.File == nil {
+				return fmt.Errorf("cannot convert user file content part with nil file to Gemini content")
+			}
+			dataurl := xurl.ParseDataURL(part.File.FileData)
+			if dataurl == nil || !dataurl.IsBase64 {
+				return fmt.Errorf("cannot convert user file %q to Gemini inline data", part.File.FileData)
+			}
+			target.Parts = append(target.Parts, &model.GeminiPart{
+				InlineData: &model.GeminiBlob{
+					MimeType: dataurl.MediaType,
+					Data:     dataurl.Data,
+				},
+			})
+		default:
+			return fmt.Errorf("cannot convert user content part type %q to Gemini content", part.Type)
+		}
+	}
+	return nil
+}
+
+func appendGeminiAssistantTextParts(target *model.GeminiContent, content model.MessageContent) error {
+	for _, part := range content.MultipleContent {
+		if part.Type != "text" {
+			return fmt.Errorf("cannot convert assistant content part type %q to Gemini model turn", part.Type)
+		}
+		if part.Text == nil {
+			return fmt.Errorf("cannot convert assistant text content part with nil text to Gemini model turn")
+		}
+		target.Parts = append(target.Parts, &model.GeminiPart{Text: *part.Text})
+	}
+	return nil
 }
 
 func convertLLMToolResultToGeminiContent(msg *model.Message, toolCallIDToName map[string]string) *model.GeminiContent {

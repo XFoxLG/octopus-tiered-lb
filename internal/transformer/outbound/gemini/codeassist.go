@@ -47,7 +47,12 @@ func transformCodeAssistRequest(
 	baseUrl string,
 	cred geminicli.CodeAssistCredential,
 ) (*http.Request, error) {
-	geminiReq := convertLLMToGeminiRequest(request)
+	// Keep the same explicit-fail contract as the official Gemini path; OAuth
+	// credentials use the same inner generateContent payload.
+	geminiReq, err := convertLLMToGeminiRequest(request)
+	if err != nil {
+		return nil, err
+	}
 
 	// Code Assist 在包装层携带模型名，内层不再重复。
 	modelName := strings.TrimPrefix(strings.TrimSpace(request.Model), "models/")
