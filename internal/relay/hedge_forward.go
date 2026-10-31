@@ -161,6 +161,7 @@ func cloneHedgeAttempt(original *relayAttempt) (*relayAttempt, error) {
 	metrics.InternalRequest = request
 	metrics.InternalResponse = nil
 	metrics.RequestTrace = nil
+	original.relayRequest.ensureFirstVisibleDeadlineState()
 	req := *original.relayRequest
 	req.internalRequest = request
 	req.inAdapter = adapter

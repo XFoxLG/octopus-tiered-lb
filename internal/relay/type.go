@@ -371,6 +371,11 @@ type relayRequest struct {
 	streamSession     *relayStreamSession
 	hedgeAttempted    bool
 	hedgeRemaining    int
+
+	// firstVisibleDeadline is request-wide state shared by serial retries,
+	// hedge lanes, and protocol fallback. It contains a mutex, so it must remain
+	// a pointer and never be shallow-copied into a speculative attempt.
+	firstVisibleDeadline *firstVisibleDeadlineState
 }
 
 // relayAttempt 尝试级上下文

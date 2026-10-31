@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lingyuins/octopus/internal/conf"
 	"github.com/lingyuins/octopus/internal/helper"
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 	ch "github.com/lingyuins/octopus/internal/op/channel"
@@ -618,7 +617,6 @@ func (ra *relayAttempt) forward() (int, error) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(ra.attemptTimeOutSec)*time.Second)
 		defer cancel()
 	}
-
 	requestForOutbound := ra.internalRequest
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
 		trace.startDiagnosticAttempt(ra.logAttemptNumber, ra.channel.ID, ra.adapterType.String(), ctx)
@@ -666,12 +664,18 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
 		trace.wrapUpstreamRequest(ra.logAttemptNumber, ra.adapterType.String(), outboundRequest)
-		trace.markUpstreamSendStarted(ra.logAttemptNumber)
 	}
 
 	// 发送请求
-	response, err := ra.sendRequest(outboundRequest)
+	response, dispatchGuard, err := ra.sendRequest(outboundRequest)
+	if dispatchGuard != nil {
+		defer dispatchGuard.Close()
+	}
 	if err != nil {
+		if dispatchGuard != nil && dispatchGuard.TimedOut() {
+			log.Warnf("first visible output timeout (%ds) while waiting for upstream response headers", ra.firstTokenTimeOutSec)
+			return 0, fmt.Errorf("%w (%ds)", errFirstVisibleOutputTimeout, ra.firstTokenTimeOutSec)
+		}
 		return 0, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer response.Body.Close()
@@ -890,30 +894,40 @@ func (ra *relayAttempt) copyHeaders(outboundRequest *http.Request, effectiveRewr
 }
 
 // sendRequest 发送 HTTP 请求
-func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, error) {
+func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, *firstVisibleDispatchGuard, error) {
 	// SSRF 防护（issue #219）：校验最终出站 URL 并把安全 IP 钉入 context，
 	// 杜绝 DNS rebinding。relay 主链路的渠道/号池 Base URL 在此前未经校验，
 	// editor 可借此打云元数据端点等内网地址。
 	safeCtx, err := xurl.AssertSafeRequestWithPin(req)
 	if err != nil {
 		log.Warnf("ssrf check failed for %s: %v", req.URL.Redacted(), err)
-		return nil, fmt.Errorf("upstream url is not allowed: %w", err)
+		return nil, nil, fmt.Errorf("upstream url is not allowed: %w", err)
 	}
-	req = req.WithContext(safeCtx)
 
 	httpClient, err2 := helper.ChannelHttpClient(ra.channel)
 	if err2 != nil {
 		log.Warnf("failed to get http client: %v", err2)
-		return nil, err2
+		return nil, nil, err2
+	}
+
+	// This is the actual dispatch boundary: routing, rewriting, serialization and
+	// SSRF validation have completed. The guard uses a stoppable timer rather than
+	// attaching a permanent deadline to the request context, so a visible answer
+	// arriving before the deadline does not cut the long stream off later.
+	dispatchGuard := ra.withFirstVisibleDeadline(safeCtx, ra.firstTokenTimeOutSec)
+	req = req.WithContext(dispatchGuard.Context())
+	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+		trace.markUpstreamSendStarted(ra.logAttemptNumber)
 	}
 
 	response, err := httpClient.Do(req)
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to send request: %v", err)
-		return nil, err
+		return nil, dispatchGuard, err
 	}
+	dispatchGuard.ResponseHeadersReceived()
 
-	return response, nil
+	return response, dispatchGuard, nil
 }
 
 // handleStreamResponse 处理流式响应
@@ -1127,7 +1141,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	var firstVisibleOutputTimer *time.Timer
 	var firstVisibleOutputC <-chan time.Time
 	if firstVisibleOutputPending && ra.firstTokenTimeOutSec > 0 {
-		firstVisibleOutputTimer = time.NewTimer(time.Duration(ra.firstTokenTimeOutSec) * time.Second)
+		firstVisibleDelay := time.Duration(ra.firstTokenTimeOutSec) * time.Second
+		if remaining, ok := ra.remainingFirstVisibleDeadline(); ok {
+			firstVisibleDelay = remaining
+		}
+		firstVisibleOutputTimer = time.NewTimer(firstVisibleDelay)
 		firstVisibleOutputC = firstVisibleOutputTimer.C
 		defer func() {
 			if firstVisibleOutputTimer != nil {
@@ -1196,14 +1214,6 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			streamIdleTimer.Stop()
 		}
 	}()
-
-	// SSE 心跳：当下游已收到输出后出现较长间隔（如 reasoning 阶段）时，定期写入
-	// SSE comment（": ping\n\n"）防止反向代理因 proxy_read_timeout 判定后端无响应而
-	// 切断连接返回 502。仅在 hasDownstreamOutput 之后发送——首个可见输出前的心跳会让
-	// c.Writer.Written() 变 true，破坏 buffer 策略下 reasoning 阶段的安全重试语义
-	//（见 issue #155），且首可见输出超时已由 firstVisibleOutputTimer 兜底。
-	heartbeatTicker := time.NewTicker(conf.SSEHeartbeatInterval)
-	defer heartbeatTicker.Stop()
 
 	// 客户端断连后的宽限期检查。仅在存在 stream session 时有意义：没有 session
 	// 的请求在客户端断连时会直接返回。周期远小于宽限期，保证及时收尾。
@@ -1362,6 +1372,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			if ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && !ra.streamTermination.Cause.IsProviderFailure() {
 				return finishAcceptedTerminal()
 			}
+			if firstVisibleOutputPending && ra.firstVisibleDeadlineApplies(ctx) {
+				return firstVisibleOutputTimeoutError()
+			}
 			interruptedErr := fmt.Errorf("stream interrupted: %w", ctx.Err())
 			emitStreamInterruption(interruptedErr, false)
 			return interruptedErr
@@ -1419,19 +1432,6 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				emitStreamInterruption(idleErr, false)
 				return idleErr
 			}
-		case <-heartbeatTicker.C:
-			if hasDownstreamOutput && !clientDisconnected {
-				if _, err := ra.c.Writer.Write([]byte(": ping\n\n")); err != nil {
-					markClientDisconnected()
-					logClientDisconnected()
-					if ra.streamSession == nil {
-						return errClientDisconnected
-					}
-					continue
-				}
-				ra.c.Writer.Flush()
-			}
-			continue
 		case r, ok = <-results:
 		}
 
@@ -1444,6 +1444,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				}
 				if ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && !ra.streamTermination.Cause.IsProviderFailure() {
 					return finishAcceptedTerminal()
+				}
+				if firstVisibleOutputPending && ra.firstVisibleDeadlineApplies(ctx) {
+					return firstVisibleOutputTimeoutError()
 				}
 				interruptedErr := fmt.Errorf("stream interrupted: %w", ctxErr)
 				emitStreamInterruption(interruptedErr, false)

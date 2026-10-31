@@ -14,10 +14,10 @@ import (
 
 const testGoogleNotice = "The prompt could not be submitted. The prompt contains sensitive words that violate Google's [Generative AI Prohibited Use policy](https://policies.google.com/terms/generative-ai/use-policy). Try rephrasing the prompt. If you think this was an error, [send feedback](https://ai.google.dev/gemini-api/docs/troubleshooting)."
 
-func TestAnswerNoticeExactOnly(t *testing.T) {
+func TestAnswerNoticeTextIsNotRelabeled(t *testing.T) {
 	for _, text := range []string{testGoogleNotice, strings.ReplaceAll(testGoogleNotice, "'", "’")} {
-		if !isExplicitAnswerNotice(text) {
-			t.Fatalf("missed complete notice: %s", text)
+		if isExplicitAnswerNotice(text) {
+			t.Fatalf("ordinary 200 text treated as termination metadata: %s", text)
 		}
 	}
 	for _, text := range []string{"Example: " + testGoogleNotice, "\"" + testGoogleNotice + "\"", testGoogleNotice + " This is an example.", "sensitive words", "The prompt could not be submitted.", ""} {
@@ -34,8 +34,8 @@ func TestAnswerNoticeExplicitSafetyRefusals(t *testing.T) {
 		"我无法协助生成高度露骨的色情描写及显式性行为细节。根据安全准则，涉及详细性器官描写及成人色情互动的内容均受到限制。如果您希望继续推进故事的主线剧情、角色对话或非露骨的情节发展，可以在合规范围内提出调整方向。",
 	}
 	for _, message := range messages {
-		if !isExplicitAnswerNotice(message) {
-			t.Fatalf("missed complete safety refusal: %s", message)
+		if isExplicitAnswerNotice(message) {
+			t.Fatalf("ordinary 200 refusal text treated as termination metadata: %s", message)
 		}
 	}
 
@@ -58,10 +58,9 @@ func TestAnswerNoticeResponseAndGeminiBlock(t *testing.T) {
 		adapter                 outbound.OutboundType
 		blocked                 bool
 	}{
-		{"plain", testGoogleNotice, "text/plain", outbound.OutboundTypeOpenAIChat, true},
 		{"prompt-block", "{\"promptFeedback\":{\"blockReason\":\"SAFETY\"},\"usageMetadata\":{\"promptTokenCount\":12}}", "application/json", outbound.OutboundTypeGemini, true},
 		{"candidate-block", "{\"candidates\":[{\"content\":{\"parts\":[]},\"finishReason\":\"SAFETY\"}]}", "application/json", outbound.OutboundTypeGemini, true},
-		{"notice", testGoogleNotice, "application/json", outbound.OutboundTypeOpenAIChat, true},
+		{"notice", testGoogleNotice, "application/json", outbound.OutboundTypeOpenAIChat, false},
 		{"quote", "Example: " + testGoogleNotice, "application/json", outbound.OutboundTypeOpenAIChat, false},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -80,7 +79,7 @@ func TestAnswerNoticeResponseAndGeminiBlock(t *testing.T) {
 				if !found || !termination.Cause.IsProviderRefusal() || recorder.Body.Len() != 0 {
 					t.Fatalf("block failed: err=%v body=%s", err, recorder.Body.String())
 				}
-			} else if err != nil || !strings.Contains(recorder.Body.String(), "Example:") {
+			} else if err != nil || !strings.Contains(recorder.Body.String(), scenario.body) {
 				t.Fatalf("normal quote changed: %v", err)
 			}
 		})
@@ -98,19 +97,20 @@ func TestAnswerNoticeSplitStream(t *testing.T) {
 	}
 	stream.WriteString("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":7,\"total_tokens\":19}}\n\ndata: [DONE]\n\n")
 	err := attempt.handleStreamResponse(context.Background(), &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream.String()))})
-	termination, found := terminalCauseFromError(err)
-	if !found || !termination.Cause.IsProviderRefusal() {
-		t.Fatalf("missing block: %v", err)
+	if err != nil {
+		t.Fatalf("ordinary 200 answer text failed: %v", err)
 	}
-	if recorder.Body.Len() != 0 || attempt.streamOutputWasCommitted() {
-		t.Fatalf("notice leaked: %s", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "The prompt") || !strings.Contains(recorder.Body.String(), "sensitive words") {
+		t.Fatalf("notice not delivered: %s", recorder.Body.String())
 	}
+	if !attempt.streamOutputWasCommitted() {
+		t.Fatal("ordinary 200 answer text was not committed")
+	}
+	// The stream handler leaves successful response collection to the relay
+	// attempt loop; this test exercises the attempt in isolation.
+	attempt.collectResponse()
 	if attempt.metrics.Stats.InputToken != 12 || attempt.metrics.Stats.OutputToken != 7 {
 		t.Fatalf("usage lost: %+v", attempt.metrics.Stats)
-	}
-	writeClientTerminalError(attempt.c, attempt.channel, attempt.channel.Type, 200, err)
-	if recorder.Code != 400 || !strings.Contains(recorder.Body.String(), "content_filter") {
-		t.Fatalf("invalid terminal: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 

@@ -4,8 +4,17 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import type { LiveRequest } from '@/api/endpoints/log';
 
+function formatBytes(byteCount: number): string {
+    if (byteCount < 1024) return `${byteCount} B`;
+    if (byteCount < 1024 * 1024) return `${(byteCount / 1024).toFixed(1)} KiB`;
+    return `${(byteCount / (1024 * 1024)).toFixed(2)} MiB`;
+}
+
+const deliveryOutcomeKeys = new Set(['writer_accepted', 'partial', 'not_started', 'unknown']);
+
 export function LiveRequests({ requests, connected }: { requests: LiveRequest[]; connected: boolean }) {
     const translate = useTranslations('log.live');
+    const forensics = useTranslations('log.card.forensics');
     const [now, setNow] = useState(0);
     useEffect(() => {
         if (!requests.length) return;
@@ -28,10 +37,19 @@ export function LiveRequests({ requests, connected }: { requests: LiveRequest[];
                         <span>{translate(entry.state)}</span>
                         {entry.attempt > 0 && <span>{translate('attemptCount', { count: entry.attempt })}</span>}
                         <span>{Math.max(0, Math.floor((((entry.state === 'completed' || entry.state === 'unavailable') ? entry.updated_at : (now || entry.updated_at)) - entry.started_at) / 1000))}s</span>
+                        <span>
+                            {forensics('writerBytes')}: {formatBytes(entry.client_write_bytes || 0)}
+                        </span>
+                        <span>
+                            {forensics('axes.delivery')}: {entry.client_delivery_state
+                                ? (deliveryOutcomeKeys.has(entry.client_delivery_state) ? forensics(`outcomes.${entry.client_delivery_state}`) : entry.client_delivery_state)
+                                : forensics('outcomes.unknown')}
+                        </span>
                         <span className="text-muted-foreground">{translate('instance', { id: entry.instance_id.slice(0, 8) })}</span>
                     </li>
                 ))}
             </ul>
+            <p className="mt-2 text-xs text-muted-foreground">{forensics('writerCaveat')}</p>
         </section>
     );
 }

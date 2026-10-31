@@ -151,6 +151,8 @@ export interface LiveRequest {
     log_id?: string;
     sequence?: number;
     persistence_state?: string;
+    client_write_bytes?: number;
+    client_delivery_state?: string;
 }
 
 export interface RelayLogDetail extends RelayLog {

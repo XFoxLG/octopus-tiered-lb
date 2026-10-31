@@ -461,7 +461,13 @@ func (trace *relayRequestTrace) recordClientWrite(payload []byte, writeCount int
 	if writeErr != nil && trace.clientWriteError == "" {
 		trace.clientWriteError = writeErr.Error()
 	}
+	clientWriteBytes := trace.clientWriteBytes
+	clientWriteError := trace.clientWriteError
 	trace.mutex.Unlock()
+	relaylog.UpdateLiveRequest(trace.id, func(entry *relaylog.LiveRequest) {
+		entry.ClientWriteBytes = clientWriteBytes
+		entry.ClientDelivery = relayLogClientDeliveryState(clientWriteBytes, clientWriteError == "", clientWriteError)
+	})
 }
 
 func (trace *relayRequestTrace) completeClientEgress(statusCode int, responseHeaders http.Header) {
@@ -478,6 +484,9 @@ func (trace *relayRequestTrace) completeClientEgress(statusCode int, responseHea
 	}
 	trace.httpStatus = statusCode
 	trace.clientWriteComplete = trace.clientWriteError == ""
+	clientWriteBytes := trace.clientWriteBytes
+	clientWriteError := trace.clientWriteError
+	clientWriteComplete := trace.clientWriteComplete
 	if trace.captureContent {
 		trace.declaredContents = append(trace.declaredContents, buildHTTPMetadataContent(
 			model.RelayLogBoundaryClientEgress,
@@ -495,6 +504,10 @@ func (trace *relayRequestTrace) completeClientEgress(statusCode int, responseHea
 		trace.clientEgress.setHTTPStatus(statusCode)
 		trace.clientEgress.markComplete()
 	}
+	relaylog.UpdateLiveRequest(trace.id, func(entry *relaylog.LiveRequest) {
+		entry.ClientWriteBytes = clientWriteBytes
+		entry.ClientDelivery = relayLogClientDeliveryState(clientWriteBytes, clientWriteComplete, clientWriteError)
+	})
 }
 
 func (trace *relayRequestTrace) commitClientResponse(statusCode int, responseHeaders http.Header) {
