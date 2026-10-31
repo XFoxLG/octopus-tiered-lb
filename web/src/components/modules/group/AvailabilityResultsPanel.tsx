@@ -54,7 +54,7 @@ export function AvailabilityResultsPanel({
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-4 pr-1">
                 {rows.length ? (
                     <div className="grid content-start items-start gap-3 lg:grid-cols-2">
-                        {rows.map(({ id, modelName, channelName, status, result }) => (
+                        {rows.map(({ id, modelName, channelName, status, result, historical }) => (
                             <article key={id} className={cn(
                                 'min-w-0 rounded-lg border p-3 sm:p-4',
                                 status === 'failed' ? 'border-destructive/25 bg-destructive/5' : 'border-border bg-card',
@@ -74,10 +74,15 @@ export function AvailabilityResultsPanel({
                                             </span>
                                         </div>
                                         <p className="mt-1 break-all text-xs text-muted-foreground">{channelName}</p>
+                                        {historical ? <p className="mt-1 text-xs text-muted-foreground">{t('detail.availability.historicalResult')}</p> : null}
                                         {result ? (
                                             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                                 {result.status_code > 0 ? <span>HTTP {result.status_code}</span> : null}
                                                 <span>{t('detail.availability.resultAttempts', { count: result.attempts })}</span>
+                                                {result.source ? <span>source: {result.source}</span> : null}
+                                                {result.protocol ? <span>protocol: {result.protocol}</span> : null}
+                                                {result.endpoint_id ? <span className="break-all">endpoint: {result.endpoint_id}</span> : null}
+                                                {result.snapshot_hash ? <span className="break-all" title={result.snapshot_hash}>snapshot: {result.snapshot_hash.slice(0, 12)}</span> : null}
                                             </div>
                                         ) : null}
                                     </div>

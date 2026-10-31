@@ -2402,6 +2402,7 @@
         "toggleDetails": "展開或收起錯誤詳情",
         "waitingResults": "等待檢測結果…",
         "noResults": "暫無檢測結果",
+        "historicalResult": "此檢測條目已不在目前分組中",
         "passedCount": "通過 {count} 個",
         "failedCount": "失敗 {count} 個",
         "testing": "檢測中",
@@ -2423,6 +2424,8 @@
     },
     "form": {
       "requestTimeout": {"label":"整個請求時限（秒）","hint":"包含排隊、重試與串流；0 繼承其他限制，最短時限優先。"},
+      "relayRetryCount": {"label":"候選內 Key 重試次數","hint":"分組級覆寫。填 -1 跟隨渠道或全域設定；0 表示同一候選不再更換 Key。"},
+      "relayRouteRetries": {"label":"路由輪次覆寫","hint":"分組級覆寫。填 -1 跟隨全域設定；控制完整候選輪次可執行多少次。"},
       "streamKeepalive": {"label":"串流保活","hint":"等待期間每 15 秒傳送 SSE 註解，不包含模型內容，也不能延長用戶端時限。"},
       "assistantPrefill": {"label":"Assistant 預填相容","hint":"轉換請求以 assistant 純文字結尾時，加入續寫指令。原始轉送保持原樣。"},
       "forwardMode": {"label":"轉送模式","hint":"繼承端點設定、轉換格式，或要求 passthrough/raw 使用相同協議。協議衝突會排除候選。","inherit":"繼承端點設定","convert":"轉換","passthrough":"透傳","raw":"原始路徑與正文"},
@@ -3593,7 +3596,7 @@
       "cancelWait": "停止等待",
       "footerHint": "模型回應與逐 Key 檢查會消耗供應源 Key 額度；協定與能力探測會向該模型發真實請求。全部只在手動點擊時執行，沒有背景定時。",
       "modelScope": "依渠道路由規則測試，可能重試或回退到其他介面。回應成功只證明實際回應的介面可用。",
-      "probeScope": "對每個介面分別發送非串流請求。結論只對應本次模型、Key 和協定，不能據此判斷串流相容性。",
+      "probeScope": "對每個介面分別檢查，並單獨傳送串流請求。結論只對應本次模型、Key、協定和介面；一次成功不能代表所有變體。",
       "keysScope": "使用渠道已儲存的測試模型檢查啟用的 Key，可能與上方選中的模型不同。",
       "actualProtocol": "回應協定：{protocol}",
       "testedModel": "測試模型：{model}",
@@ -3632,6 +3635,7 @@
         "protocol_gemini": "協定：Gemini generateContent",
         "models": "能力：模型列表",
         "text_generation": "能力：文字生成",
+        "streaming": "能力：串流輸出",
         "tool_calling": "能力：工具呼叫",
         "structured_output": "能力：結構化輸出",
         "web_search": "能力：聯網搜尋"

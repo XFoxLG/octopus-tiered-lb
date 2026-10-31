@@ -10,7 +10,6 @@ import {
     CircleCheck,
     CircleX,
     Waves,
-    TestTubeDiagonal,
     HeartPulse,
     ChevronDown,
     AlertTriangle,
@@ -43,8 +42,8 @@ import {
 } from '@/components/animate-ui/components/animate/tooltip';
 import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
-import { GroupEditor, type GroupEditorValues } from './Editor';
-import { AIRouteButton } from './AIRouteButton';
+import type { GroupEditorValues } from './Editor';
+import { EditDialogContent } from './EditDialogContent';
 import {
     buildChannelNameByModelKey,
     modelChannelKey,
@@ -56,154 +55,10 @@ import {
 import { getModelIcon } from '@/lib/model-icons';
 import {
     MorphingDialog,
-    MorphingDialogClose,
     MorphingDialogContainer,
     MorphingDialogContent,
-    MorphingDialogDescription,
-    MorphingDialogTitle,
     MorphingDialogTrigger,
-    useMorphingDialog,
 } from '@/components/ui/morphing-dialog';
-import { AvailabilityResultsPanel } from './AvailabilityResultsPanel';
-
-// ---------------------------------------------------------------------------
-// EditDialogContent (duplicated from Card.tsx to keep this component self-contained)
-// ---------------------------------------------------------------------------
-
-interface EditDialogContentProps {
-    group: Group;
-    editMembers: SelectedMember[];
-    isSubmitting: boolean;
-    onSubmit: (values: GroupEditorValues, onDone?: () => void) => void;
-    onTestAvailability: () => void;
-    onRemoveFailedModels: () => void;
-    isTestingAvailability: boolean;
-    testProgressCompleted: number;
-    testProgressTotal: number;
-    testProgressValue: number;
-    testResults: GroupTestResult[];
-    availabilitySummary?: {
-        unavailableCount: number;
-        availableCount: number;
-        allAvailable: boolean;
-        fullyMatched: boolean;
-    };
-}
-
-function EditDialogContent({
-    group,
-    editMembers,
-    isSubmitting,
-    onSubmit,
-    onTestAvailability,
-    onRemoveFailedModels,
-    isTestingAvailability,
-    testProgressCompleted,
-    testProgressTotal,
-    testProgressValue,
-    testResults,
-    availabilitySummary,
-}: EditDialogContentProps) {
-    const { setIsOpen } = useMorphingDialog();
-    const t = useTranslations('group');
-    return (
-        <div className="relative flex h-full min-h-0 w-full max-w-full flex-1 flex-col 2xl:h-auto">
-            <MorphingDialogTitle className="shrink-0">
-                <header className="relative mb-4 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
-                    <div className="min-w-0 space-y-3">
-                        <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary">
-                            <Waves className="size-3.5" />
-                            {t('detail.actions.edit')}
-                        </div>
-                        <div className="space-y-1">
-                            <h2 className="text-2xl font-bold text-card-foreground">
-                                {t('detail.actions.edit')}
-                            </h2>
-                            <p className="truncate text-sm text-muted-foreground" title={group.name}>{group.name}</p>
-                        </div>
-                    </div>
-                    <div className="col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 empty:hidden sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:justify-end">
-                        {group.id && supportsGroupTest(group.endpoint_type) ? (
-                            <AIRouteButton
-                                scope="group"
-                                groupId={group.id}
-                                variant="ghost"
-                                className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate"
-                                onSuccess={() => setIsOpen(false)}
-                            />
-                        ) : null}
-                        {group.id && supportsGroupTest(group.endpoint_type) && !isTestingAvailability && !availabilitySummary ? (
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={onTestAvailability}
-                                className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate"
-                            >
-                                <TestTubeDiagonal className="size-4" />
-                                <span>{t('detail.availability.testAll')}</span>
-                            </Button>
-                        ) : null}
-                    </div>
-                    <MorphingDialogClose className="relative col-start-2 row-start-1 right-auto top-auto size-11 shrink-0 rounded-lg border-transparent bg-transparent p-2 text-muted-foreground hover:bg-muted sm:col-start-3 sm:right-auto sm:top-auto sm:size-9 sm:p-2 [&>svg]:size-4" />
-                </header>
-            </MorphingDialogTitle>
-            <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
-                <div className={cn('min-h-0 min-w-0 flex-1', group.id && (isTestingAvailability || availabilitySummary) ? 'hidden' : 'flex')}>
-                    <GroupEditor
-                        key={`edit-group-${group.id}`}
-                        className="flex-1 min-h-0"
-                        initial={{
-                            name: group.name,
-                            category: group.category ?? '',
-                            endpoint_type: normalizeEndpointType(group.endpoint_type),
-                            endpoint_provider: group.endpoint_provider ?? '',
-                            outbound_format: group.outbound_format ?? '',
-                            match_regex: group.match_regex ?? '',
-                            condition: group.condition ?? '',
-                            mode: group.mode,
-                            first_token_time_out: group.first_token_time_out ?? 0,
-                            attempt_time_out: group.attempt_time_out ?? 0,
-                            stream_idle_timeout: group.stream_idle_timeout ?? 0,
-                            request_timeout_seconds: group.request_timeout_seconds ?? 0,
-                            stream_keepalive_enabled: group.stream_keepalive_enabled ?? false,
-                            assistant_prefill_compat: group.assistant_prefill_compat ?? false,
-                            forward_mode: group.forward_mode ?? 'inherit',
-                            hedge_enabled: group.hedge_enabled ?? false,
-                            hedge_delay_ms: group.hedge_delay_ms ?? 300,
-                            session_keep_time: group.session_keep_time ?? 0,
-                            reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
-                            default_reasoning_effort: group.default_reasoning_effort ?? '',
-                            reasoning_force_override: group.reasoning_force_override ?? false,
-                            param_override: group.param_override ?? '',
-                            custom_header: group.custom_header ?? [],
-                            members: editMembers,
-                        }}
-                        submitText={t('detail.actions.save')}
-                        submittingText={t('create.submitting')}
-                        isSubmitting={isSubmitting}
-                        onCancel={() => setIsOpen(false)}
-                        onSubmit={(v) => onSubmit(v, () => setIsOpen(false))}
-                    />
-                </div>
-                {group.id && (isTestingAvailability || availabilitySummary) ? (
-                    <AvailabilityResultsPanel
-                        isTesting={isTestingAvailability}
-                        members={editMembers}
-                        completed={testProgressCompleted}
-                        total={testProgressTotal || editMembers.length}
-                        progressValue={testProgressValue}
-                        results={testResults}
-                        summary={availabilitySummary}
-                    />
-                ) : null}
-            </MorphingDialogDescription>
-        </div>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// GroupListItem
-// ---------------------------------------------------------------------------
 
 export function GroupListItem({ group }: { group: Group }) {
     const t = useTranslations('group');
@@ -363,18 +218,45 @@ export function GroupListItem({ group }: { group: Group }) {
     }, [getRemovableSuggestion, t, testProgress]);
 
     // ---- Test handlers ----
-    const handleTestDraftGroup = useCallback(() => {
-        if (members.length === 0) return;
+    const handleTestDraftGroup = useCallback((draft?: GroupEditorValues) => {
+        const draftMembers = draft?.members ?? members;
+        if (draftMembers.length === 0) return;
         setCurrentTestId(null);
         handledTestCompletionRef.current = null;
         testDraftGroup.mutate(
             {
-                endpoint_type: normalizeEndpointType(group.endpoint_type),
-                endpoint_provider: group.endpoint_provider ?? '',
-                items: members.map((member) => ({
+                name: draft?.name ?? group.name,
+                category: draft?.category ?? group.category,
+                endpoint_type: normalizeEndpointType(draft?.endpoint_type ?? group.endpoint_type),
+                endpoint_provider: draft?.endpoint_provider ?? group.endpoint_provider ?? '',
+                outbound_format: draft?.outbound_format ?? group.outbound_format ?? '',
+                forward_mode: draft?.forward_mode ?? group.forward_mode ?? 'inherit',
+                mode: draft?.mode ?? group.mode,
+                first_token_time_out: draft?.first_token_time_out ?? group.first_token_time_out,
+                attempt_time_out: draft?.attempt_time_out ?? group.attempt_time_out,
+                stream_idle_timeout: draft?.stream_idle_timeout ?? group.stream_idle_timeout ?? 0,
+                request_timeout_seconds: draft?.request_timeout_seconds ?? group.request_timeout_seconds ?? 0,
+                relay_retry_count: draft?.relay_retry_count ?? group.relay_retry_count ?? -1,
+                relay_route_retries: draft?.relay_route_retries ?? group.relay_route_retries ?? -1,
+                stream_keepalive_enabled: draft?.stream_keepalive_enabled ?? group.stream_keepalive_enabled ?? false,
+                assistant_prefill_compat: draft?.assistant_prefill_compat ?? group.assistant_prefill_compat ?? false,
+                hedge_enabled: draft?.hedge_enabled ?? group.hedge_enabled ?? false,
+                hedge_delay_ms: draft?.hedge_delay_ms ?? group.hedge_delay_ms ?? 300,
+                session_keep_time: draft?.session_keep_time ?? group.session_keep_time,
+                condition: draft?.condition ?? group.condition ?? '',
+                reasoning_buffer_strategy: draft?.reasoning_buffer_strategy ?? group.reasoning_buffer_strategy ?? '',
+                default_reasoning_effort: draft?.default_reasoning_effort ?? group.default_reasoning_effort ?? '',
+                reasoning_force_override: draft?.reasoning_force_override ?? group.reasoning_force_override ?? false,
+                param_override: draft?.param_override ?? group.param_override ?? null,
+                custom_header: draft?.custom_header ?? group.custom_header ?? [],
+                items: draftMembers.map((member, index) => ({
                     client_id: member.id,
+                    item_id: member.item_id,
                     channel_id: member.channel_id,
                     model_name: member.name,
+                    priority: index + 1,
+                    weight: member.weight ?? 1,
+                    relay_retry_count_override: member.relayRetryCountOverride ?? null,
                 })),
             },
             {
@@ -386,8 +268,7 @@ export function GroupListItem({ group }: { group: Group }) {
             },
         );
     }, [
-        group.endpoint_provider,
-        group.endpoint_type,
+        group,
         members,
         t,
         testDraftGroup,
@@ -613,6 +494,8 @@ export function GroupListItem({ group }: { group: Group }) {
             const nextCondition = values.condition.trim();
             const nextFirstTokenTimeOut =
                 values.first_token_time_out ?? 0;
+            const nextRelayRetryCount = values.relay_retry_count ?? -1;
+            const nextRelayRouteRetries = values.relay_route_retries ?? -1;
             if (values.request_timeout_seconds !== undefined && values.request_timeout_seconds !== (group.request_timeout_seconds ?? 0)) payload.request_timeout_seconds = values.request_timeout_seconds;
             if (values.stream_keepalive_enabled !== undefined && values.stream_keepalive_enabled !== (group.stream_keepalive_enabled ?? false)) payload.stream_keepalive_enabled = values.stream_keepalive_enabled;
             if (values.assistant_prefill_compat !== undefined && values.assistant_prefill_compat !== (group.assistant_prefill_compat ?? false)) payload.assistant_prefill_compat = values.assistant_prefill_compat;
@@ -655,6 +538,10 @@ export function GroupListItem({ group }: { group: Group }) {
                 (group.first_token_time_out ?? 0)
             )
                 payload.first_token_time_out = nextFirstTokenTimeOut;
+            if (nextRelayRetryCount !== (group.relay_retry_count ?? -1))
+                payload.relay_retry_count = nextRelayRetryCount;
+            if (nextRelayRouteRetries !== (group.relay_route_retries ?? -1))
+                payload.relay_route_retries = nextRelayRouteRetries;
             if (
                 nextAttemptTimeOut !==
                 (group.attempt_time_out ?? 0)
@@ -729,6 +616,8 @@ export function GroupListItem({ group }: { group: Group }) {
             group.endpoint_provider,
             group.endpoint_type,
             group.first_token_time_out,
+            group.relay_retry_count,
+            group.relay_route_retries,
             group.attempt_time_out,
             group.param_override,
             group.reasoning_force_override,
@@ -750,7 +639,7 @@ export function GroupListItem({ group }: { group: Group }) {
     );
 
     // ---- Remove failed models ----
-    const handleRemoveFailedMembers = useCallback(() => {
+    const handleRemoveFailedMembers = useCallback((draft?: GroupEditorValues) => {
         if (!group.id) return;
 
         const failedResults = (testProgress?.results ?? []).filter(
@@ -784,7 +673,8 @@ export function GroupListItem({ group }: { group: Group }) {
         )
             return;
 
-        const nextMembers = members.filter((member) => {
+        const sourceMembers = draft?.members ?? members;
+        const nextMembers = sourceMembers.filter((member) => {
             if (
                 failedClientIds.has(member.id) ||
                 failedFallbackKeys.has(member.id)
@@ -794,29 +684,38 @@ export function GroupListItem({ group }: { group: Group }) {
             return !failedItemIds.has(member.item_id);
         });
 
-        if (nextMembers.length === members.length) return;
+        if (nextMembers.length === sourceMembers.length) return;
 
-        const values: GroupEditorValues = {
-            name: group.name,
-            category: group.category ?? '',
-            endpoint_type: normalizeEndpointType(group.endpoint_type),
-            endpoint_provider: group.endpoint_provider ?? '',
-            outbound_format: group.outbound_format ?? '',
-            match_regex: group.match_regex ?? '',
-            condition: group.condition ?? '',
-            mode: group.mode,
-            first_token_time_out: group.first_token_time_out ?? 0,
-            attempt_time_out: group.attempt_time_out ?? 0,
-            stream_idle_timeout: group.stream_idle_timeout ?? 0,
-            request_timeout_seconds: group.request_timeout_seconds ?? 0,
-            stream_keepalive_enabled: group.stream_keepalive_enabled ?? false,
-            assistant_prefill_compat: group.assistant_prefill_compat ?? false,
-            forward_mode: group.forward_mode ?? 'inherit',
-            hedge_enabled: group.hedge_enabled ?? false,
-            hedge_delay_ms: group.hedge_delay_ms ?? 300,
-            session_keep_time: group.session_keep_time ?? 0,
-            members: nextMembers,
-        };
+        const values: GroupEditorValues = draft
+            ? { ...draft, members: nextMembers }
+            : {
+                name: group.name,
+                category: group.category ?? '',
+                endpoint_type: normalizeEndpointType(group.endpoint_type),
+                endpoint_provider: group.endpoint_provider ?? '',
+                outbound_format: group.outbound_format ?? '',
+                match_regex: group.match_regex ?? '',
+                condition: group.condition ?? '',
+                mode: group.mode,
+                first_token_time_out: group.first_token_time_out ?? 0,
+                attempt_time_out: group.attempt_time_out ?? 0,
+                stream_idle_timeout: group.stream_idle_timeout ?? 0,
+                request_timeout_seconds: group.request_timeout_seconds ?? 0,
+                relay_retry_count: group.relay_retry_count ?? -1,
+                relay_route_retries: group.relay_route_retries ?? -1,
+                stream_keepalive_enabled: group.stream_keepalive_enabled ?? false,
+                assistant_prefill_compat: group.assistant_prefill_compat ?? false,
+                forward_mode: group.forward_mode ?? 'inherit',
+                hedge_enabled: group.hedge_enabled ?? false,
+                hedge_delay_ms: group.hedge_delay_ms ?? 300,
+                session_keep_time: group.session_keep_time ?? 0,
+                reasoning_buffer_strategy: group.reasoning_buffer_strategy ?? '',
+                default_reasoning_effort: group.default_reasoning_effort ?? '',
+                reasoning_force_override: group.reasoning_force_override ?? false,
+                param_override: group.param_override ?? '',
+                custom_header: group.custom_header ?? [],
+                members: nextMembers,
+            };
 
         setMembers(nextMembers);
         handleSubmitEdit(values, () => {
@@ -827,10 +726,17 @@ export function GroupListItem({ group }: { group: Group }) {
     }, [
         group.category,
         group.condition,
+        group.custom_header,
+        group.default_reasoning_effort,
         group.endpoint_provider,
         group.endpoint_type,
         group.first_token_time_out,
+        group.param_override,
+        group.relay_retry_count,
+        group.relay_route_retries,
         group.attempt_time_out,
+        group.reasoning_buffer_strategy,
+        group.reasoning_force_override,
         group.request_timeout_seconds, group.stream_keepalive_enabled, group.assistant_prefill_compat, group.forward_mode, group.stream_idle_timeout,
         group.hedge_enabled,
         group.hedge_delay_ms,
@@ -1272,7 +1178,7 @@ export function GroupListItem({ group }: { group: Group }) {
                                         </Tooltip>
                                     </MorphingDialogTrigger>
 
-                                    <MorphingDialogContainer>
+                                    <MorphingDialogContainer unmountOnClose>
                                         <MorphingDialogContent className="max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-3rem)] lg:max-h-[calc(100dvh-1.5rem)] max-w-full sm:max-w-[92rem] lg:max-w-full relative flex h-[calc(100dvh-6rem)] w-[min(100vw-2rem,92rem)] lg:w-full lg:h-[calc(100dvh-1.5rem)] 2xl:h-auto flex-col overflow-hidden rounded-xl border border-border/35 bg-card px-4 py-4 text-card-foreground shadow-md md:h-[calc(100dvh-3rem)] md:w-[min(100vw-2rem,92rem)] md:px-6">
                                             <EditDialogContent
                                                 group={group}
@@ -1300,9 +1206,11 @@ export function GroupListItem({ group }: { group: Group }) {
                                                 testResults={
                                                     testProgress?.results ?? []
                                                 }
-                                                availabilitySummary={
-                                                    availabilitySummary
-                                                }
+                                                availabilitySummary={availabilitySummary}
+                                                canRemoveFailedModels={canRemoveFailedModels}
+                                                testTaskId={currentTestId}
+                                                testError={testProgress?.message || testProgressQuery.error?.message || testDraftGroup.error?.message}
+                                                confirmRemoval
                                             />
                                         </MorphingDialogContent>
                                     </MorphingDialogContainer>

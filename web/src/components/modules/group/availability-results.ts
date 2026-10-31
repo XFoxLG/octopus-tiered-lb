@@ -9,6 +9,7 @@ export type AvailabilityRow = {
     channelName: string;
     status: AvailabilityRowStatus;
     result?: GroupTestResult;
+    historical?: boolean;
 };
 
 export function buildAvailabilityRows(
@@ -23,8 +24,10 @@ export function buildAvailabilityRows(
         byModelChannel.set(`${result.channel_id}:${result.model_name}`, result);
     });
 
-    return members.map((member) => {
+    const matched = new Set<GroupTestResult>();
+    const rows: AvailabilityRow[] = members.map((member) => {
         const result = byClientId.get(member.id) ?? byModelChannel.get(`${member.channel_id}:${member.name}`);
+        if (result) matched.add(result);
         return {
             id: member.id,
             modelName: member.name,
@@ -33,4 +36,16 @@ export function buildAvailabilityRows(
             result,
         };
     });
+    results.forEach((result, index) => {
+        if (matched.has(result)) return;
+        rows.push({
+            id: 'result:' + (result.client_id ?? result.item_id) + ':' + index,
+            modelName: result.model_name,
+            channelName: result.channel_name,
+            status: result.passed ? 'passed' : 'failed',
+            result,
+            historical: true,
+        });
+    });
+    return rows;
 }

@@ -159,6 +159,8 @@ export interface Group {
     // the new per-group watchdog setting yet. Callers normalize it to zero.
     stream_idle_timeout?: number;
     request_timeout_seconds?: number;
+    relay_retry_count?: number;
+    relay_route_retries?: number;
     stream_keepalive_enabled?: boolean;
     assistant_prefill_compat?: boolean;
     forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
@@ -183,6 +185,8 @@ export interface Group {
 export interface GroupTestResult {
     endpoint_id?: string;
     protocol?: import('./channel').EndpointProtocol;
+    source?: 'draft' | 'saved';
+    snapshot_hash?: string;
     client_id?: string;
     item_id: number;
     channel_id: number;
@@ -204,19 +208,47 @@ export interface GroupTestSummary {
 
 export interface GroupTestProgress extends GroupTestSummary {
     id: string;
+    source?: 'draft' | 'saved';
+    snapshot_hash?: string;
     done: boolean;
     message?: string;
 }
 
 export interface GroupDraftTestRequestItem {
     client_id: string;
+    item_id?: number;
     channel_id: number;
     model_name: string;
+    priority?: number;
+    weight?: number;
+    relay_retry_count_override?: number | null;
 }
 
 export interface GroupDraftTestRequest {
+    name?: string;
+    category?: string;
     endpoint_type: string;
     endpoint_provider?: string;
+    outbound_format?: string;
+    forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
+    mode?: GroupMode;
+    first_token_time_out?: number;
+    attempt_time_out?: number;
+    stream_idle_timeout?: number;
+    request_timeout_seconds?: number;
+    stream_keepalive_enabled?: boolean;
+    assistant_prefill_compat?: boolean;
+    hedge_enabled?: boolean;
+    hedge_delay_ms?: number;
+    session_keep_time?: number;
+    condition?: string;
+    reasoning_buffer_strategy?: string;
+    default_reasoning_effort?: string;
+    reasoning_force_override?: boolean;
+    param_override?: string | null;
+    custom_header?: { header_key: string; header_value: string }[];
+    relay_retry_count?: number;
+    relay_route_retries?: number;
     items: GroupDraftTestRequestItem[];
 }
 
@@ -508,6 +540,8 @@ export interface CreateGroupRequest {
     attempt_time_out: number;
     stream_idle_timeout: number;
     request_timeout_seconds?: number;
+    relay_retry_count?: number;
+    relay_route_retries?: number;
     stream_keepalive_enabled?: boolean;
     assistant_prefill_compat?: boolean;
     forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
@@ -540,6 +574,8 @@ export interface GroupUpdateRequest {
     attempt_time_out?: number;
     stream_idle_timeout?: number;
     request_timeout_seconds?: number;
+    relay_retry_count?: number;
+    relay_route_retries?: number;
     stream_keepalive_enabled?: boolean;
     assistant_prefill_compat?: boolean;
     forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
