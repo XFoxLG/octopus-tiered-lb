@@ -74,7 +74,7 @@ func runConfiguredConnectionProbe(ctx context.Context, ch *m.Channel, run *m.Cha
 		if endpoint.Protocol == "embeddings" {
 			continue
 		}
-		for _, capability := range []string{m.ProbeItemTextGeneration, m.ProbeItemToolCalling, m.ProbeItemStructuredOutput, m.ProbeItemWebSearch} {
+		for _, capability := range []string{m.ProbeItemTextGeneration, m.ProbeItemStreaming, m.ProbeItemToolCalling, m.ProbeItemStructuredOutput, m.ProbeItemWebSearch} {
 			if ctx.Err() != nil {
 				break
 			}

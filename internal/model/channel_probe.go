@@ -48,6 +48,7 @@ const (
 	ProbeItemToolCalling      = "tool_calling"
 	ProbeItemStructuredOutput = "structured_output"
 	ProbeItemWebSearch        = "web_search"
+	ProbeItemStreaming        = "streaming"
 )
 
 // CapabilityName 是渠道×模型能力表里的一项能力标识。
