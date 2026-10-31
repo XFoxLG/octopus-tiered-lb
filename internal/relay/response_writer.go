@@ -129,7 +129,6 @@ func (w *relayResponseWriter) close() {
 		if w.stopRequestWatcher != nil {
 			w.stopRequestWatcher()
 		}
-		w.interrupt()
 		w.closeMu.Lock()
 		w.accepted = true
 		close(w.commands)

@@ -727,6 +727,10 @@ type relayCaptureResponseWriter struct {
 	trace *relayRequestTrace
 }
 
+func (writer *relayCaptureResponseWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
+}
+
 func (writer *relayCaptureResponseWriter) WriteHeader(statusCode int) {
 	wasCommitted := writer.ResponseWriter.Written()
 	writer.ResponseWriter.WriteHeader(statusCode)

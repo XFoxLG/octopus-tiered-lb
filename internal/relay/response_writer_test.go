@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -117,6 +118,42 @@ func TestRelayResponseWriterRejectsUnboundedProductionSink(t *testing.T) {
 	err := w.ping()
 	if !errors.Is(err, errRelayWriteDeadlineUnsupported) {
 		t.Fatalf("ping error = %v, want %v", err, errRelayWriteDeadlineUnsupported)
+	}
+}
+
+func TestRelayResponseWriterBoundedDeadlineTraversesTraceWrapper(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handlerDone := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		c, _ := gin.CreateTestContext(response)
+		c.Request = request
+		trace := newRelayRequestTrace(request, false)
+		c.Writer = &relayCaptureResponseWriter{ResponseWriter: c.Writer, trace: trace}
+		w := installRelayResponseWriter(c)
+		defer w.close()
+
+		if _, err := w.Write([]byte("data: visible\n\n")); err != nil {
+			handlerDone <- err
+			return
+		}
+		handlerDone <- w.FlushError()
+	}))
+	defer server.Close()
+
+	response, err := server.Client().Get(server.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer response.Body.Close()
+	if err := <-handlerDone; err != nil {
+		t.Fatalf("handled bounded write: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != "data: visible\n\n" {
+		t.Fatalf("body = %q, want visible frame", body)
 	}
 }
 
