@@ -65,9 +65,14 @@ func (w *relayHedgeWriter) Write(payload []byte) (int, error) {
 }
 func (w *relayHedgeWriter) WriteString(payload string) (int, error) { return w.Write([]byte(payload)) }
 func (w *relayHedgeWriter) Flush()                                  {} // coordinator already flushed before acknowledging Write
-func (w *relayHedgeWriter) Status() int                             { return w.status }
-func (w *relayHedgeWriter) Size() int                               { return w.size }
-func (w *relayHedgeWriter) Written() bool                           { return w.size >= 0 }
+// Hedge lanes buffer frames in memory and never own the client socket. The
+// coordinator's real relayResponseWriter applies the bounded write deadline.
+// Treat the lane-local deadline as supported so ResponseController can still
+// traverse the in-memory writer used by production and tests.
+func (w *relayHedgeWriter) SetWriteDeadline(time.Time) error { return nil }
+func (w *relayHedgeWriter) Status() int                      { return w.status }
+func (w *relayHedgeWriter) Size() int                        { return w.size }
+func (w *relayHedgeWriter) Written() bool                    { return w.size >= 0 }
 func (w *relayHedgeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, errors.New("hedged streams cannot hijack")
 }
@@ -161,6 +166,7 @@ func cloneHedgeAttempt(original *relayAttempt) (*relayAttempt, error) {
 	metrics.InternalRequest = request
 	metrics.InternalResponse = nil
 	metrics.RequestTrace = nil
+	original.relayRequest.ensureFirstVisibleDeadlineState()
 	req := *original.relayRequest
 	req.internalRequest = request
 	req.inAdapter = adapter

@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Loader2, Pencil, TestTubeDiagonal, Trash2 } from 'lucide-react';
+import { useCallback, useId, useRef, useState } from 'react';
+import { Loader2, Pencil, TestTubeDiagonal, Trash2, Waves } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import type { Group, GroupTestResult } from '@/api/endpoints/group';
 import { Button } from '@/components/ui/button';
@@ -26,8 +26,8 @@ export interface EditDialogContentProps {
     editMembers: SelectedMember[];
     isSubmitting: boolean;
     onSubmit: (values: GroupEditorValues, onDone?: () => void) => void;
-    onTestAvailability: () => void;
-    onRemoveFailedModels: () => void;
+    onTestAvailability: (draft?: GroupEditorValues) => void;
+    onRemoveFailedModels: (draft?: GroupEditorValues) => void;
     isTestingAvailability: boolean;
     canRemoveFailedModels: boolean;
     testProgressCompleted: number;
@@ -52,54 +52,61 @@ export function EditDialogContent({
 }: EditDialogContentProps) {
     const t = useTranslations('group');
     const { setIsOpen } = useMorphingDialog();
-    const hasResults = Boolean(testTaskId || isTestingAvailability || availabilitySummary || testResults.length);
-    const [view, setView] = useState<'edit' | 'results'>(hasResults ? 'results' : 'edit');
+    const hasResults = Boolean(testTaskId || isTestingAvailability || availabilitySummary || testResults.length || testError);
+    const [view, setView] = useState<'edit' | 'results'>('edit');
+    const viewId = useId();
     const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+    const draftRef = useRef<GroupEditorValues | null>(null);
+    const [draftMemberCount, setDraftMemberCount] = useState(editMembers.length);
+    const [testedMembers, setTestedMembers] = useState<SelectedMember[]>(editMembers);
     const canTest = Boolean(group.id && supportsGroupTest(group.endpoint_type));
 
-    useEffect(() => {
-        if (isTestingAvailability || testTaskId) setView('results');
-    }, [isTestingAvailability, testTaskId]);
+    const handleDraftChange = useCallback((draft: GroupEditorValues) => {
+        draftRef.current = draft;
+        setDraftMemberCount((current) => current === draft.members.length ? current : draft.members.length);
+    }, []);
 
     const handleTest = () => {
+        const draft = draftRef.current;
+        setTestedMembers((draft?.members ?? editMembers).map((member) => ({ ...member })));
         setView('results');
-        onTestAvailability();
+        onTestAvailability(draft ?? undefined);
     };
     const handleRemoveFailed = () => {
         if (confirmRemoval) setShowRemoveConfirm(true);
-        else onRemoveFailedModels();
+        else onRemoveFailedModels(draftRef.current ?? undefined);
     };
 
     return (
-        <div className="flex h-full min-h-0 w-full min-w-0 flex-col gap-3 sm:gap-4">
+        <div className="relative flex h-full min-h-0 w-full max-w-full flex-1 flex-col 2xl:h-auto gap-3 sm:gap-4">
             <MorphingDialogTitle className="shrink-0">
-                <header className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border pb-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                <header className="relative mb-4 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
                     <div className="min-w-0">
-                        <p className="mb-1 text-xs text-muted-foreground">{t('detail.actions.edit')}</p>
+                        <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/15 bg-card px-3 py-1 text-[0.68rem] font-semibold text-primary"><Waves className="size-3.5" />{t('detail.actions.edit')}</div>
                         <h2 className="truncate text-lg font-semibold sm:text-xl" title={group.name}>{group.name}</h2>
                     </div>
-                    <div className="col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:justify-end">
+                    <div className="col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 empty:hidden sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:justify-end">
                         {canTest ? (
                             <>
                                 <AIRouteButton scope="group" groupId={group.id} variant="ghost"
-                                    className="h-10 rounded-lg border-border bg-card px-3 text-xs transition-colors hover:translate-y-0 hover:bg-muted sm:text-sm"
+                                    className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate"
                                     onSuccess={() => setIsOpen(false)} />
-                                <Button type="button" variant="outline" onClick={handleTest}
-                                    disabled={isTestingAvailability || isSubmitting || editMembers.length === 0}
-                                    className="h-10 rounded-lg bg-card px-3 text-xs shadow-none sm:text-sm">
+                                <Button type="button" variant="ghost" onClick={handleTest}
+                                    disabled={isTestingAvailability || isSubmitting || draftMemberCount === 0}
+                                    className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate">
                                     {isTestingAvailability ? <Loader2 className="size-4 animate-spin" /> : <TestTubeDiagonal className="size-4" />}
                                     {t('detail.availability.testAll')}
                                 </Button>
                             </>
                         ) : null}
                     </div>
-                    <MorphingDialogClose className="relative col-start-2 row-start-1 size-10 shrink-0 inset-auto p-2 sm:col-start-3 sm:inset-auto sm:size-10 sm:p-2" />
+                    <MorphingDialogClose className="relative col-start-2 row-start-1 right-auto top-auto size-11 shrink-0 rounded-lg border-transparent bg-transparent p-2 text-muted-foreground hover:bg-muted sm:col-start-3 sm:right-auto sm:top-auto sm:size-9 sm:p-2 [&>svg]:size-4" />
                 </header>
             </MorphingDialogTitle>
             {hasResults || view === 'results' ? (
                 <div role="tablist" aria-label={t('detail.availability.viewLabel')} className="flex shrink-0 gap-1 border-b border-border">
                     {(['edit', 'results'] as const).map((item) => (
-                        <button key={item} type="button" role="tab" aria-selected={view === item}
+                        <button key={item} type="button" role="tab" id={`${viewId}-${item}-tab`} aria-controls={`${viewId}-${item}-panel`} aria-selected={view === item}
                             onClick={() => setView(item)} className={cn(
                                 'inline-flex h-10 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors',
                                 view === item ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
@@ -112,8 +119,8 @@ export function EditDialogContent({
                 </div>
             ) : null}
             <MorphingDialogDescription disableLayoutAnimation className="flex min-h-0 flex-1 overflow-hidden">
-                <div role="tabpanel" aria-label={t('detail.actions.edit')} aria-hidden={view !== 'edit'} inert={view !== 'edit'}
-                    className={cn('min-h-0 min-w-0 flex-1', view === 'edit' ? 'block' : 'hidden')}>
+                <div role="tabpanel" id={`${viewId}-edit-panel`} aria-labelledby={hasResults || view === 'results' ? `${viewId}-edit-tab` : undefined} aria-label={t('detail.actions.edit')} aria-hidden={view !== 'edit'} inert={view !== 'edit'}
+                    className={cn('min-h-0 min-w-0 flex-1', view === 'edit' ? 'flex' : 'hidden')}>
                     <GroupEditor key={`edit-group-${group.id}`} className="min-h-0 flex-1"
                         initial={{
                             name: group.name, category: group.category ?? '',
@@ -122,6 +129,8 @@ export function EditDialogContent({
                             match_regex: group.match_regex ?? '', condition: group.condition ?? '', mode: group.mode,
                             first_token_time_out: group.first_token_time_out ?? 0, attempt_time_out: group.attempt_time_out ?? 0,
                             request_timeout_seconds: group.request_timeout_seconds ?? 0,
+                            relay_retry_count: group.relay_retry_count ?? -1,
+                            relay_route_retries: group.relay_route_retries ?? -1,
                             stream_keepalive_enabled: group.stream_keepalive_enabled ?? false,
                             assistant_prefill_compat: group.assistant_prefill_compat ?? false,
                             forward_mode: group.forward_mode ?? 'inherit',
@@ -133,12 +142,13 @@ export function EditDialogContent({
                             members: editMembers,
                         }}
                         submitText={t('detail.actions.save')} submittingText={t('create.submitting')} isSubmitting={isSubmitting}
-                        onCancel={() => setIsOpen(false)} onSubmit={(values) => onSubmit(values, () => setIsOpen(false))} />
+                        onCancel={() => setIsOpen(false)} onDraftChange={handleDraftChange}
+                        onSubmit={(values) => onSubmit(values, () => setIsOpen(false))} />
                 </div>
-                <div role="tabpanel" aria-label={t('detail.availability.resultsTab')} aria-hidden={view !== 'results'} inert={view !== 'results'}
+                <div role="tabpanel" id={`${viewId}-results-panel`} aria-labelledby={`${viewId}-results-tab`} aria-label={t('detail.availability.resultsTab')} aria-hidden={view !== 'results'} inert={view !== 'results'}
                     className={cn('min-h-0 min-w-0 flex-1 flex-col', view === 'results' ? 'flex' : 'hidden')}>
-                    <AvailabilityResultsPanel isTesting={isTestingAvailability} members={editMembers}
-                        completed={testProgressCompleted} total={testProgressTotal || editMembers.length} progressValue={testProgressValue}
+                    <AvailabilityResultsPanel isTesting={isTestingAvailability} members={testedMembers}
+                        completed={testProgressCompleted} total={testProgressTotal || testedMembers.length} progressValue={testProgressValue}
                         results={testResults} summary={availabilitySummary} error={testError} />
                     <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border pt-3 pb-[env(safe-area-inset-bottom)]">
                         {canRemoveFailedModels ? (
@@ -161,7 +171,7 @@ export function EditDialogContent({
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                         <AlertDialogCancel>{t('detail.actions.cancel')}</AlertDialogCancel>
-                        <AlertDialogAction disabled={!canRemoveFailedModels} onClick={() => { onRemoveFailedModels(); setShowRemoveConfirm(false); }}>
+                        <AlertDialogAction disabled={!canRemoveFailedModels} onClick={() => { onRemoveFailedModels(draftRef.current ?? undefined); setShowRemoveConfirm(false); }}>
                             {t('detail.actions.confirmRemove')}
                         </AlertDialogAction>
                     </AlertDialogFooter>

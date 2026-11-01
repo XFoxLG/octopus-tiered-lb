@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
@@ -61,6 +62,92 @@ func TestReviewProtocolProbeRejectsFalseSuccess(t *testing.T) {
 				t.Errorf("temporary server error became conclusive verdict %s", got.Verdict)
 			}
 		})
+	}
+}
+
+func TestReviewStreamingProbeWaitsForProtocolTerminal(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"VISIBLE\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+		w.(http.Flusher).Flush()
+	}))
+	defer srv.Close()
+	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []appmodel.BaseUrl{{URL: srv.URL}}}
+	request, err := buildCapabilityProbeRequest(appmodel.ProbeItemStreaming, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := sendProbeRequest(context.Background(), channel, "sk-test-key", probeKeyScope{Index: -1}, outbound.OutboundTypeOpenAIChat, request, appmodel.ProbeItemStreaming)
+	if outcome.Verdict != appmodel.ProbeVerdictPass || !strings.Contains(outcome.Body, "VISIBLE") {
+		t.Fatalf("stream probe outcome = %s body=%q summary=%q, want visible terminal SSE pass", outcome.Verdict, outcome.Body, outcome.Summary)
+	}
+}
+
+func TestReviewStreamingProbeRejectsVisibleEOFWithoutTerminal(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"VISIBLE\"}}]}\n\n"))
+		w.(http.Flusher).Flush()
+	}))
+	defer srv.Close()
+	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []appmodel.BaseUrl{{URL: srv.URL}}}
+	request, err := buildCapabilityProbeRequest(appmodel.ProbeItemStreaming, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := sendProbeRequest(context.Background(), channel, "sk-test-key", probeKeyScope{Index: -1}, outbound.OutboundTypeOpenAIChat, request, appmodel.ProbeItemStreaming)
+	if got := judgeCapabilityResponse(appmodel.ProbeItemStreaming, outcome); got != appmodel.ProbeVerdictUnknown {
+		t.Fatalf("visible EOF without terminal = %s, want unknown; summary=%s", got, outcome.Summary)
+	}
+}
+
+func TestReviewStreamingProbeRejectsHangingVisibleStream(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"VISIBLE\"}}]}\n\n"))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []appmodel.BaseUrl{{URL: srv.URL}}}
+	request, err := buildCapabilityProbeRequest(appmodel.ProbeItemStreaming, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	outcome := sendProbeRequest(ctx, channel, "sk-test-key", probeKeyScope{Index: -1}, outbound.OutboundTypeOpenAIChat, request, appmodel.ProbeItemStreaming)
+	if got := judgeCapabilityResponse(appmodel.ProbeItemStreaming, outcome); got != appmodel.ProbeVerdictUnknown {
+		t.Fatalf("hanging visible stream = %s, want unknown; summary=%s", got, outcome.Summary)
+	}
+}
+
+func TestReviewStreamingProbeDoesNotPassErrorStatusWithSSEBody(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"VISIBLE ERROR\"}}]}\n\n"))
+	}))
+	defer srv.Close()
+	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIChat, BaseUrls: []appmodel.BaseUrl{{URL: srv.URL}}}
+	request, err := buildCapabilityProbeRequest(appmodel.ProbeItemStreaming, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := sendProbeRequest(context.Background(), channel, "sk-test-key", probeKeyScope{Index: -1}, outbound.OutboundTypeOpenAIChat, request, appmodel.ProbeItemStreaming)
+	if got := judgeCapabilityResponse(appmodel.ProbeItemStreaming, outcome); got != appmodel.ProbeVerdictUnknown {
+		t.Fatalf("stream probe with HTTP 500 = %s, want unknown", got)
 	}
 }
 

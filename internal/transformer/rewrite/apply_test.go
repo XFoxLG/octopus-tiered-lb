@@ -116,6 +116,89 @@ func TestApply_FlattensTextOnlyBlockArray(t *testing.T) {
 	}
 }
 
+func TestResolve_PreserveDoesNotRewriteBody(t *testing.T) {
+	got, enabled, err := Resolve(outbound.OutboundTypeOpenAIChat, &appmodel.RequestRewriteConfig{
+		Enabled: true,
+		Profile: appmodel.RequestRewriteProfilePreserve,
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if !enabled {
+		t.Fatal("Resolve() enabled = false, want true")
+	}
+	if got.FlattenTextBlockArrays || got.NilContentAsEmptyString || got.EnsureAssistantContentWithToolCalls {
+		t.Fatalf("Resolve() preserve defaults changed body semantics: %#v", got)
+	}
+	if got.ToolRoleStrategy != appmodel.ToolRoleStrategyKeep || got.SystemMessageStrategy != appmodel.SystemMessageStrategyKeep {
+		t.Fatalf("Resolve() preserve strategies = %#v, want keep", got)
+	}
+}
+
+func TestApply_PreserveKeepsExactMessagesAndContentShapes(t *testing.T) {
+	system := " system "
+	developer := "developer"
+	user := "user"
+	first := " first "
+	second := "second"
+	req := &transmodel.InternalLLMRequest{
+		Model: "gpt-4o-mini",
+		Messages: []transmodel.Message{
+			{Role: "system", Content: transmodel.MessageContent{Content: &system}},
+			{Role: "developer", Content: transmodel.MessageContent{Content: &developer}},
+			{Role: "user", Content: transmodel.MessageContent{Content: &user}},
+			{
+				Role: "assistant",
+				Content: transmodel.MessageContent{
+					MultipleContent: []transmodel.MessageContentPart{
+						{Type: "text", Text: &first},
+						{Type: "text", Text: &second},
+					},
+				},
+				ToolCalls: []transmodel.ToolCall{{ID: "call_1", Type: "function"}},
+			},
+		},
+	}
+
+	cfg, _, err := Resolve(outbound.OutboundTypeOpenAIChat, &appmodel.RequestRewriteConfig{
+		Enabled: true,
+		Profile: appmodel.RequestRewriteProfilePreserve,
+	})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	got, err := Apply(req, cfg)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if len(got.Messages) != len(req.Messages) {
+		t.Fatalf("Apply() messages len = %d, want %d", len(got.Messages), len(req.Messages))
+	}
+	for i := range req.Messages {
+		want := req.Messages[i]
+		gotMessage := got.Messages[i]
+		if gotMessage.Role != want.Role || len(gotMessage.Content.MultipleContent) != len(want.Content.MultipleContent) {
+			t.Fatalf("Apply() messages[%d] = %#v, want %#v", i, gotMessage, want)
+		}
+		if (want.Content.Content == nil) != (gotMessage.Content.Content == nil) {
+			t.Fatalf("Apply() messages[%d] content pointer shape changed: got %#v, want %#v", i, gotMessage.Content, want.Content)
+		}
+		if want.Content.Content != nil && *want.Content.Content != *gotMessage.Content.Content {
+			t.Fatalf("Apply() messages[%d].Content = %q, want %q", i, *gotMessage.Content.Content, *want.Content.Content)
+		}
+		for partIndex := range want.Content.MultipleContent {
+			gotPart := gotMessage.Content.MultipleContent[partIndex]
+			wantPart := want.Content.MultipleContent[partIndex]
+			if gotPart.Type != wantPart.Type || gotPart.Text == nil || wantPart.Text == nil || *gotPart.Text != *wantPart.Text {
+				t.Fatalf("Apply() messages[%d] parts[%d] = %#v, want %#v", i, partIndex, gotPart, wantPart)
+			}
+		}
+		if len(gotMessage.ToolCalls) != len(want.ToolCalls) {
+			t.Fatalf("Apply() messages[%d] tool calls changed: %#v", i, gotMessage.ToolCalls)
+		}
+	}
+}
+
 func TestApply_PreservesMixedMultipartContent(t *testing.T) {
 	text := "hello"
 	req := &transmodel.InternalLLMRequest{

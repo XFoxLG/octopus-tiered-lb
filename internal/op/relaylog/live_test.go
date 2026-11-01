@@ -61,3 +61,17 @@ func TestLiveRequestsNoDuplicateEvents(t *testing.T) {
 		t.Fatalf("per-token duplicate event: %d", len(subscriber))
 	}
 }
+
+func TestLiveRequestCarriesWriterAcceptanceWithoutChangingTerminalState(t *testing.T) {
+	store := newLiveRequestStore()
+	store.update("trace", func(entry *LiveRequest) {
+		entry.State = "streaming"
+		entry.ClientWriteBytes = 42
+		entry.ClientDelivery = "writer_accepted"
+	})
+	store.update("trace", func(entry *LiveRequest) { entry.State = "completed" })
+	entry := store.requests["trace"]
+	if entry.State != "completed" || entry.ClientWriteBytes != 42 || entry.ClientDelivery != "writer_accepted" {
+		t.Fatalf("writer acceptance was not retained independently from terminal state: %+v", entry)
+	}
+}

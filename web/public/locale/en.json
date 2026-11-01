@@ -2453,6 +2453,7 @@
         "toggleDetails": "Toggle error details",
         "waitingResults": "Waiting for test results...",
         "noResults": "No test results yet",
+        "historicalResult": "Tested member is no longer in this group",
         "passedCount": "Passed {count}",
         "failedCount": "Failed {count}",
         "testing": "Testing",
@@ -2474,6 +2475,8 @@
     },
     "form": {
       "requestTimeout": {"label":"Whole request timeout (seconds)","hint":"Includes queueing, attempts and streaming. Zero inherits other limits; the shortest deadline wins."},
+      "relayRetryCount": {"label":"Key retries per candidate","hint":"Group override. -1 inherits the channel or global setting; 0 prevents another key from being tried for the same candidate."},
+      "relayRouteRetries": {"label":"Route-round override","hint":"Group override. -1 inherits the global setting; controls how many complete candidate rounds may run."},
       "streamKeepalive": {"label":"Stream keepalive","hint":"Send an SSE comment every 15 seconds while waiting. It carries no model content and cannot extend a client deadline."},
       "assistantPrefill": {"label":"Assistant prefill compatibility","hint":"On converted requests ending with assistant text, append a user instruction to continue. Raw forwarding is preserved."},
       "forwardMode": {"label":"Forwarding mode","hint":"Follow endpoint settings, convert formats, or require the same protocol for passthrough/raw. Protocol conflicts are excluded.","inherit":"Follow endpoint settings","convert":"Convert","passthrough":"Passthrough","raw":"Raw path and body"},
@@ -3637,7 +3640,7 @@
       "cancelWait": "Stop waiting",
       "footerHint": "Model response and per-key checks consume the channel key quota; the probe sends real requests. Everything runs only on manual click, with no background schedule.",
       "modelScope": "Uses the channel routing rules and may retry or fall back to another interface. A successful answer verifies only the interface that answered.",
-      "probeScope": "Checks each interface separately using non-streaming requests. Results apply to this model, key and protocol; they do not verify streaming.",
+      "probeScope": "Checks each interface separately, including a dedicated streaming request. Results apply to this model, key, protocol and endpoint; one success does not prove every variant.",
       "keysScope": "Checks enabled keys with the saved channel test model, which can differ from the model selected above.",
       "actualProtocol": "Answer protocol: {protocol}",
       "testedModel": "Tested model: {model}",
@@ -3676,6 +3679,7 @@
         "protocol_gemini": "Protocol: Gemini generateContent",
         "models": "Capability: model list",
         "text_generation": "Capability: text generation",
+        "streaming": "Capability: streaming",
         "tool_calling": "Capability: tool calling",
         "structured_output": "Capability: structured output",
         "web_search": "Capability: web search"

@@ -255,7 +255,7 @@ func startDraftGroupTest(c *gin.Context) {
 		channels[item.ChannelID] = *channel
 	}
 
-	progress, err := helper.StartDraftGroupModelTest(req.EndpointType, req.Items, channels)
+	progress, err := helper.StartDraftGroupModelTestRequest(req, channels)
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, "failed to start group test")
 		return

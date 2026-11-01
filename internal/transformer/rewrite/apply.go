@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	appmodel "github.com/lingyuins/octopus/internal/model"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
@@ -17,6 +18,9 @@ func Apply(req *transmodel.InternalLLMRequest, cfg *EffectiveConfig) (*transmode
 
 	cloned := cloneRequest(req)
 	if !cloned.IsChatRequest() {
+		return cloned, nil
+	}
+	if cfg.Profile == appmodel.RequestRewriteProfilePreserve {
 		return cloned, nil
 	}
 

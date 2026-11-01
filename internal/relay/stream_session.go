@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lingyuins/octopus/internal/conf"
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
 	"github.com/lingyuins/octopus/internal/server/resp"
@@ -764,9 +763,6 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 	sub, unsubscribe := req.streamSession.Subscribe()
 	defer unsubscribe()
 
-	heartbeatTicker := time.NewTicker(conf.SSEHeartbeatInterval)
-	defer heartbeatTicker.Stop()
-
 	for {
 		events, done, sessionErr := req.streamSession.Snapshot(lastSeq)
 		if errors.Is(sessionErr, errRelayReplayWindowExpired) {
@@ -805,13 +801,6 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 		select {
 		case <-clientCtx.Done():
 			return
-		case <-heartbeatTicker.C:
-			if headersWritten {
-				if _, err := c.Writer.Write([]byte(": ping\n\n")); err != nil {
-					return
-				}
-				c.Writer.Flush()
-			}
 		case _, ok := <-sub:
 			if !ok {
 				continue

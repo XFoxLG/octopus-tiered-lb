@@ -219,6 +219,7 @@ type probeRequestOutcome struct {
 	RequestFingerprint string
 	StatusCode         int
 	Body               string
+	ResponseTruncated  bool
 	Verdict            appmodel.ProbeVerdict
 	LatencyMS          int64
 	Summary            string
@@ -392,22 +393,62 @@ func sendProbeRequest(
 	}
 	defer response.Body.Close()
 
-	rawBody, readErr := io.ReadAll(io.LimitReader(response.Body, capabilityProbeMaxBody+1))
 	outcome.StatusCode = response.StatusCode
+	outcome.Summary = response.Status
+	outcome.Verdict = probeHTTPStatusVerdict(response.StatusCode)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		initialVerdict := outcome.Verdict
+		rawBody, readErr := io.ReadAll(io.LimitReader(response.Body, capabilityProbeMaxBody+1))
+		if readErr == nil && len(rawBody) <= capabilityProbeMaxBody {
+			outcome.Body = string(rawBody)
+			if initialVerdict != appmodel.ProbeVerdictUnknown {
+				if bodyVerdict, ok := classifyProbeBody(outcome.Body); ok {
+					outcome.Verdict = bodyVerdict
+				}
+			}
+		}
+		return outcome
+	}
+
+	isStreamingProbe := len(capability) > 0 && capability[0] == appmodel.ProbeItemStreaming
+	if isStreamingProbe {
+		probeBody := io.LimitReader(response.Body, capabilityProbeMaxBody+1)
+		buffer := make([]byte, 0, 8192)
+		chunk := make([]byte, 4096)
+		for {
+			count, readErr := probeBody.Read(chunk)
+			if count > 0 {
+				buffer = append(buffer, chunk[:count]...)
+				if len(buffer) > capabilityProbeMaxBody {
+					outcome.Body = string(buffer[:capabilityProbeMaxBody])
+					outcome.ResponseTruncated = true
+					outcome.Summary = "Stream probe reached the response size limit before evidence was conclusive"
+					return outcome
+				}
+				signals := collectCapabilitySignals(string(buffer))
+				if signals.HasStreamTerminal {
+					outcome.Body = string(buffer)
+					outcome.Summary = "Received a streamed protocol terminal"
+					return outcome
+				}
+			}
+			if readErr != nil {
+				outcome.Body = string(buffer)
+				if readErr != io.EOF {
+					outcome.ResponseTruncated = true
+					outcome.Verdict = appmodel.ProbeVerdictUnknown
+					outcome.Summary = "Stream response ended before evidence was conclusive"
+				}
+				return outcome
+			}
+		}
+	}
+
+	rawBody, readErr := io.ReadAll(io.LimitReader(response.Body, capabilityProbeMaxBody+1))
 	outcome.Body = string(rawBody)
 	if readErr != nil || len(rawBody) > capabilityProbeMaxBody {
+		outcome.ResponseTruncated = true
 		outcome.Summary = "Incomplete or oversized probe response"
-		return outcome
-	}
-	outcome.Verdict = probeHTTPStatusVerdict(response.StatusCode)
-	outcome.Summary = response.Status
-	if outcome.Verdict == appmodel.ProbeVerdictUnknown {
-		return outcome
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		if bodyVerdict, ok := classifyProbeBody(outcome.Body); ok {
-			outcome.Verdict = bodyVerdict
-		}
 		return outcome
 	}
 	decodedResponse := *response
@@ -603,6 +644,17 @@ func buildCapabilityProbeRequest(item, modelName string) (*transmodel.InternalLL
 			}},
 			Stream: &stream,
 		}, nil
+	case appmodel.ProbeItemStreaming:
+		streaming := true
+		return &transmodel.InternalLLMRequest{
+			Model:        modelName,
+			RawAPIFormat: transmodel.APIFormatOpenAIChatCompletion,
+			Messages: []transmodel.Message{{
+				Role:    "user",
+				Content: transmodel.MessageContent{Content: stringPtr("Reply with one short visible sentence.")},
+			}},
+			Stream: &streaming,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unknown capability probe item: %s", item)
 	}
@@ -610,11 +662,16 @@ func buildCapabilityProbeRequest(item, modelName string) (*transmodel.InternalLL
 
 // capabilityResponseSignals 是从响应体里提取的判定信号。
 type capabilityResponseSignals struct {
-	HasToolCall     bool
-	HasStructuredOK bool
-	HasSearchTrace  bool
-	HasVisibleText  bool
-	RefusalDetected bool
+	HasToolCall       bool
+	HasStructuredOK   bool
+	HasSearchTrace    bool
+	HasVisibleText    bool
+	RefusalDetected   bool
+	HasStreamEnvelope bool
+	HasStreamTerminal bool
+	HasStreamFailure  bool
+	HasStreamDone     bool
+	HasFinishReason   bool
 }
 
 // collectCapabilitySignals reads answer envelopes, never metadata or echoed requests.
@@ -624,14 +681,81 @@ type capabilityResponseSignals struct {
 func collectCapabilitySignals(rawBody string) capabilityResponseSignals {
 	signals := capabilityResponseSignals{}
 	var root map[string]any
-	if json.Unmarshal([]byte(rawBody), &root) != nil {
-		return signals
+	if json.Unmarshal([]byte(rawBody), &root) == nil {
+		if len(root) == 1 && root["ok"] == true {
+			signals.HasStructuredOK = true
+		}
+		collectProbeEnvelope(root, &signals)
 	}
-	if len(root) == 1 && root["ok"] == true {
-		signals.HasStructuredOK = true
+	// A streaming request must return SSE data events, not the same complete
+	// JSON body used by the non-streaming probe.
+	for _, payload := range probeSSEDataPayloads(rawBody) {
+		signals.HasStreamEnvelope = true
+		var event map[string]any
+		if json.Unmarshal([]byte(payload), &event) == nil {
+			collectProbeEnvelope(event, &signals)
+			collectProbeStreamTerminal(event, &signals)
+		}
 	}
-	collectProbeEnvelope(root, &signals)
+	if strings.Contains(strings.ReplaceAll(rawBody, "\r\n", "\n"), "data: [DONE]") {
+		signals.HasStreamEnvelope = true
+		signals.HasStreamDone = true
+		signals.HasStreamTerminal = true
+	}
 	return signals
+}
+
+func collectProbeStreamTerminal(root map[string]any, signals *capabilityResponseSignals) {
+	if eventType, _ := root["type"].(string); eventType != "" {
+		switch eventType {
+		case "response.completed":
+			signals.HasStreamTerminal = true
+		case "response.failed", "response.incomplete", "response.error", "error":
+			signals.HasStreamTerminal = true
+			signals.HasStreamFailure = true
+		case "message_stop":
+			signals.HasStreamTerminal = true
+		}
+	}
+	if choices, ok := root["choices"].([]any); ok {
+		for _, rawChoice := range choices {
+			choice, _ := rawChoice.(map[string]any)
+			if reason, _ := choice["finish_reason"].(string); strings.TrimSpace(reason) != "" {
+				signals.HasFinishReason = true
+			}
+		}
+	}
+	if candidates, ok := root["candidates"].([]any); ok {
+		for _, rawCandidate := range candidates {
+			candidate, _ := rawCandidate.(map[string]any)
+			if reason, _ := candidate["finishReason"].(string); strings.TrimSpace(reason) != "" {
+				signals.HasStreamTerminal = true
+			}
+		}
+	}
+}
+
+func probeSSEDataPayloads(rawBody string) []string {
+	normalized := strings.ReplaceAll(rawBody, "\r\n", "\n")
+	blocks := strings.Split(normalized, "\n\n")
+	payloads := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		lines := strings.Split(block, "\n")
+		data := make([]string, 0, len(lines))
+		for _, line := range lines {
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			value := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if value != "" && value != "[DONE]" {
+				data = append(data, value)
+			}
+		}
+		if len(data) > 0 {
+			payloads = append(payloads, strings.Join(data, "\n"))
+		}
+	}
+	return payloads
 }
 
 func collectProbeEnvelope(root map[string]any, signals *capabilityResponseSignals) {
@@ -643,6 +767,21 @@ func collectProbeEnvelope(root map[string]any, signals *capabilityResponseSignal
 				if call, ok := message["function_call"].(map[string]any); ok {
 					collectProbeTool(call, signals)
 				}
+			}
+			if delta, ok := choice["delta"].(map[string]any); ok {
+				collectProbeAnswer(delta, signals)
+			}
+		}
+	}
+	if eventType, _ := root["type"].(string); eventType == "response.output_text.delta" {
+		if text, ok := root["delta"].(string); ok {
+			collectProbeText(text, signals)
+		}
+	}
+	if eventType, _ := root["type"].(string); eventType == "content_block_delta" {
+		if delta, ok := root["delta"].(map[string]any); ok {
+			if text, ok := delta["text"].(string); ok {
+				collectProbeText(text, signals)
 			}
 		}
 	}
@@ -871,6 +1010,31 @@ func judgeCapabilityResponse(item string, outcome *probeRequestOutcome) appmodel
 		outcome.Summary = "No native search evidence was returned; search support remains unverified"
 		// 没有检索痕迹但有正文：模型可能只是"凭记忆回答"。
 		// 这种证据不足以判定支持，也不足以判定不支持 → Unknown（不写入）。
+		return appmodel.ProbeVerdictUnknown
+	case appmodel.ProbeItemStreaming:
+		if signals.HasStreamFailure {
+			outcome.Summary = "The response stream ended with a protocol failure"
+			return appmodel.ProbeVerdictUnknown
+		}
+		chatTerminal := signals.HasFinishReason && signals.HasStreamDone
+		otherTerminal := !signals.HasFinishReason && signals.HasStreamTerminal
+		if signals.HasStreamEnvelope && signals.HasVisibleText && (chatTerminal || otherTerminal) {
+			outcome.Summary = "Received visible streaming output with a protocol terminal"
+			return appmodel.ProbeVerdictPass
+		}
+		if outcome.ResponseTruncated {
+			outcome.Summary = "The stream ended before a complete answer could be verified"
+			return appmodel.ProbeVerdictUnknown
+		}
+		if signals.HasStreamEnvelope && signals.HasVisibleText {
+			outcome.Summary = "Visible streamed output arrived without a complete protocol terminal"
+			return appmodel.ProbeVerdictUnknown
+		}
+		if signals.HasStreamEnvelope {
+			outcome.Summary = "The response stream contained no visible answer text; support remains unverified"
+			return appmodel.ProbeVerdictUnknown
+		}
+		outcome.Summary = "The stream request returned no SSE answer evidence; compatibility remains unverified"
 		return appmodel.ProbeVerdictUnknown
 	default:
 		return outcome.Verdict

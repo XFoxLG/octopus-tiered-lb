@@ -167,6 +167,70 @@ func TestJudgeCapabilityResponseTextGeneration(t *testing.T) {
 	}
 }
 
+func TestJudgeCapabilityResponseStreamingRequiresVisibleTextAndTerminal(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		truncated bool
+		want      appmodel.ProbeVerdict
+	}{
+		{
+			name: "chat delta",
+			body: "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+			want: appmodel.ProbeVerdictPass,
+		},
+		{
+			name: "responses delta",
+			body: "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+			want: appmodel.ProbeVerdictPass,
+		},
+		{
+			name: "messages delta",
+			body: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+			want: appmodel.ProbeVerdictPass,
+		},
+		{
+			name: "gemini candidate",
+			body: "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+			want: appmodel.ProbeVerdictPass,
+		},
+		{
+			name: "visible without terminal",
+			body: "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n\n",
+			want: appmodel.ProbeVerdictUnknown,
+		},
+		{
+			name: "reasoning only",
+			body: "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n",
+			want: appmodel.ProbeVerdictUnknown,
+		},
+		{
+			name: "usage only",
+			body: "data: {\"usage\":{\"total_tokens\":1}}\n\ndata: [DONE]\n\n",
+			want: appmodel.ProbeVerdictUnknown,
+		},
+		{
+			name: "non-stream response",
+			body: `{"choices":[{"message":{"content":"OK"}}]}`,
+			want: appmodel.ProbeVerdictUnknown,
+		},
+		{
+			name:      "truncated before visible answer",
+			body:      "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n",
+			truncated: true,
+			want:      appmodel.ProbeVerdictUnknown,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			outcome := &probeRequestOutcome{Verdict: appmodel.ProbeVerdictPass, Body: testCase.body, ResponseTruncated: testCase.truncated}
+			if got := judgeCapabilityResponse(appmodel.ProbeItemStreaming, outcome); got != testCase.want {
+				t.Fatalf("streaming verdict = %s, want %s; summary=%s", got, testCase.want, outcome.Summary)
+			}
+		})
+	}
+}
+
 // 联网搜索缺少统一入口，没有检索痕迹时保持 Unknown —— 证据不足不写入。
 func TestJudgeCapabilityResponseWebSearchStaysUnknownWithoutEvidence(t *testing.T) {
 	prose := &probeRequestOutcome{Verdict: appmodel.ProbeVerdictPass, Body: `{"choices":[{"message":{"content":"Here is a headline"}}]}`}
@@ -239,6 +303,7 @@ func TestCapabilityProbeSupportedForChannel(t *testing.T) {
 	// 常规能力在 OpenAI 兼容渠道上应当可探。
 	for _, item := range []string{
 		appmodel.ProbeItemTextGeneration,
+		appmodel.ProbeItemStreaming,
 		appmodel.ProbeItemToolCalling,
 		appmodel.ProbeItemStructuredOutput,
 		appmodel.ProbeItemWebSearch,
@@ -246,6 +311,13 @@ func TestCapabilityProbeSupportedForChannel(t *testing.T) {
 		if !capabilityProbeSupportedForChannel(item, outbound.OutboundTypeOpenAIChat) {
 			t.Fatalf("item %s should be probeable on an OpenAI channel", item)
 		}
+	}
+}
+
+func TestCapabilityForProbeItemMapsStreaming(t *testing.T) {
+	got, ok := capabilityForProbeItem(appmodel.ProbeItemStreaming)
+	if !ok || got != appmodel.CapabilityStreaming {
+		t.Fatalf("capabilityForProbeItem(streaming) = %q, %t", got, ok)
 	}
 }
 

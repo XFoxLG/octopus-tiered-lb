@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -42,7 +43,7 @@ func TestKeepaliveCommitsHTTPWithoutSemanticOutput(t *testing.T) {
 	})
 }
 
-func TestKeepaliveStopsAtVisibleContentAndClientCancel(t *testing.T) {
+func TestSingleKeepaliveOwnerContinuesAfterVisibleContent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(recorder)
@@ -60,8 +61,8 @@ func TestKeepaliveStopsAtVisibleContentAndClientCancel(t *testing.T) {
 		synctest.Wait()
 		cancel()
 		synctest.Wait()
-		if strings.Count(recorder.Body.String(), ": ping") != 1 {
-			t.Fatal("pre-visible heartbeat continued")
+		if strings.Count(recorder.Body.String(), ": ping") != 3 {
+			t.Fatalf("keepalive owner count = %d, want 3 continuous pings", strings.Count(recorder.Body.String(), ": ping"))
 		}
 	})
 }
@@ -107,6 +108,55 @@ func TestRelayResponseWriterCallAfterClose(t *testing.T) {
 	}
 }
 
+func TestRelayResponseWriterRejectsUnboundedProductionSink(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	w := newRelayResponseWriterWithDeadlinePolicy(c.Writer, true)
+	defer w.close()
+
+	err := w.ping()
+	if !errors.Is(err, errRelayWriteDeadlineUnsupported) {
+		t.Fatalf("ping error = %v, want %v", err, errRelayWriteDeadlineUnsupported)
+	}
+}
+
+func TestRelayResponseWriterBoundedDeadlineTraversesTraceWrapper(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handlerDone := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		c, _ := gin.CreateTestContext(response)
+		c.Request = request
+		trace := newRelayRequestTrace(request, false)
+		c.Writer = &relayCaptureResponseWriter{ResponseWriter: c.Writer, trace: trace}
+		w := installRelayResponseWriter(c)
+		defer w.close()
+
+		if _, err := w.Write([]byte("data: visible\n\n")); err != nil {
+			handlerDone <- err
+			return
+		}
+		handlerDone <- w.FlushError()
+	}))
+	defer server.Close()
+
+	response, err := server.Client().Get(server.URL)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer response.Body.Close()
+	if err := <-handlerDone; err != nil {
+		t.Fatalf("handled bounded write: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != "data: visible\n\n" {
+		t.Fatalf("body = %q, want visible frame", body)
+	}
+}
+
 func TestRelayResponseWriterCloseWaitsForAcceptedCommand(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -145,8 +195,11 @@ func TestRelayResponseWriterCloseWaitsForAcceptedCommand(t *testing.T) {
 	}()
 	select {
 	case result := <-afterCloseDone:
-		t.Fatalf("call() started after close() returned early: %v", result.err)
+		if !errors.Is(result.err, io.ErrClosedPipe) {
+			t.Fatalf("call() during close error = %v, want io.ErrClosedPipe", result.err)
+		}
 	case <-time.After(50 * time.Millisecond):
+		t.Fatal("call() did not fail fast after close started")
 	}
 
 	close(release)
@@ -157,8 +210,5 @@ func TestRelayResponseWriterCloseWaitsForAcceptedCommand(t *testing.T) {
 	case <-closeDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("close() did not finish after accepted command completed")
-	}
-	if result := <-afterCloseDone; !errors.Is(result.err, io.ErrClosedPipe) {
-		t.Fatalf("call() after close error = %v, want io.ErrClosedPipe", result.err)
 	}
 }

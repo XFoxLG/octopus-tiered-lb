@@ -2409,6 +2409,7 @@
         "toggleDetails": "展开或收起错误详情",
         "waitingResults": "等待检测结果…",
         "noResults": "暂无检测结果",
+        "historicalResult": "此检测条目已不在当前分组中",
         "passedCount": "通过 {count} 个",
         "failedCount": "失败 {count} 个",
         "testing": "检测中",
@@ -2430,6 +2431,8 @@
     },
     "form": {
       "requestTimeout": {"label":"整请求超时（秒）","hint":"包含排队、全部尝试和流式交付。0 继承其它期限；多个期限取最短值。"},
+      "relayRetryCount": {"label":"候选内 Key 重试次数","hint":"分组级覆盖。填 -1 跟随渠道或全局设置；0 表示该候选不重复换 Key。"},
+      "relayRouteRetries": {"label":"路由轮次覆盖","hint":"分组级覆盖。填 -1 跟随全局设置；控制完整候选轮次可执行多少次。"},
       "streamKeepalive": {"label":"流式保活","hint":"等待时每 15 秒发送 SSE comment，无模型内容，也不能延长客户端的硬期限。"},
       "assistantPrefill": {"label":"Assistant 预填兼容","hint":"转换请求以 assistant 文本结束时，追加一次继续生成的 user 指令；原始穿透保持原文。"},
       "forwardMode": {"label":"转发模式","hint":"跟随接口设置、转换协议，或要求同协议穿透；协议冲突会排除并记录。","inherit":"跟随接口设置","convert":"协议转换","passthrough":"同协议穿透","raw":"原路径和正文穿透"},
@@ -3593,7 +3596,7 @@
       "cancelWait": "停止等待",
       "footerHint": "模型应答与逐 Key 检查会消耗渠道 Key 额度；协议与能力探测会向该模型发真实请求。全部只在手动点击时执行，没有后台定时。",
       "modelScope": "按渠道路由规则测试，可能重试或回退到其他接口。应答成功只证明实际应答的接口可用。",
-      "probeScope": "按每个接口分别发送非流式请求。结论只对应本次模型、Key 和协议，不能据此判断流式兼容性。",
+      "probeScope": "按每个接口分别检查，并单独发送流式请求。结论只对应本次模型、Key、协议和接口；一次成功不能代表所有变体。",
       "keysScope": "使用渠道已保存的测试模型检查启用的 Key，可能与上方选中的模型不同。",
       "actualProtocol": "应答协议：{protocol}",
       "testedModel": "测试模型：{model}",
@@ -3632,6 +3635,7 @@
         "protocol_gemini": "协议：Gemini generateContent",
         "models": "能力：模型列表",
         "text_generation": "能力：文本生成",
+        "streaming": "能力：流式输出",
         "tool_calling": "能力：工具调用",
         "structured_output": "能力：结构化输出",
         "web_search": "能力：联网搜索"

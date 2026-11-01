@@ -16,7 +16,10 @@ func TestConvertMaxTokensFallsBackToMaxCompletionTokens(t *testing.T) {
 		MaxCompletionTokens: &limit,
 	}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if got.GenerationConfig == nil || got.GenerationConfig.MaxOutputTokens != 256 {
 		t.Fatalf("generationConfig = %+v, want maxOutputTokens=256", got.GenerationConfig)
 	}
@@ -31,7 +34,10 @@ func TestConvertMaxTokensPrefersMaxTokensWhenBothSet(t *testing.T) {
 		MaxCompletionTokens: &maxCompletion,
 	}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if got.GenerationConfig == nil || got.GenerationConfig.MaxOutputTokens != 64 {
 		t.Fatalf("generationConfig = %+v, want maxOutputTokens=64（MaxTokens 优先）", got.GenerationConfig)
 	}
@@ -40,7 +46,10 @@ func TestConvertMaxTokensPrefersMaxTokensWhenBothSet(t *testing.T) {
 func TestConvertNoTokenLimitOmitsMaxOutputTokens(t *testing.T) {
 	req := &model.InternalLLMRequest{Model: "gemini-3.1-pro-preview"}
 
-	got := convertLLMToGeminiRequest(req)
+	got, err := convertLLMToGeminiRequest(req)
+	if err != nil {
+		t.Fatalf("convertLLMToGeminiRequest: %v", err)
+	}
 	if got.GenerationConfig != nil && got.GenerationConfig.MaxOutputTokens != 0 {
 		t.Fatalf("generationConfig = %+v, want 无 maxOutputTokens", got.GenerationConfig)
 	}

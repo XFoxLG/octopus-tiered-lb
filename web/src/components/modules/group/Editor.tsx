@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Check, ChevronDownIcon, Plus, Search, Sparkles, Trash2, Waves, Orbit, SlidersHorizontal, FlaskConical } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { Accordion as AccordionPrimitive } from 'radix-ui';
@@ -35,6 +35,8 @@ export type GroupEditorValues = {
     attempt_time_out: number;
     stream_idle_timeout: number;
     request_timeout_seconds?: number;
+    relay_retry_count?: number;
+    relay_route_retries?: number;
     stream_keepalive_enabled?: boolean;
     assistant_prefill_compat?: boolean;
     forward_mode?: 'inherit' | 'convert' | 'passthrough' | 'raw';
@@ -289,6 +291,7 @@ export function GroupEditor({
     isSubmitting,
     onSubmit,
     onCancel,
+    onDraftChange,
     className,
 }: {
     initial?: Partial<GroupEditorValues>;
@@ -297,6 +300,7 @@ export function GroupEditor({
     isSubmitting: boolean;
     onSubmit: (values: GroupEditorValues) => void;
     onCancel?: () => void;
+    onDraftChange?: (values: GroupEditorValues) => void;
     className?: string;
 }) {
     const t = useTranslations('group');
@@ -321,6 +325,8 @@ export function GroupEditor({
     const [attemptTimeOut, setAttemptTimeOut] = useState<number>(initial?.attempt_time_out ?? 0);
     const [streamIdleTimeout, setStreamIdleTimeout] = useState<number>(initial?.stream_idle_timeout ?? 0);
     const [requestTimeout, setRequestTimeout] = useState(initial?.request_timeout_seconds ?? 0);
+    const [relayRetryCount, setRelayRetryCount] = useState<number>(initial?.relay_retry_count ?? -1);
+    const [relayRouteRetries, setRelayRouteRetries] = useState<number>(initial?.relay_route_retries ?? -1);
     const [streamKeepalive, setStreamKeepalive] = useState(initial?.stream_keepalive_enabled ?? false);
     const [assistantPrefill, setAssistantPrefill] = useState(initial?.assistant_prefill_compat ?? false);
     const [forwardMode, setForwardMode] = useState<GroupEditorValues['forward_mode']>(initial?.forward_mode ?? 'inherit');
@@ -414,37 +420,53 @@ export function GroupEditor({
     const hedgeDelayValid = hedgeDelayMs >= 0 && hedgeDelayMs <= 30000;
     const isValid = groupKey.length > 0 && selectedMembers.length > 0 && !regexError && hedgeDelayValid;
 
+    const draftValues = useMemo<GroupEditorValues>(() => ({
+        name: groupName,
+        category: category.trim(),
+        endpoint_type: endpointType,
+        endpoint_provider: supportsProviderSelection ? endpointProvider : '',
+        outbound_format: supportsOutboundFormat ? outboundFormat : '',
+        match_regex: regexKey,
+        mode,
+        first_token_time_out: firstTokenTimeOut,
+        attempt_time_out: attemptTimeOut,
+        stream_idle_timeout: streamIdleTimeout,
+        request_timeout_seconds: requestTimeout,
+        relay_retry_count: relayRetryCount,
+        relay_route_retries: relayRouteRetries,
+        stream_keepalive_enabled: streamKeepalive,
+        assistant_prefill_compat: assistantPrefill,
+        forward_mode: forwardMode,
+        hedge_enabled: hedgeEnabled,
+        hedge_delay_ms: hedgeDelayMs,
+        session_keep_time: sessionKeepTime,
+        condition,
+        reasoning_buffer_strategy: reasoningBufferStrategy,
+        default_reasoning_effort: defaultReasoningEffort,
+        reasoning_force_override: reasoningForceOverride,
+        param_override: paramOverride,
+        custom_header: customHeaders.filter((header) => header.header_key.trim() !== ''),
+        members: dedupeSelectedMembers(selectedMembers),
+    }), [
+        assistantPrefill, attemptTimeOut, category, condition, customHeaders,
+        defaultReasoningEffort, endpointProvider, endpointType, firstTokenTimeOut,
+        forwardMode, groupName, hedgeDelayMs, hedgeEnabled, mode, outboundFormat,
+        paramOverride, reasoningBufferStrategy, reasoningForceOverride,
+        regexKey, relayRetryCount, relayRouteRetries, requestTimeout, selectedMembers, sessionKeepTime,
+        streamIdleTimeout, streamKeepalive, supportsOutboundFormat,
+        supportsProviderSelection,
+    ]);
+
+    useEffect(() => {
+        onDraftChange?.(draftValues);
+    }, [draftValues, onDraftChange]);
+
     const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         setGroupNameTouched(true);
         setShowValidation(true);
         if (!isValid) return;
-        onSubmit({
-            name: groupName,
-            category: category.trim(),
-            endpoint_type: endpointType,
-            endpoint_provider: supportsProviderSelection ? endpointProvider : '',
-            outbound_format: supportsOutboundFormat ? outboundFormat : '',
-            match_regex: regexKey,
-            mode,
-            first_token_time_out: firstTokenTimeOut,
-            attempt_time_out: attemptTimeOut,
-            stream_idle_timeout: streamIdleTimeout,
-            request_timeout_seconds: requestTimeout,
-            stream_keepalive_enabled: streamKeepalive,
-            assistant_prefill_compat: assistantPrefill,
-            forward_mode: forwardMode,
-            hedge_enabled: hedgeEnabled,
-            hedge_delay_ms: hedgeDelayMs,
-            session_keep_time: sessionKeepTime,
-            condition,
-            reasoning_buffer_strategy: reasoningBufferStrategy,
-            default_reasoning_effort: defaultReasoningEffort,
-            reasoning_force_override: reasoningForceOverride,
-            param_override: paramOverride,
-            custom_header: customHeaders.filter((header) => header.header_key.trim() !== ''),
-            members: dedupeSelectedMembers(selectedMembers),
-        });
+        onSubmit(draftValues);
     };
 
 
@@ -752,6 +774,24 @@ export function GroupEditor({
                                     <FieldLabel htmlFor="group-request-timeout">{t('form.requestTimeout.label')}<Hint text={t('form.requestTimeout.hint')} /></FieldLabel>
                                     <Input id="group-request-timeout" type="number" min={0} max={86400} step={1} value={requestTimeout}
                                         onChange={(event) => setRequestTimeout(Math.min(86400, Math.max(0, Number.parseInt(event.target.value, 10) || 0)))} />
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="group-relay-retry-count">{t('form.relayRetryCount.label')}<Hint text={t('form.relayRetryCount.hint')} /></FieldLabel>
+                                    <Input id="group-relay-retry-count" type="number" min={-1} step={1} value={relayRetryCount}
+                                        onChange={(event) => {
+                                            const raw = event.target.value;
+                                            const parsed = raw.trim() === '' ? -1 : Number.parseInt(raw, 10);
+                                            setRelayRetryCount(Number.isFinite(parsed) ? Math.max(-1, parsed) : -1);
+                                        }} />
+                                </Field>
+                                <Field>
+                                    <FieldLabel htmlFor="group-relay-route-retries">{t('form.relayRouteRetries.label')}<Hint text={t('form.relayRouteRetries.hint')} /></FieldLabel>
+                                    <Input id="group-relay-route-retries" type="number" min={-1} step={1} value={relayRouteRetries}
+                                        onChange={(event) => {
+                                            const raw = event.target.value;
+                                            const parsed = raw.trim() === '' ? -1 : Number.parseInt(raw, 10);
+                                            setRelayRouteRetries(Number.isFinite(parsed) ? Math.max(-1, parsed) : -1);
+                                        }} />
                                 </Field>
                                 <Field>
                                     <FieldLabel htmlFor="group-forward-mode">{t('form.forwardMode.label')}<Hint text={t('form.forwardMode.hint')} /></FieldLabel>

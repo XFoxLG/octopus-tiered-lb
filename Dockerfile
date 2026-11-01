@@ -26,7 +26,7 @@ RUN NEXT_PUBLIC_APP_VERSION="${APP_VERSION}" NEXT_PUBLIC_GITHUB_REPO="${GITHUB_R
 # =============================================================================
 # Build stage for Go binary
 # =============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS go-builder
 
 WORKDIR /build
 

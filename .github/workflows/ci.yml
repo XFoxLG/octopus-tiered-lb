@@ -6,6 +6,12 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [master]
+  workflow_call:
+    inputs:
+      checkout-ref:
+        description: Exact Git ref or commit SHA to test
+        required: false
+        type: string
 
 jobs:
   postgres-stability:
@@ -27,9 +33,11 @@ jobs:
       OCTOPUS_TEST_POSTGRES_DSN: postgres://postgres:octopus_test@localhost:5432/octopus_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          go-version: '1.27.3'
           cache: true
       - run: go test -count=1 -p 1 ./internal/op/group -run TestGroupUpdateStability
       # 迁移注册表在进程内是一次性的（AfterAutoMigrate 跑完即清空），所以
@@ -48,10 +56,12 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          go-version: '1.27.3'
           cache: true
 
       - name: Download dependencies
@@ -89,10 +99,12 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          go-version: '1.27.3'
           cache: true
           cache-dependency-path: |
             go.sum

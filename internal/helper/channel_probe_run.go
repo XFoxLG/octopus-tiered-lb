@@ -122,6 +122,7 @@ func RunChannelCapabilityProbe(
 		capabilityItems := []string{
 			appmodel.ProbeItemModels,
 			appmodel.ProbeItemTextGeneration,
+			appmodel.ProbeItemStreaming,
 			appmodel.ProbeItemToolCalling,
 			appmodel.ProbeItemStructuredOutput,
 			appmodel.ProbeItemWebSearch,
@@ -406,6 +407,8 @@ func capabilityForProbeItem(item string) (appmodel.CapabilityName, bool) {
 		return appmodel.CapabilityStructured, true
 	case appmodel.ProbeItemWebSearch:
 		return appmodel.CapabilityWebSearch, true
+	case appmodel.ProbeItemStreaming:
+		return appmodel.CapabilityStreaming, true
 	default:
 		return "", false
 	}

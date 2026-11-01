@@ -2,6 +2,7 @@ package helper
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,19 +37,48 @@ type GroupModelTestRequest struct {
 }
 
 type GroupModelDraftTestItem struct {
-	ClientID  string `json:"client_id" binding:"required"`
-	ChannelID int    `json:"channel_id" binding:"required"`
-	ModelName string `json:"model_name" binding:"required"`
+	ClientID                string `json:"client_id" binding:"required"`
+	ItemID                  int    `json:"item_id,omitempty"`
+	ChannelID               int    `json:"channel_id" binding:"required"`
+	ModelName               string `json:"model_name" binding:"required"`
+	Priority                int    `json:"priority,omitempty"`
+	Weight                  int    `json:"weight,omitempty"`
+	RelayRetryCountOverride *int   `json:"relay_retry_count_override,omitempty"`
 }
 
 type GroupModelDraftTestRequest struct {
-	EndpointType string                    `json:"endpoint_type" binding:"required"`
-	Items        []GroupModelDraftTestItem `json:"items" binding:"required"`
+	Name                    string                    `json:"name,omitempty"`
+	Category                string                    `json:"category,omitempty"`
+	EndpointType            string                    `json:"endpoint_type" binding:"required"`
+	EndpointProvider        string                    `json:"endpoint_provider,omitempty"`
+	OutboundFormat          string                    `json:"outbound_format,omitempty"`
+	ForwardMode             string                    `json:"forward_mode,omitempty"`
+	Mode                    appmodel.GroupMode        `json:"mode,omitempty"`
+	FirstTokenTimeOut       int                       `json:"first_token_time_out,omitempty"`
+	AttemptTimeOut          int                       `json:"attempt_time_out,omitempty"`
+	StreamIdleTimeout       int                       `json:"stream_idle_timeout,omitempty"`
+	RequestTimeoutSeconds   int                       `json:"request_timeout_seconds,omitempty"`
+	StreamKeepaliveEnabled  bool                      `json:"stream_keepalive_enabled,omitempty"`
+	AssistantPrefillCompat  bool                      `json:"assistant_prefill_compat,omitempty"`
+	HedgeEnabled            bool                      `json:"hedge_enabled,omitempty"`
+	HedgeDelayMs            int                       `json:"hedge_delay_ms,omitempty"`
+	SessionKeepTime         int                       `json:"session_keep_time,omitempty"`
+	Condition               string                    `json:"condition,omitempty"`
+	ReasoningBufferStrategy string                    `json:"reasoning_buffer_strategy,omitempty"`
+	DefaultReasoningEffort  string                    `json:"default_reasoning_effort,omitempty"`
+	ReasoningForceOverride  bool                      `json:"reasoning_force_override,omitempty"`
+	ParamOverride           *string                   `json:"param_override,omitempty"`
+	CustomHeader            []appmodel.CustomHeader   `json:"custom_header,omitempty"`
+	RelayRetryCount         int                       `json:"relay_retry_count,omitempty"`
+	RelayRouteRetries       int                       `json:"relay_route_retries,omitempty"`
+	Items                   []GroupModelDraftTestItem `json:"items" binding:"required"`
 }
 
 type GroupModelTestResult struct {
 	EndpointID   string `json:"endpoint_id,omitempty"`
 	Protocol     string `json:"protocol,omitempty"`
+	Source       string `json:"source,omitempty"`
+	SnapshotHash string `json:"snapshot_hash,omitempty"`
 	ClientID     string `json:"client_id,omitempty"`
 	ItemID       int    `json:"item_id"`
 	ChannelID    int    `json:"channel_id"`
@@ -69,13 +99,15 @@ type GroupModelTestSummary struct {
 }
 
 type GroupModelTestProgress struct {
-	ID        string                 `json:"id"`
-	Passed    bool                   `json:"passed"`
-	Completed int                    `json:"completed"`
-	Total     int                    `json:"total"`
-	Done      bool                   `json:"done"`
-	Results   []GroupModelTestResult `json:"results"`
-	Message   string                 `json:"message,omitempty"`
+	ID           string                 `json:"id"`
+	Source       string                 `json:"source,omitempty"`
+	SnapshotHash string                 `json:"snapshot_hash,omitempty"`
+	Passed       bool                   `json:"passed"`
+	Completed    int                    `json:"completed"`
+	Total        int                    `json:"total"`
+	Done         bool                   `json:"done"`
+	Results      []GroupModelTestResult `json:"results"`
+	Message      string                 `json:"message,omitempty"`
 }
 
 type groupModelTestProgressEntry struct {
@@ -159,6 +191,7 @@ func StartGroupModelTest(group *appmodel.Group, channels map[int]appmodel.Channe
 	id := uuid.NewString()
 	progress := &GroupModelTestProgress{
 		ID:      id,
+		Source:  "saved",
 		Total:   len(group.Items),
 		Results: make([]GroupModelTestResult, 0, len(group.Items)),
 	}
@@ -201,36 +234,102 @@ func StartGroupModelTest(group *appmodel.Group, channels map[int]appmodel.Channe
 }
 
 func StartDraftGroupModelTest(endpointType string, items []GroupModelDraftTestItem, channels map[int]appmodel.Channel) (*GroupModelTestProgress, error) {
-	log.Infof("start draft group test: endpoint_type=%s items=%d channels=%d", endpointType, len(items), len(channels))
-	group := &appmodel.Group{
-		Name:         "draft-group-test",
-		EndpointType: appmodel.NormalizeEndpointType(endpointType),
-		Items:        make([]appmodel.GroupItem, 0, len(items)),
-	}
+	return StartDraftGroupModelTestRequest(GroupModelDraftTestRequest{
+		EndpointType: endpointType,
+		Items:        items,
+	}, channels)
+}
 
-	for index, item := range items {
+func StartDraftGroupModelTestRequest(request GroupModelDraftTestRequest, channels map[int]appmodel.Channel) (*GroupModelTestProgress, error) {
+	if len(request.Items) == 0 {
+		return nil, fmt.Errorf("group has no items")
+	}
+	if len(request.Items) > 64 {
+		return nil, fmt.Errorf("too many draft test items: %d", len(request.Items))
+	}
+	snapshotJSON, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("marshal draft snapshot: %w", err)
+	}
+	snapshotHash := fmt.Sprintf("%x", sha256.Sum256(snapshotJSON))
+	endpointType := appmodel.NormalizeEndpointType(request.EndpointType)
+	log.Infof("start draft group test: endpoint_type=%s items=%d channels=%d snapshot=%s", endpointType, len(request.Items), len(channels), snapshotHash[:12])
+
+	paramOverride := request.ParamOverride
+	if paramOverride != nil && strings.TrimSpace(*paramOverride) == "" {
+		paramOverride = nil
+	}
+	groupName := strings.TrimSpace(request.Name)
+	if groupName == "" {
+		groupName = "draft-group-test"
+	}
+	forwardMode := strings.ToLower(strings.TrimSpace(request.ForwardMode))
+	if forwardMode == "" {
+		forwardMode = "inherit"
+	}
+	group := &appmodel.Group{
+		Name:                    groupName,
+		Category:                strings.TrimSpace(request.Category),
+		EndpointType:            endpointType,
+		EndpointProvider:        strings.TrimSpace(request.EndpointProvider),
+		OutboundFormat:          strings.TrimSpace(request.OutboundFormat),
+		ForwardMode:             forwardMode,
+		Mode:                    request.Mode,
+		FirstTokenTimeOut:       request.FirstTokenTimeOut,
+		AttemptTimeOut:          request.AttemptTimeOut,
+		StreamIdleTimeout:       request.StreamIdleTimeout,
+		RequestTimeoutSeconds:   request.RequestTimeoutSeconds,
+		StreamKeepaliveEnabled:  request.StreamKeepaliveEnabled,
+		AssistantPrefillCompat:  request.AssistantPrefillCompat,
+		HedgeEnabled:            request.HedgeEnabled,
+		HedgeDelayMs:            request.HedgeDelayMs,
+		SessionKeepTime:         request.SessionKeepTime,
+		Condition:               request.Condition,
+		ReasoningBufferStrategy: request.ReasoningBufferStrategy,
+		DefaultReasoningEffort:  strings.TrimSpace(request.DefaultReasoningEffort),
+		ReasoningForceOverride:  request.ReasoningForceOverride,
+		ParamOverride:           paramOverride,
+		CustomHeader:            append([]appmodel.CustomHeader(nil), request.CustomHeader...),
+		RelayRetryCount:         request.RelayRetryCount,
+		RelayRouteRetries:       request.RelayRouteRetries,
+		Items:                   make([]appmodel.GroupItem, 0, len(request.Items)),
+	}
+	clientIDs := make(map[int]string, len(request.Items))
+
+	for index, item := range request.Items {
 		log.Infof("draft group test item: index=%d channel_id=%d model=%s", index, item.ChannelID, strings.TrimSpace(item.ModelName))
+		itemID := item.ItemID
+		if itemID <= 0 {
+			itemID = index + 1
+		}
+		priority := item.Priority
+		if priority <= 0 {
+			priority = index + 1
+		}
+		weight := item.Weight
+		if weight <= 0 {
+			weight = 1
+		}
 		group.Items = append(group.Items, appmodel.GroupItem{
-			ID:        index + 1,
-			ChannelID: item.ChannelID,
-			ModelName: strings.TrimSpace(item.ModelName),
-			Priority:  index + 1,
-			Weight:    1,
+			ID:                      itemID,
+			ChannelID:               item.ChannelID,
+			ModelName:               strings.TrimSpace(item.ModelName),
+			Priority:                priority,
+			Weight:                  weight,
+			RelayRetryCountOverride: item.RelayRetryCountOverride,
 		})
+		clientIDs[itemID] = strings.TrimSpace(item.ClientID)
 	}
 
 	id := uuid.NewString()
 	progress := &GroupModelTestProgress{
-		ID:      id,
-		Total:   len(group.Items),
-		Results: make([]GroupModelTestResult, 0, len(group.Items)),
+		ID:           id,
+		Source:       "draft",
+		SnapshotHash: snapshotHash,
+		Total:        len(group.Items),
+		Results:      make([]GroupModelTestResult, 0, len(group.Items)),
 	}
 	storeGroupModelProgress(progress)
-
-	clientIDs := make(map[int]string, len(items))
-	for index, item := range items {
-		clientIDs[index+1] = strings.TrimSpace(item.ClientID)
-	}
 
 	go func() {
 		defer func() {
@@ -257,6 +356,8 @@ func StartDraftGroupModelTest(endpointType string, items []GroupModelDraftTestIt
 				if clientID, ok := clientIDs[failed.Results[i].ItemID]; ok {
 					failed.Results[i].ClientID = clientID
 				}
+				failed.Results[i].Source = "draft"
+				failed.Results[i].SnapshotHash = snapshotHash
 			}
 			storeGroupModelProgress(&failed)
 			return
@@ -272,6 +373,8 @@ func StartDraftGroupModelTest(endpointType string, items []GroupModelDraftTestIt
 			if clientID, ok := clientIDs[final.Results[i].ItemID]; ok {
 				final.Results[i].ClientID = clientID
 			}
+			final.Results[i].Source = "draft"
+			final.Results[i].SnapshotHash = snapshotHash
 		}
 		storeGroupModelProgress(&final)
 	}()
@@ -337,7 +440,7 @@ func runGroupModelTest(ctx context.Context, group *appmodel.Group, channels map[
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				results <- indexedResult{index: index, result: testGroupModelItem(ctx, group.EndpointType, group.Items[index], channels)}
+					results <- indexedResult{index: index, result: testGroupModelItemWithGroup(ctx, group, group.Items[index], channels)}
 			}
 		}()
 	}
@@ -384,11 +487,20 @@ func runGroupModelTest(ctx context.Context, group *appmodel.Group, channels map[
 }
 
 func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.GroupItem, channels map[int]appmodel.Channel) GroupModelTestResult {
+	return testGroupModelItemWithGroup(ctx, &appmodel.Group{EndpointType: endpointType}, item, channels)
+}
+
+func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, item appmodel.GroupItem, channels map[int]appmodel.Channel) GroupModelTestResult {
 	result := GroupModelTestResult{
 		ItemID:    item.ID,
 		ChannelID: item.ChannelID,
 		ModelName: item.ModelName,
-		Attempts:  3,
+		Attempts:  1,
+		Source:    "saved",
+	}
+	endpointType := appmodel.EndpointTypeChat
+	if group != nil {
+		endpointType = appmodel.NormalizeEndpointType(group.EndpointType)
 	}
 
 	channel, ok := channels[item.ChannelID]
@@ -432,6 +544,9 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 
 	// 构建探测请求，用于日志记录和出站 adapter 回退解析
 	probeRequest, probeErr := buildGroupProbeRequest(endpointType, item.ModelName)
+	if probeErr == nil && group != nil {
+		probeRequest = applyGroupProbeSettings(group, probeRequest)
+	}
 	var requestJSON []byte
 	if probeErr == nil && probeRequest != nil {
 		requestJSON, _ = json.Marshal(probeRequest)
@@ -442,14 +557,22 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 	// (/v1/responses)。这与 relay 主流程的 outboundAttemptTypes 一致，
 	// 避免 type=1 渠道在只支持 chat completions 的上游上探测失败（issue #187）。
 	// 渠道级协议覆盖与主流程同规则：覆盖非空时禁用回退，探测与转发一致。
-	plans := channel.ResolveConnectionPlans(probeRequest, "")
+	groupFormat := ""
+	if group != nil {
+		groupFormat = group.OutboundFormat
+	}
+	plans := channel.ResolveConnectionPlans(probeRequest, groupFormat)
+	if len(plans) > 1 {
+		plans = plans[:1]
+	}
 
 	startTime := time.Now()
 	var logAttempts []appmodel.ChannelAttempt
 	var lastInternalResp *transmodel.InternalLLMResponse
 
 	attemptNum := 0
-probeAdapters:
+	probeCtx, probeCancel := context.WithTimeout(ctx, 25*time.Second)
+	defer probeCancel()
 	for _, plan := range plans {
 		adapterType := plan.AdapterType
 		outAdapter := plan.Adapter()
@@ -457,14 +580,14 @@ probeAdapters:
 			continue
 		}
 
-		for attempt := 1; attempt <= 3; attempt++ {
+		for attempt := 1; attempt <= 1; attempt++ {
 			attemptNum++
-			if attemptNum > 1 && ctx.Err() != nil {
-				result.Message = ctx.Err().Error()
-				break probeAdapters
+			if attemptNum > 1 && probeCtx.Err() != nil {
+				result.Message = probeCtx.Err().Error()
+				break
 			}
 			attemptStart := time.Now()
-			statusCode, responseText, internalResp, err := sendGroupProbeRequest(ctx, outAdapter, adapterType, channel.WithConnectionPlan(plan), usedKey.ChannelKey, endpointType, item.ModelName)
+			statusCode, responseText, internalResp, err := sendGroupProbeRequestWithGroup(probeCtx, outAdapter, adapterType, channel.WithConnectionPlan(plan), usedKey.ChannelKey, endpointType, item.ModelName, group)
 			attemptDuration := int(time.Since(attemptStart).Milliseconds())
 
 			result.Protocol = probeProtocolForAdapter(adapterType)
@@ -501,7 +624,7 @@ probeAdapters:
 				result.Passed = true
 				result.Attempts = attemptNum
 				result.Message = "ok"
-				break probeAdapters
+				break
 			}
 			result.Attempts = attemptNum
 			result.Message = err.Error()
@@ -603,6 +726,10 @@ func opRelayLogCacheReadTokens(responseContent string) int {
 }
 
 func appendGroupTestResult(summary *GroupModelTestSummary, progress *GroupModelTestProgress, result GroupModelTestResult) {
+	if progress != nil {
+		result.Source = progress.Source
+		result.SnapshotHash = progress.SnapshotHash
+	}
 	log.Infof("group test result: item_id=%d channel_id=%d model=%s passed=%t status=%d message=%s", result.ItemID, result.ChannelID, result.ModelName, result.Passed, result.StatusCode, result.Message)
 	summary.Results = append(summary.Results, result)
 	summary.Completed = len(summary.Results)
@@ -680,6 +807,10 @@ func cloneGroupModelProgress(progress *GroupModelTestProgress) GroupModelTestPro
 // base URL：多协议渠道可以把不同协议绑到不同地址，探测必须与真实转发用同一套
 // 地址选择规则，否则会出现「探测失败但转发正常」的假阴性。
 func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, adapterType outbound.OutboundType, channel *appmodel.Channel, key, endpointType, modelName string) (int, string, *transmodel.InternalLLMResponse, error) {
+	return sendGroupProbeRequestWithGroup(ctx, outAdapter, adapterType, channel, key, endpointType, modelName, nil)
+}
+
+func sendGroupProbeRequestWithGroup(ctx context.Context, outAdapter transmodel.Outbound, adapterType outbound.OutboundType, channel *appmodel.Channel, key, endpointType, modelName string, group *appmodel.Group) (int, string, *transmodel.InternalLLMResponse, error) {
 	if channel == nil {
 		return 0, "", nil, fmt.Errorf("channel is nil")
 	}
@@ -695,6 +826,9 @@ func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, 
 	probeRequest, err := buildGroupProbeRequest(endpointType, modelName)
 	if err != nil {
 		return 0, "", nil, err
+	}
+	if group != nil {
+		probeRequest = applyGroupProbeSettings(group, probeRequest)
 	}
 
 	// 地址按本次探测实际使用的 adapter 协议挑选：多协议渠道可以把不同协议
@@ -715,6 +849,13 @@ func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, 
 		return 0, "", nil, err
 	}
 
+	if group != nil {
+		for _, header := range group.CustomHeader {
+			if strings.TrimSpace(header.HeaderKey) != "" {
+				req.Header.Set(header.HeaderKey, header.HeaderValue)
+			}
+		}
+	}
 	channel.ApplyConnectionHeaders(req, plan, key)
 
 	resp, err := httpClient.Do(req)
@@ -771,6 +912,75 @@ func buildGroupProbeRequest(endpointType, modelName string) (*transmodel.Interna
 	default:
 		return nil, fmt.Errorf("group probe does not support endpoint type: %s", normalizedEndpointType)
 	}
+}
+
+func applyGroupProbeSettings(group *appmodel.Group, request *transmodel.InternalLLMRequest) *transmodel.InternalLLMRequest {
+	if group == nil || request == nil {
+		return request
+	}
+	cloned := transmodel.CloneForAttempt(request)
+	if cloned == nil {
+		return request
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(group.EndpointProvider))
+	if provider == "" || provider == "auto" {
+		provider = appmodel.NormalizeEndpointType(group.EndpointType)
+	}
+	if provider != "" {
+		if cloned.TransformerMetadata == nil {
+			cloned.TransformerMetadata = make(map[string]string)
+		}
+		cloned.TransformerMetadata[transmodel.TransformerMetadataGroupEndpointType] = provider
+	}
+
+	if effort := strings.ToLower(strings.TrimSpace(group.DefaultReasoningEffort)); effort != "" && effort != "auto" {
+		if transmodel.ReasoningIntentOf(cloned) == transmodel.ReasoningIntentUnspecified {
+			cloned.ReasoningEffort = effort
+		}
+	}
+
+	if group.ParamOverride == nil || strings.TrimSpace(*group.ParamOverride) == "" {
+		return cloned
+	}
+	var overrides map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(*group.ParamOverride), &overrides); err != nil {
+		log.Warnf("draft group probe: invalid param_override: %v", err)
+		return cloned
+	}
+	if cloned.MaxTokens == nil {
+		if raw, ok := overrides["max_tokens"]; ok {
+			var value int64
+			if json.Unmarshal(raw, &value) == nil {
+				cloned.MaxTokens = &value
+			}
+		}
+	}
+	if cloned.MaxCompletionTokens == nil {
+		if raw, ok := overrides["max_completion_tokens"]; ok {
+			var value int64
+			if json.Unmarshal(raw, &value) == nil {
+				cloned.MaxCompletionTokens = &value
+			}
+		}
+	}
+	if cloned.Temperature == nil {
+		if raw, ok := overrides["temperature"]; ok {
+			var value float64
+			if json.Unmarshal(raw, &value) == nil {
+				cloned.Temperature = &value
+			}
+		}
+	}
+	if cloned.TopP == nil {
+		if raw, ok := overrides["top_p"]; ok {
+			var value float64
+			if json.Unmarshal(raw, &value) == nil {
+				cloned.TopP = &value
+			}
+		}
+	}
+	return cloned
 }
 
 func validateGroupProbeChannelType(endpointType string, channelType outbound.OutboundType) error {

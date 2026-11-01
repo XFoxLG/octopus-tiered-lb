@@ -93,7 +93,8 @@ func TestConfiguredProbePersistsProtocolMetadataWithoutCredentials(t *testing.T)
 		if result.KeyScope != "key_index:0,key_id:42" {
 			t.Errorf("key scope %q does not describe the key used", result.KeyScope)
 		}
-		if result.RequestStream == nil || *result.RequestStream {
+		wantStream := result.Item == m.ProbeItemStreaming
+		if result.RequestStream == nil || *result.RequestStream != wantStream {
 			t.Errorf("probe stream flag not recorded: %v", result.RequestStream)
 		}
 		if result.RequestBudgetMS == nil || *result.RequestBudgetMS != capabilityProbeTimeout.Milliseconds() {

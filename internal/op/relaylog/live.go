@@ -28,6 +28,8 @@ type LiveRequest struct {
 	LogID            string `json:"log_id,omitempty"`
 	Sequence         uint64 `json:"sequence"`
 	PersistenceState string `json:"persistence_state,omitempty"`
+	ClientWriteBytes int64  `json:"client_write_bytes,omitempty"`
+	ClientDelivery   string `json:"client_delivery_state,omitempty"`
 }
 
 type liveRequestStore struct {

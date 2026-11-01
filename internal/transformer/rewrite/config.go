@@ -35,6 +35,13 @@ func Resolve(channelType outbound.OutboundType, cfg *appmodel.RequestRewriteConf
 	codexProfile := string(appmodel.RequestRewriteProfileCodexHeaders)
 
 	if cfg.Profile == appmodel.RequestRewriteProfilePreserve {
+		// Preserve means exactly that: no body rewrite. Keep every message,
+		// text block, nil-content shape, and assistant/tool-call shape intact.
+		effective := &EffectiveConfig{
+			Profile:               cfg.Profile,
+			ToolRoleStrategy:      appmodel.ToolRoleStrategyKeep,
+			SystemMessageStrategy: appmodel.SystemMessageStrategyKeep,
+		}
 		if cfg.HeaderProfile == codexProfile {
 			effective.ExtraHeaders = map[string]string{
 				"User-Agent": "Codex Desktop/0.131.0 (Windows 10.0.19045; x86_64) unknown (Codex Desktop; 26.519.21041)",

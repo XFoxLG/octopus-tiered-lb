@@ -28,7 +28,7 @@ test('availability results are read-only and long error details stay collapsed',
 });
 
 test('group editor header actions use matching quiet secondary styling', () => {
-    for (const source of [card, list]) {
+    for (const source of [shared]) {
         const header = source.slice(source.indexOf('<header'), source.indexOf('</header>'));
         assert.equal((header.match(/variant="ghost"/g) ?? []).length, 2);
         assert.equal((header.match(/border-border\/60 bg-muted\/30/g) ?? []).length, 2);
@@ -36,13 +36,13 @@ test('group editor header actions use matching quiet secondary styling', () => {
         assert.equal((header.match(/hover:translate-y-0/g) ?? []).length, 2);
         assert.equal((header.match(/sm:h-9/g) ?? []).length, 2);
         assert.doesNotMatch(header, /bg-primary\b|text-primary-foreground|variant="default"/);
-        assert.match(header, /onClick=\{onTestAvailability\}/);
+        assert.match(header, /onClick=\{handleTest\}/);
         assert.match(header, /onSuccess=\{\(\) => setIsOpen\(false\)\}/);
     }
 });
 
 test('group editor actions wrap below the title on mobile and leave a separate close target', () => {
-    for (const source of [card, list]) {
+    for (const source of [shared]) {
         const header = source.slice(source.indexOf('<header'), source.indexOf('</header>'));
         assert.match(header, /grid-cols-\[minmax\(0,1fr\)_auto\]/);
         assert.match(header, /col-span-2 row-start-2 flex min-w-0 flex-wrap/);
@@ -82,7 +82,7 @@ test('wide dialogs hug the editor content instead of reserving viewport-height w
     }
     const groupCreateClasses = toolbar.match(/if \(activeItem === 'group'\) \{\s*return '([^']*)'/)?.[1].split(/\s+/);
     assert.ok(groupCreateClasses?.includes('2xl:h-auto'), 'toolbar group creation must also hug its content');
-    for (const source of [card, list, create]) {
+    for (const source of [shared, create]) {
         assert.match(source, /max-w-full flex-1 flex-col 2xl:h-auto/);
     }
     assert.match(editor, /overflow-hidden 2xl:h-auto/);
@@ -95,4 +95,13 @@ test('shared editor view keeps form mounted while switching to results', () => {
     assert.match(shared, /inert=\{view !== 'edit'\}/);
     assert.match(shared, /resultsTab/);
     assert.match(shared, /setView\('results'\)/);
+});
+
+
+test('both edit entrypoints use the shared view and unmount when closed', () => {
+    for (const source of [card, list]) {
+        assert.match(source, /import \{ EditDialogContent \} from '\.\/EditDialogContent'/);
+        assert.doesNotMatch(source, /function EditDialogContent\(/);
+        assert.match(source, /<MorphingDialogContainer unmountOnClose>/);
+    }
 });

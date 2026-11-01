@@ -250,3 +250,143 @@ test('group advanced fields retain shrinkable native selects and a labeled overr
     assert.match(source, /placeholder=\{t\.raw\('form\.paramOverride\.placeholder'\)\}/);
     assert.doesNotMatch(source, /md:col-span-2/);
 });
+
+
+function editorFixture(relativePath) {
+    const sourceFile = parseSource(relativePath);
+    const inline = sourceFile.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'EditDialogContent');
+    const sharedSource = readSource('../src/components/modules/group/EditDialogContent.tsx');
+    const states = [], refs = [], dependencies = [], effects = [];
+    let hook = 0, isOpen = true;
+    const react = {
+        useState(initial) {
+            const index = hook++;
+            if (!(index in states)) states[index] = typeof initial === 'function' ? initial() : initial;
+            return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }];
+        },
+        useRef(initial) { const index = hook++; return refs[index] ??= { current: initial }; },
+        useId() { return 'test-editor-view'; },
+        useCallback(callback) { return callback; },
+        useEffect(effect, deps) {
+            const index = hook++;
+            if (!dependencies[index] || deps.some((value, i) => !Object.is(value, dependencies[index][i]))) {
+                dependencies[index] = deps; effects.push(effect);
+            }
+        },
+    };
+    const globals = {
+        ...react,
+        useMorphingDialog: () => ({ isOpen, setIsOpen: next => { isOpen = next; } }),
+        useTranslations: () => key => key,
+        cn: (...values) => values.filter(Boolean).join(' '),
+        GroupEditor: 'form', AIRouteButton: 'button', AvailabilityResultsPanel: 'section', Button: 'button',
+        MorphingDialogTitle: 'header', MorphingDialogClose: 'button', MorphingDialogDescription: 'main',
+        AlertDialog: 'aside', AlertDialogContent: 'div', AlertDialogHeader: 'div', AlertDialogTitle: 'h3',
+        AlertDialogDescription: 'p', AlertDialogFooter: 'footer', AlertDialogCancel: 'button', AlertDialogAction: 'button',
+        Loader2: 'i', Pencil: 'i', TestTubeDiagonal: 'i', Trash2: 'i', Waves: 'i',
+        normalizeEndpointType: value => value, supportsGroupTest: () => true,
+    };
+    const loaded = evaluateSource(inline ? 'export ' + inline.getText(sourceFile) : sharedSource, {
+        ...globals,
+        react,
+        'next-intl': { useTranslations: globals.useTranslations },
+        'lucide-react': globals,
+        '@/components/ui/button': { Button: globals.Button },
+        '@/components/ui/alert-dialog': globals,
+        '@/components/ui/morphing-dialog': globals,
+        '@/lib/utils': { cn: globals.cn },
+        './AIRouteButton': { AIRouteButton: globals.AIRouteButton },
+        './AvailabilityResultsPanel': { AvailabilityResultsPanel: globals.AvailabilityResultsPanel },
+        './Editor': { GroupEditor: globals.GroupEditor },
+        './utils': globals,
+    });
+    return {
+        render(props) { hook = 0; effects.length = 0; let tree = loaded.EditDialogContent(props); for (const effect of effects.splice(0)) effect(); hook = 0; tree = loaded.EditDialogContent(props); return tree; },
+        setOpen(value) { isOpen = value; },
+        reset() { states.length = 0; refs.length = 0; dependencies.length = 0; },
+    };
+}
+
+function treeNodes(tree, predicate, ancestors = []) {
+    if (!tree || typeof tree !== 'object') return [];
+    if (Array.isArray(tree)) return tree.flatMap(child => treeNodes(child, predicate, ancestors));
+    const matches = predicate(tree) ? [{ node: tree, ancestors }] : [];
+    return [...matches, ...treeNodes(tree.props?.children, predicate, [...ancestors, tree])];
+}
+function visibleEditor(tree) {
+    return treeNodes(tree, node => node.type === 'form').find(({ ancestors }) => ancestors.every(node => !String(node.props?.className ?? '').split(/\s+/).includes('hidden') && node.props?.['aria-hidden'] !== true && node.props?.inert !== true));
+}
+const completedEditorProps = {
+    group: { id: 7, name: 'deepseek-v4-flash', endpoint_type: 'chat', mode: 5, items: [] },
+    editMembers: [], isSubmitting: false, onSubmit() {}, onTestAvailability() {}, onRemoveFailedModels() {},
+    isTestingAvailability: false, canRemoveFailedModels: false, testTaskId: 'completed-task',
+    testProgressCompleted: 2, testProgressTotal: 2, testProgressValue: 100,
+    testResults: [{ item_id: 1, channel_id: 1, channel_name: 'Primary', model_name: 'alpha', passed: false, attempts: 1, status_code: 400 }],
+    availabilitySummary: { unavailableCount: 2, availableCount: 0, allAvailable: false, fullyMatched: false },
+};
+for (const [label, relativePath] of [['card', '../src/components/modules/group/Card.tsx'], ['list', '../src/components/modules/group/GroupListItem.tsx']]) {
+    test(label + ' edit entry remains editable after completed failed tests on an empty group', () => {
+        const fixture = editorFixture(relativePath);
+        const tree = fixture.render(completedEditorProps);
+        assert.ok(visibleEditor(tree), 'completed availability results must not hide the editor');
+        assert.equal(treeNodes(tree, node => node.type === 'form')[0].node.props.initial.members.length, 0);
+    });
+}
+
+
+test('testing and result navigation keep the editor mounted and preserve its draft', () => {
+    const fixture = editorFixture('../src/components/modules/group/GroupListItem.tsx');
+    let testsStarted = 0;
+    const props = { ...completedEditorProps, editMembers: [{ id: '1:alpha', channel_id: 1, channel_name: 'Primary', name: 'alpha', enabled: true }], onTestAvailability() { testsStarted++; } };
+    let tree = fixture.render(props);
+    const form = treeNodes(tree, node => node.type === 'form')[0].node;
+    assert.ok(visibleEditor(tree));
+    const testButton = treeNodes(tree, node => node.type === 'button' && Array.isArray(node.props.children) && node.props.children.includes('detail.availability.testAll'))[0].node;
+    testButton.props.onClick();
+    tree = fixture.render({ ...props, isTestingAvailability: true, testTaskId: 'new-task' });
+    assert.equal(testsStarted, 1);
+    assert.equal(visibleEditor(tree), undefined);
+    const hiddenForm = treeNodes(tree, node => node.type === 'form')[0].node;
+    assert.equal(hiddenForm.key, form.key);
+    assert.equal(treeNodes(tree, node => node.type === 'form').length, 1, 'switching views must not unmount or duplicate the editor');
+    const editTab = treeNodes(tree, node => node.props?.role === 'tab' && node.props.id.endsWith('-edit-tab'))[0].node;
+    editTab.props.onClick();
+    tree = fixture.render({ ...props, isTestingAvailability: true, testTaskId: 'new-task' });
+    assert.ok(visibleEditor(tree), 'ongoing test updates must not force the user back to results');
+    tree = fixture.render({ ...props, isTestingAvailability: false, testTaskId: 'new-task', testProgressCompleted: 2 });
+    assert.ok(visibleEditor(tree), 'completed test updates must not hide the editor');
+    fixture.reset();
+    assert.ok(visibleEditor(fixture.render(props)), 'reopening must begin in the editing view');
+});
+
+test('shared editor preserves explicit zero, false and empty advanced configuration', () => {
+    const fixture = editorFixture('../src/components/modules/group/Card.tsx');
+    const group = { ...completedEditorProps.group, hedge_delay_ms: 0, request_timeout_seconds: 0, relay_retry_count: -1, relay_route_retries: -1, stream_keepalive_enabled: false, reasoning_force_override: false, default_reasoning_effort: '', param_override: '', custom_header: [] };
+    const initial = treeNodes(fixture.render({ ...completedEditorProps, group }), node => node.type === 'form')[0].node.props.initial;
+    assert.equal(initial.hedge_delay_ms, 0);
+    assert.equal(initial.request_timeout_seconds, 0);
+    assert.equal(initial.relay_retry_count, -1);
+    assert.equal(initial.relay_route_retries, -1);
+    assert.equal(initial.stream_keepalive_enabled, false);
+    assert.equal(initial.reasoning_force_override, false);
+    assert.equal(initial.default_reasoning_effort, '');
+    assert.equal(initial.param_override, '');
+    assert.equal(initial.custom_header.length, 0);
+});
+
+test('draft tests freeze the started member snapshot and failed removal keeps unsaved draft fields', () => {
+    const shared = readSource('../src/components/modules/group/EditDialogContent.tsx');
+    assert.match(shared, /const \[testedMembers, setTestedMembers\] = useState<SelectedMember\[\]>\(editMembers\)/);
+    assert.match(shared, /setTestedMembers\(\(draft\?\.members \?\? editMembers\)\.map/);
+    assert.match(shared, /members=\{testedMembers\}/);
+    assert.match(shared, /onRemoveFailedModels\(draftRef\.current \?\? undefined\)/);
+    for (const relativePath of ['../src/components/modules/group/Card.tsx', '../src/components/modules/group/GroupListItem.tsx']) {
+        const source = readSource(relativePath);
+        assert.match(source, /draft\s*\?\s*\{ \.\.\.draft, members: nextMembers \}/);
+    }
+    const panel = readSource('../src/components/modules/group/AvailabilityResultsPanel.tsx');
+    assert.match(panel, /source: \{result\.source\}/);
+    assert.match(panel, /protocol: \{result\.protocol\}/);
+    assert.match(panel, /endpoint: \{result\.endpoint_id\}/);
+    assert.match(panel, /snapshot: \{result\.snapshot_hash/);
+});
