@@ -107,6 +107,7 @@ export function resolveFirstTokenMilestones(
  */
 export type RelayLogInvestigationMarker =
     | 'suspect_fake_stream'
+    | 'reasoning_latency_heavy'
     | 'length_truncated'
     | 'stream_interrupted'
     | 'empty_output'
@@ -149,7 +150,7 @@ function resolveLeadingAttemptMs(attempts: ChannelAttempt[] | undefined, firstVi
 }
 
 export function resolveLogInvestigationMarkers(
-    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes'> & {
+    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes' | 'reasoning_tokens'> & {
         upstream_model?: string | null;
         actual_model_name?: string | null;
     },
@@ -158,13 +159,20 @@ export function resolveLogInvestigationMarkers(
     const ftutRaw = typeof log.ftut === 'number' ? log.ftut : 0;
     const useTimeRaw = typeof log.use_time === 'number' ? log.use_time : 0;
     const outputTokens = typeof log.output_tokens === 'number' ? log.output_tokens : 0;
+    const reasoningTokens = typeof log.reasoning_tokens === 'number' ? log.reasoning_tokens : 0;
     const usageState = log.usage_state ?? '';
     // 伪流式判据必须扣掉「首个可见内容之前」的失败重试耗时，否则重试链会抬高首字占比。
     const leadingAttemptMs = resolveLeadingAttemptMs(log.attempts, ftutRaw);
     const ftut = ftutRaw > 0 ? Math.max(0, ftutRaw - leadingAttemptMs) : 0;
     const useTime = useTimeRaw > 0 ? Math.max(0, useTimeRaw - leadingAttemptMs) : 0;
 
-    if (outputTokens > 0) {
+    const reasoningHeavy = outputTokens > 0 && reasoningTokens > 0 && reasoningTokens / outputTokens >= 0.5 && ftut >= 60_000;
+    if (reasoningHeavy) {
+        // A long first-visible delay explained by reported reasoning is not
+        // evidence that the channel buffered the whole answer. Keep it visible
+        // as its own diagnosing signal rather than mislabeling it as fake.
+        markers.push('reasoning_latency_heavy');
+    } else if (outputTokens > 0) {
         if (isSuspectFakeStreamSignature(ftut, useTime)) {
             markers.push('suspect_fake_stream');
         } else if (ftut > 0 && useTime > ftut) {

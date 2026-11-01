@@ -8,18 +8,101 @@ import (
 	"github.com/lingyuins/octopus/internal/op/relaylog"
 )
 
+// ensureDiagnosticsLocked creates the diagnostics envelope on the first
+// observed request milestone. Callers must hold trace.mutex.
+func (trace *relayRequestTrace) ensureDiagnosticsLocked() *model.RelayDiagnostics {
+	if trace.diagnostics == nil {
+		trace.diagnostics = &model.RelayDiagnostics{
+			Version:    2,
+			RequestID:  trace.id,
+			InstanceID: relaylog.LiveInstanceID(),
+			ReceivedAt: trace.startedAt.UnixMilli(),
+		}
+	}
+	return trace.diagnostics
+}
+
 func (trace *relayRequestTrace) setOperationDeadline(ctx context.Context, source string) {
 	if trace == nil {
 		return
 	}
 	trace.mutex.Lock()
-	if trace.diagnostics == nil {
-		trace.diagnostics = &model.RelayDiagnostics{Version: 1, RequestID: trace.id, InstanceID: relaylog.LiveInstanceID(), ReceivedAt: trace.startedAt.UnixMilli()}
-	}
-	trace.diagnostics.DeadlineSource = source
+	diagnostics := trace.ensureDiagnosticsLocked()
+	diagnostics.DeadlineSource = source
 	if deadline, ok := ctx.Deadline(); ok {
-		trace.diagnostics.DeadlineAt = deadline.UnixMilli()
+		diagnostics.DeadlineAt = deadline.UnixMilli()
 	}
+	trace.mutex.Unlock()
+}
+
+func (trace *relayRequestTrace) recordReasoningBufferStrategy(strategy string, applied bool) {
+	if trace == nil {
+		return
+	}
+	trace.mutex.Lock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	diagnostics.ReasoningBufferStrategy = strategy
+	diagnostics.ReasoningBufferApplied = applied
+	trace.mutex.Unlock()
+}
+
+func (trace *relayRequestTrace) recordStreamChunk(reasoningBytes int, visible bool, visibleBytes, toolDeltas int) {
+	if trace == nil {
+		return
+	}
+	now := time.Now().UnixMilli()
+	trace.mutex.Lock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	if reasoningBytes > 0 {
+		diagnostics.ReasoningChunksReceived++
+		diagnostics.ReasoningContentBytes += int64(reasoningBytes)
+		if diagnostics.FirstReasoningAt == 0 {
+			diagnostics.FirstReasoningAt = now
+		}
+		diagnostics.LastReasoningAt = now
+	}
+	if visible {
+		diagnostics.VisibleChunks++
+		diagnostics.VisibleContentBytes += int64(max(0, visibleBytes))
+	}
+	diagnostics.ToolDeltaCount += int64(max(0, toolDeltas))
+	trace.mutex.Unlock()
+}
+
+func (trace *relayRequestTrace) recordReasoningBuffered(frameBytes int) {
+	if trace == nil || frameBytes <= 0 {
+		return
+	}
+	trace.mutex.Lock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	diagnostics.ReasoningChunksBuffered++
+	diagnostics.ReasoningFrameBytes += int64(frameBytes)
+	trace.mutex.Unlock()
+}
+
+func (trace *relayRequestTrace) recordReasoningBufferOverflow(droppedChunks, droppedBytes int) {
+	if trace == nil {
+		return
+	}
+	trace.mutex.Lock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	diagnostics.ReasoningBufferOverflows++
+	diagnostics.ReasoningChunksBuffered -= int64(max(0, droppedChunks))
+	if diagnostics.ReasoningChunksBuffered < 0 {
+		diagnostics.ReasoningChunksBuffered = 0
+	}
+	diagnostics.ReasoningBufferDropped += int64(max(0, droppedBytes))
+	trace.mutex.Unlock()
+}
+
+func (trace *relayRequestTrace) recordReasoningBufferFlush(chunks int) {
+	if trace == nil || chunks <= 0 {
+		return
+	}
+	trace.mutex.Lock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	diagnostics.ReasoningChunksFlushed += int64(chunks)
+	diagnostics.ReasoningBufferFlushAt = time.Now().UnixMilli()
 	trace.mutex.Unlock()
 }
 

@@ -461,6 +461,18 @@ test('resolveLogInvestigationMarkers flags fake-streaming bursts on long request
     assert.deepEqual(tailBurst, ['suspect_fake_stream']);
 });
 
+test('resolveLogInvestigationMarkers distinguishes reported reasoning latency from fake streaming', () => {
+    const reasoningHeavy = resolveLogInvestigationMarkers({
+        ftut: 107804,
+        use_time: 111204,
+        output_tokens: 15812,
+        reasoning_tokens: 15152,
+        usage_state: 'reported',
+        provider_termination_reason: 'stop',
+    });
+    assert.deepEqual(reasoningHeavy, ['reasoning_latency_heavy']);
+});
+
 test('resolveLogInvestigationMarkers leaves real streaming logs unmarked', () => {
     // New Cross 真流式：首字 19.5s / 总 90.7s（21.5%），尾部速率 ~99 tok/s
     const realStream = resolveLogInvestigationMarkers({
