@@ -1006,6 +1006,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	if ra.canPassthroughStream() {
 		shouldBuffer = false
 	}
+	if ra.metrics != nil && ra.metrics.RequestTrace != nil {
+		ra.metrics.RequestTrace.recordReasoningBufferStrategy(strategy, shouldBuffer)
+	}
 	var reasoningBuffer [][]byte // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
 	var reasoningBufferBytes int // reasoningBuffer 累计字节数，用于软上限判定（见 maxReasoningBufferBytes）
 	clientDone := ra.clientCtx.Done()
@@ -1241,6 +1244,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		if len(noticeBuffer.payloads) == 0 {
 			return
 		}
+		if len(reasoningBuffer) > 0 && ra.metrics != nil && ra.metrics.RequestTrace != nil {
+			ra.metrics.RequestTrace.recordReasoningBufferFlush(len(reasoningBuffer))
+		}
 		writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 		reasoningBuffer, reasoningBufferBytes = nil, 0
 		ra.hedgeVisibleChunk = true
@@ -1291,6 +1297,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		// disabled, flush its buffered protocol frames. Otherwise strict
 		// clients would receive neither the terminal event nor an error.
 		if !hasVisibleContent && len(reasoningBuffer) > 0 {
+			if ra.metrics != nil && ra.metrics.RequestTrace != nil {
+				ra.metrics.RequestTrace.recordReasoningBufferFlush(len(reasoningBuffer))
+			}
 			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 		}
 		reasoningBuffer = nil
@@ -1470,6 +1479,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			if ra.streamTermination.Cause.IsProviderFailure() {
 				providerErr := providerTerminalFailureError(ra.streamTermination)
 				if len(reasoningBuffer) > 0 {
+					if ra.metrics != nil && ra.metrics.RequestTrace != nil {
+						ra.metrics.RequestTrace.recordReasoningBufferFlush(len(reasoningBuffer))
+					}
 					writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 					reasoningBuffer = nil
 					reasoningBufferBytes = 0
@@ -1603,11 +1615,17 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			// 长 reasoning-only 流内存无界增长。丢弃而非 flush 以保持空输出重试安全性
 			// （hasVisibleContent 保持 false，仍可重试）。8 MiB reasoning-only 已属异常。
 			if reasoningBufferBytes >= maxReasoningBufferBytes {
+				if ra.metrics != nil && ra.metrics.RequestTrace != nil {
+					ra.metrics.RequestTrace.recordReasoningBufferOverflow(len(reasoningBuffer), reasoningBufferBytes)
+				}
 				reasoningBuffer = nil
 				reasoningBufferBytes = 0
 			}
 			reasoningBuffer = append(reasoningBuffer, data)
 			reasoningBufferBytes += len(data)
+			if ra.metrics != nil && ra.metrics.RequestTrace != nil {
+				ra.metrics.RequestTrace.recordReasoningBuffered(len(data))
+			}
 			continue
 		}
 
@@ -1616,6 +1634,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 		// 可见内容到达，先 flush 暂存的 reasoning buffer
 		if len(reasoningBuffer) > 0 {
+			if ra.metrics != nil && ra.metrics.RequestTrace != nil {
+				ra.metrics.RequestTrace.recordReasoningBufferFlush(len(reasoningBuffer))
+			}
 			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 			if clientDisconnected && ra.streamSession == nil {
 				return errClientDisconnected
@@ -1758,6 +1779,14 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	}
 	hasVisible := streamChunkHasVisibleContent(internalStream)
 	ra.streamAnswerText, ra.streamAnswerBypass = answerText(internalStream, true)
+	if ra.metrics != nil && ra.metrics.RequestTrace != nil {
+		ra.metrics.RequestTrace.recordStreamChunk(
+			streamChunkReasoningBytes(internalStream),
+			hasVisible,
+			streamChunkVisibleBytes(internalStream),
+			streamChunkToolDeltaCount(internalStream),
+		)
+	}
 
 	ra.recordStreamTermination(internalStream)
 	if ra.canPassthroughStream() {

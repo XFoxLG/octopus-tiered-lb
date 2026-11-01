@@ -2916,6 +2916,8 @@
             "investigation": {
         "suspectFakeStream": "疑似偽串流",
         "suspectFakeStreamHint": "首字很晚或內容集中到達：單次時長 ≥60 秒且首字佔比 ≥60%（或首字 ≥60 秒且佔比 ≥40%），或首字後內容以 ≥1500 tok/s 集中到達。首字佔比已扣除首個可見內容之前的失敗重試耗時。常見於先維持連線、臨近結束才一次性輸出的渠道，需結合實際回應確認。",
+        "reasoningLatencyHeavy": "思考階段佔比高",
+        "reasoningLatencyHeavyHint": "上游回報思考 Token 至少佔輸出一半，且首個可見正文等待至少 60 秒。這能解釋較晚首字，但不能證明客戶端已顯示正文；請同時核對上游首字、客戶端寫出位元組與終態。",
         "lengthTruncated": "達到長度上限",
         "lengthTruncatedHint": "上游終止原因回報為長度上限（length / max_tokens），輸出可能被截斷。",
         "streamInterrupted": "上游串流中斷",

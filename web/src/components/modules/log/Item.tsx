@@ -208,6 +208,7 @@ function RetryBadgeWithTooltip({ channelName, brandColor, attempts, channelNameB
 // 文案与阈值解释都走 i18n，避免界面出现无法理解的缩写。
 const INVESTIGATION_MARKER_LABEL_KEY: Record<RelayLogInvestigationMarker, string> = {
     suspect_fake_stream: 'investigation.suspectFakeStream',
+    reasoning_latency_heavy: 'investigation.reasoningLatencyHeavy',
     length_truncated: 'investigation.lengthTruncated',
     stream_interrupted: 'investigation.streamInterrupted',
     empty_output: 'investigation.emptyOutput',
@@ -219,6 +220,7 @@ const INVESTIGATION_MARKER_LABEL_KEY: Record<RelayLogInvestigationMarker, string
 
 const INVESTIGATION_MARKER_HINT_KEY: Record<RelayLogInvestigationMarker, string> = {
     suspect_fake_stream: 'investigation.suspectFakeStreamHint',
+    reasoning_latency_heavy: 'investigation.reasoningLatencyHeavyHint',
     length_truncated: 'investigation.lengthTruncatedHint',
     stream_interrupted: 'investigation.streamInterruptedHint',
     empty_output: 'investigation.emptyOutputHint',
@@ -230,6 +232,7 @@ const INVESTIGATION_MARKER_HINT_KEY: Record<RelayLogInvestigationMarker, string>
 
 const INVESTIGATION_MARKER_CLASS: Record<RelayLogInvestigationMarker, string> = {
     suspect_fake_stream: 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+    reasoning_latency_heavy: 'border-sky-500/50 bg-sky-500/10 text-sky-600 dark:text-sky-400',
     length_truncated: 'border-destructive/50 bg-destructive/10 text-destructive',
     stream_interrupted: 'border-destructive/50 bg-destructive/10 text-destructive',
     empty_output: 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400',

@@ -328,6 +328,45 @@ func streamChunkHasVisibleContent(resp *model.InternalLLMResponse) bool {
 	return false
 }
 
+func streamChunkReasoningBytes(resp *model.InternalLLMResponse) int {
+	if resp == nil {
+		return 0
+	}
+	total := 0
+	for _, choice := range resp.Choices {
+		if choice.Delta != nil {
+			total += len([]byte(choice.Delta.GetReasoningContent()))
+		}
+	}
+	return total
+}
+
+func streamChunkVisibleBytes(resp *model.InternalLLMResponse) int {
+	if resp == nil {
+		return 0
+	}
+	total := 0
+	for _, choice := range resp.Choices {
+		if choice.Delta != nil && choice.Delta.Content.Content != nil {
+			total += len([]byte(*choice.Delta.Content.Content))
+		}
+	}
+	return total
+}
+
+func streamChunkToolDeltaCount(resp *model.InternalLLMResponse) int {
+	if resp == nil {
+		return 0
+	}
+	total := 0
+	for _, choice := range resp.Choices {
+		if choice.Delta != nil {
+			total += len(choice.Delta.ToolCalls)
+		}
+	}
+	return total
+}
+
 // hopByHopHeaders 定义不应转发的 HTTP 头
 var hopByHopHeaders = map[string]bool{
 	"authorization":       true,
