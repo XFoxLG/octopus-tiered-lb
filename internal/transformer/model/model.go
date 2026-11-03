@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	transformer "github.com/lingyuins/octopus/internal/transformer"
@@ -25,6 +26,26 @@ const (
 )
 
 const TransformerMetadataGroupEndpointType = "group_endpoint_type"
+
+const (
+	TransformerMetadataOutboundMaxTokensValue    = "outbound_max_tokens_value"
+	TransformerMetadataOutboundMaxTokensSource   = "outbound_max_tokens_source"
+	TransformerMetadataOutboundMaxTokensAdjusted = "outbound_max_tokens_adjusted"
+)
+
+// Outbound max-token provenance values. They identify the field that won, not
+// just the layer, because max_tokens and max_completion_tokens are aliases that
+// different clients and param_override layers may set independently.
+const (
+	OutboundMaxTokensSourceClientMaxTokens            = "client:max_tokens"
+	OutboundMaxTokensSourceClientMaxCompletionTokens  = "client:max_completion_tokens"
+	OutboundMaxTokensSourceClientMaxOutputTokens      = "client:max_output_tokens"
+	OutboundMaxTokensSourceChannelMaxTokens           = "override:channel:max_tokens"
+	OutboundMaxTokensSourceChannelMaxCompletionTokens = "override:channel:max_completion_tokens"
+	OutboundMaxTokensSourceGroupMaxTokens             = "override:group:max_tokens"
+	OutboundMaxTokensSourceGroupMaxCompletionTokens   = "override:group:max_completion_tokens"
+	OutboundMaxTokensSourceAnthropicDefault           = "anthropic:default_8192"
+)
 
 // Request is the unified llm request model for AxonHub, to keep compatibility with major app and framework.
 // It choose to base on the OpenAI chat completion request, but add some extra fields to support more features.
@@ -435,6 +456,22 @@ func (r *InternalLLMRequest) EffectiveMaxTokens() *int64 {
 		return r.MaxTokens
 	}
 	return r.MaxCompletionTokens
+}
+
+// RecordOutboundMaxTokensProvenance stores the effective outbound limit and its
+// winning source as stable, attempt-local metadata. Transformers may overwrite
+// the value later (for example, Anthropic thinking constraints) and must then
+// mark adjusted=true so the diagnostics snapshot reports the actual wire value.
+func (r *InternalLLMRequest) RecordOutboundMaxTokensProvenance(value int64, source string, adjusted bool) {
+	if r == nil || source == "" {
+		return
+	}
+	if r.TransformerMetadata == nil {
+		r.TransformerMetadata = make(map[string]string)
+	}
+	r.TransformerMetadata[TransformerMetadataOutboundMaxTokensValue] = strconv.FormatInt(value, 10)
+	r.TransformerMetadata[TransformerMetadataOutboundMaxTokensSource] = source
+	r.TransformerMetadata[TransformerMetadataOutboundMaxTokensAdjusted] = strconv.FormatBool(adjusted)
 }
 
 type TransformOptions struct {

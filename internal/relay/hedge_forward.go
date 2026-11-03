@@ -367,7 +367,7 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 // never reaches this helper, and unselected lanes never collect usage/sticky.
 func recordUnselectedHedgeFailure(lane *relayAttempt, status int, err error, duration time.Duration) {
 	if errors.Is(err, errHedgeLost) || errors.Is(err, context.Canceled) || errors.Is(err, errClientDisconnected) ||
-		errors.Is(err, errEmptyOutput) || errors.Is(err, errTruncatedOutput) {
+		errors.Is(err, errEmptyOutput) || errors.Is(err, errRobinInsufficientOutput) || errors.Is(err, errTruncatedOutput) {
 		return
 	}
 	decision := ClassifyRelayError(status, err, false)

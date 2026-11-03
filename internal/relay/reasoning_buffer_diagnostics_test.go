@@ -74,8 +74,8 @@ func TestReasoningBufferDiagnosticsFlushOnlyAfterVisibleOutput(t *testing.T) {
 	if diagnostics == nil {
 		t.Fatal("diagnostics missing")
 	}
-	if diagnostics.Version != 2 {
-		t.Fatalf("version = %d, want 2", diagnostics.Version)
+	if diagnostics.Version != 3 {
+		t.Fatalf("version = %d, want 3", diagnostics.Version)
 	}
 	if diagnostics.ReasoningBufferStrategy != "buffer" {
 		t.Fatalf("strategy = %q, want buffer", diagnostics.ReasoningBufferStrategy)
