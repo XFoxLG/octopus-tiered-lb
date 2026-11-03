@@ -46,6 +46,7 @@ const (
 	SettingKeyRelayMaxTotalAttempts              SettingKey = "relay_max_total_attempts"                 // 所有候选渠道的最大决策纪录次数，0/负数回退到内置默认上限（issue #192）
 	SettingKeyRetryEmptyOutput                   SettingKey = "retry_empty_output"                       // 输出为空(无可见内容)时自动重试，流式与非流式均适用（issue #106/#155）
 	SettingKeyRetryTruncationEnabled             SettingKey = "retry_truncation_enabled"                 // 输出被 max_tokens 截断(finish_reason=length)时自动重试，默认关闭
+	SettingKeyRobinActualContentExtractEnabled   SettingKey = "robin_actual_content_extract_enabled"     // Catiecli/Robin actual_content 工具信封转普通正文，默认关闭
 	SettingKeyCustomRetryableCodes               SettingKey = "custom_retryable_codes"                   // 自定义可重试上游状态码（逗号分隔，如 "418,499"），命中则强制进入换 Key/换渠道重试
 	SettingKeyCustomErrorRules                   SettingKey = "custom_error_rules"                       // 自定义错误透传规则（JSON 数组，见 relay.CustomErrorRule），按渠道类型+错误码/关键词改写最终错误呈现
 	SettingKeyRelayLogMemoryLogMaxDimidiateTimes SettingKey = "relay_log_memory_log_max_dimidiate_times" // 仅内存日志模式下折半次数阈值，达到后主动 GC 一次，-1=关闭
@@ -168,43 +169,44 @@ type Setting struct {
 func DefaultSettings() []Setting {
 	return []Setting{
 		{Key: SettingKeyProxyURL, Value: ""},
-		{Key: SettingKeyStatsSaveInterval, Value: "10"},                  // 默认10分钟保存一次统计信息
-		{Key: SettingKeyCORSAllowOrigins, Value: ""},                     // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
-		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},            // 默认24小时更新一次模型信息
-		{Key: SettingKeySyncLLMInterval, Value: "24"},                    // 默认24小时同步一次LLM
-		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},                  // 默认日志保存7天
-		{Key: SettingKeyRelayLogKeepCount, Value: "0"},                   // 默认不按条数保留(0=禁用)
-		{Key: SettingKeyRelayLogContentEnabled, Value: "true"},           // 默认记录请求/响应内容，保持兼容；高负载可关闭以降低 IO
-		{Key: SettingKeyRelayLogContentKeepSizeMB, Value: "256"},         // Aiven Free 1GiB 磁盘下为正文预留有界空间
-		{Key: SettingKeyRelayLogContentKeepPeriod, Value: "7"},           // 正文默认随元数据保留7天，但可单独缩短
-		{Key: SettingKeyRelayLogQueueDropPolicy, Value: "oldest"},        // 默认丢弃最旧日志，防止队列溢出 OOM（高 QPS 下推荐）
-		{Key: SettingKeyStreamSessionReplayEnabled, Value: "true"},       // 默认启用重连重放，保持兼容；内存受限可关闭
-		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},              // 默认保留历史日志
-		{Key: SettingKeyRelayRetryCount, Value: "3"},                     // 默认单个渠道内 Key 级重试3次
-		{Key: SettingKeyRelayRouteRetries, Value: "2"},                   // 默认路由级重试2次（全部渠道遍历两轮）
-		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},             // 默认连续失败5次触发熔断
-		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},             // 默认基础冷却60秒；与 circuit.GetCooldown 的运行期回退保持一致
-		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},         // 默认最大冷却600秒（10分钟）
-		{Key: SettingKeyCircuitBreakerHalfOpenProbeTimeout, Value: "60"}, // 默认 HalfOpen 探测超时60秒；试探被中途放弃后避免永久跳过（issue #162）
-		{Key: SettingKeyRatelimitCooldown, Value: "300"},                 // 默认 Key 错误冷却300秒（5分钟），0=关闭
-		{Key: SettingKeyAuthErrorCooldown, Value: "300"},                 // 默认认证错误隔离300秒（5分钟），0=关闭
-		{Key: SettingKeyServerErrorCooldown, Value: "30"},                // 默认服务错误冷却30秒，0=关闭
-		{Key: SettingKeyRateLimitChannelThreshold, Value: "2"},           // 默认同窗口两个429即认为渠道容量受限
-		{Key: SettingKeyRateLimitChannelWindow, Value: "30"},             // 默认渠道限流统计窗口30秒
-		{Key: SettingKeyRateLimitChannelCooldown, Value: "30"},           // 默认渠道限流隔离30秒
-		{Key: SettingKeyKeySelectionStrategy, Value: "cost"},             // 默认 Key 选择策略：成本最低优先；可选 availability（可用度优先）
-		{Key: SettingKeyRelayMaxTotalAttempts, Value: "0"},               // 0 回退到内置默认上限（issue #192 防止 attempts 无限膨胀）
-		{Key: SettingKeyRetryEmptyOutput, Value: "true"},                 // 默认启用空输出重试
-		{Key: SettingKeyRetryTruncationEnabled, Value: "false"},          // 默认关闭截断重试（按需在设置页开启）
-		{Key: SettingKeyCustomRetryableCodes, Value: ""},                 // 默认无自定义可重试码
-		{Key: SettingKeyCustomErrorRules, Value: "[]"},                   // 默认无自定义错误透传规则
-		{Key: SettingKeyRelayLogMemoryLogMaxDimidiateTimes, Value: "15"}, // 默认折半 15 次后主动 GC 一次
-		{Key: SettingKeyReasoningBufferStrategy, Value: "buffer"},        // 默认缓冲策略：安全重试但可能 CF 超时
-		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},            // 默认关闭：429 仍立即换 Key/渠道
-		{Key: SettingKeyRateLimitHoldInterval, Value: "10"},              // 默认每 10 秒重试一次
-		{Key: SettingKeyRateLimitHoldMaxWait, Value: "60"},               // 默认最多坚持 60 秒
-		{Key: SettingKeyGlobalRateLimitRPM, Value: "0"},                  // 默认关闭:不限制全站转发频率
-		{Key: SettingKeyGlobalMaxConcurrency, Value: "0"},                // 默认关闭:不限制全站并发
+		{Key: SettingKeyStatsSaveInterval, Value: "10"},                   // 默认10分钟保存一次统计信息
+		{Key: SettingKeyCORSAllowOrigins, Value: ""},                      // CORS 默认不允许跨域，设置为 "*" 才允许所有来源
+		{Key: SettingKeyModelInfoUpdateInterval, Value: "24"},             // 默认24小时更新一次模型信息
+		{Key: SettingKeySyncLLMInterval, Value: "24"},                     // 默认24小时同步一次LLM
+		{Key: SettingKeyRelayLogKeepPeriod, Value: "7"},                   // 默认日志保存7天
+		{Key: SettingKeyRelayLogKeepCount, Value: "0"},                    // 默认不按条数保留(0=禁用)
+		{Key: SettingKeyRelayLogContentEnabled, Value: "true"},            // 默认记录请求/响应内容，保持兼容；高负载可关闭以降低 IO
+		{Key: SettingKeyRelayLogContentKeepSizeMB, Value: "256"},          // Aiven Free 1GiB 磁盘下为正文预留有界空间
+		{Key: SettingKeyRelayLogContentKeepPeriod, Value: "7"},            // 正文默认随元数据保留7天，但可单独缩短
+		{Key: SettingKeyRelayLogQueueDropPolicy, Value: "oldest"},         // 默认丢弃最旧日志，防止队列溢出 OOM（高 QPS 下推荐）
+		{Key: SettingKeyStreamSessionReplayEnabled, Value: "true"},        // 默认启用重连重放，保持兼容；内存受限可关闭
+		{Key: SettingKeyRelayLogKeepEnabled, Value: "true"},               // 默认保留历史日志
+		{Key: SettingKeyRelayRetryCount, Value: "3"},                      // 默认单个渠道内 Key 级重试3次
+		{Key: SettingKeyRelayRouteRetries, Value: "2"},                    // 默认路由级重试2次（全部渠道遍历两轮）
+		{Key: SettingKeyCircuitBreakerThreshold, Value: "5"},              // 默认连续失败5次触发熔断
+		{Key: SettingKeyCircuitBreakerCooldown, Value: "60"},              // 默认基础冷却60秒；与 circuit.GetCooldown 的运行期回退保持一致
+		{Key: SettingKeyCircuitBreakerMaxCooldown, Value: "600"},          // 默认最大冷却600秒（10分钟）
+		{Key: SettingKeyCircuitBreakerHalfOpenProbeTimeout, Value: "60"},  // 默认 HalfOpen 探测超时60秒；试探被中途放弃后避免永久跳过（issue #162）
+		{Key: SettingKeyRatelimitCooldown, Value: "300"},                  // 默认 Key 错误冷却300秒（5分钟），0=关闭
+		{Key: SettingKeyAuthErrorCooldown, Value: "300"},                  // 默认认证错误隔离300秒（5分钟），0=关闭
+		{Key: SettingKeyServerErrorCooldown, Value: "30"},                 // 默认服务错误冷却30秒，0=关闭
+		{Key: SettingKeyRateLimitChannelThreshold, Value: "2"},            // 默认同窗口两个429即认为渠道容量受限
+		{Key: SettingKeyRateLimitChannelWindow, Value: "30"},              // 默认渠道限流统计窗口30秒
+		{Key: SettingKeyRateLimitChannelCooldown, Value: "30"},            // 默认渠道限流隔离30秒
+		{Key: SettingKeyKeySelectionStrategy, Value: "cost"},              // 默认 Key 选择策略：成本最低优先；可选 availability（可用度优先）
+		{Key: SettingKeyRelayMaxTotalAttempts, Value: "0"},                // 0 回退到内置默认上限（issue #192 防止 attempts 无限膨胀）
+		{Key: SettingKeyRetryEmptyOutput, Value: "true"},                  // 默认启用空输出重试
+		{Key: SettingKeyRetryTruncationEnabled, Value: "false"},           // 默认关闭截断重试（按需在设置页开启）
+		{Key: SettingKeyRobinActualContentExtractEnabled, Value: "false"}, // 默认关闭 Catiecli/Robin 内部正文信封兼容改写
+		{Key: SettingKeyCustomRetryableCodes, Value: ""},                  // 默认无自定义可重试码
+		{Key: SettingKeyCustomErrorRules, Value: "[]"},                    // 默认无自定义错误透传规则
+		{Key: SettingKeyRelayLogMemoryLogMaxDimidiateTimes, Value: "15"},  // 默认折半 15 次后主动 GC 一次
+		{Key: SettingKeyReasoningBufferStrategy, Value: "buffer"},         // 默认缓冲策略：安全重试但可能 CF 超时
+		{Key: SettingKeyRateLimitHoldEnabled, Value: "false"},             // 默认关闭：429 仍立即换 Key/渠道
+		{Key: SettingKeyRateLimitHoldInterval, Value: "10"},               // 默认每 10 秒重试一次
+		{Key: SettingKeyRateLimitHoldMaxWait, Value: "60"},                // 默认最多坚持 60 秒
+		{Key: SettingKeyGlobalRateLimitRPM, Value: "0"},                   // 默认关闭:不限制全站转发频率
+		{Key: SettingKeyGlobalMaxConcurrency, Value: "0"},                 // 默认关闭:不限制全站并发
 
 		{Key: SettingKeyPublicAPIBaseURL, Value: ""},
 		{Key: SettingKeyAutoStrategyMinSamples, Value: "10"},          // 默认最小样本数10次
@@ -429,7 +431,7 @@ func (s *Setting) Validate() error {
 				return fmt.Errorf("setting value is too large")
 			}
 		}
-	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRetryTruncationEnabled, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify, SettingKeyAutoSoftSignalsEnabled, SettingKeyRelayContextPrecheckEnabled, SettingKeyChannelModelLimitLearnEnabled:
+	case SettingKeyRelayLogKeepEnabled, SettingKeyRelayLogContentEnabled, SettingKeyStreamSessionReplayEnabled, SettingKeyModelNormalizeMarketDedupeDefault, SettingKeyRetryEmptyOutput, SettingKeyRetryTruncationEnabled, SettingKeyRobinActualContentExtractEnabled, SettingKeyRateLimitHoldEnabled, SettingKeyKeyHealthCheckEnabled, SettingKeyKeyHealthCheckNotifyEnabled, SettingKeyKeyHealthCheckRecoveryNotify, SettingKeyAutoSoftSignalsEnabled, SettingKeyRelayContextPrecheckEnabled, SettingKeyChannelModelLimitLearnEnabled:
 		if s.Value != "true" && s.Value != "false" {
 			return fmt.Errorf("setting value must be true or false")
 		}

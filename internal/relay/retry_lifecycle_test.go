@@ -273,11 +273,15 @@ func TestHandlerRateLimitHoldStopsAtBudgetOrOperationDeadline(testContext *testi
 				}
 			}
 			originalTimeout := relayUpstreamTimeout
-			relayUpstreamTimeout = 100 * time.Millisecond
+			// Keep the operation deadline clearly below the 10s rate-limit hold,
+			// but above real handler setup on loaded Windows/CI runners. A 100ms
+			// deadline sometimes expired before the first dispatch, so the
+			// fixture no longer observed the rate-limit path it intends to test.
+			relayUpstreamTimeout = 2 * time.Second
 			testContext.Cleanup(func() { relayUpstreamTimeout = originalTimeout })
 			startedAt := time.Now()
 			recorder := serveIndependentFixtureRequest(`{"model":"creative-fixture","messages":[{"role":"user","content":"Continue the story"}]}`)
-			if time.Since(startedAt) >= time.Second {
+			if time.Since(startedAt) >= 5*time.Second {
 				testContext.Error("rate-limit wait outlived the operation deadline or an exhausted attempt budget")
 			}
 			expectedStatus := http.StatusBadGateway

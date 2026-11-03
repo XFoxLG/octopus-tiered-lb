@@ -181,3 +181,26 @@ func TestRecordUnselectedHedgeFailureSkipsCancelledLane(t *testing.T) {
 		t.Fatal("cancelled hedge lane must not update channel health")
 	}
 }
+
+func TestRecordUnselectedHedgeFailureSkipsRobinInsufficientOutput(t *testing.T) {
+	channelID, keyID, modelName := 987656, 987657, "hedge-robin-empty-model"
+	channel := dbmodel.Channel{ID: channelID, Name: "robin-empty-lane", CircuitBreakerThreshold: 1}
+	ch.GetCache().Set(channelID, channel)
+	t.Cleanup(func() {
+		ch.GetCache().Del(channelID)
+		balancer.RemoveChannelEntries(channelID)
+	})
+
+	lane := &relayAttempt{
+		relayRequest: &relayRequest{
+			internalRequest: &tmodel.InternalLLMRequest{Model: modelName},
+		},
+		channel: &channel,
+		usedKey: dbmodel.ChannelKey{ID: keyID},
+	}
+	recordUnselectedHedgeFailure(lane, http.StatusOK, errRobinInsufficientOutput, time.Millisecond)
+
+	if tripped, _ := balancer.IsTripped(channelID, keyID, modelName); tripped {
+		t.Fatal("empty Robin envelope must not update channel health")
+	}
+}

@@ -422,6 +422,17 @@ func (ra *relayAttempt) attempt() attemptResult {
 			Decision: RetryDecision{Scope: ScopeSameChannel, Reason: "empty output, try another key", Code: statusCode, IsError: true},
 		}
 	}
+	if errors.Is(fwdErr, errRobinInsufficientOutput) {
+		written := ra.streamOutputWasCommitted()
+		decision := robinInsufficientOutputDecision(written, isRetryEmptyOutputEnabled(), statusCode)
+		span.End(dbmodel.AttemptFailed, statusCode, decision.Reason)
+		return attemptResult{
+			Success:  false,
+			Written:  written,
+			Err:      fwdErr,
+			Decision: decision,
+		}
+	}
 	// 截断输出重试：非流式 200 但 finish_reason=length（被 max_tokens 掐断成半截）。
 	// 与空输出同语义：不计渠道失败统计/熔断（内容质量问题而非渠道故障），
 	// 占用一次 Key 级重试名额，用完后换下一渠道；受 maxTotalAttempts 预算保护。
@@ -568,6 +579,32 @@ func (ra *relayAttempt) attempt() attemptResult {
 	}
 }
 
+func robinInsufficientOutputDecision(written, retryEnabled bool, statusCode int) RetryDecision {
+	switch {
+	case written:
+		return RetryDecision{
+			Scope:   ScopeNone,
+			Reason:  "empty internal tool envelope after output was committed",
+			Code:    statusCode,
+			IsError: true,
+		}
+	case !retryEnabled:
+		return RetryDecision{
+			Scope:   ScopeNone,
+			Reason:  "empty internal tool envelope, retry disabled",
+			Code:    statusCode,
+			IsError: true,
+		}
+	default:
+		return RetryDecision{
+			Scope:   ScopeSameChannel,
+			Reason:  "empty internal tool envelope, try another key",
+			Code:    statusCode,
+			IsError: true,
+		}
+	}
+}
+
 // parseRequest 解析并验证入站请求
 func parseRequest(inboundType inbound.InboundType, c *gin.Context) (*model.InternalLLMRequest, model.Inbound, error) {
 	body, err := readRelayRequestBody(c, getMaxRelayJSONBodyBytes())
@@ -655,6 +692,9 @@ func (ra *relayAttempt) forward() (int, error) {
 	if err != nil {
 		log.Warnf("failed to create request: %v", err)
 		return 0, fmt.Errorf("failed to create request: %w", err)
+	}
+	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+		trace.recordOutboundMaxTokens(ra.logAttemptNumber, requestForOutbound)
 	}
 
 	// 复制请求头
@@ -1765,6 +1805,9 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	if internalStream == nil {
 		return nil, false, nil
 	}
+	if err := ra.applyRobinEnvelopePolicyToStreamChunk(internalStream); err != nil {
+		return nil, false, err
+	}
 	var finishPayload []byte
 	if ra.adapterEndpointProtocol() == "chat" && (internalStream.Object == "[DONE]" || (internalStream.Usage != nil && len(internalStream.Choices) == 0 && ra.hasCompleteChatFinishHints())) {
 		finishPayload, err = ra.flushChatFinishHints(ctx)
@@ -1933,6 +1976,10 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 		internalResponse.Termination = termination
 		ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
 		return providerTerminalFailureError(internalResponse.Termination)
+	}
+	if err := ra.applyRobinEnvelopePolicyToResponse(internalResponse); err != nil {
+		ra.metrics.SetInternalResponse(internalResponse, ra.internalRequest.Model)
+		return err
 	}
 
 	// 空输出检测（issue #106/#155）：上游返回 200 但无可见内容。

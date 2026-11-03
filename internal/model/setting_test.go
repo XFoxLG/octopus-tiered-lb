@@ -67,6 +67,27 @@ func TestSettingValidateRateLimitHoldEnabled(t *testing.T) {
 	}
 }
 
+func TestSettingValidateRobinActualContentExtractEnabled(t *testing.T) {
+	tests := []struct {
+		value   string
+		wantErr bool
+	}{
+		{value: "true"},
+		{value: "false"},
+		{value: "yes", wantErr: true},
+	}
+	for _, test := range tests {
+		setting := Setting{Key: SettingKeyRobinActualContentExtractEnabled, Value: test.value}
+		err := setting.Validate()
+		if test.wantErr && err == nil {
+			t.Fatalf("value %q: Validate() error = nil, want non-nil", test.value)
+		}
+		if !test.wantErr && err != nil {
+			t.Fatalf("value %q: Validate() error = %v, want nil", test.value, err)
+		}
+	}
+}
+
 // TestSettingValidateTaskIntervals 覆盖本 fork 周期型设置键的校验：必须是整数
 // 且 >0，并在换算 time.Duration 会溢出时拒绝（上界 = MaxInt64 纳秒 / 单位纳秒）。
 // keyhealth 三键（interval/fail_threshold/notify_cooldown）曾遗漏在整数 case

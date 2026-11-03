@@ -28,6 +28,7 @@ func TestResolveUsageState(t *testing.T) {
 		{"client disconnect with partial usage", responseWithUsage, errClientDisconnected, model.RelayLogUsageClientDisconnect},
 		{"missing stream terminal with partial usage", responseWithUsage, errMissingStreamTerminal, model.RelayLogUsageMissingTerminal},
 		{"empty output", responseWithUsage, errEmptyOutput, model.RelayLogUsageEmptyOutput},
+		{"empty Robin envelope", responseWithUsage, errRobinInsufficientOutput, model.RelayLogUsageEmptyOutput},
 		{"provider failure with usage", responseWithUsage, providerFailure, model.RelayLogUsageProviderFailed},
 		{"unknown provider failure with usage", responseWithUsage, providerTerminalFailureError(transformerModel.TerminationMetadata{
 			Cause: transformerModel.TerminationCauseUnknown,

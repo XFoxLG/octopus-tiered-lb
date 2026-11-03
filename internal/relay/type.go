@@ -45,6 +45,7 @@ const (
 
 var (
 	errEmptyOutput               = errors.New("upstream returned empty output (no visible content)")
+	errRobinInsufficientOutput   = errors.New("upstream returned an empty internal Robin tool envelope")
 	errTruncatedOutput           = errors.New("upstream returned truncated output (finish_reason=length)")
 	errMissingStreamTerminal     = errors.New("upstream stream ended without a terminal event")
 	errProviderTerminalFailure   = errors.New("upstream provider reported a terminal failure")
@@ -141,6 +142,17 @@ func isRetryTruncationEnabled() bool {
 	v, err := setting.GetBool(dbmodel.SettingKeyRetryTruncationEnabled)
 	if err != nil {
 		return false // 默认关闭
+	}
+	return v
+}
+
+// isRobinActualContentExtractEnabled enables a narrowly validated conversion
+// from Catiecli/Robin's nonstandard actual_content tool envelope to visible
+// assistant text. The default is intentionally false.
+func isRobinActualContentExtractEnabled() bool {
+	v, err := setting.GetBool(dbmodel.SettingKeyRobinActualContentExtractEnabled)
+	if err != nil {
+		return false
 	}
 	return v
 }

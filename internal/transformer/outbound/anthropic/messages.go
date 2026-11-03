@@ -314,14 +314,16 @@ func (o *MessageOutbound) TransformStream(ctx context.Context, eventData []byte)
 
 // convertToAnthropicRequest converts internal LLM request to Anthropic format
 func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.MessageRequest {
+	resolvedMaxTokens := resolveMaxTokens(req)
 	result := &anthropicModel.MessageRequest{
 		Model:       req.Model,
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		Stream:      req.Stream,
-		MaxTokens:   resolveMaxTokens(req),
+		MaxTokens:   resolvedMaxTokens.value,
 		System:      convertSystemPrompt(req),
 	}
+	req.RecordOutboundMaxTokensProvenance(resolvedMaxTokens.value, resolvedMaxTokens.source, false)
 
 	if req.Metadata != nil && req.Metadata["user_id"] != "" {
 		result.Metadata = &anthropicModel.AnthropicMetadata{UserID: req.Metadata["user_id"]}
@@ -369,6 +371,7 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 				)
 				result.MaxTokens = clampedMaxTokens
 				budgetTokens = &clampedBudget
+				req.RecordOutboundMaxTokensProvenance(result.MaxTokens, outboundMaxTokensSource(req), true)
 			}
 		}
 		result.Thinking = &anthropicModel.Thinking{
@@ -431,20 +434,50 @@ func normalizeAnthropicEffort(effort string) string {
 	return normalized
 }
 
-func resolveMaxTokens(req *model.InternalLLMRequest) int64 {
+// resolveMaxTokens returns the effective limit plus the source recorded before
+// transformation. Param override already records client/override provenance;
+// this fallback keeps direct Anthropic requests observable and labels the
+// long-standing default truthfully.
+type resolvedOutboundMaxTokens struct {
+	value  int64
+	source string
+}
+
+func resolveMaxTokens(req *model.InternalLLMRequest) resolvedOutboundMaxTokens {
+	source := ""
 	var maxtoken int64 = 1
 	switch {
 	case req.MaxTokens != nil:
 		maxtoken = *req.MaxTokens
+		source = model.OutboundMaxTokensSourceClientMaxTokens
 	case req.MaxCompletionTokens != nil:
 		maxtoken = *req.MaxCompletionTokens
+		source = model.OutboundMaxTokensSourceClientMaxCompletionTokens
 	default:
 		maxtoken = 8192
+		source = model.OutboundMaxTokensSourceAnthropicDefault
 	}
-	if maxtoken < 1 {
-		maxtoken = 1
+	if metadataSource := req.TransformerMetadata[model.TransformerMetadataOutboundMaxTokensSource]; metadataSource != "" {
+		source = metadataSource
 	}
-	return maxtoken
+	return resolvedOutboundMaxTokens{value: clampMinOutboundMaxTokens(maxtoken), source: source}
+}
+
+func clampMinOutboundMaxTokens(value int64) int64 {
+	if value < 1 {
+		return 1
+	}
+	return value
+}
+
+func outboundMaxTokensSource(req *model.InternalLLMRequest) string {
+	if req == nil {
+		return model.OutboundMaxTokensSourceAnthropicDefault
+	}
+	if source := strings.TrimSpace(req.TransformerMetadata[model.TransformerMetadataOutboundMaxTokensSource]); source != "" {
+		return source
+	}
+	return model.OutboundMaxTokensSourceAnthropicDefault
 }
 
 func convertSystemPrompt(req *model.InternalLLMRequest) *anthropicModel.SystemPrompt {

@@ -59,20 +59,95 @@ func applyParamOverride(channel *appmodel.Channel, group *appmodel.Group, reques
 		}
 	}
 	if channel == nil || channel.ParamOverride == nil || *channel.ParamOverride == "" {
-		if len(groupOverrides) == 0 {
-			return
-		}
 	} else if err := jsonAPI.Unmarshal([]byte(*channel.ParamOverride), &channelOverrides); err != nil {
 		log.Warnf("param_override: invalid JSON for channel %d: %v", channel.ID, err)
-		if len(groupOverrides) == 0 {
-			return
-		}
 	}
 
-	mergeParamOverrideField(groupOverrides, channelOverrides, "max_tokens", &request.MaxTokens)
-	mergeParamOverrideField(groupOverrides, channelOverrides, "max_completion_tokens", &request.MaxCompletionTokens)
+	// Record client max-token provenance even when neither layer has an
+	// override. Otherwise a Responses max_output_tokens request can later be
+	// mislabeled as a generic Chat max_completion_tokens value by an outbound
+	// transformer.
+	applyMaxTokensParamOverride(groupOverrides, channelOverrides, request)
 	mergeParamOverrideFloatField(groupOverrides, channelOverrides, "temperature", &request.Temperature)
 	mergeParamOverrideFloatField(groupOverrides, channelOverrides, "top_p", &request.TopP)
+}
+
+// applyMaxTokensParamOverride resolves max_tokens and max_completion_tokens as
+// aliases instead of as independent fields. A client that expressed one alias
+// therefore cannot have the other alias injected behind its back; without a
+// client limit, channel beats group, and max_tokens beats its sibling alias
+// within the same layer. Exactly one alias is set when an override wins.
+func applyMaxTokensParamOverride(groupOverrides, channelOverrides map[string]RawMessage, request *transmodel.InternalLLMRequest) {
+	switch {
+	case request.MaxTokens != nil:
+		request.RecordOutboundMaxTokensProvenance(
+			*request.EffectiveMaxTokens(),
+			transmodel.OutboundMaxTokensSourceClientMaxTokens,
+			false,
+		)
+		return
+	case request.MaxCompletionTokens != nil:
+		source := transmodel.OutboundMaxTokensSourceClientMaxCompletionTokens
+		if request.RawAPIFormat == transmodel.APIFormatOpenAIResponse {
+			source = transmodel.OutboundMaxTokensSourceClientMaxOutputTokens
+		}
+		request.RecordOutboundMaxTokensProvenance(
+			*request.EffectiveMaxTokens(),
+			source,
+			false,
+		)
+		return
+	}
+
+	value, source, ok := maxTokensFromLayer(channelOverrides,
+		transmodel.OutboundMaxTokensSourceChannelMaxTokens,
+		transmodel.OutboundMaxTokensSourceChannelMaxCompletionTokens,
+	)
+	if !ok {
+		value, source, ok = maxTokensFromLayer(groupOverrides,
+			transmodel.OutboundMaxTokensSourceGroupMaxTokens,
+			transmodel.OutboundMaxTokensSourceGroupMaxCompletionTokens,
+		)
+	}
+	if !ok {
+		return
+	}
+
+	if source == transmodel.OutboundMaxTokensSourceChannelMaxTokens ||
+		source == transmodel.OutboundMaxTokensSourceGroupMaxTokens {
+		request.MaxTokens = &value
+	} else {
+		request.MaxCompletionTokens = &value
+	}
+	request.RecordOutboundMaxTokensProvenance(value, source, false)
+}
+
+// maxTokensFromLayer applies the same-layer alias priority while ignoring
+// malformed JSON, matching the fail-open behavior of the generic override
+// merge helper below.
+func maxTokensFromLayer(overrides map[string]RawMessage, maxTokensSource, maxCompletionTokensSource string) (int64, string, bool) {
+	if value, ok := parseMaxTokenOverride(overrides, "max_tokens"); ok {
+		return value, maxTokensSource, true
+	}
+	if value, ok := parseMaxTokenOverride(overrides, "max_completion_tokens"); ok {
+		return value, maxCompletionTokensSource, true
+	}
+	return 0, "", false
+}
+
+func parseMaxTokenOverride(overrides map[string]RawMessage, key string) (int64, bool) {
+	if overrides == nil {
+		return 0, false
+	}
+	raw, ok := overrides[key]
+	if !ok {
+		return 0, false
+	}
+	var value int64
+	if err := jsonAPI.Unmarshal(raw, &value); err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 // mergeParamOverrideField 按「客户端 > 渠道 > 分组」优先级填充 int64 指针字段。

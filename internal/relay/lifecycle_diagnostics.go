@@ -2,10 +2,12 @@ package relay
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
+	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
 // ensureDiagnosticsLocked creates the diagnostics envelope on the first
@@ -13,7 +15,7 @@ import (
 func (trace *relayRequestTrace) ensureDiagnosticsLocked() *model.RelayDiagnostics {
 	if trace.diagnostics == nil {
 		trace.diagnostics = &model.RelayDiagnostics{
-			Version:    2,
+			Version:    3,
 			RequestID:  trace.id,
 			InstanceID: relaylog.LiveInstanceID(),
 			ReceivedAt: trace.startedAt.UnixMilli(),
@@ -33,6 +35,61 @@ func (trace *relayRequestTrace) setOperationDeadline(ctx context.Context, source
 		diagnostics.DeadlineAt = deadline.UnixMilli()
 	}
 	trace.mutex.Unlock()
+}
+
+// recordOutboundMaxTokens copies transformer metadata that survived into the
+// actual outbound request. It does not infer values for adapters that did not
+// record provenance, so missing data remains absent rather than misleading.
+func (trace *relayRequestTrace) recordOutboundMaxTokens(attempt int, request *transmodel.InternalLLMRequest) {
+	if trace == nil || request == nil {
+		return
+	}
+	valueText := request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensValue]
+	source := request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensSource]
+	if valueText == "" || source == "" {
+		return
+	}
+	value, err := strconv.ParseInt(valueText, 10, 64)
+	if err != nil || value < 0 {
+		return
+	}
+
+	trace.mutex.Lock()
+	defer trace.mutex.Unlock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	diagnostics.OutboundMaxTokens = &value
+	diagnostics.OutboundMaxTokensSource = source
+	diagnostics.OutboundMaxTokensAdjusted =
+		request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensAdjusted] == "true"
+	for i := range diagnostics.Attempts {
+		item := &diagnostics.Attempts[i]
+		if item.Attempt == attempt {
+			item.OutboundMaxTokens = &value
+			item.OutboundMaxTokensSource = diagnostics.OutboundMaxTokensSource
+			item.OutboundMaxTokensAdjusted = diagnostics.OutboundMaxTokensAdjusted
+			break
+		}
+	}
+}
+
+func (trace *relayRequestTrace) recordRobinEnvelope(attempt int, classification RobinEnvelopeClassification) {
+	if trace == nil || classification.Kind == RobinEnvelopeNormalContent ||
+		classification.Reason == RobinReasonEmptyResponse {
+		return
+	}
+	trace.mutex.Lock()
+	defer trace.mutex.Unlock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	diagnostics.RobinEnvelopeKind = string(classification.Kind)
+	diagnostics.RobinEnvelopeReason = string(classification.Reason)
+	for i := range diagnostics.Attempts {
+		item := &diagnostics.Attempts[i]
+		if item.Attempt == attempt {
+			item.RobinEnvelopeKind = diagnostics.RobinEnvelopeKind
+			item.RobinEnvelopeReason = diagnostics.RobinEnvelopeReason
+			break
+		}
+	}
 }
 
 func (trace *relayRequestTrace) recordReasoningBufferStrategy(strategy string, applied bool) {
@@ -133,9 +190,7 @@ func (trace *relayRequestTrace) startDiagnosticAttempt(attempt, channel int, pro
 	}
 	trace.mutex.Lock()
 	defer trace.mutex.Unlock()
-	if trace.diagnostics == nil {
-		return
-	}
+	trace.ensureDiagnosticsLocked()
 	item := model.RelayAttemptDiagnostics{Attempt: attempt, ChannelID: channel, Protocol: protocol, StartedAt: time.Now().UnixMilli()}
 	if deadline, ok := ctx.Deadline(); ok {
 		item.DeadlineAt = deadline.UnixMilli()
