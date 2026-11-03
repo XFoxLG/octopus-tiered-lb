@@ -15,10 +15,88 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// synchronizedGinResponseWriter protects httptest.ResponseRecorder's body while
+// a keepalive goroutine can still append control frames. Production writers are
+// serialized by relayResponseWriter; the recorder's bytes.Buffer is not.
+type synchronizedGinResponseWriter struct {
+	gin.ResponseWriter
+	recorder *httptest.ResponseRecorder
+	mu       sync.Mutex
+}
+
+func newSynchronizedTestContext(t *testing.T) (*gin.Context, *synchronizedGinResponseWriter) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	writer := &synchronizedGinResponseWriter{
+		ResponseWriter: c.Writer,
+		recorder:       recorder,
+	}
+	c.Writer = writer
+	return c, writer
+}
+
+func (w *synchronizedGinResponseWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.ResponseWriter.Write(data)
+}
+
+func (w *synchronizedGinResponseWriter) WriteString(data string) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.ResponseWriter.WriteString(data)
+}
+
+func (w *synchronizedGinResponseWriter) WriteHeader(code int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *synchronizedGinResponseWriter) WriteHeaderNow() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ResponseWriter.WriteHeaderNow()
+}
+
+func (w *synchronizedGinResponseWriter) Status() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.ResponseWriter.Status()
+}
+
+func (w *synchronizedGinResponseWriter) Size() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.ResponseWriter.Size()
+}
+
+func (w *synchronizedGinResponseWriter) Written() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.ResponseWriter.Written()
+}
+
+func (w *synchronizedGinResponseWriter) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ResponseWriter.Flush()
+}
+
+func (w *synchronizedGinResponseWriter) bodyString() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.recorder.Body.String()
+}
+
+func (w *synchronizedGinResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func TestKeepaliveCommitsHTTPWithoutSemanticOutput(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		recorder := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(recorder)
+		c, recorder := newSynchronizedTestContext(t)
 		w := installRelayResponseWriter(c)
 		defer w.close()
 		stop, err := w.keepalive(context.Background())
@@ -26,27 +104,27 @@ func TestKeepaliveCommitsHTTPWithoutSemanticOutput(t *testing.T) {
 			t.Fatalf("keepalive start: %v", err)
 		}
 		defer stop()
-		if !w.Written() || relaySemanticWritten(c) || recorder.Body.String() != ": ping\n\n" {
-			t.Fatalf("initial heartbeat missing or claimed content: %q", recorder.Body.String())
+		if !w.Written() || relaySemanticWritten(c) || recorder.bodyString() != ": ping\n\n" {
+			t.Fatalf("initial heartbeat missing or claimed content: %q", recorder.bodyString())
 		}
 		if recorder.Header().Get("Cache-Control") != "no-cache, no-transform" {
 			t.Fatalf("heartbeat Cache-Control = %q", recorder.Header().Get("Cache-Control"))
 		}
 		time.Sleep(14 * time.Second)
 		synctest.Wait()
-		if strings.Count(recorder.Body.String(), ": ping") != 1 {
+		if strings.Count(recorder.bodyString(), ": ping") != 1 {
 			t.Fatal("heartbeat repeated before the 15 second interval")
 		}
 		time.Sleep(time.Second)
 		synctest.Wait()
-		if relaySemanticWritten(c) || strings.Count(recorder.Body.String(), ": ping") != 2 {
-			t.Fatalf("heartbeat claimed content: %q", recorder.Body.String())
+		if relaySemanticWritten(c) || strings.Count(recorder.bodyString(), ": ping") != 2 {
+			t.Fatalf("heartbeat claimed content: %q", recorder.bodyString())
 		}
 		if recorder.Header().Get("Content-Type") != "text/event-stream" {
 			t.Fatal("heartbeat missing SSE type")
 		}
 		writeClientTerminalError(c, nil, 0, 502, context.DeadlineExceeded)
-		if !strings.Contains(recorder.Body.String(), "event: error\n") || !relaySemanticWritten(c) {
+		if !strings.Contains(recorder.bodyString(), "event: error\n") || !relaySemanticWritten(c) {
 			t.Fatal("committed heartbeat swallowed final error")
 		}
 	})
