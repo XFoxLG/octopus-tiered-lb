@@ -742,9 +742,10 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 		}
 		headersWritten = true
 		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
+		c.Header("Cache-Control", "no-cache, no-transform")
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no")
+		c.Writer.Header().Del("ETag")
 		c.Header("X-Conversation-ID", req.internalRequest.ConversationID)
 	}
 

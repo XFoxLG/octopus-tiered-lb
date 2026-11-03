@@ -175,6 +175,10 @@ export interface RelayLogDetail extends RelayLog {
         writer_accepted_bytes?: number;
         semantic_bytes?: number;
         control_bytes?: number;
+        keepalive_pings?: number;
+        first_keepalive_at?: number;
+        last_keepalive_at?: number;
+        last_keepalive_phase?: string;
         reasoning_buffer_strategy?: string;
         reasoning_buffer_applied?: boolean;
         reasoning_chunks_received?: number;

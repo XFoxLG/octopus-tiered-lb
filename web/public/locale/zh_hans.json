@@ -2437,7 +2437,7 @@
       "requestTimeout": {"label":"整请求超时（秒）","hint":"包含排队、全部尝试和流式交付。0 继承其它期限；多个期限取最短值。"},
       "relayRetryCount": {"label":"候选内 Key 重试次数","hint":"分组级覆盖。填 -1 跟随渠道或全局设置；0 表示该候选不重复换 Key。"},
       "relayRouteRetries": {"label":"路由轮次覆盖","hint":"分组级覆盖。填 -1 跟随全局设置；控制完整候选轮次可执行多少次。"},
-      "streamKeepalive": {"label":"流式保活","hint":"等待时每 15 秒发送 SSE comment，无模型内容，也不能延长客户端的硬期限。"},
+      "streamKeepalive": {"label":"流式保活","hint":"等待一开始立即发送 SSE comment，之后每 15 秒发送一次；无模型内容，也不能延长客户端的硬期限。"},
       "assistantPrefill": {"label":"Assistant 预填兼容","hint":"转换请求以 assistant 文本结束时，追加一次继续生成的 user 指令；原始穿透保持原文。"},
       "forwardMode": {"label":"转发模式","hint":"跟随接口设置、转换协议，或要求同协议穿透；协议冲突会排除并记录。","inherit":"跟随接口设置","convert":"协议转换","passthrough":"同协议穿透","raw":"原路径和正文穿透"},
       "name": "分组名称",

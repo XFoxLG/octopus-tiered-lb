@@ -21,6 +21,10 @@ type RelayDiagnostics struct {
 	WriterAcceptedBytes       int64                     `json:"writer_accepted_bytes,omitempty"`
 	SemanticBytes             int64                     `json:"semantic_bytes,omitempty"`
 	ControlBytes              int64                     `json:"control_bytes,omitempty"`
+	KeepalivePings            int64                     `json:"keepalive_pings,omitempty"`
+	FirstKeepaliveAt          int64                     `json:"first_keepalive_at,omitempty"`
+	LastKeepaliveAt           int64                     `json:"last_keepalive_at,omitempty"`
+	LastKeepalivePhase        string                    `json:"last_keepalive_phase,omitempty"`
 	ReasoningBufferStrategy   string                    `json:"reasoning_buffer_strategy,omitempty"`
 	ReasoningBufferApplied    bool                      `json:"reasoning_buffer_applied,omitempty"`
 	ReasoningChunksReceived   int64                     `json:"reasoning_chunks_received,omitempty"`

@@ -21,16 +21,25 @@ func TestKeepaliveCommitsHTTPWithoutSemanticOutput(t *testing.T) {
 		c, _ := gin.CreateTestContext(recorder)
 		w := installRelayResponseWriter(c)
 		defer w.close()
-		stop := w.keepalive(context.Background())
+		stop, err := w.keepalive(context.Background())
+		if err != nil {
+			t.Fatalf("keepalive start: %v", err)
+		}
 		defer stop()
+		if !w.Written() || relaySemanticWritten(c) || recorder.Body.String() != ": ping\n\n" {
+			t.Fatalf("initial heartbeat missing or claimed content: %q", recorder.Body.String())
+		}
+		if recorder.Header().Get("Cache-Control") != "no-cache, no-transform" {
+			t.Fatalf("heartbeat Cache-Control = %q", recorder.Header().Get("Cache-Control"))
+		}
 		time.Sleep(14 * time.Second)
 		synctest.Wait()
-		if w.Written() {
-			t.Fatal("early heartbeat")
+		if strings.Count(recorder.Body.String(), ": ping") != 1 {
+			t.Fatal("heartbeat repeated before the 15 second interval")
 		}
 		time.Sleep(time.Second)
 		synctest.Wait()
-		if !w.Written() || relaySemanticWritten(c) || recorder.Body.String() != ": ping\n\n" {
+		if relaySemanticWritten(c) || strings.Count(recorder.Body.String(), ": ping") != 2 {
 			t.Fatalf("heartbeat claimed content: %q", recorder.Body.String())
 		}
 		if recorder.Header().Get("Content-Type") != "text/event-stream" {
@@ -50,7 +59,10 @@ func TestSingleKeepaliveOwnerContinuesAfterVisibleContent(t *testing.T) {
 		w := installRelayResponseWriter(c)
 		defer w.close()
 		ctx, cancel := context.WithCancel(context.Background())
-		stop := w.keepalive(ctx)
+		stop, err := w.keepalive(ctx)
+		if err != nil {
+			t.Fatalf("keepalive start: %v", err)
+		}
 		defer stop()
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
@@ -61,8 +73,47 @@ func TestSingleKeepaliveOwnerContinuesAfterVisibleContent(t *testing.T) {
 		synctest.Wait()
 		cancel()
 		synctest.Wait()
-		if strings.Count(recorder.Body.String(), ": ping") != 3 {
-			t.Fatalf("keepalive owner count = %d, want 3 continuous pings", strings.Count(recorder.Body.String(), ": ping"))
+		if strings.Count(recorder.Body.String(), ": ping") != 4 {
+			t.Fatalf("keepalive owner count = %d, want 4 continuous pings", strings.Count(recorder.Body.String(), ": ping"))
+		}
+	})
+}
+
+func TestKeepaliveDiagnosticsSeparateControlFromSemanticBytes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", http.NoBody)
+		trace := newRelayRequestTrace(c.Request, false)
+		c.Set(relayRequestTraceContextKey, trace)
+		c.Writer = &relayCaptureResponseWriter{ResponseWriter: c.Writer, trace: trace}
+		w := installRelayResponseWriter(c)
+		stop, err := w.keepalive(context.Background())
+		if err != nil {
+			t.Fatalf("keepalive start: %v", err)
+		}
+		stop()
+
+		visible := []byte("data: semantic\n\n")
+		if _, err := w.Write(visible); err != nil {
+			t.Fatalf("write semantic frame: %v", err)
+		}
+		w.close()
+
+		diagnostics := trace.diagnosticsSnapshot()
+		if diagnostics == nil {
+			t.Fatal("missing diagnostics")
+		}
+		pingBytes := int64(len(": ping\n\n"))
+		if diagnostics.KeepalivePings != 1 || diagnostics.ControlBytes != pingBytes ||
+			diagnostics.SemanticBytes != int64(len(visible)) ||
+			diagnostics.WriterAcceptedBytes != pingBytes+int64(len(visible)) {
+			t.Fatalf("diagnostics = %+v", diagnostics)
+		}
+		if diagnostics.FirstKeepaliveAt == 0 || diagnostics.LastKeepaliveAt == 0 ||
+			diagnostics.LastKeepalivePhase != relayKeepalivePhaseHeaderWait {
+			t.Fatalf("keepalive diagnostics = %+v", diagnostics)
 		}
 	})
 }

@@ -2430,7 +2430,7 @@
       "requestTimeout": {"label":"整個請求時限（秒）","hint":"包含排隊、重試與串流；0 繼承其他限制，最短時限優先。"},
       "relayRetryCount": {"label":"候選內 Key 重試次數","hint":"分組級覆寫。填 -1 跟隨渠道或全域設定；0 表示同一候選不再更換 Key。"},
       "relayRouteRetries": {"label":"路由輪次覆寫","hint":"分組級覆寫。填 -1 跟隨全域設定；控制完整候選輪次可執行多少次。"},
-      "streamKeepalive": {"label":"串流保活","hint":"等待期間每 15 秒傳送 SSE 註解，不包含模型內容，也不能延長用戶端時限。"},
+      "streamKeepalive": {"label":"串流保活","hint":"等待一開始立即傳送 SSE 註解，之後每 15 秒傳送一次；不含模型內容，也不能延長用戶端時限。"},
       "assistantPrefill": {"label":"Assistant 預填相容","hint":"轉換請求以 assistant 純文字結尾時，加入續寫指令。原始轉送保持原樣。"},
       "forwardMode": {"label":"轉送模式","hint":"繼承端點設定、轉換格式，或要求 passthrough/raw 使用相同協議。協議衝突會排除候選。","inherit":"繼承端點設定","convert":"轉換","passthrough":"透傳","raw":"原始路徑與正文"},
       "name": "分組名稱",
