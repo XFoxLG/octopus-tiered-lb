@@ -45,6 +45,7 @@ export const SettingKey = {
     RelayMaxTotalAttempts: 'relay_max_total_attempts',
     RetryEmptyOutput: 'retry_empty_output',
     RetryTruncationEnabled: 'retry_truncation_enabled',
+    RobinActualContentExtractEnabled: 'robin_actual_content_extract_enabled',
     CustomRetryableCodes: 'custom_retryable_codes',
     CustomErrorRules: 'custom_error_rules',
     RelayLogMemoryLogMaxDimidiateTimes: 'relay_log_memory_log_max_dimidiate_times',

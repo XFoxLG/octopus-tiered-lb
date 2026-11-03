@@ -29,6 +29,7 @@ export function SettingRetry() {
         nextValues[SettingKey.KeySelectionStrategy] = settings.find((item) => item.key === SettingKey.KeySelectionStrategy)?.value ?? 'cost';
         nextValues[SettingKey.RetryEmptyOutput] = settings.find((item) => item.key === SettingKey.RetryEmptyOutput)?.value ?? 'true';
         nextValues[SettingKey.RetryTruncationEnabled] = settings.find((item) => item.key === SettingKey.RetryTruncationEnabled)?.value ?? 'false';
+        nextValues[SettingKey.RobinActualContentExtractEnabled] = settings.find((item) => item.key === SettingKey.RobinActualContentExtractEnabled)?.value ?? 'false';
         nextValues[SettingKey.ReasoningBufferStrategy] = settings.find((item) => item.key === SettingKey.ReasoningBufferStrategy)?.value ?? 'buffer';
         nextValues[SettingKey.StreamSessionReplayEnabled] = settings.find((item) => item.key === SettingKey.StreamSessionReplayEnabled)?.value ?? 'true';
         nextValues[SettingKey.KeyHealthCheckEnabled] = settings.find((item) => item.key === SettingKey.KeyHealthCheckEnabled)?.value ?? 'false';
@@ -139,6 +140,33 @@ export function SettingRetry() {
                                     initialValues.current = {
                                         ...initialValues.current,
                                         [SettingKey.RetryEmptyOutput]: value,
+                                    };
+                                },
+                            },
+                        );
+                    }}
+                />
+            </div>
+            <div className="flex min-w-0 flex-col gap-3 rounded-lg border-border/30 bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex flex-col gap-1">
+                    <span className="text-sm font-medium">
+                        {t('retry.robinActualContentExtract.label')}
+                        <Hint text={t('retry.robinActualContentExtract.hint')} />
+                    </span>
+                </div>
+                <Switch
+                    checked={values[SettingKey.RobinActualContentExtractEnabled] === 'true'}
+                    onCheckedChange={(checked) => {
+                        const value = checked ? 'true' : 'false';
+                        setValues((prev) => ({ ...prev, [SettingKey.RobinActualContentExtractEnabled]: value }));
+                        setSetting.mutate(
+                            { key: SettingKey.RobinActualContentExtractEnabled, value },
+                            {
+                                onSuccess: () => {
+                                    toast.success(t('saved'));
+                                    initialValues.current = {
+                                        ...initialValues.current,
+                                        [SettingKey.RobinActualContentExtractEnabled]: value,
                                     };
                                 },
                             },

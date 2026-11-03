@@ -167,6 +167,11 @@ export interface RelayLogDetail extends RelayLog {
         cancel_reason?: string;
         terminal_at?: number;
         terminal_source?: string;
+        outbound_max_tokens?: number;
+        outbound_max_tokens_source?: string;
+        outbound_max_tokens_adjusted?: boolean;
+        robin_envelope_kind?: string;
+        robin_envelope_reason?: string;
         writer_accepted_bytes?: number;
         semantic_bytes?: number;
         control_bytes?: number;
@@ -187,7 +192,21 @@ export interface RelayLogDetail extends RelayLog {
         tool_delta_count?: number;
         persistence_state?: string;
         routing_conflicts?: string[];
-        attempts?: Array<{ attempt: number; channel_id?: number; protocol?: string; started_at?: number; ended_at?: number; deadline_at?: number; terminal_source?: string; cancel_reason?: string }>;
+        attempts?: Array<{
+            attempt: number;
+            channel_id?: number;
+            protocol?: string;
+            started_at?: number;
+            ended_at?: number;
+            deadline_at?: number;
+            terminal_source?: string;
+            cancel_reason?: string;
+            outbound_max_tokens?: number;
+            outbound_max_tokens_source?: string;
+            outbound_max_tokens_adjusted?: boolean;
+            robin_envelope_kind?: string;
+            robin_envelope_reason?: string;
+        }>;
     };
     request_content?: string;
     response_content?: string;

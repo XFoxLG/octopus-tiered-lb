@@ -1269,6 +1269,10 @@
         "label": "Retry on truncated output",
         "hint": "Only applies to non-streaming answers not yet sent to the client. If the provider hits a token limit, regenerate using another key/channel within the attempt budget. Off by default; retries may add latency and cost. Partially delivered streams cannot be replayed or automatically continued."
       },
+      "robinActualContentExtract": {
+        "label": "Robin internal content envelope compatibility",
+        "hint": "Converts only an undeclared Robin tool envelope whose name is exactly actual_content and whose arguments contain a single strict content string. Off by default. Other unknown tools, fragmented arguments, and tools declared by the client are never rewritten."
+      },
       "keySelectionStrategy": {
         "label": "Key selection strategy",
         "hint": "Default strategy for choosing among multiple keys in a channel. 'cost' picks the lowest-cost key; 'availability' picks the highest-availability key (penalized on errors, recovers on success/time); 'speed' picks the fastest key by EMA-smoothed TPS (tokens/sec, from successful requests); 'priority' picks the key with the higher priority number first. Channels can override this individually.",
