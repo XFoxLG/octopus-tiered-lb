@@ -281,6 +281,12 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		c.Writer = previousWriter
 	}()
 	if internalRequest.Stream != nil && *internalRequest.Stream && group.StreamKeepaliveEnabled {
+			// The first comment commits the HTTP response before the stream
+			// handler runs, so session-identity headers must be published
+			// before that commit or replay/resume silently loses them.
+			if internalRequest.ConversationID != "" {
+				c.Header("X-Conversation-ID", internalRequest.ConversationID)
+			}
 		writer.setKeepalivePhase(relayKeepalivePhaseHeaderWait)
 		stopKeepalive, keepaliveErr := writer.keepalive(c.Request.Context())
 		if keepaliveErr != nil {

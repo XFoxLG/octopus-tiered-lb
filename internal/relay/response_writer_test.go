@@ -157,6 +157,47 @@ func TestSingleKeepaliveOwnerContinuesAfterVisibleContent(t *testing.T) {
 	})
 }
 
+// The first comment commits the HTTP response before the relay applies its SSE
+// headers. Anything the relay sets after that commit is dropped by net/http, so
+// the early commit must publish a complete SSE header set on its own.
+func TestKeepaliveFirstCommentCommitsCompleteSSEHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	w := installRelayResponseWriter(c)
+	defer w.close()
+	c.Header("X-Conversation-ID", "conv-early-commit")
+
+	stop, err := w.keepalive(context.Background())
+	if err != nil {
+		t.Fatalf("keepalive start: %v", err)
+	}
+	defer stop()
+
+	headers := recorder.Result().Header
+	if headers.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("Content-Type = %q", headers.Get("Content-Type"))
+	}
+	if headers.Get("Cache-Control") != "no-cache, no-transform" {
+		t.Fatalf("Cache-Control = %q", headers.Get("Cache-Control"))
+	}
+	if headers.Get("Connection") != "keep-alive" {
+		t.Fatalf("Connection = %q", headers.Get("Connection"))
+	}
+	if headers.Get("X-Accel-Buffering") != "no" {
+		t.Fatalf("X-Accel-Buffering = %q", headers.Get("X-Accel-Buffering"))
+	}
+	if headers.Get("X-Conversation-ID") != "conv-early-commit" {
+		t.Fatalf("X-Conversation-ID = %q", headers.Get("X-Conversation-ID"))
+	}
+	if headers.Get("ETag") != "" {
+		t.Fatalf("ETag = %q, want removed", headers.Get("ETag"))
+	}
+	if recorder.Body.String() != ": ping\n\n" {
+		t.Fatalf("body = %q", recorder.Body.String())
+	}
+}
+
 func TestKeepaliveDiagnosticsSeparateControlFromSemanticBytes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		gin.SetMode(gin.TestMode)

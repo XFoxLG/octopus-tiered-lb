@@ -257,10 +257,17 @@ func sseCommentOnly(p []byte) bool {
 func (w *relayResponseWriter) ping() error {
 	r := w.call(func(base gin.ResponseWriter) relayWriteResult {
 		if !base.Written() {
-			base.Header().Set("Content-Type", "text/event-stream")
-			base.Header().Set("Cache-Control", "no-cache, no-transform")
-			base.Header().Set("X-Accel-Buffering", "no")
-			base.Header().Del("ETag")
+			// The first comment commits the response before the relay has applied
+			// its own SSE headers. Publish a complete, standalone SSE header set
+			// here so a proxy never sees a partial response, and so the final
+			// Connection / X-Conversation-ID values survive the early commit.
+			header := w.header.Clone()
+			header.Set("Content-Type", "text/event-stream")
+			header.Set("Cache-Control", "no-cache, no-transform")
+			header.Set("Connection", "keep-alive")
+			header.Set("X-Accel-Buffering", "no")
+			header.Del("ETag")
+			applyWriterHeaders(base, header)
 		}
 		n, err := base.Write([]byte(": ping\n\n"))
 		if err == nil {
