@@ -280,20 +280,23 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		writer.close()
 		c.Writer = previousWriter
 	}()
-	if internalRequest.Stream != nil && *internalRequest.Stream && group.StreamKeepaliveEnabled {
-		// The first comment commits the HTTP response before the stream
-		// handler runs, so session-identity headers must be published
-		// before that commit or replay/resume silently loses them.
-		if internalRequest.ConversationID != "" {
-			c.Header("X-Conversation-ID", internalRequest.ConversationID)
+	var stopKeepalive func()
+	defer func() {
+		if stopKeepalive != nil {
+			stopKeepalive()
 		}
-		writer.setKeepalivePhase(relayKeepalivePhaseHeaderWait)
-		stopKeepalive, keepaliveErr := writer.keepalive(c.Request.Context())
+	}()
+	startKeepalive := func() bool {
+		enabled := internalRequest.Stream != nil && *internalRequest.Stream && group.StreamKeepaliveEnabled
+		stop, started, keepaliveErr := startRelayStreamKeepalive(c, enabled, internalRequest.ConversationID)
 		if keepaliveErr != nil {
 			log.Warnf("stream keepalive initial write failed: %v", keepaliveErr)
-			return
+			return false
 		}
-		defer stopKeepalive()
+		if started {
+			stopKeepalive = stop
+		}
+		return true
 	}
 
 	// Explicit replay is admitted only after authentication and routing preflight.
@@ -313,6 +316,9 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 			}
 			return
 		}
+		if !startKeepalive() {
+			return
+		}
 		var replayCancel context.CancelCauseFunc
 		var replayDeadlineCancel context.CancelFunc
 		operationCtx, replayCancel, replayDeadlineCancel = newRelayReplayOperationContext(operationCtx)
@@ -326,6 +332,9 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 				session.Finish(lastErr)
 			}
 		}()
+	}
+	if !startKeepalive() {
+		return
 	}
 
 	// 根据分组端点提供方做请求兼容改写
