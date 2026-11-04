@@ -61,6 +61,9 @@ func TestFirstVisibleMilestonesFollowClientDelivery(t *testing.T) {
 				if !writer.flushed || attempt.metrics.FirstTokenTime.IsZero() {
 					t.Fatal("successful flush missing client milestone")
 				}
+				if got := attempt.c.Writer.Header().Get("Cache-Control"); got != "no-cache, no-transform" {
+					t.Fatalf("SSE Cache-Control = %q", got)
+				}
 				if attempt.metrics.FirstTokenTime.Before(attempt.metrics.UpstreamFirstVisibleTime) {
 					t.Fatal("client milestone precedes upstream arrival")
 				}

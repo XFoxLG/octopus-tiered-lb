@@ -30,6 +30,12 @@ const (
 	relayWriteDeadline      = 10 * time.Second
 	relayWriterCloseGrace   = relayWriteDeadline + time.Second
 	relayWriterFinishDetach = 25 * time.Millisecond
+	relayKeepaliveInterval  = 15 * time.Second
+
+	relayKeepalivePhaseHeaderWait    = "header_wait"
+	relayKeepalivePhaseRetryWait     = "retry_wait"
+	relayKeepalivePhaseReasoningWait = "reasoning_wait"
+	relayKeepalivePhaseBodyWait      = "body_wait"
 )
 
 var (
@@ -38,7 +44,9 @@ var (
 )
 
 // All access to the real HTTP writer runs on this one goroutine. Header() is
-// request-owner state; heartbeat commands never read or mutate that map.
+// request-owner state. The synchronous pre-commit ping snapshots it after route
+// admission; once that ping commits the writer, asynchronous heartbeats skip the
+// mutable map, so they cannot race later header updates from stream handling.
 type relayResponseWriter struct {
 	gin.ResponseWriter
 	header             http.Header
@@ -52,6 +60,9 @@ type relayResponseWriter struct {
 	visible            bool
 	stopRequestWatcher func() bool
 	requireDeadline    bool
+	keepaliveMu        sync.RWMutex
+	keepalivePhase     string
+	onKeepalive        func(time.Time, string)
 }
 
 func newRelayResponseWriter(base gin.ResponseWriter) *relayResponseWriter {
@@ -65,6 +76,7 @@ func newRelayResponseWriterWithDeadlinePolicy(base gin.ResponseWriter, requireDe
 		commands:        make(chan relayWriteCommand),
 		finished:        make(chan struct{}),
 		requireDeadline: requireDeadline,
+		keepalivePhase:  relayKeepalivePhaseHeaderWait,
 	}
 	go func() {
 		defer close(w.finished)
@@ -247,9 +259,17 @@ func sseCommentOnly(p []byte) bool {
 func (w *relayResponseWriter) ping() error {
 	r := w.call(func(base gin.ResponseWriter) relayWriteResult {
 		if !base.Written() {
-			base.Header().Set("Content-Type", "text/event-stream")
-			base.Header().Set("Cache-Control", "no-cache")
-			base.Header().Set("X-Accel-Buffering", "no")
+			// The first comment commits the response before the relay has applied
+			// its own SSE headers. Publish a complete, standalone SSE header set
+			// here so a proxy never sees a partial response, and so the final
+			// Connection / X-Conversation-ID values survive the early commit.
+			header := w.header.Clone()
+			header.Set("Content-Type", "text/event-stream")
+			header.Set("Cache-Control", "no-cache, no-transform")
+			header.Set("Connection", "keep-alive")
+			header.Set("X-Accel-Buffering", "no")
+			header.Del("ETag")
+			applyWriterHeaders(base, header)
 		}
 		n, err := base.Write([]byte(": ping\n\n"))
 		if err == nil {
@@ -259,12 +279,56 @@ func (w *relayResponseWriter) ping() error {
 	})
 	return r.err
 }
-func (w *relayResponseWriter) keepalive(ctx context.Context) func() {
+
+func (w *relayResponseWriter) setKeepalivePhase(phase string) {
+	if w == nil || phase == "" {
+		return
+	}
+	w.keepaliveMu.Lock()
+	w.keepalivePhase = phase
+	w.keepaliveMu.Unlock()
+}
+
+func (w *relayResponseWriter) currentKeepalivePhase() string {
+	if w == nil {
+		return relayKeepalivePhaseHeaderWait
+	}
+	w.keepaliveMu.RLock()
+	phase := w.keepalivePhase
+	w.keepaliveMu.RUnlock()
+	if phase == "" {
+		return relayKeepalivePhaseHeaderWait
+	}
+	return phase
+}
+
+func (w *relayResponseWriter) notifyKeepalive(at time.Time) {
+	if w == nil || w.onKeepalive == nil {
+		return
+	}
+	w.onKeepalive(at, w.currentKeepalivePhase())
+}
+
+func (w *relayResponseWriter) keepalive(ctx context.Context) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return func() {}, err
+	}
+	// Commit the SSE response immediately after authentication and route
+	// preflight. Waiting 15 seconds for the first comment leaves proxies with
+	// an avoidable "origin has not started responding" window.
+	if err := w.ping(); err != nil {
+		return func() {}, err
+	}
+	w.notifyKeepalive(time.Now())
+
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		timer := time.NewTicker(15 * time.Second)
+		timer := time.NewTicker(relayKeepaliveInterval)
 		defer timer.Stop()
 		for {
 			select {
@@ -276,22 +340,54 @@ func (w *relayResponseWriter) keepalive(ctx context.Context) func() {
 				if w.ping() != nil {
 					return
 				}
+				w.notifyKeepalive(time.Now())
 			}
 		}
 	}()
-	return func() { close(stop); <-done }
+	var stopOnce sync.Once
+	return func() {
+		stopOnce.Do(func() {
+			close(stop)
+			<-done
+		})
+	}, nil
 }
 func installRelayResponseWriter(c *gin.Context) *relayResponseWriter {
 	if w, ok := c.Writer.(*relayResponseWriter); ok {
 		return w
 	}
 	w := newRelayResponseWriter(c.Writer)
+	if trace := relayRequestTraceFromContext(c); trace != nil {
+		w.onKeepalive = trace.recordKeepalive
+	}
 	if c.Request != nil {
 		w.stopRequestWatcher = context.AfterFunc(c.Request.Context(), w.interrupt)
 	}
 	c.Writer = w
 	return w
 }
+
+func setRelayKeepalivePhase(c *gin.Context, phase string) {
+	if c == nil {
+		return
+	}
+	if w, ok := c.Writer.(*relayResponseWriter); ok {
+		w.setKeepalivePhase(phase)
+	}
+}
+
+func (req *relayRequest) setKeepalivePhase(phase string) {
+	if req != nil {
+		setRelayKeepalivePhase(req.c, phase)
+	}
+}
+
+func (ra *relayAttempt) setKeepalivePhase(phase string) {
+	if ra != nil {
+		setRelayKeepalivePhase(ra.c, phase)
+	}
+}
+
 func relaySemanticWritten(c *gin.Context) bool {
 	if c == nil {
 		return false

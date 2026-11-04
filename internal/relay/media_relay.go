@@ -1223,9 +1223,10 @@ func isMediaSSEResponse(response *http.Response) bool {
 
 func handleSSEResponse(c *gin.Context, response *http.Response) (int, error) {
 	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
+	c.Header("Cache-Control", "no-cache, no-transform")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	c.Writer.Header().Del("ETag")
 
 	reader := getReader(response.Body)
 	defer putReader(reader)

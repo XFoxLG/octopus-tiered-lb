@@ -2481,7 +2481,7 @@
       "requestTimeout": {"label":"Whole request timeout (seconds)","hint":"Includes queueing, attempts and streaming. Zero inherits other limits; the shortest deadline wins."},
       "relayRetryCount": {"label":"Key retries per candidate","hint":"Group override. -1 inherits the channel or global setting; 0 prevents another key from being tried for the same candidate."},
       "relayRouteRetries": {"label":"Route-round override","hint":"Group override. -1 inherits the global setting; controls how many complete candidate rounds may run."},
-      "streamKeepalive": {"label":"Stream keepalive","hint":"Send an SSE comment every 15 seconds while waiting. It carries no model content and cannot extend a client deadline."},
+      "streamKeepalive": {"label":"Stream keepalive","hint":"Send an SSE comment immediately, then every 15 seconds while waiting. It carries no model content and cannot extend a client deadline."},
       "assistantPrefill": {"label":"Assistant prefill compatibility","hint":"On converted requests ending with assistant text, append a user instruction to continue. Raw forwarding is preserved."},
       "forwardMode": {"label":"Forwarding mode","hint":"Follow endpoint settings, convert formats, or require the same protocol for passthrough/raw. Protocol conflicts are excluded.","inherit":"Follow endpoint settings","convert":"Convert","passthrough":"Passthrough","raw":"Raw path and body"},
       "name": "Group Name",

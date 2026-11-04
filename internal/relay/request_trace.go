@@ -448,12 +448,11 @@ func (trace *relayRequestTrace) recordClientWrite(payload []byte, writeCount int
 	}
 	trace.mutex.Lock()
 	trace.clientWriteBytes += int64(writeCount)
-	if trace.diagnostics != nil {
-		if sseCommentOnly(payload) {
-			trace.diagnostics.ControlBytes += int64(writeCount)
-		} else {
-			trace.diagnostics.SemanticBytes += int64(writeCount)
-		}
+	diagnostics := trace.ensureDiagnosticsLocked()
+	if sseCommentOnly(payload) {
+		diagnostics.ControlBytes += int64(writeCount)
+	} else {
+		diagnostics.SemanticBytes += int64(writeCount)
 	}
 	if writeCount < len(payload) && writeErr == nil {
 		writeErr = io.ErrShortWrite

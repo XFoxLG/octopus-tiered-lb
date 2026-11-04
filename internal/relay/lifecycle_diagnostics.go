@@ -126,6 +126,25 @@ func (trace *relayRequestTrace) recordStreamChunk(reasoningBytes int, visible bo
 	trace.mutex.Unlock()
 }
 
+func (trace *relayRequestTrace) recordKeepalive(at time.Time, phase string) {
+	if trace == nil {
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	atMillis := at.UnixMilli()
+	trace.mutex.Lock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	diagnostics.KeepalivePings++
+	if diagnostics.FirstKeepaliveAt == 0 {
+		diagnostics.FirstKeepaliveAt = atMillis
+	}
+	diagnostics.LastKeepaliveAt = atMillis
+	diagnostics.LastKeepalivePhase = phase
+	trace.mutex.Unlock()
+}
+
 func (trace *relayRequestTrace) recordReasoningBuffered(frameBytes int) {
 	if trace == nil || frameBytes <= 0 {
 		return

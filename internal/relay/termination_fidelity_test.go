@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -532,6 +533,39 @@ func TestHandleStreamResponseWaitsForVisibleOutputBeforeFirstTimeout(t *testing.
 	if recorder.Body.Len() != 0 {
 		t.Fatalf("metadata-only stream wrote downstream data: %s", recorder.Body.String())
 	}
+}
+
+func TestHandleStreamResponseNonSSEStalledBodyHonorsFirstVisibleDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		attempt := newTerminationFidelityRelayAttempt(recorder, &model.InternalLLMResponse{}, nil)
+		attempt.firstTokenTimeOutSec = 1
+		attempt.ensureFirstVisibleDeadlineState().deadline = time.Now().Add(time.Second)
+
+		body := newFakeStallBody()
+		result := make(chan error, 1)
+		go func() {
+			result <- attempt.handleStreamResponse(context.Background(), &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+				Body:       body,
+			})
+		}()
+
+		time.Sleep(time.Second)
+		synctest.Wait()
+		select {
+		case err := <-result:
+			if !errors.Is(err, errFirstVisibleOutputTimeout) {
+				t.Fatalf("handleStreamResponse() error = %v, want first visible output timeout", err)
+			}
+		default:
+			t.Fatal("non-SSE stalled body bypassed the request-wide first-visible deadline")
+		}
+		if recorder.Body.Len() != 0 {
+			t.Fatalf("non-SSE stalled body wrote downstream data: %s", recorder.Body.String())
+		}
+	})
 }
 
 func TestHandleStreamResponseAbortsIdleVisibleStream(t *testing.T) {

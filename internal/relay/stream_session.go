@@ -726,6 +726,27 @@ func writeSSEErrorEvent(w io.Writer, message string) {
 	fmt.Fprintf(w, "event: error\ndata: %s\n\n", data)
 }
 
+func startRelayStreamKeepalive(c *gin.Context, enabled bool, conversationID string) (func(), bool, error) {
+	if !enabled {
+		return nil, false, nil
+	}
+	writer, ok := c.Writer.(*relayResponseWriter)
+	if !ok || writer == nil {
+		return nil, false, errors.New("relay stream keepalive requires the single relay response writer")
+	}
+	// The first comment commits the response, so publish the session identity
+	// before that point or replay/resume silently loses the header.
+	if strings.TrimSpace(conversationID) != "" {
+		c.Header("X-Conversation-ID", conversationID)
+	}
+	writer.setKeepalivePhase(relayKeepalivePhaseHeaderWait)
+	stop, err := writer.keepalive(c.Request.Context())
+	if err != nil {
+		return nil, false, err
+	}
+	return stop, true, nil
+}
+
 func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 	if req == nil || req.streamSession == nil {
 		resp.Error(c, http.StatusBadRequest, "missing relay stream session")
@@ -734,7 +755,8 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 
 	clientCtx := c.Request.Context()
 	lastSeq := req.internalRequest.ResumeFromEventID
-	headersWritten := false
+	headersWritten := c.Writer.Written()
+	keepaliveChecked := false
 
 	writeHeaders := func() {
 		if headersWritten {
@@ -742,9 +764,10 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 		}
 		headersWritten = true
 		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
+		c.Header("Cache-Control", "no-cache, no-transform")
 		c.Header("Connection", "keep-alive")
 		c.Header("X-Accel-Buffering", "no")
+		c.Writer.Header().Del("ETag")
 		c.Header("X-Conversation-ID", req.internalRequest.ConversationID)
 	}
 
@@ -774,6 +797,27 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 				c.Writer.Flush()
 			}
 			return
+		}
+		if done && sessionErr != nil && len(events) == 0 && !headersWritten {
+			statusCode := http.StatusBadGateway
+			if errors.Is(sessionErr, context.DeadlineExceeded) {
+				statusCode = http.StatusGatewayTimeout
+			}
+			resp.Error(c, statusCode, sessionErr.Error())
+			return
+		}
+		if !keepaliveChecked {
+			enabled := req.group != nil && req.group.StreamKeepaliveEnabled
+			stop, started, keepaliveErr := startRelayStreamKeepalive(c, enabled, req.internalRequest.ConversationID)
+			if keepaliveErr != nil {
+				log.Warnf("stream replay keepalive initial write failed: %v", keepaliveErr)
+				return
+			}
+			if started {
+				defer stop()
+				headersWritten = true
+			}
+			keepaliveChecked = true
 		}
 		if len(events) > 0 {
 			if !writeEvents(events) {

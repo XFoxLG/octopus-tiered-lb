@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -279,9 +280,28 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		writer.close()
 		c.Writer = previousWriter
 	}()
-	if internalRequest.Stream != nil && *internalRequest.Stream && group.StreamKeepaliveEnabled {
-		stopKeepalive := writer.keepalive(c.Request.Context())
-		defer stopKeepalive()
+	var stopKeepalive func()
+	defer func() {
+		if stopKeepalive != nil {
+			stopKeepalive()
+		}
+	}()
+	keepaliveStarted := false
+	startKeepalive := func() bool {
+		if keepaliveStarted {
+			return true
+		}
+		enabled := internalRequest.Stream != nil && *internalRequest.Stream && group.StreamKeepaliveEnabled
+		stop, started, keepaliveErr := startRelayStreamKeepalive(c, enabled, internalRequest.ConversationID)
+		if keepaliveErr != nil {
+			log.Warnf("stream keepalive initial write failed: %v", keepaliveErr)
+			return false
+		}
+		if started {
+			stopKeepalive = stop
+			keepaliveStarted = true
+		}
+		return true
 	}
 
 	// Explicit replay is admitted only after authentication and routing preflight.
@@ -301,6 +321,9 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 			}
 			return
 		}
+		if !startKeepalive() {
+			return
+		}
 		var replayCancel context.CancelCauseFunc
 		var replayDeadlineCancel context.CancelFunc
 		operationCtx, replayCancel, replayDeadlineCancel = newRelayReplayOperationContext(operationCtx)
@@ -314,6 +337,9 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 				session.Finish(lastErr)
 			}
 		}()
+	}
+	if !startKeepalive() {
+		return
 	}
 
 	// 根据分组端点提供方做请求兼容改写
@@ -956,6 +982,7 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, *firstVi
 	// arriving before the deadline does not cut the long stream off later.
 	dispatchGuard := ra.withFirstVisibleDeadline(safeCtx, ra.firstTokenTimeOutSec)
 	req = req.WithContext(dispatchGuard.Context())
+	ra.setKeepalivePhase(relayKeepalivePhaseHeaderWait)
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
 		trace.markUpstreamSendStarted(ra.logAttemptNumber)
 	}
@@ -968,6 +995,41 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, *firstVi
 	dispatchGuard.ResponseHeadersReceived()
 
 	return response, dispatchGuard, nil
+}
+
+// readStreamMismatchBody preserves the request-wide first-visible deadline
+// after response headers have arrived. A non-SSE Content-Type is invalid for a
+// stream request, but a peer can still send headers and then leave the body
+// blocked forever. Closing the body from the watchdog unblocks the read.
+func (ra *relayAttempt) readStreamMismatchBody(body io.ReadCloser) ([]byte, error) {
+	if body == nil {
+		return nil, errors.New("upstream response body is nil")
+	}
+	limited := io.LimitReader(body, 16*1024)
+	if ra == nil || ra.firstTokenTimeOutSec <= 0 {
+		return io.ReadAll(limited)
+	}
+	remaining, ok := ra.remainingFirstVisibleDeadline()
+	if !ok {
+		return io.ReadAll(limited)
+	}
+	if remaining <= 0 {
+		_ = body.Close()
+		return nil, fmt.Errorf("%w (%ds)", errFirstVisibleOutputTimeout, ra.firstTokenTimeOutSec)
+	}
+
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(remaining, func() {
+		timedOut.Store(true)
+		_ = body.Close()
+	})
+	data, readErr := io.ReadAll(limited)
+	timer.Stop()
+	if timedOut.Load() && readErr != nil {
+		log.Warnf("first visible output timeout (%ds) after upstream sent a non-SSE response body", ra.firstTokenTimeOutSec)
+		return data, fmt.Errorf("%w (%ds)", errFirstVisibleOutputTimeout, ra.firstTokenTimeOutSec)
+	}
+	return data, readErr
 }
 
 // handleStreamResponse 处理流式响应
@@ -999,7 +1061,14 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}()
 
 	if ct := response.Header.Get("Content-Type"); ct != "" && !strings.Contains(strings.ToLower(ct), "text/event-stream") {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 16*1024))
+		ra.setKeepalivePhase(relayKeepalivePhaseBodyWait)
+		body, readErr := ra.readStreamMismatchBody(response.Body)
+		if errors.Is(readErr, errFirstVisibleOutputTimeout) {
+			return readErr
+		}
+		if readErr != nil {
+			return fmt.Errorf("failed to read non-SSE stream response: %w", readErr)
+		}
 		if isExplicitAnswerNotice(string(body)) {
 			return providerTerminalFailureError(answerNoticeTermination())
 		}
@@ -1016,10 +1085,12 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}()
 
 	// 设置 SSE 响应头
+	ra.setKeepalivePhase(relayKeepalivePhaseBodyWait)
 	ra.c.Header("Content-Type", "text/event-stream")
-	ra.c.Header("Cache-Control", "no-cache")
+	ra.c.Header("Cache-Control", "no-cache, no-transform")
 	ra.c.Header("Connection", "keep-alive")
 	ra.c.Header("X-Accel-Buffering", "no")
+	ra.c.Writer.Header().Del("ETag")
 	if ra.internalRequest.ConversationID != "" {
 		ra.c.Header("X-Conversation-ID", ra.internalRequest.ConversationID)
 	}
@@ -1822,9 +1893,15 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	}
 	hasVisible := streamChunkHasVisibleContent(internalStream)
 	ra.streamAnswerText, ra.streamAnswerBypass = answerText(internalStream, true)
+	reasoningBytes := streamChunkReasoningBytes(internalStream)
+	if hasVisible {
+		ra.setKeepalivePhase(relayKeepalivePhaseBodyWait)
+	} else if reasoningBytes > 0 {
+		ra.setKeepalivePhase(relayKeepalivePhaseReasoningWait)
+	}
 	if ra.metrics != nil && ra.metrics.RequestTrace != nil {
 		ra.metrics.RequestTrace.recordStreamChunk(
-			streamChunkReasoningBytes(internalStream),
+			reasoningBytes,
 			hasVisible,
 			streamChunkVisibleBytes(internalStream),
 			streamChunkToolDeltaCount(internalStream),
@@ -2513,6 +2590,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 							goto exhausted
 						}
 						if waitFor, canWait := rateLimitHoldWaitDuration(rateLimitHoldCfg, result.Decision, rateLimitHoldWaited); canWait {
+							req.setKeepalivePhase(relayKeepalivePhaseRetryWait)
 							holdCtx, cancelHold := context.WithCancel(req.operationCtx)
 							clientContext := req.clientCtx
 							if clientContext == nil {
