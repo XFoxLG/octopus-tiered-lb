@@ -44,6 +44,31 @@ func assertJSONConflictWithoutKeepalive(t *testing.T, recorder interface {
 	}
 }
 
+func TestHandlerStartsOneKeepaliveForOwnedSession(t *testing.T) {
+	if runIndependentRequestTestInSubprocess(t) {
+		return
+	}
+
+	resetRelayStreamSessionsForTest(t)
+	fixtureID := prepareIndependentRequestFixture(t, func(request *http.Request) (*http.Response, error) {
+		response := newIndependentFixtureResponse(request, http.StatusOK,
+			"data: "+`{"id":"keepalive-once","object":"chat.completion.chunk","model":"creative-fixture","choices":[{"index":0,"delta":{"content":"ok"}}]}`+"\n\n"+
+				"data: "+`{"id":"keepalive-once","object":"chat.completion.chunk","model":"creative-fixture","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`+"\n\n"+
+				"data: [DONE]\n\n")
+		response.Header.Set("Content-Type", "text/event-stream")
+		return response, nil
+	})
+	enableKeepaliveForIndependentFixture(t, fixtureID)
+
+	recorder := serveIndependentFixtureRequest(`{"conversation_id":"conv-keepalive-once","model":"creative-fixture","stream":true,"messages":[{"role":"user","content":"Continue"}]}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if pings := strings.Count(recorder.Body.String(), ": ping"); pings != 1 {
+		t.Fatalf("owned stream initial ping count = %d, want exactly 1; body=%s", pings, recorder.Body.String())
+	}
+}
+
 func TestHandlerKeepaliveBusySessionReturnsJSONConflictBeforeInitialPing(t *testing.T) {
 	if runIndependentRequestTestInSubprocess(t) {
 		return

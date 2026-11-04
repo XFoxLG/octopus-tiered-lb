@@ -44,7 +44,9 @@ var (
 )
 
 // All access to the real HTTP writer runs on this one goroutine. Header() is
-// request-owner state; heartbeat commands never read or mutate that map.
+// request-owner state. The synchronous pre-commit ping snapshots it after route
+// admission; once that ping commits the writer, asynchronous heartbeats skip the
+// mutable map, so they cannot race later header updates from stream handling.
 type relayResponseWriter struct {
 	gin.ResponseWriter
 	header             http.Header

@@ -286,7 +286,11 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 			stopKeepalive()
 		}
 	}()
+	keepaliveStarted := false
 	startKeepalive := func() bool {
+		if keepaliveStarted {
+			return true
+		}
 		enabled := internalRequest.Stream != nil && *internalRequest.Stream && group.StreamKeepaliveEnabled
 		stop, started, keepaliveErr := startRelayStreamKeepalive(c, enabled, internalRequest.ConversationID)
 		if keepaliveErr != nil {
@@ -295,6 +299,7 @@ func Handler(endpointType string, inboundType inbound.InboundType, c *gin.Contex
 		}
 		if started {
 			stopKeepalive = stop
+			keepaliveStarted = true
 		}
 		return true
 	}

@@ -237,6 +237,47 @@ func TestKeepaliveDiagnosticsSeparateControlFromSemanticBytes(t *testing.T) {
 	})
 }
 
+func TestKeepalivePostCommitPingsDoNotReadMutableHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	w := installRelayResponseWriter(c)
+	defer w.close()
+	stop, err := w.keepalive(context.Background())
+	if err != nil {
+		t.Fatalf("keepalive start: %v", err)
+	}
+	defer stop()
+	if !w.Written() {
+		t.Fatal("initial keepalive did not commit the writer")
+	}
+
+	const iterations = 256
+	pingDone := make(chan error, 1)
+	go func() {
+		for range iterations {
+			if err := w.ping(); err != nil {
+				pingDone <- err
+				return
+			}
+		}
+		pingDone <- nil
+	}()
+	for i := 0; i < iterations; i++ {
+		if i%2 == 0 {
+			c.Header("X-Header-Mutation-Test", "even")
+		} else {
+			c.Header("X-Header-Mutation-Test", "odd")
+		}
+	}
+	if err := <-pingDone; err != nil {
+		t.Fatalf("post-commit ping: %v", err)
+	}
+	if pings := strings.Count(recorder.Body.String(), ": ping"); pings != iterations+1 {
+		t.Fatalf("ping count = %d, want %d", pings, iterations+1)
+	}
+}
+
 func TestRelayResponseWriterCallCloseRace(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
