@@ -139,13 +139,6 @@ jobs:
       - name: Build
         run: bash scripts/build.sh release
 
-      - name: Upload Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: build/archives/*
-          prerelease: false
-          make_latest: true
-          tag_name: ${{ env.RELEASE_TAG }}
 
       - name: Set build time
         id: build_time
@@ -267,8 +260,8 @@ jobs:
           if not archives:
               raise RuntimeError("no release archives found")
 
-          docker_digest = os.environ.get("DOCKER_DIGEST", "").strip()
-          if docker_digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", docker_digest):
+          docker_digest = required_env("DOCKER_DIGEST")
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", docker_digest):
               raise RuntimeError("invalid Docker digest")
           docker_tags = [
               tag.strip()
@@ -318,3 +311,13 @@ jobs:
           path: release-manifest.json
           if-no-files-found: error
           retention-days: 90
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/archives/*
+            release-manifest.json
+          prerelease: false
+          make_latest: true
+          tag_name: ${{ env.RELEASE_TAG }}
