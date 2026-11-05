@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readableLogBody, logIssueSummary } from './body-preview.ts';
+import {
+    readableLogBody,
+    logIssueSummary,
+    resolveContentFilterTextEvidence,
+    strictLogTextEvidence,
+} from './body-preview.ts';
 
 test('reads visible answer text across supported response envelopes', () => {
     for (const body of [
@@ -39,4 +44,60 @@ test('display summaries do not change stored error evidence', () => {
     assert.equal(logIssueSummary('upstream 429'), 'limited');
     assert.equal(logIssueSummary('context deadline exceeded'), 'timeout');
     assert.equal(logIssueSummary('unknown adapter failure'), 'failed');
+});
+
+test('content-filter evidence prefers exact backend state and treats zero bytes as unknown', () => {
+    assert.equal(resolveContentFilterTextEvidence({ output_text_present: true }, undefined).state, 'present');
+    assert.equal(resolveContentFilterTextEvidence({ output_text_present: false }, undefined).state, 'absent');
+    assert.equal(resolveContentFilterTextEvidence(undefined, undefined).state, 'unknown');
+    assert.equal(resolveContentFilterTextEvidence({ visible_content_bytes: 0 }, undefined).state, 'unknown');
+    assert.equal(resolveContentFilterTextEvidence({ visible_content_bytes: 32 }, undefined).state, 'present');
+    assert.equal(
+        resolveContentFilterTextEvidence(
+            { output_text_present: false, visible_content_bytes: 32 },
+            undefined,
+        ).state,
+        'absent',
+    );
+});
+
+test('strict evidence accepts only complete captured visible response text', () => {
+    const bodies = [
+        JSON.stringify({ choices:[{message:{content:'Hello'}}] }),
+        JSON.stringify({ choices:[{message:{content:'Hello'}},{message:{content:'World'}}] }),
+        JSON.stringify({ output:[{type:'message',content:[{type:'output_text',text:'Hello'}]}] }),
+        JSON.stringify({ content:[{type:'thinking',thinking:'private'},{type:'text',text:'Hello'}] }),
+        JSON.stringify({ content:['Hello','World'] }),
+        JSON.stringify({ candidates:[{content:{parts:[{text:'Hello'}]}}] }),
+    ];
+    for (const body of bodies) assert.equal(strictLogTextEvidence(body, true).state, 'present');
+
+    assert.equal(strictLogTextEvidence(JSON.stringify({ choices:[] }), true).state, 'absent');
+    assert.equal(strictLogTextEvidence(JSON.stringify({ content:[{type:'thinking',thinking:'private'}] }), true).state, 'absent');
+    assert.equal(strictLogTextEvidence(JSON.stringify({ choices:[{message:{tool_calls:[{id:'call'}]}}] }), true).state, 'absent');
+    assert.equal(strictLogTextEvidence(JSON.stringify({ content:[{type:'image_url',image_url:{url:'image'}}] }), true).state, 'absent');
+    assert.equal(strictLogTextEvidence(JSON.stringify({ error:{message:'failed'} }), true).state, 'unknown');
+    assert.equal(strictLogTextEvidence(JSON.stringify({ choices:[{message:{content:'Hello'}}] }), false).state, 'unknown');
+    assert.equal(strictLogTextEvidence('plain response', true).state, 'unknown');
+});
+
+test('strict evidence excludes unrecognized and error SSE frames but reads text deltas', () => {
+    const stream = [
+        'data: {"type":"response.output_text.delta","delta":"Hello "}',
+        'data: {"type":"response.output_text.delta","delta":"World"}',
+        'data: [DONE]',
+    ].join('\n\n');
+    assert.equal(strictLogTextEvidence(stream, true).state, 'present');
+    assert.equal(strictLogTextEvidence('data: [DONE]', true).state, 'absent');
+    assert.equal(strictLogTextEvidence('data: [DONE]', false).state, 'unknown');
+    assert.equal(strictLogTextEvidence('data: {"error":{"message":"failed"}}', true).state, 'unknown');
+    assert.equal(strictLogTextEvidence('data: {"type":"keepalive"}', true).state, 'unknown');
+    assert.equal(strictLogTextEvidence([
+        'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+        'data: [DONE]',
+    ].join('\n\n'), true).state, 'present');
+    assert.equal(strictLogTextEvidence([
+        'data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}]}',
+        'data: [DONE]',
+    ].join('\n\n'), true).state, 'present');
 });

@@ -67,3 +67,144 @@ export function readableLogBody(raw: string): string {
     const candidateText = candidates.map(value => textParts(record(record(value)?.content)?.parts)).filter(Boolean).join('\n\n');
     return candidateText || JSON.stringify(parsed, null, 2);
 }
+
+export type StrictLogTextEvidenceState = 'present' | 'absent' | 'unknown';
+
+export interface StrictLogTextEvidence {
+    state: StrictLogTextEvidenceState;
+}
+
+interface StrictEvidenceInput {
+    output_text_present?: boolean;
+    visible_content_bytes?: number;
+}
+
+function strictTextParts(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (!Array.isArray(value)) return '';
+    return value.map(part => {
+        if (typeof part === 'string') return part;
+        const item = record(part);
+        if (!item || item.thought === true) return '';
+        const itemType = item.type === undefined ? 'text' : String(item.type);
+        if (!['text', 'output_text'].includes(itemType)) return '';
+        return typeof item.text === 'string' ? item.text : '';
+    }).filter(Boolean).join('\n');
+}
+
+function jsonEnvelopeText(body: RecordValue): string {
+    if (typeof body.output_text === 'string' && body.output_text) return body.output_text;
+    const choices = Array.isArray(body.choices) ? body.choices : [];
+    const choiceText = choices.map(value => {
+        const choice = record(value);
+        return strictTextParts(record(choice?.message)?.content ?? record(choice?.delta)?.content);
+    }).filter(Boolean).join('\n\n');
+    if (choiceText) return choiceText;
+    const output = Array.isArray(body.output) ? body.output : [];
+    const outputText = output.map(value => strictTextParts(record(value)?.content)).filter(Boolean).join('\n\n');
+    if (outputText) return outputText;
+    const candidates = Array.isArray(body.candidates) ? body.candidates : [];
+    const candidateText = candidates.map(value => strictTextParts(record(record(value)?.content)?.parts)).filter(Boolean).join('\n\n');
+    if (candidateText) return candidateText;
+    return strictTextParts(body.content);
+}
+
+function isErrorResponse(value: unknown): boolean {
+    return Boolean(record(value)?.error);
+}
+
+function jsonStrictTextEvidence(raw: string): StrictLogTextEvidence {
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return { state: 'unknown' }; }
+    if (isErrorResponse(parsed)) return { state: 'unknown' };
+    if (typeof parsed === 'string') return parsed.trim() ? { state: 'present' } : { state: 'unknown' };
+    const body = record(parsed);
+    if (!body) return { state: 'unknown' };
+    const isKnownResponseEnvelope = (
+        Array.isArray(body.choices) ||
+        Array.isArray(body.output) ||
+        Array.isArray(body.candidates) ||
+        body.content !== undefined ||
+        body.output_text !== undefined
+    );
+    if (!isKnownResponseEnvelope) return { state: 'unknown' };
+    return jsonEnvelopeText(body).trim() ? { state: 'present' } : { state: 'absent' };
+}
+
+function streamStrictTextEvidence(raw: string): StrictLogTextEvidence {
+    let recognizedFrame = false;
+    let sawError = false;
+    const textPartsByLine = raw.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => {
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') {
+            recognizedFrame = true;
+            return '';
+        }
+        let value: unknown;
+        try { value = JSON.parse(payload); } catch { return ''; }
+        const event = record(value);
+        if (!event) return '';
+        const eventType = typeof event.type === 'string' ? event.type : '';
+        const isRecognizedEvent = (
+            eventType === 'response.output_text.delta' ||
+            eventType.startsWith('response.') ||
+            eventType === 'content_block_delta' ||
+            eventType.startsWith('content_block_') ||
+            Array.isArray(event.choices) ||
+            Array.isArray(event.candidates)
+        );
+        if (!isRecognizedEvent) return '';
+        recognizedFrame = true;
+        if (isErrorResponse(event)) {
+            sawError = true;
+            return '';
+        }
+        if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
+            return event.delta;
+        }
+        if (event.type === 'content_block_delta') {
+            const delta = record(event.delta);
+            return delta?.type === 'text_delta' && typeof delta.text === 'string' ? delta.text : '';
+        }
+        if (Array.isArray(event.choices)) {
+            return event.choices.map(choice => strictTextParts(record(record(choice)?.delta)?.content)).join('');
+        }
+        if (Array.isArray(event.candidates)) {
+            return event.candidates.map(candidate => strictTextParts(record(record(candidate)?.content)?.parts)).join('');
+        }
+        return '';
+    }).join('');
+    if (textPartsByLine.trim()) return { state: 'present' };
+    if (sawError || !recognizedFrame) return { state: 'unknown' };
+    return { state: 'absent' };
+}
+
+/**
+ * Classify captured response text without treating display fallbacks as proof.
+ * Plain strings, `text`, `output_text`, and stream `delta` content are the only
+ * visible body candidates; tool, reasoning, media, control, and error frames
+ * never become evidence.
+ */
+export function strictLogTextEvidence(raw: string | undefined, captureComplete: boolean): StrictLogTextEvidence {
+    if (!raw || !captureComplete) return { state: 'unknown' };
+    const bodyEvidence = jsonStrictTextEvidence(raw);
+    if (bodyEvidence.state !== 'unknown') return bodyEvidence;
+    return streamStrictTextEvidence(raw);
+}
+
+/**
+ * Resolve content-filter body evidence. A backend boolean wins. For legacy
+ * records, a positive gateway byte count proves text existed, but zero never
+ * proves absence; otherwise the selected captured response is parsed strictly.
+ */
+export function resolveContentFilterTextEvidence(
+    diagnostics: StrictEvidenceInput | undefined,
+    capturedResponse: { text?: string; complete: boolean } | undefined,
+): StrictLogTextEvidence {
+    if (diagnostics?.output_text_present === true) return { state: 'present' };
+    if (diagnostics?.output_text_present === false) return { state: 'absent' };
+    if (typeof diagnostics?.visible_content_bytes === 'number' && Number.isFinite(diagnostics.visible_content_bytes) && diagnostics.visible_content_bytes > 0) {
+        return { state: 'present' };
+    }
+    return strictLogTextEvidence(capturedResponse?.text, capturedResponse?.complete === true);
+}

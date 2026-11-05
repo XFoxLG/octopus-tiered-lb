@@ -191,6 +191,7 @@ export interface RelayLogDetail extends RelayLog {
         first_reasoning_at?: number;
         last_reasoning_at?: number;
         reasoning_buffer_flush_at?: number;
+        output_text_present?: boolean;
         visible_chunks?: number;
         visible_content_bytes?: number;
         tool_delta_count?: number;

@@ -3077,6 +3077,13 @@
         "writerBytes": "Writer-accepted bytes",
         "termination": "Canonical termination",
         "providerTermination": "Provider termination",
+        "contentFilterEvidence": {
+            "axis": "Moderation evidence",
+            "present": "Moderation ended with body",
+            "absent": "Moderation ended with no body",
+            "unknown": "Body evidence insufficient",
+            "hint": "Based only on gateway-captured terminal content. It does not show whether Tavo received or saved it."
+        },
         "writerCaveat": "Writer accepted means only that the server-side writer accepted these bytes. It does not prove the client received, rendered, or saved them.",
         "none": "None",
         "partial": "Incomplete",

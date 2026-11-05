@@ -3033,6 +3033,13 @@
         "writerBytes": "Writer 接受字节",
         "termination": "规范化终态",
         "providerTermination": "上游原始终态",
+        "contentFilterEvidence": {
+            "axis": "审查证据",
+            "present": "审查终止：已有正文",
+            "absent": "审查终止：无正文",
+            "unknown": "正文证据不足",
+            "hint": "仅依据网关捕获到的终态内容；不能证明 Tavo 已收到或保存。"
+        },
         "writerCaveat": "Writer 已接受只证明服务端写入接口接收了这些字节，不证明客户端已经收到、显示或保存。",
         "none": "不存在",
         "partial": "不完整",

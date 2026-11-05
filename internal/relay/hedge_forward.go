@@ -345,6 +345,9 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 	*ra = *chosen
 	ra.relayRequest = savedRequest
 	ra.streamOutputCommitted = winner >= 0
+	if trace != nil {
+		trace.markAttemptOutputTextPresent(ra.logAttemptNumber, ra.streamOutputTextPresent, ra.channel.ID, ra.adapterType.String())
+	}
 	if winner < 0 {
 		req.metrics.FirstTokenTime = time.Time{}
 	}
