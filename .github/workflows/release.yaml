@@ -108,6 +108,16 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: web/pnpm-lock.yaml
 
+      - name: Generate release notes
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 scripts/generate-release-notes.py \
+            --tag "$RELEASE_TAG" \
+            --output release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Verify release source and toolchain pins
         id: toolchain
         env:
@@ -318,6 +328,8 @@ jobs:
           files: |
             build/archives/*
             release-manifest.json
+          body_path: release-notes.md
           prerelease: false
           make_latest: true
+          generate_release_notes: false
           tag_name: ${{ env.RELEASE_TAG }}
