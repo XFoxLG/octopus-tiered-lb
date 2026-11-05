@@ -95,7 +95,7 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                                 const catalog = { ...config.catalog, format: autoCatalogFormatOnEndpointChange(endpoint.protocol, protocol, config.catalog.format) };
                                 onChange({ ...config, endpoints: config.endpoints.map((entry) => entry.id === endpoint.id ? { ...entry, protocol, compatibility: '', forward_mode: 'convert', auth: 'default' } : entry), catalog });
                             }}>
-                                <option value="chat">Chat Completions</option><option value="responses">Responses</option><option value="messages">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="embeddings">Embeddings</option>
+                                <option value="chat">Chat Completions</option><option value="responses">Responses</option><option value="messages">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="embeddings">Embeddings</option><option value="rerank">Rerank</option>
                                 {['cloudflare', 'volcengine', 'codex'].includes(endpoint.protocol) && <optgroup label={t('legacy')}><option value={endpoint.protocol}>{endpoint.protocol}</option></optgroup>}
                             </select>
                         </label>
@@ -104,7 +104,7 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                         </label>
                     </div>
                     {previewURL && endpoint.forward_mode !== 'raw' && <p className="break-all text-xs text-muted-foreground">{t('preview')}: {previewURL}</p>}
-                    {endpoint.url_mode === 'base' && /\/(chat\/completions|responses|messages|embeddings)(\?|$)/.test(endpoint.url) && <div className="space-y-1 text-sm"><p>{t('fullSuggestion')}</p><Button type="button" variant="outline" size="sm" onClick={() => update(endpoint.id, { url_mode: 'full', forward_mode: 'convert' })}>{t('useFull')}</Button></div>}
+                    {endpoint.url_mode === 'base' && /\/(chat\/completions|responses|messages|embeddings|rerank)(\?|$)/.test(endpoint.url) && <div className="space-y-1 text-sm"><p>{t('fullSuggestion')}</p><Button type="button" variant="outline" size="sm" onClick={() => update(endpoint.id, { url_mode: 'full', forward_mode: 'convert' })}>{t('useFull')}</Button></div>}
                     <details className="group min-w-0 rounded-md bg-muted/30 p-2">
                         <summary className={detailsSummaryClass}>{t('advanced')}<ChevronDown className={chevronClass} aria-hidden="true" /></summary>
                         <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
@@ -112,10 +112,10 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                             <label className="space-y-1 text-sm"><span>{t('auth')}</span><select className={selectClass} value={endpoint.auth} onChange={(e) => update(endpoint.id, { auth: e.target.value as ChannelEndpoint['auth'] })}>
                                 <option value="default">{t('default')}</option><option value="bearer">Authorization: Bearer</option><option value="api_key">api-key</option><option value="x_api_key">x-api-key</option><option value="google">x-goog-api-key</option><option value="none">{t('noAuth')}</option>{endpoint.auth === 'legacy' && <option value="legacy">{t('legacy')}</option>}
                             </select></label>
-                            <div className="space-y-1 text-sm">
+                            {endpoint.protocol !== 'rerank' && <div className="space-y-1 text-sm">
                                 <label className="block space-y-1"><span>{t('compatibility')}</span><select className={selectClass} value={endpoint.compatibility || ''} onChange={(e) => update(endpoint.id, { compatibility: e.target.value as ChannelEndpoint['compatibility'] })}><option value="">{t('standard')}</option>{endpoint.protocol === 'chat' && <option value="mimo">MiMo</option>}{keepLegacyOption && <option value="legacy">{t('legacy')}</option>}{endpoint.compatibility === 'legacy_mimo' && <option value="legacy_mimo">{t('legacy')} MiMo</option>}</select></label>
                                 {canSwitchToStandard && <Button type="button" variant="outline" size="sm" onClick={() => update(endpoint.id, { compatibility: '' })}>{t('switchToStandard')}</Button>}
-                            </div>
+                            </div>}
                             {supportsForward && endpoint.url_mode === 'base' && <label className="space-y-1 text-sm"><span>{t('forwardMode')}</span><select className={selectClass} value={endpoint.forward_mode || 'convert'} onChange={(e) => update(endpoint.id, { forward_mode: e.target.value as ChannelEndpoint['forward_mode'] })}><option value="convert">{t('convert')}</option><option value="passthrough">{t('passthrough')}</option><option value="raw">{t('raw')}</option></select></label>}
                         </div>
                         <p className="mt-2 text-xs text-muted-foreground">{t('advancedHint')}</p>

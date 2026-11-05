@@ -40,6 +40,16 @@ func channelSupportsEndpoint(channel dbmodel.Channel, endpointType string) bool 
 			return false
 		}
 		return outbound.IsEmbeddingChannelType(channel.Type)
+	case dbmodel.EndpointTypeRerank:
+		if channel.ConnectionConfig != nil {
+			for _, e := range channel.ConnectionConfig.Endpoints {
+				if e.Protocol == "rerank" {
+					return true
+				}
+			}
+			return false
+		}
+		return false
 	default:
 		return false
 	}

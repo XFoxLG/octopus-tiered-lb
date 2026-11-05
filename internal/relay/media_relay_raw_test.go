@@ -115,6 +115,7 @@ func TestForwardMediaRequestJSONRawProviderKeepsClientPathAndBody(t *testing.T) 
 		context.Background(),
 		nil,
 		0,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("forwardMediaRequestJSON() error = %v", err)
@@ -179,6 +180,7 @@ func TestForwardMediaRequestJSONRawProviderRewritesModelOnly(t *testing.T) {
 		context.Background(),
 		nil,
 		0,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("forwardMediaRequestJSON() error = %v", err)
@@ -275,6 +277,7 @@ func TestForwardMediaRequestRoutesJSONBodyOnMultipartEndpoint(t *testing.T) {
 		context.Background(),
 		nil,
 		0,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("forwardMediaRequest() error = %v", err)

@@ -12,6 +12,7 @@ const CATALOG_FORMAT_BY_PROTOCOL: Partial<Record<ChannelEndpoint['protocol'], Co
     chat: 'openai',
     responses: 'openai',
     embeddings: 'openai',
+    rerank: 'openai',
     messages: 'anthropic',
     gemini: 'gemini',
     cloudflare: 'cloudflare',
@@ -44,7 +45,7 @@ export function connectionURLPreview(endpoint: ChannelEndpoint, model = 'MODEL',
             url.pathname = decodeURI(url.pathname).replaceAll('{model}', model.replace(/^models\//, ''));
         } else {
             const root = url.pathname.replace(/\/+$/, '') || (endpoint.protocol === 'gemini' ? '/v1beta' : endpoint.protocol === 'cloudflare' ? '' : '/v1');
-            const suffix = { chat: '/chat/completions', responses: '/responses', messages: '/messages', embeddings: '/embeddings', gemini: `/models/${model.replace(/^models\//, '')}:generateContent`, cloudflare: `/ai/run/${model}`, volcengine: '/responses', codex: '/responses' }[endpoint.protocol];
+            const suffix = { chat: '/chat/completions', responses: '/responses', messages: '/messages', embeddings: '/embeddings', rerank: '/rerank', gemini: `/models/${model.replace(/^models\//, '')}:generateContent`, cloudflare: `/ai/run/${model}`, volcengine: '/responses', codex: '/responses' }[endpoint.protocol];
             url.pathname = root + suffix;
         }
         if (endpoint.protocol === 'gemini' && stream) {

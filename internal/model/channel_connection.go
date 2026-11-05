@@ -69,6 +69,9 @@ func (e ChannelEndpoint) AdapterType() outbound.OutboundType {
 		return outbound.OutboundTypeVolcengine
 	case "codex":
 		return outbound.OutboundTypeCodex
+	case "rerank":
+		// Rerank is media-only and intentionally has no LLM adapter identity.
+		return -1
 	default:
 		return -1
 	}
@@ -95,7 +98,7 @@ func (config *ConnectionConfig) Validate() error {
 		ids[e.ID] = true
 		protocolOnly := e
 		protocolOnly.ForwardMode = ""
-		if protocolOnly.AdapterType() < 0 {
+		if protocolOnly.AdapterType() < 0 && e.Protocol != "rerank" {
 			return fmt.Errorf("unsupported endpoint protocol: %s", e.Protocol)
 		}
 		if e.URLMode != "base" && e.URLMode != "full" {
@@ -210,6 +213,9 @@ func (c *Channel) ResolveConnectionPlans(r *tm.InternalLLMRequest, groupFormat s
 	plans := []ConnectionPlan{}
 	for i := range c.ConnectionConfig.Endpoints {
 		e := &c.ConnectionConfig.Endpoints[i]
+		if e.Protocol == "rerank" {
+			continue
+		}
 		if c.SelectedEndpointID != "" && e.ID != c.SelectedEndpointID {
 			continue
 		}
@@ -227,6 +233,26 @@ func (c *Channel) ResolveConnectionPlans(r *tm.InternalLLMRequest, groupFormat s
 	}
 	return plans
 }
+
+// ResolveRerankConnectionPlan resolves only an explicitly declared rerank
+// endpoint. It never falls back to chat/embedding endpoints or legacy URLs.
+func (c *Channel) ResolveRerankConnectionPlan() *ConnectionPlan {
+	if c == nil || c.ConnectionConfig == nil || c.ConnectionConfig.Validate() != nil {
+		return nil
+	}
+	for i := range c.ConnectionConfig.Endpoints {
+		e := &c.ConnectionConfig.Endpoints[i]
+		if e.Protocol != "rerank" {
+			continue
+		}
+		if c.SelectedEndpointID != "" && e.ID != c.SelectedEndpointID {
+			continue
+		}
+		return &ConnectionPlan{Endpoint: e, AdapterType: -1}
+	}
+	return nil
+}
+
 func (c *Channel) WithConnectionPlan(p ConnectionPlan) *Channel {
 	clone := *c
 	clone.SelectedConnectionPlan = &p
@@ -288,6 +314,8 @@ func (e ChannelEndpoint) BuildURL(modelName string, stream bool) (string, error)
 			u.Path = root + "/chat/completions"
 		case "responses", "volcengine", "codex":
 			u.Path = root + "/responses"
+		case "rerank":
+			u.Path = root + "/rerank"
 		case "messages":
 			u.Path = root + "/messages"
 		case "embeddings":
