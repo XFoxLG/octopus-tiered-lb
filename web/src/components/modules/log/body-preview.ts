@@ -132,12 +132,14 @@ function jsonStrictTextEvidence(raw: string): StrictLogTextEvidence {
 }
 
 function streamStrictTextEvidence(raw: string): StrictLogTextEvidence {
-    let recognizedFrame = false;
+    let sawTerminal = false;
     let sawError = false;
+    const observedChoices = new Set<number>();
+    const finishedChoices = new Set<number>();
     const textPartsByLine = raw.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => {
         const payload = line.slice(5).trim();
         if (payload === '[DONE]') {
-            recognizedFrame = true;
+            sawTerminal = true;
             return '';
         }
         let value: unknown;
@@ -145,20 +147,24 @@ function streamStrictTextEvidence(raw: string): StrictLogTextEvidence {
         const event = record(value);
         if (!event) return '';
         const eventType = typeof event.type === 'string' ? event.type : '';
+        if (eventType === 'error' || isErrorResponse(event)) {
+            sawError = true;
+            return '';
+        }
+        if (['response.completed', 'response.incomplete', 'message_stop'].includes(eventType)) {
+            sawTerminal = true;
+        }
+        if (eventType === 'response.failed' || eventType === 'response.error') sawError = true;
         const isRecognizedEvent = (
             eventType === 'response.output_text.delta' ||
             eventType.startsWith('response.') ||
             eventType === 'content_block_delta' ||
             eventType.startsWith('content_block_') ||
+            eventType === 'message_stop' ||
             Array.isArray(event.choices) ||
             Array.isArray(event.candidates)
         );
         if (!isRecognizedEvent) return '';
-        recognizedFrame = true;
-        if (isErrorResponse(event)) {
-            sawError = true;
-            return '';
-        }
         if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') {
             return event.delta;
         }
@@ -167,15 +173,31 @@ function streamStrictTextEvidence(raw: string): StrictLogTextEvidence {
             return delta?.type === 'text_delta' && typeof delta.text === 'string' ? delta.text : '';
         }
         if (Array.isArray(event.choices)) {
-            return event.choices.map(choice => strictTextParts(record(record(choice)?.delta)?.content)).join('');
+            return event.choices.map((value, position) => {
+                const choice = record(value);
+                if (!choice) return '';
+                const index = typeof choice.index === 'number' ? choice.index : position;
+                observedChoices.add(index);
+                if (typeof choice.finish_reason === 'string' && choice.finish_reason.trim()) finishedChoices.add(index);
+                return strictTextParts(record(choice.delta)?.content);
+            }).join('');
         }
         if (Array.isArray(event.candidates)) {
-            return event.candidates.map(candidate => strictTextParts(record(record(candidate)?.content)?.parts)).join('');
+            return event.candidates.map((value, position) => {
+                const candidate = record(value);
+                if (!candidate) return '';
+                const index = typeof candidate.index === 'number' ? candidate.index : position;
+                observedChoices.add(index);
+                if (typeof candidate.finishReason === 'string' && candidate.finishReason.trim()) finishedChoices.add(index);
+                return strictTextParts(record(candidate.content)?.parts);
+            }).join('');
         }
         return '';
     }).join('');
     if (textPartsByLine.trim()) return { state: 'present' };
-    if (sawError || !recognizedFrame) return { state: 'unknown' };
+    const allObservedChoicesFinished = observedChoices.size > 0 &&
+        [...observedChoices].every(index => finishedChoices.has(index));
+    if (sawError || (!sawTerminal && !allObservedChoicesFinished)) return { state: 'unknown' };
     return { state: 'absent' };
 }
 
