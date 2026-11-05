@@ -212,8 +212,9 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "channel disabled")
 				continue
 			}
-			if channel.ConnectionConfig != nil {
-				routeIter.Skip(channel.ID, 0, channel.Name, "media forwarding requires a legacy media connection")
+			rerankPlan := channel.ResolveRerankConnectionPlan()
+			if channel.ConnectionConfig != nil && (endpointType != MediaEndpointRerank || rerankPlan == nil) {
+				routeIter.Skip(channel.ID, 0, channel.Name, "media forwarding requires a legacy media connection or explicit rerank endpoint")
 				continue
 			}
 
@@ -320,7 +321,11 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					break
 				}
 				span := routeIter.StartAttempt(channel.ID, usedKey.ID, channel.Name, resolvedModel)
-				statusCode, fwdErr := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, span.AttemptNumber())
+				var rerankPlanEndpoint *dbmodel.ChannelEndpoint
+				if rerankPlan != nil {
+					rerankPlanEndpoint = rerankPlan.Endpoint
+				}
+				statusCode, fwdErr := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, span.AttemptNumber(), rerankPlanEndpoint)
 				if channel.MaxConcurrency > 0 {
 					rl.ReleaseChannelSlot(channel.ID)
 				}
@@ -681,11 +686,12 @@ func forwardMediaRequest(
 	operationCtx context.Context,
 	requestTrace *relayRequestTrace,
 	attemptNumber int,
+	rerankEndpoint *dbmodel.ChannelEndpoint,
 ) (int, error) {
 	if cfg.MultipartInput && len(bodyBytes) == 0 {
 		return forwardMediaRequestMultipart(c, cfg, channel, key, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, attemptNumber)
 	}
-	return forwardMediaRequestJSON(c, cfg, group, channel, key, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, attemptNumber)
+	return forwardMediaRequestJSON(c, cfg, group, channel, key, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, attemptNumber, rerankEndpoint)
 }
 
 // forwardMediaRequestJSON handles JSON-based media endpoint forwarding.
@@ -702,6 +708,7 @@ func forwardMediaRequestJSON(
 	operationCtx context.Context,
 	requestTrace *relayRequestTrace,
 	attemptNumber int,
+	rerankEndpoint *dbmodel.ChannelEndpoint,
 ) (int, error) {
 	ctx := operationCtx
 
@@ -726,15 +733,21 @@ func forwardMediaRequestJSON(
 		return 0, fmt.Errorf("failed to rewrite music request: %w", err)
 	}
 
-	// Build upstream URL
-	upstreamURL, err := buildMediaUpstreamURL(channel.GetBaseUrl(), cfg.UpstreamPath)
+	// Build upstream URL. Explicit endpoint URLs are authoritative and never
+	// fall back to legacy base URLs.
+	var upstreamURL string
+	if rerankEndpoint != nil {
+		upstreamURL, err = rerankEndpoint.BuildURL(resolvedModel, false)
+	} else {
+		upstreamURL, err = buildMediaUpstreamURL(channel.GetBaseUrl(), cfg.UpstreamPath)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("failed to build upstream URL: %w", err)
 	}
 
 	// 透传（信息体）：保留客户端原始请求路径与查询串，仅改写请求体中的
 	// model 字段（与对话分组的出站格式 "raw" 语义一致）。
-	if strings.EqualFold(strings.TrimSpace(group.EndpointProvider), "raw") {
+	if rerankEndpoint == nil && strings.EqualFold(strings.TrimSpace(group.EndpointProvider), "raw") {
 		upstreamURL, err = buildRawPassthroughUpstreamURL(channel.GetBaseUrl(), c)
 		if err != nil {
 			return 0, fmt.Errorf("failed to build raw passthrough url: %w", err)
@@ -748,6 +761,9 @@ func forwardMediaRequestJSON(
 	}
 
 	copyMediaForwardHeaders(req, c, channel, key, "application/json", streamRequested)
+	if rerankEndpoint != nil {
+		channel.ApplyConnectionHeaders(req, dbmodel.ConnectionPlan{Endpoint: rerankEndpoint, AdapterType: -1}, key)
+	}
 
 	// MiMo Chat Completions API only accepts application/json, but the
 	// upstream TTS client (e.g. OpenAI SDK) sends Accept: audio/mpeg.

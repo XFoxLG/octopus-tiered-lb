@@ -187,3 +187,60 @@ func TestConnectionMigrationFallsBackToLegacyWhenStandardDiffers(t *testing.T) {
 		t.Fatal("legacy fallback is not equivalent")
 	}
 }
+
+func TestConnectionRerankURLModes(t *testing.T) {
+	base := connectionFixture("rerank")
+	base.URL = "https://x.test"
+	got, err := base.BuildURL("test-model", false)
+	if err != nil || got != "https://x.test/v1/rerank" {
+		t.Fatalf("rerank base URL=%q err=%v", got, err)
+	}
+
+	full := base
+	full.URL = "https://x.test/custom/rerank?tenant=a"
+	full.URLMode = "full"
+	got, err = full.BuildURL("test-model", false)
+	if err != nil || got != "https://x.test/custom/rerank?tenant=a" {
+		t.Fatalf("rerank full URL=%q err=%v", got, err)
+	}
+}
+
+func TestRerankEndpointIsExplicitAndStaysOutOfLLMPlans(t *testing.T) {
+	rerank := connectionFixture("rerank")
+	rerank.URL = "https://rerank.test"
+	secondRerank := rerank
+	secondRerank.ID = "rerank-selected"
+	chat := connectionFixture("chat")
+	embeddings := connectionFixture("embeddings")
+	legacyBase := []BaseUrl{{URL: "https://legacy.test"}}
+
+	onlyLLM := Channel{ConnectionConfig: &ConnectionConfig{Version: 1, Selection: "same_protocol", Endpoints: []ChannelEndpoint{chat, embeddings}, Catalog: ModelCatalog{Format: "manual"}}}
+	if onlyLLM.ResolveRerankConnectionPlan() != nil {
+		t.Fatal("chat/embedding endpoints fell back to rerank")
+	}
+
+	rerankChannel := Channel{
+		SelectedEndpointID: "rerank-selected",
+		BaseUrls:           legacyBase,
+		ConnectionConfig:   &ConnectionConfig{Version: 1, Selection: "same_protocol", Endpoints: []ChannelEndpoint{rerank, secondRerank, chat, embeddings}, Catalog: ModelCatalog{Format: "manual"}},
+	}
+	plan := rerankChannel.ResolveRerankConnectionPlan()
+	if plan == nil || plan.Endpoint == nil || plan.Endpoint.ID != "rerank-selected" {
+		t.Fatalf("selected rerank endpoint not respected: %+v", plan)
+	}
+
+	chatOnly := rerankChannel
+	chatOnly.SelectedEndpointID = "chat"
+	if chatOnly.ResolveRerankConnectionPlan() != nil {
+		t.Fatal("selected LLM endpoint silently fell back to rerank")
+	}
+
+	ch := Channel{ConnectionConfig: &ConnectionConfig{Version: 1, Selection: "same_protocol", Endpoints: []ChannelEndpoint{rerank, chat, embeddings}, Catalog: ModelCatalog{Format: "manual"}}}
+	if plans := ch.ResolveConnectionPlans(connectionRequest(tm.APIFormatOpenAIChatCompletion), ""); len(plans) != 1 || plans[0].Endpoint.ID != "chat" {
+		t.Fatalf("rerank leaked into chat plans: %+v", plans)
+	}
+	embeddingRequest := &tm.InternalLLMRequest{Model: "test-model", EmbeddingInput: &tm.EmbeddingInput{Multiple: []string{"test"}}}
+	if plans := ch.ResolveConnectionPlans(embeddingRequest, ""); len(plans) != 1 || plans[0].Endpoint.ID != "embeddings" {
+		t.Fatalf("rerank leaked into embedding plans: %+v", plans)
+	}
+}

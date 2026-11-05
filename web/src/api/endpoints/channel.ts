@@ -110,9 +110,11 @@ export type CustomHeader = {
 };
 
 export type EndpointProtocol = 'chat' | 'responses' | 'messages' | 'gemini' | 'embeddings' | 'cloudflare' | 'volcengine' | 'codex';
+/** Connection-only protocol: rerank uses an exact endpoint and is not part of LLM probe protocol naming. */
+export type ChannelEndpointProtocol = EndpointProtocol | 'rerank';
 export type ChannelEndpoint = {
     id: string;
-    protocol: EndpointProtocol;
+    protocol: ChannelEndpointProtocol;
     url: string;
     url_mode: 'base' | 'full';
     auth: 'default' | 'bearer' | 'api_key' | 'x_api_key' | 'google' | 'none' | 'legacy';

@@ -92,6 +92,40 @@ func TestItemSupportsEndpoint_ModelNameHeuristic_Rerank(t *testing.T) {
 	}
 }
 
+func TestChannelSupportsEndpoint_RerankRequiresDeclaredConnectionEndpoint(t *testing.T) {
+	rerankChannel := dbmodel.Channel{
+		ConnectionConfig: &dbmodel.ConnectionConfig{
+			Version:   1,
+			Selection: "same_protocol",
+			Endpoints: []dbmodel.ChannelEndpoint{
+				{ID: "rerank", Protocol: "rerank", URL: "https://example.test/v1", URLMode: "base", Auth: "default"},
+			},
+			Catalog: dbmodel.ModelCatalog{Format: "manual"},
+		},
+	}
+	if !channelSupportsEndpoint(rerankChannel, dbmodel.EndpointTypeRerank) {
+		t.Error("declared rerank endpoint should support rerank")
+	}
+	if channelSupportsEndpoint(rerankChannel, dbmodel.EndpointTypeImageGeneration) {
+		t.Error("declared rerank endpoint should not support other media")
+	}
+
+	llmChannel := dbmodel.Channel{
+		ConnectionConfig: &dbmodel.ConnectionConfig{
+			Version:   1,
+			Selection: "same_protocol",
+			Endpoints: []dbmodel.ChannelEndpoint{
+				{ID: "chat", Protocol: "chat", URL: "https://example.test/v1", URLMode: "base", Auth: "default"},
+				{ID: "embeddings", Protocol: "embeddings", URL: "https://example.test/v1", URLMode: "base", Auth: "default"},
+			},
+			Catalog: dbmodel.ModelCatalog{Format: "manual"},
+		},
+	}
+	if channelSupportsEndpoint(llmChannel, dbmodel.EndpointTypeRerank) {
+		t.Error("chat/embedding endpoints must not be inferred as rerank")
+	}
+}
+
 func TestItemSupportsEndpoint_ModelNameHeuristic_Moderation(t *testing.T) {
 	ch := dbmodel.Channel{
 		ID:   8,

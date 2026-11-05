@@ -124,6 +124,39 @@ test('URL previews preserve custom prefixes and do not show query credentials', 
   assert.equal(helpers.canFetchConnectionModels({ ...helpers.newConnectionConfig(), catalog: { format: 'manual' } }), false);
 });
 
+test('rerank interfaces keep their root, preview /v1/rerank, and map to the OpenAI catalog', () => {
+  const rerank = { ...helpers.newEndpoint(), protocol: 'rerank' };
+  assert.equal(helpers.catalogFormatForEndpointProtocol('rerank'), 'openai');
+  assert.equal(helpers.autoCatalogFormatOnEndpointChange('embeddings', 'rerank', 'openai'), 'openai');
+  rerank.url = 'https://example.com/custom-root/v1';
+  assert.equal(helpers.connectionURLPreview(rerank), 'https://example.com/custom-root/v1/rerank');
+  rerank.url = 'https://example.com';
+  assert.equal(helpers.connectionURLPreview(rerank), 'https://example.com/v1/rerank');
+  rerank.url_mode = 'full';
+  rerank.url = 'https://example.com/exact/rerank?token=secret';
+  const preview = helpers.connectionURLPreview(rerank);
+  assert.match(preview, /^https:\/\/example\.com\/exact\/rerank\?token=/);
+  assert.doesNotMatch(preview, /secret/);
+});
+
+test('rerank is an explicit interface protocol without chat forwarding or compatibility controls', () => {
+  const ui = fixture();
+  const protocolSelect = all(ui.render(), (e) => e.type === 'select' && e.props.children?.some((child) => child?.props?.value === 'chat'))[0];
+  protocolSelect.props.onChange({ target: { value: 'rerank' } });
+  assert.equal(ui.value.endpoints[0].protocol, 'rerank');
+  assert.equal(ui.value.catalog.format, 'openai');
+  const options = all(ui.render(), (e) => e.type === 'option').map((e) => e.props.value);
+  assert.ok(options.includes('rerank'));
+  assert.ok(!options.includes('passthrough'));
+  assert.ok(!options.includes('raw'));
+  assert.ok(!options.includes('mimo'));
+  assert.ok(!options.includes('legacy'));
+  all(ui.render(), (e) => e.type === 'input' && e.props.type === 'url')[0].props.onChange({ target: { value: 'https://example.com/v1' } });
+  const markup = renderToStaticMarkup(ui.render());
+  assert.match(markup, /https:\/\/example\.com\/v1\/rerank/);
+  assert.doesNotMatch(markup, /Compatibility/);
+});
+
 const CHANNEL_TYPES = { OpenAIEmbedding: 3 };
 
 function testDialogFixture({ locale = 'en', overrides = {}, probeRun = null } = {}) {
