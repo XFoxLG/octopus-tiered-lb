@@ -21,6 +21,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/store"
+	"github.com/lingyuins/octopus/internal/transformer"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"github.com/lingyuins/octopus/internal/utils/log"
@@ -440,7 +441,7 @@ func runGroupModelTest(ctx context.Context, group *appmodel.Group, channels map[
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-					results <- indexedResult{index: index, result: testGroupModelItemWithGroup(ctx, group, group.Items[index], channels)}
+				results <- indexedResult{index: index, result: testGroupModelItemWithGroup(ctx, group, group.Items[index], channels)}
 			}
 		}()
 	}
@@ -864,7 +865,12 @@ func sendGroupProbeRequestWithGroup(ctx context.Context, outAdapter transmodel.O
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	// Parse the complete bounded response. A display-preview limit truncates
+	// ordinary embedding vectors and turns a healthy endpoint into a false failure.
+	body, err := transformer.ReadResponseBody(resp)
+	if err != nil {
+		return resp.StatusCode, "", nil, err
+	}
 	bodyText := strings.TrimSpace(string(body))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if bodyText == "" {
