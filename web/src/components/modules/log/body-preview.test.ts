@@ -101,3 +101,31 @@ test('strict evidence excludes unrecognized and error SSE frames but reads text 
         'data: [DONE]',
     ].join('\n\n'), true).state, 'present');
 });
+
+test('strict SSE absence requires an observed protocol terminal', () => {
+    for (const frame of [
+        { choices: [{ index: 0, delta: { role: 'assistant' } }] },
+        { type: 'response.created', response: {} },
+        { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'private' } },
+        { type: 'content_block_stop', index: 0 },
+        { candidates: [{ index: 0, content: { parts: [{ thought: true, text: 'private' }] } }] },
+    ]) {
+        assert.equal(strictLogTextEvidence('data: ' + JSON.stringify(frame), true).state, 'unknown');
+    }
+    for (const frame of [
+        { choices: [{ index: 0, delta: {}, finish_reason: 'content_filter' }] },
+        { candidates: [{ index: 0, finishReason: 'SAFETY' }] },
+        { type: 'response.incomplete', response: { output: [] } },
+        { type: 'message_stop' },
+    ]) {
+        assert.equal(strictLogTextEvidence('data: ' + JSON.stringify(frame), true).state, 'absent');
+    }
+    assert.equal(strictLogTextEvidence([
+        'data: {"choices":[{"index":0,"delta":{}},{"index":1,"delta":{}}]}',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"content_filter"}]}',
+    ].join('\n\n'), true).state, 'unknown');
+    assert.equal(strictLogTextEvidence([
+        'data: {"type":"error","error":{"message":"interrupted"}}',
+        'data: [DONE]',
+    ].join('\n\n'), true).state, 'unknown');
+});
