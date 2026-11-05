@@ -136,6 +136,41 @@ func TestSendGroupProbeRequest_EmbeddingsUseEmbeddingPayload(t *testing.T) {
 	}
 }
 
+func TestSendGroupProbeRequest_EmbeddingVectorLargerThanPreviewLimit(t *testing.T) {
+	vector := make([]float64, 4096)
+	for i := range vector {
+		vector[i] = 0.123456
+	}
+	body, err := json.Marshal(map[string]any{
+		"object": "list", "model": "Qwen/Qwen3-Embedding-8B",
+		"data":  []any{map[string]any{"object": "embedding", "index": 0, "embedding": vector}},
+		"usage": map[string]int{"prompt_tokens": 1, "total_tokens": 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) <= 4096 {
+		t.Fatal("fixture must exceed the old preview limit")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	channel := &appmodel.Channel{Type: outbound.OutboundTypeOpenAIEmbedding, BaseUrls: []appmodel.BaseUrl{{URL: server.URL}}}
+	status, text, response, err := sendGroupProbeRequest(context.Background(), outbound.Get(channel.Type), channel.Type,
+		channel, "fixture-key", appmodel.EndpointTypeEmbeddings, "Qwen/Qwen3-Embedding-8B")
+	if err != nil {
+		t.Fatalf("valid large embedding response rejected: %v", err)
+	}
+	if status != http.StatusOK || text != string(body) {
+		t.Fatalf("response truncated: status=%d bytes=%d want=%d", status, len(text), len(body))
+	}
+	if response == nil || len(response.EmbeddingData) != 1 {
+		t.Fatalf("missing embedding response: %#v", response)
+	}
+}
+
 // TestSendGroupProbeRequest_ChatResponseUsageParsed 验证 issue #90 的修复：
 // chat 探测成功后，上游返回的 usage 必须被解析到 InternalLLMResponse.Usage，
 // 使 recordTestLog 能回填 InputTokens/OutputTokens/Cost（不再显示为「未知」）。
