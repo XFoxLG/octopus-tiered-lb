@@ -16,6 +16,7 @@ type RelayDiagnostics struct {
 	OutboundMaxTokens         *int64                    `json:"outbound_max_tokens,omitempty"`
 	OutboundMaxTokensSource   string                    `json:"outbound_max_tokens_source,omitempty"`
 	OutboundMaxTokensAdjusted bool                      `json:"outbound_max_tokens_adjusted,omitempty"`
+	OutputTextPresent         *bool                     `json:"output_text_present,omitempty"`
 	RobinEnvelopeKind         string                    `json:"robin_envelope_kind,omitempty"`
 	RobinEnvelopeReason       string                    `json:"robin_envelope_reason,omitempty"`
 	WriterAcceptedBytes       int64                     `json:"writer_accepted_bytes,omitempty"`
@@ -59,6 +60,7 @@ type RelayAttemptDiagnostics struct {
 	OutboundMaxTokens         *int64 `json:"outbound_max_tokens,omitempty"`
 	OutboundMaxTokensSource   string `json:"outbound_max_tokens_source,omitempty"`
 	OutboundMaxTokensAdjusted bool   `json:"outbound_max_tokens_adjusted,omitempty"`
+	OutputTextPresent         *bool  `json:"output_text_present,omitempty"`
 	// RobinEnvelopeReason is a bounded classification, never tool arguments or
 	// generated content.
 	RobinEnvelopeKind   string `json:"robin_envelope_kind,omitempty"`

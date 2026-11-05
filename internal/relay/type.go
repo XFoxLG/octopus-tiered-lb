@@ -359,8 +359,16 @@ func streamChunkVisibleBytes(resp *model.InternalLLMResponse) int {
 	}
 	total := 0
 	for _, choice := range resp.Choices {
-		if choice.Delta != nil && choice.Delta.Content.Content != nil {
+		if choice.Delta == nil {
+			continue
+		}
+		if choice.Delta.Content.Content != nil {
 			total += len([]byte(*choice.Delta.Content.Content))
+		}
+		for _, part := range choice.Delta.Content.MultipleContent {
+			if (part.Type == "text" || part.Type == "output_text") && part.Text != nil {
+				total += len([]byte(*part.Text))
+			}
 		}
 	}
 	return total
@@ -474,16 +482,31 @@ type relayAttempt struct {
 
 	// streamTermination records the most recent terminal cause decoded from the
 	// upstream stream. It is internal-only and never serialized to clients.
-	streamTermination        model.TerminationMetadata
-	streamAnswerText         string
-	streamAnswerBypass       bool
-	inlineReasoningStates    map[int]*inlineReasoningState
-	inlineReasoningExtracted bool
+	streamTermination           model.TerminationMetadata
+	streamStickyProviderRefusal bool
+	streamOutputTextPresent     *bool
+	streamAnswerText            string
+	streamAnswerBypass          bool
+	inlineReasoningStates       map[int]*inlineReasoningState
+	inlineReasoningExtracted    bool
 }
 
 func (ra *relayAttempt) markStreamOutputCommitted() {
 	if ra != nil {
 		ra.streamOutputCommitted = true
+	}
+}
+
+func (ra *relayAttempt) observeOutputText(present bool) {
+	if ra == nil {
+		return
+	}
+	if present {
+		ra.streamOutputTextPresent = &present
+		return
+	}
+	if ra.streamOutputTextPresent == nil && ra.streamSawExplicitTerminalEvent {
+		ra.streamOutputTextPresent = &present
 	}
 }
 

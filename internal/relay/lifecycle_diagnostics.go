@@ -103,7 +103,7 @@ func (trace *relayRequestTrace) recordReasoningBufferStrategy(strategy string, a
 	trace.mutex.Unlock()
 }
 
-func (trace *relayRequestTrace) recordStreamChunk(reasoningBytes int, visible bool, visibleBytes, toolDeltas int) {
+func (trace *relayRequestTrace) recordStreamChunk(attempt int, reasoningBytes int, visible bool, visibleBytes, toolDeltas int) {
 	if trace == nil {
 		return
 	}
@@ -123,6 +123,17 @@ func (trace *relayRequestTrace) recordStreamChunk(reasoningBytes int, visible bo
 		diagnostics.VisibleContentBytes += int64(max(0, visibleBytes))
 	}
 	diagnostics.ToolDeltaCount += int64(max(0, toolDeltas))
+	for i := range diagnostics.Attempts {
+		item := &diagnostics.Attempts[i]
+		if item.Attempt != attempt {
+			continue
+		}
+		if visibleBytes > 0 && item.OutputTextPresent == nil {
+			present := true
+			item.OutputTextPresent = &present
+		}
+		break
+	}
 	trace.mutex.Unlock()
 }
 
@@ -203,6 +214,70 @@ func (trace *relayRequestTrace) markRuntimeTerminal(ctx context.Context, termina
 	})
 }
 
+func (trace *relayRequestTrace) markAttemptOutputTextPresent(attempt int, present *bool, channelID int, protocol string) {
+	if trace == nil || present == nil {
+		return
+	}
+	trace.mutex.Lock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	found := false
+	for i := range diagnostics.Attempts {
+		item := &diagnostics.Attempts[i]
+		if item.Attempt != attempt {
+			continue
+		}
+		found = true
+		if item.OutputTextPresent == nil {
+			item.OutputTextPresent = present
+		}
+		break
+	}
+	// Hedge lanes deliberately remove the request trace before forwarding, so
+	// only the selected lane can publish this attempt afterward.
+	if !found && present != nil {
+		diagnostics.Attempts = append(diagnostics.Attempts, model.RelayAttemptDiagnostics{
+			Attempt:           attempt,
+			ChannelID:         channelID,
+			Protocol:          protocol,
+			OutputTextPresent: present,
+		})
+	}
+	trace.mutex.Unlock()
+}
+
+// markSelectedAttemptOutputTextPresent publishes only the selected lane's body
+// observation to the request-level diagnostic. Failed retries and hedge losers
+// keep their own attempt-level value without contaminating the selected result.
+func (trace *relayRequestTrace) markSelectedAttemptOutputTextPresent(attempts []model.ChannelAttempt, success bool) {
+	if trace == nil {
+		return
+	}
+	selected := 0
+	for i := len(attempts) - 1; i >= 0; i-- {
+		if success && attempts[i].Status == model.AttemptSuccess {
+			selected = attempts[i].AttemptNum
+			break
+		}
+		if !success && attempts[i].Status == model.AttemptFailed {
+			selected = attempts[i].AttemptNum
+			break
+		}
+	}
+	if selected == 0 {
+		return
+	}
+	trace.mutex.Lock()
+	if trace.diagnostics != nil {
+		for _, item := range trace.diagnostics.Attempts {
+			if item.Attempt == selected {
+				trace.diagnostics.OutputTextPresent = item.OutputTextPresent
+				break
+			}
+		}
+	}
+	trace.mutex.Unlock()
+}
+
 func (trace *relayRequestTrace) startDiagnosticAttempt(attempt, channel int, protocol string, ctx context.Context) {
 	if trace == nil {
 		return
@@ -217,7 +292,7 @@ func (trace *relayRequestTrace) startDiagnosticAttempt(attempt, channel int, pro
 	trace.diagnostics.Attempts = append(trace.diagnostics.Attempts, item)
 }
 
-func (trace *relayRequestTrace) endDiagnosticAttempt(attempt int, ctx context.Context, terminal bool) {
+func (trace *relayRequestTrace) endDiagnosticAttempt(attempt int, ctx context.Context, terminal bool, outputTextPresent *bool) {
 	if trace == nil {
 		return
 	}
@@ -234,6 +309,9 @@ func (trace *relayRequestTrace) endDiagnosticAttempt(attempt int, ctx context.Co
 		item.EndedAt = time.Now().UnixMilli()
 		if terminal {
 			item.TerminalSource = item.Protocol
+		}
+		if outputTextPresent != nil && item.OutputTextPresent == nil {
+			item.OutputTextPresent = outputTextPresent
 		}
 		if ctx.Err() != nil {
 			item.CancelReason = context.Cause(ctx).Error()

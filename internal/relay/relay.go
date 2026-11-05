@@ -686,7 +686,7 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 	defer func() {
 		if trace := relayRequestTraceFromContext(ra.c); trace != nil {
-			trace.endDiagnosticAttempt(ra.logAttemptNumber, ctx, ra.streamSawTerminalEvent)
+			trace.endDiagnosticAttempt(ra.logAttemptNumber, ctx, ra.streamSawExplicitTerminalEvent, ra.streamOutputTextPresent)
 		}
 	}()
 	effectiveRewrite := (*rewrite.EffectiveConfig)(nil)
@@ -1448,6 +1448,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		if !shouldBuffer && !hasVisibleContent {
 			log.Warnf("channel %s returned empty stream (immediate strategy, no retry)", ra.channel.Name)
 		}
+		if !ra.canPassthroughStream() && ra.streamOutputTextPresent == nil {
+			present := false
+			ra.streamOutputTextPresent = &present
+		}
+		if !ra.canPassthroughStream() && ra.streamTermination.Cause == model.TerminationCauseContentFilter {
+			return providerTerminalFailureError(ra.streamTermination)
+		}
 		return nil
 	}
 
@@ -1660,7 +1667,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			terminalTailTimer, terminalTailC = nil, nil
 		}
 		if !ra.canPassthroughStream() && ra.adapterEndpointProtocol() == "chat" && ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() && terminalTailTimer == nil {
-			terminalTailTimer = time.NewTimer(time.Second)
+			terminalTailTimer = time.NewTimer(2 * time.Second)
 			terminalTailC = terminalTailTimer.C
 		}
 		// 上游流终止标记：记下但不在这里 return。[DONE] 仍要走完下方正常的
@@ -1901,6 +1908,7 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	}
 	if ra.metrics != nil && ra.metrics.RequestTrace != nil {
 		ra.metrics.RequestTrace.recordStreamChunk(
+			ra.logAttemptNumber,
 			reasoningBytes,
 			hasVisible,
 			streamChunkVisibleBytes(internalStream),
@@ -1909,6 +1917,7 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	}
 
 	ra.recordStreamTermination(internalStream)
+	ra.observeOutputText(streamChunkVisibleBytes(internalStream) > 0)
 	if ra.canPassthroughStream() {
 		// Aggregation is observational; the inbound renderer cannot rewrite raw frames.
 		_, _ = ra.inAdapter.TransformStream(ctx, internalStream)
@@ -1938,6 +1947,14 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 
 	if termination, blocked := responseContentBlock(internalStream); blocked {
 		ra.collectResponse()
+		// A normalized content_filter terminal is already a legal SSE frame
+		// in the client protocol (Chat finish_reason, Responses incomplete,
+		// or Anthropic refusal/message_stop). Preserve that converted frame;
+		// finishAcceptedTerminal turns the observed terminal into a typed
+		// generation failure without appending a second generic error.
+		if termination.Cause == model.TerminationCauseContentFilter {
+			return append(finishPayload, inStream...), hasVisible, nil
+		}
 		return nil, false, providerTerminalFailureError(termination)
 	}
 	return append(finishPayload, inStream...), hasVisible, nil
@@ -1952,10 +1969,12 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 		ra.streamSawTerminalEvent = true
 		ra.streamSawExplicitTerminalEvent = true
 	}
-	if internalStream.Termination.HasCause() {
+	if internalStream.Termination.HasCause() &&
+		(!ra.streamStickyProviderRefusal || internalStream.Termination.Cause.IsProviderRefusal()) {
 		ra.streamSawTerminalEvent = true
 		ra.streamSawExplicitTerminalEvent = true
 		ra.streamTermination = internalStream.Termination
+		ra.streamStickyProviderRefusal = internalStream.Termination.Cause.IsProviderRefusal()
 	}
 
 	for _, choice := range internalStream.Choices {
@@ -1980,11 +1999,17 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 		// Per-choice termination metadata only proves stream completion when it
 		// arrived on a terminal chunk. A function-call delta, for example, is not
 		// permission to close the whole stream early.
-		if choice.Termination.HasCause() && (internalStream.SawTerminalEvent || choice.FinishReason != nil) {
+		if choice.Termination.HasCause() && (internalStream.SawTerminalEvent || choice.FinishReason != nil) &&
+			(!ra.streamStickyProviderRefusal || choice.Termination.Cause.IsProviderRefusal()) {
 			ra.streamTermination = choice.Termination
+			ra.streamStickyProviderRefusal = choice.Termination.Cause.IsProviderRefusal()
 		}
-		if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" && !ra.streamTermination.HasCause() {
-			ra.streamTermination = terminationForChoice(choice)
+		if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
+			termination := terminationForChoice(choice)
+			if termination.Cause == model.TerminationCauseContentFilter || !ra.streamTermination.HasCause() {
+				ra.streamTermination = termination
+				ra.streamStickyProviderRefusal = termination.Cause == model.TerminationCauseContentFilter
+			}
 		}
 	}
 	if internalStream.SawTerminalEvent && ra.adapterEndpointProtocol() == "gemini" && !ra.hasUnfinishedObservedStreamChoices() {
@@ -1992,6 +2017,9 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 	}
 	if ra.adapterEndpointProtocol() == "chat" && internalStream.Usage != nil && len(internalStream.Choices) == 0 && ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() {
 		ra.streamSawExplicitTerminalEvent = true
+	}
+	if ra.streamSawExplicitTerminalEvent {
+		ra.observeOutputText(false)
 	}
 }
 

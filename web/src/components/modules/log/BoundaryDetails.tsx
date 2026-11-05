@@ -14,7 +14,11 @@ import {
     useDownloadRelayLogContent,
 } from '@/api/endpoints/log';
 import { cn } from '@/lib/utils';
-import { readableLogBody } from './body-preview';
+import {
+    type StrictLogTextEvidenceState,
+    readableLogBody,
+    resolveContentFilterTextEvidence,
+} from './body-preview';
 
 interface BoundaryDetailsProps {
     detail: RelayLogDetail | null;
@@ -125,13 +129,13 @@ function BoundarySection({ title, records, emptyText }: { title: string; records
     );
 }
 
-function StatusAxis({ label, value }: { label: string; value?: string }) {
+function StatusAxis({ label, value, text, hint }: { label: string; value?: string; text?: string; hint?: string }) {
     const t = useTranslations('log.card.forensics');
     return (
-        <div className="min-w-0 rounded-xl border border-border/50 bg-muted/30 px-3 py-2">
+        <div className="min-w-0 rounded-xl border border-border/50 bg-muted/30 px-3 py-2" title={hint}>
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
             <div className="truncate text-xs font-semibold text-card-foreground" title={value || 'unknown'}>
-                {t(`outcomes.${value || 'unknown'}`)}
+                {text || t(`outcomes.${value || 'unknown'}`)}
             </div>
         </div>
     );
@@ -190,6 +194,29 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
         .map((content) => content.protocol)
         .filter(Boolean)));
     const hasBoundaryRecords = contents.length > 0;
+    const isContentFilterTerminal = detail.termination_cause?.trim().toLowerCase() === 'content_filter';
+    const selectedAttemptNumber = (() => {
+        const responseAttempts = forwardedAttempts.filter(attempt => (
+            attempt.response_received || typeof attempt.http_status === 'number'
+        ));
+        const attempts = responseAttempts.length > 0 ? responseAttempts : forwardedAttempts;
+        return attempts.length > 0 ? attempts[attempts.length - 1].attempt_num : undefined;
+    })();
+    const upstreamResponseRecords = recordsFor('upstream_response');
+    const selectedAttemptNumberFromRecords = upstreamResponseRecords.length > 0
+        ? upstreamResponseRecords.reduce((latest, record) => (
+            record.attempt_num > latest ? record.attempt_num : latest
+        ), upstreamResponseRecords[0].attempt_num)
+        : undefined;
+    const resolvedSelectedAttempt = selectedAttemptNumber ?? selectedAttemptNumberFromRecords;
+    const selectedResponseRecords = resolvedSelectedAttempt === undefined
+        ? []
+        : recordsFor('upstream_response', resolvedSelectedAttempt);
+    const selectedResponse = selectedResponseRecords.find(record => record.kind === 'body')
+        ?? selectedResponseRecords.find(record => record.kind === 'normalized_response');
+    const contentFilterEvidence = isContentFilterTerminal
+        ? resolveContentFilterTextEvidence(detail.diagnostics, selectedResponse)
+        : null;
 
     return (
         <div className="min-h-0 space-y-4 pb-1">
@@ -214,6 +241,13 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                     {detail.diagnostics ? <pre tabIndex={0} aria-label={t('diagnostics')} className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/30 p-3 font-mono text-xs">{JSON.stringify(detail.diagnostics, null, 2)}</pre> : null}
             <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-5">
                 <StatusAxis label={t('axes.generation')} value={detail.generation_outcome} />
+                {contentFilterEvidence ? (
+                    <StatusAxis
+                        label={t('contentFilterEvidence.axis')}
+                        text={t(`contentFilterEvidence.${contentFilterEvidence.state as StrictLogTextEvidenceState}`)}
+                        hint={t('contentFilterEvidence.hint')}
+                    />
+                ) : null}
                 <StatusAxis label={t('axes.upstream')} value={detail.upstream_outcome} />
                 <StatusAxis label={t('axes.content')} value={detail.content_state} />
                 <StatusAxis label={t('axes.persistence')} value={detail.persistence_state} />

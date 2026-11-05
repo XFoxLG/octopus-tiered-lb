@@ -156,10 +156,8 @@ func (m *RelayMetrics) SetOutboundRequest(req *transformerModel.InternalLLMReque
 
 func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAttempt) {
 	if m.RequestTrace != nil {
-		source := "gateway_error"
-		if success {
-			source = "upstream_terminal"
-		}
+		m.RequestTrace.markSelectedAttemptOutputTextPresent(attempts, success)
+		source := relayMetricsTerminalSource(m, success, err)
 		m.RequestTrace.markRuntimeTerminal(m.OperationContext, source, err)
 	}
 	ctx, cancel := newRelayPersistenceContext()
@@ -235,6 +233,25 @@ func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAtt
 
 	m.saveLog(ctx, err, duration, attempts, channelID, channelName)
 	telemetry.Global().RecordRequest(duration.Milliseconds(), success)
+}
+
+func relayMetricsTerminalSource(metrics *RelayMetrics, success bool, err error) string {
+	if metrics != nil && metrics.RequestTrace != nil {
+		_, _, _, _, writeError := metrics.RequestTrace.summary()
+		if writeError != "" {
+			return "delivery_error"
+		}
+	}
+	if success {
+		return "upstream_terminal"
+	}
+	if errors.Is(err, errClientDisconnected) || errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	if _, ok := terminalCauseFromError(err); ok {
+		return "upstream_terminal"
+	}
+	return "gateway_error"
 }
 
 func finalChannel(attempts []model.ChannelAttempt) (int, string) {

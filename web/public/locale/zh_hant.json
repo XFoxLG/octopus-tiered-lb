@@ -3033,6 +3033,13 @@
         "writerBytes": "Writer 接受位元組",
         "termination": "規範化終態",
         "providerTermination": "上游原始終態",
+        "contentFilterEvidence": {
+            "axis": "審查證據",
+            "present": "審查終止：已有正文",
+            "absent": "審查終止：無正文",
+            "unknown": "正文證據不足",
+            "hint": "僅依據網關捕獲到的終態內容；不能證明 Tavo 已收到或儲存。"
+        },
         "writerCaveat": "Writer 已接受只證明服務端寫入介面接收了這些位元組，不代表用戶端已收到、顯示或儲存。",
         "none": "不存在",
         "partial": "不完整",
