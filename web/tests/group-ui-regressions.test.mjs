@@ -284,7 +284,7 @@ function editorFixture(relativePath) {
         AlertDialog: 'aside', AlertDialogContent: 'div', AlertDialogHeader: 'div', AlertDialogTitle: 'h3',
         AlertDialogDescription: 'p', AlertDialogFooter: 'footer', AlertDialogCancel: 'button', AlertDialogAction: 'button',
         Loader2: 'i', Pencil: 'i', TestTubeDiagonal: 'i', Trash2: 'i', Waves: 'i',
-        normalizeEndpointType: value => value, supportsGroupTest: () => true,
+        normalizeEndpointType: value => value, supportsGroupTest: value => ['chat', 'embeddings', 'rerank'].includes(value),
     };
     const loaded = evaluateSource(inline ? 'export ' + inline.getText(sourceFile) : sharedSource, {
         ...globals,
@@ -389,4 +389,78 @@ test('draft tests freeze the started member snapshot and failed removal keeps un
     assert.match(panel, /protocol: \{result\.protocol\}/);
     assert.match(panel, /endpoint: \{result\.endpoint_id\}/);
     assert.match(panel, /snapshot: \{result\.snapshot_hash/);
+});
+
+
+const editorUtils = evaluateSource(readSource('../src/components/modules/group/utils.ts'), { './capabilities.ts': {} });
+function groupSettingsFixture(initial) {
+    const source = parseSource('../src/components/modules/group/Editor.tsx');
+    const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'GroupEditor');
+    const states = []; let index = 0, draft;
+    const globals = {
+        useState(value) { const key=index++; if (!(key in states)) states[key]=typeof value==='function'?value():value; return [states[key], next=>{states[key]=typeof next==='function'?next(states[key]):next;}]; },
+        useMemo: callback=>callback(), useCallback: callback=>callback, useEffect: callback=>callback(),
+        useTranslations: ()=>Object.assign(key=>key,{raw:key=>key}), useModelChannelList: ()=>({data:[]}),
+        GroupMode:{Auto:5}, ...editorUtils,
+        dedupeSelectedMembers: members=>members,
+        cn:(...values)=>values.filter(Boolean).join(' '),
+    };
+    for (const name of ['Field','FieldLabel','FieldGroup','Input','Switch','Hint','Button','Accordion','AccordionItem','AccordionTrigger','AccordionContent','TooltipProvider','Tooltip','TooltipTrigger','TooltipContent','HelpCircle','SlidersHorizontal','Waves','Sparkles','FlaskConical','Plus','Trash2','ModelPickerSection','SortSection']) globals[name]=name;
+    const loaded=evaluateSource('export '+declaration.getText(source),globals);
+    return {
+        render() { index=0;return loaded.GroupEditor({initial,submitText:'save',submittingText:'saving',isSubmitting:false,onSubmit:()=>{},onDraftChange:value=>{draft=value;}}); },
+        draft:()=>draft,
+    };
+}
+function byId(tree,id) { return treeNodes(tree,node=>node.props?.id===id)[0]?.node; }
+
+test('category changes hide chat fields without clearing the complete draft',()=>{
+    const fixture=groupSettingsFixture({name:'example',endpoint_type:'chat',members:[],default_reasoning_effort:'high',reasoning_force_override:true,stream_keepalive_enabled:true,assistant_prefill_compat:true,forward_mode:'raw',outbound_format:'messages_only',param_override:'{"temperature":0}',custom_header:[{header_key:'X-Test',header_value:'saved'}],hedge_delay_ms:0});
+    let tree=fixture.render(); const before=fixture.draft();
+    assert.ok(byId(tree,'group-default-reasoning-effort'));
+    byId(tree,'group-endpoint-type').props.onChange({target:{value:'embeddings'}});
+    tree=fixture.render();
+    for(const id of ['group-default-reasoning-effort','group-reasoning-force-override','group-stream-keepalive','group-stream-idle-timeout','group-assistant-prefill','group-hedge-enabled','group-param-override']) assert.equal(byId(tree,id),undefined,id);
+    assert.equal(byId(tree,'group-first-token-time-out').props.disabled,false);
+    assert.equal(byId(tree,'group-attempt-time-out').props.disabled,false);
+    const expected={...before,endpoint_type:'embeddings'};
+    assert.deepEqual(JSON.parse(JSON.stringify(fixture.draft())),JSON.parse(JSON.stringify(expected)));
+    assert.equal(treeNodes(tree,node=>node.props?.role==='alert').length,1,'legacy protocol conflict must remain visible');
+    byId(tree,'group-endpoint-type').props.onChange({target:{value:'rerank'}});
+    tree=fixture.render();
+    assert.equal(byId(tree,'group-attempt-time-out').props.disabled,true);
+    assert.equal(byId(tree,'group-first-token-time-out').props.disabled,true);
+    assert.equal(byId(tree,'group-request-timeout').props.disabled,undefined);
+    assert.equal(fixture.draft().default_reasoning_effort,'high');
+    byId(tree,'group-endpoint-type').props.onChange({target:{value:'chat'}});
+    tree=fixture.render();
+    assert.equal(byId(tree,'group-default-reasoning-effort').props.value,'high');
+    assert.equal(byId(tree,'group-stream-keepalive').props.checked,true);
+    assert.equal(byId(tree,'group-hedge-delay-ms').props.value,'0');
+    assert.deepEqual(JSON.parse(JSON.stringify(fixture.draft())),JSON.parse(JSON.stringify(before)));
+});
+
+test('embedding protocol reset is an explicit draft-only action',()=>{
+    const fixture=groupSettingsFixture({name:'example',endpoint_type:'embeddings',forward_mode:'passthrough',outbound_format:'chat_only',default_reasoning_effort:'high',members:[]});
+    let tree=fixture.render();
+    const button=treeNodes(tree,node=>node.type==='Button' && node.props.children==='form.categoryFields.resetEmbeddingProtocol')[0].node;
+    assert.equal(fixture.draft().forward_mode,'passthrough');
+    button.props.onClick();tree=fixture.render();
+    assert.equal(fixture.draft().forward_mode,'convert');
+    assert.equal(fixture.draft().outbound_format,'');
+    assert.equal(fixture.draft().default_reasoning_effort,'high');
+    assert.equal(treeNodes(tree,node=>node.props?.role==='alert').length,0);
+});
+
+test('draft test action follows current category and rejects unsupported media',()=>{
+    const fixture=editorFixture('../src/components/modules/group/GroupListItem.tsx');let sent=0;
+    const props={...completedEditorProps,onTestAvailability(){sent++;}};
+    let tree=fixture.render(props);const oldButton=treeNodes(tree,node=>node.type==='button' && Array.isArray(node.props.children) && node.props.children.includes('detail.availability.testAll'))[0].node;
+    treeNodes(tree,node=>node.type==='form')[0].node.props.onDraftChange({endpoint_type:'image_generation',members:[{id:'x'}]});
+    tree=fixture.render(props);
+    assert.equal(treeNodes(tree,node=>node.type==='button' && Array.isArray(node.props.children) && node.props.children.includes('detail.availability.testAll')).length,0);
+    oldButton.props.onClick();assert.equal(sent,0,'stale click must not probe chat for a media draft');
+    treeNodes(tree,node=>node.type==='form')[0].node.props.onDraftChange({endpoint_type:'rerank',members:[{id:'x'}]});
+    tree=fixture.render(props);
+    assert.equal(treeNodes(tree,node=>node.type==='button' && Array.isArray(node.props.children) && node.props.children.includes('detail.availability.testAll')).length,1);
 });

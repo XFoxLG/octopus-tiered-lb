@@ -59,15 +59,18 @@ export function EditDialogContent({
     const draftRef = useRef<GroupEditorValues | null>(null);
     const [draftMemberCount, setDraftMemberCount] = useState(editMembers.length);
     const [testedMembers, setTestedMembers] = useState<SelectedMember[]>(editMembers);
-    const canTest = Boolean(group.id && supportsGroupTest(group.endpoint_type));
+    const [draftEndpointType, setDraftEndpointType] = useState(group.endpoint_type);
+    const canTest = Boolean(group.id && supportsGroupTest(draftEndpointType));
 
     const handleDraftChange = useCallback((draft: GroupEditorValues) => {
         draftRef.current = draft;
+        setDraftEndpointType(draft.endpoint_type);
         setDraftMemberCount((current) => current === draft.members.length ? current : draft.members.length);
     }, []);
 
     const handleTest = () => {
         const draft = draftRef.current;
+        if (!supportsGroupTest(draft?.endpoint_type ?? group.endpoint_type)) return;
         setTestedMembers((draft?.members ?? editMembers).map((member) => ({ ...member })));
         setView('results');
         onTestAvailability(draft ?? undefined);
@@ -88,9 +91,9 @@ export function EditDialogContent({
                     <div className="col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 empty:hidden sm:col-span-1 sm:col-start-2 sm:row-start-1 sm:justify-end">
                         {canTest ? (
                             <>
-                                <AIRouteButton scope="group" groupId={group.id} variant="ghost"
+                                {normalizeEndpointType(group.endpoint_type) === 'chat' && <AIRouteButton scope="group" groupId={group.id} variant="ghost"
                                     className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate"
-                                    onSuccess={() => setIsOpen(false)} />
+                                    onSuccess={() => setIsOpen(false)} />}
                                 <Button type="button" variant="ghost" onClick={handleTest}
                                     disabled={isTestingAvailability || isSubmitting || draftMemberCount === 0}
                                     className="h-11 max-w-full gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 text-xs font-medium text-muted-foreground shadow-none transition-colors duration-150 hover:translate-y-0 hover:border-border hover:bg-muted hover:text-foreground dark:hover:bg-muted sm:h-9 [&>span]:truncate">
