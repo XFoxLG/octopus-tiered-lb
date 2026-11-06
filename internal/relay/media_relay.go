@@ -379,6 +379,13 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 						WaitTime:       span.Duration().Milliseconds(),
 						RequestSuccess: 1,
 					})
+					if logEndpointType == dbmodel.EndpointTypeRerank {
+						usage := mediaRerankUsageFromContext(c)
+						st.ModelRecord(channel.ID, resolvedModel, dbmodel.StatsMetrics{
+							WaitTime: span.Duration().Milliseconds(), RequestSuccess: 1,
+							InputToken: int64(usage.input), OutputToken: int64(usage.output),
+						})
+					}
 					balancer.RecordSuccess(channel.ID, usedKey.ID, resolvedModel)
 					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModel)
 					// 离群窗口：记录成功样本（与熔断器同级）。
@@ -404,6 +411,11 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					WaitTime:      span.Duration().Milliseconds(),
 					RequestFailed: 1,
 				})
+				if logEndpointType == dbmodel.EndpointTypeRerank {
+					st.ModelRecord(channel.ID, resolvedModel, dbmodel.StatsMetrics{
+						WaitTime: span.Duration().Milliseconds(), RequestFailed: 1,
+					})
+				}
 
 				// 熔断守卫与 relay.go 复用同一个纯函数 shouldRecordChannelFailure，避免两文件
 				// 判定逻辑漂移。SkipFailureAccounting（客户端断连）由上方
@@ -519,6 +531,7 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 
 	// 与 relay_log 一致地截断 attempts（issue #192 兜底），防止 media 路径同样把
 	// 决策纪录无上限写入日志。
+	accountingAttempts := attempts
 	attempts, totalAttempts := capAttemptsForLog(attempts)
 
 	relayLog := dbmodel.RelayLog{
@@ -606,6 +619,16 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		log.Warnf("failed to update daily stats for media relay: %v", statsErr)
 	}
 	st.APIKeyUpdate(apiKeyID, stats)
+	if endpointType == dbmodel.EndpointTypeRerank {
+		actualModel := resolvedModel
+		if actualModel == "" {
+			actualModel = requestModel
+		}
+		// Reuse the LLM dimension contract: requests are counted once, while
+		// channel/model attempts exclude skips and cancellations.
+		metrics := RelayMetrics{APIKeyID: apiKeyID, RequestModel: requestModel}
+		metrics.recordDailyDimensions(ctx, stats, accountingAttempts, channelID, channelName, actualModel)
+	}
 	telemetry.Global().RecordRequest(duration.Milliseconds(), relayErr == nil)
 }
 

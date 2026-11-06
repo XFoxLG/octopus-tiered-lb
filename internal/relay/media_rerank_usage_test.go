@@ -81,7 +81,11 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 			}
 			engine := gin.New()
 			engine.Use(RelayRequestTraceMiddleware())
-			engine.POST("/v1/rerank", func(c *gin.Context) { MediaHandler(MediaEndpointRerank, c) })
+			apiKeyID := ch.ID + 10000
+			engine.POST("/v1/rerank", func(c *gin.Context) {
+				c.Set("api_key_id", apiKeyID)
+				MediaHandler(MediaEndpointRerank, c)
+			})
 			req := httptest.NewRequest(http.MethodPost, "/v1/rerank", strings.NewReader(`{"model":"`+name+`","query":"safe","documents":["safe"]}`))
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
@@ -111,6 +115,53 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 			if tc.status == 200 && (rr.Body.String() != tc.body || got.ClientWriteBytes != int64(len(tc.body)) || !got.ClientWriteComplete) {
 				t.Fatalf("response or egress accounting changed: %#v", got)
 			}
+			wantSuccess, wantFailed := int64(0), int64(1)
+			if tc.status == 200 {
+				wantSuccess, wantFailed = 1, 0
+			}
+			checkMetrics := func(label string, got m.StatsMetrics) {
+				t.Helper()
+				if got.InputToken != int64(tc.input) || got.OutputToken != 0 || got.RequestSuccess != wantSuccess || got.RequestFailed != wantFailed {
+					t.Errorf("%s: got %#v, want tokens=%d success=%d failed=%d", label, got, tc.input, wantSuccess, wantFailed)
+				}
+			}
+			checkMetrics("API key", stats.APIKeyGet(apiKeyID).StatsMetrics)
+			var dailyModel m.StatsDailyModel
+			if err := db.GetDB().Where("model_name = ?", name).First(&dailyModel).Error; err != nil {
+				t.Fatal(err)
+			}
+			checkMetrics("daily model", dailyModel.StatsMetrics)
+			var dailyKey m.StatsDailyAPIKey
+			if err := db.GetDB().Where("api_key_id = ?", apiKeyID).First(&dailyKey).Error; err != nil {
+				t.Fatal(err)
+			}
+			checkMetrics("daily API key", dailyKey.StatsMetrics)
+			var modelStats []m.StatsModel
+			for _, row := range stats.ModelList() {
+				if row.ChannelID == ch.ID && row.Name == name {
+					modelStats = append(modelStats, row)
+				}
+			}
+			if tc.noEndpoint {
+				if len(modelStats) != 0 {
+					t.Fatal("skipped endpoint incorrectly counted as a model attempt")
+				}
+				return
+			}
+			if len(modelStats) != 1 {
+				t.Fatalf("model stats rows=%d", len(modelStats))
+			}
+			checkMetrics("channel model", modelStats[0].StatsMetrics)
+			checkMetrics("channel", stats.ChannelGet(ch.ID).StatsMetrics)
+			var dailyChannel m.StatsDailyChannel
+			var dailyChannelModel m.StatsDailyChannelModel
+			for _, row := range []any{&dailyChannel, &dailyChannelModel} {
+				if err := db.GetDB().Where("channel_id = ?", ch.ID).First(row).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			checkMetrics("daily channel", dailyChannel.StatsMetrics)
+			checkMetrics("daily channel model", dailyChannelModel.StatsMetrics)
 		})
 	}
 }
