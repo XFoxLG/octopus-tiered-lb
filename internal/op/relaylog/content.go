@@ -215,8 +215,16 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 		for relayLogIndex := range relayLogs {
 			relayLogs[relayLogIndex].PersistenceState = model.RelayLogPersistencePending
 		}
-		if err := transaction.Clauses(clause.OnConflict{DoNothing: true}).Create(&relayLogs).Error; err != nil {
-			return err
+		storedLogs := append([]model.RelayLog(nil), relayLogs...)
+		for i := range storedLogs {
+			escapeRelayLogRowText(&storedLogs[i])
+			storedLogs[i].Attempts = append([]model.ChannelAttempt(nil), storedLogs[i].Attempts...)
+			for j := range storedLogs[i].Attempts {
+				escapeRelayLogRowText(&storedLogs[i].Attempts[j])
+			}
+		}
+		if err := transaction.Clauses(clause.OnConflict{DoNothing: true}).Create(&storedLogs).Error; err != nil {
+			return fmt.Errorf("persist relay log metadata: %w", err)
 		}
 
 		relayLogIDs := make([]int64, 0, len(relayLogs))
@@ -230,12 +238,15 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 			return err
 		}
 		attemptRows := relayLogContentAttempts(relayLogs)
+		for i := range attemptRows {
+			escapeRelayLogRowText(&attemptRows[i])
+		}
 		if len(attemptRows) > 0 {
 			// 同一 (relay_log_id, attempt_num) 撞 uidx_rla_log_attempt 时只跳过那一行。
 			// 裸 Create 会让整个事务回滚，代价是整批日志（含其它请求的记录）全部写不进去，
 			// 用一条重复的尝试记录换掉一批完好的日志不划算。
 			if err := transaction.Clauses(clause.OnConflict{DoNothing: true}).Create(&attemptRows).Error; err != nil {
-				return err
+				return fmt.Errorf("persist relay log attempts: %w", err)
 			}
 		}
 
@@ -249,6 +260,7 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 				capturedContent := &relayLog.Contents[contentIndex]
 				capturedContent.RelayLogID = relayLog.ID
 				contentRef := capturedContent.RelayLogContentRef
+				escapeRelayLogRowText(&contentRef)
 
 				if contentRef.State == model.RelayLogContentStateReady && capturedContent.Data != nil {
 					blob, encodeErr := buildRelayLogContentBlob(capturedContent.Data, capturedContent.CreatedAt)
@@ -258,7 +270,7 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 						contentState = model.RelayLogContentStateUnavailable
 					} else {
 						if err := transaction.Clauses(clause.OnConflict{DoNothing: true}).Create(blob).Error; err != nil {
-							return err
+							return fmt.Errorf("persist relay log content blob: %w", err)
 						}
 						contentRef.BlobDigest = blob.Digest
 					}
@@ -267,7 +279,7 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 				// 同一 (relay_log_id, attempt_num, boundary, slot, kind) 撞 uidx_rlcr_slot
 				// 时只跳过那一行；裸 Create 会让整个事务回滚，代价是整批日志全部丢失。
 				if err := transaction.Clauses(clause.OnConflict{DoNothing: true}).Create(&contentRef).Error; err != nil {
-					return err
+					return fmt.Errorf("persist relay log content reference: %w", err)
 				}
 			}
 
@@ -277,7 +289,7 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 			relayLog.ContentState = contentState
 			updates := map[string]any{
 				"content_state":             contentState,
-				"content_unavailable_error": relayLog.ContentUnavailableError,
+				"content_unavailable_error": escapeRelayLogDatabaseText(relayLog.ContentUnavailableError),
 				"persistence_state":         model.RelayLogPersistenceReady,
 			}
 			if relayLog.Diagnostics != nil {
@@ -311,6 +323,7 @@ func persistUnavailableRelayLogMetadata(ctx context.Context, relayLog model.Rela
 	relayLog.ContentState = model.RelayLogContentStateUnavailable
 	relayLog.ContentUnavailableError = reason
 	relayLog.PersistenceState = model.RelayLogPersistenceUnavailable
+	escapeRelayLogRowText(&relayLog)
 	if err := connection.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&relayLog).Error; err != nil {
 		relayLogPersistenceFailures.Add(1)
 		relayLogLastPersistenceFailureAt.Store(time.Now().Unix())
