@@ -52,6 +52,11 @@ func runConfiguredConnectionProbe(ctx context.Context, ch *m.Channel, run *m.Cha
 		endpoint := &ch.ConnectionConfig.Endpoints[i]
 		plan := m.ConnectionPlan{Endpoint: endpoint, AdapterType: endpoint.AdapterType()}
 		selected := ch.WithConnectionPlan(plan)
+		if endpoint.Protocol == "rerank" {
+			outcome := sendRerankProbe(ctx, selected, key, scope, modelName)
+			results = append(results, buildProbeResult(run, m.ProbeKindProtocol, "protocol_rerank", outcome, key))
+			continue
+		}
 		request, _ := buildCapabilityProbeRequest(m.ProbeItemTextGeneration, modelName)
 		item := m.ProbeItemProtocolChat
 		switch endpoint.Protocol {
@@ -131,7 +136,12 @@ func testConfiguredChannel(ctx context.Context, ch m.Channel) (*ChannelTestSumma
 			if endpoint.Protocol == "embeddings" {
 				request, _ = buildGroupProbeRequest(m.EndpointTypeEmbeddings, name)
 			}
-			outcome := sendProbeRequest(ctx, ch.WithConnectionPlan(plan), key.ChannelKey, probeKeyScope{Index: index, KeyID: key.ID}, plan.AdapterType, request)
+			var outcome *probeRequestOutcome
+			if endpoint.Protocol == "rerank" {
+				outcome = sendRerankProbe(ctx, ch.WithConnectionPlan(plan), key.ChannelKey, probeKeyScope{Index: index, KeyID: key.ID}, name)
+			} else {
+				outcome = sendProbeRequest(ctx, ch.WithConnectionPlan(plan), key.ChannelKey, probeKeyScope{Index: index, KeyID: key.ID}, plan.AdapterType, request)
+			}
 			secrets := []string{key.ChannelKey}
 			for _, h := range ch.CustomHeader {
 				secrets = append(secrets, h.HeaderValue)

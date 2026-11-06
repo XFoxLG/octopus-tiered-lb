@@ -97,7 +97,27 @@ export function normalizeEndpointType(value?: string | null) {
 const CONVERSATION_ENDPOINT_TYPES = new Set(['chat', 'deepseek', 'mimo', 'responses', 'messages']);
 
 export function supportsGroupTest(endpointType?: string | null) {
-    return CONVERSATION_ENDPOINT_TYPES.has(normalizeEndpointType(endpointType));
+    const normalized = normalizeEndpointType(endpointType);
+    return CONVERSATION_ENDPOINT_TYPES.has(normalized) || normalized === 'embeddings' || normalized === 'rerank';
+}
+
+// These describe the current relay paths, not inferred model capabilities.
+export function groupEditorCapabilities(endpointType?: string | null) {
+    const endpoint = normalizeEndpointType(endpointType);
+    const chat = endpoint === 'chat';
+    const embedding = endpoint === 'embeddings';
+    return {
+        chat,
+        embedding,
+        llmPath: chat || embedding,
+        known: ENDPOINT_TYPE_OPTIONS.some((option) => option.value === endpoint),
+    };
+}
+
+export function hasEmbeddingProtocolConflict(endpointType: string, forwardMode?: string, outboundFormat?: string) {
+    if (normalizeEndpointType(endpointType) !== 'embeddings') return false;
+    return ['raw', 'passthrough'].includes(forwardMode ?? '')
+        || ['raw', 'passthrough', 'chat_only', 'responses_only', 'messages_only'].includes(outboundFormat ?? '');
 }
 
 export function endpointTypeLabelKey(value?: string | null) {
