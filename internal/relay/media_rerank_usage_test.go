@@ -44,15 +44,16 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 	xurl.SetSSRFAllowPrivateForTest(true)
 	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
 	for _, tc := range []struct {
-		name, body, state string
-		status, input     int
-		noEndpoint        bool
+		name, body, state     string
+		status, input, output int
+		noEndpoint            bool
 	}{
-		{"reported", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":245,"total_tokens":245}}`, m.RelayLogUsageReported, 200, 245, false},
-		{"missing", `{"results":[{"index":0,"relevance_score":0.9}]}`, m.RelayLogUsageNotReported, 200, 0, false},
-		{"invalid_usage", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":-1}}`, m.RelayLogUsageNotReported, 200, 0, false},
-		{"upstream_error", `{"error":{"message":"invalid request"}}`, m.RelayLogUsageFailedNoResponse, 400, 0, false},
-		{"no_rerank_endpoint", ``, m.RelayLogUsageFailedNoResponse, 502, 0, true},
+		{"reported", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":245,"total_tokens":245}}`, m.RelayLogUsageReported, 200, 245, 0, false},
+		{"reported_output", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"input_tokens":245,"output_tokens":3,"total_tokens":248}}`, m.RelayLogUsageReported, 200, 245, 3, false},
+		{"missing", `{"results":[{"index":0,"relevance_score":0.9}]}`, m.RelayLogUsageNotReported, 200, 0, 0, false},
+		{"invalid_usage", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":-1}}`, m.RelayLogUsageNotReported, 200, 0, 0, false},
+		{"upstream_error", `{"error":{"message":"invalid request"}}`, m.RelayLogUsageFailedNoResponse, 400, 0, 0, false},
+		{"no_rerank_endpoint", ``, m.RelayLogUsageFailedNoResponse, 502, 0, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			relaylog.SetCacheForTest(nil)
@@ -109,7 +110,7 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 					t.Fatalf("unroutable request recorded as success: error=%q before=%#v after=%#v", got.Error, before, after)
 				}
 			}
-			if got.UsageState != tc.state || got.InputTokens != tc.input || got.OutputTokens != 0 {
+			if got.UsageState != tc.state || got.InputTokens != tc.input || got.OutputTokens != tc.output {
 				t.Fatalf("usage=%s %d/%d", got.UsageState, got.InputTokens, got.OutputTokens)
 			}
 			if tc.status == 200 && (rr.Body.String() != tc.body || got.ClientWriteBytes != int64(len(tc.body)) || !got.ClientWriteComplete) {
@@ -121,7 +122,7 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 			}
 			checkMetrics := func(label string, got m.StatsMetrics) {
 				t.Helper()
-				if got.InputToken != int64(tc.input) || got.OutputToken != 0 || got.RequestSuccess != wantSuccess || got.RequestFailed != wantFailed {
+				if got.InputToken != int64(tc.input) || got.OutputToken != int64(tc.output) || got.RequestSuccess != wantSuccess || got.RequestFailed != wantFailed {
 					t.Errorf("%s: got %#v, want tokens=%d success=%d failed=%d", label, got, tc.input, wantSuccess, wantFailed)
 				}
 			}
