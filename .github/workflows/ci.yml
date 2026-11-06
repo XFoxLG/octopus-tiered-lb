@@ -49,6 +49,8 @@ jobs:
         run: go test -count=1 -v -p 1 ./internal/db/pgchain/...
       - name: PostgreSQL backup sequence synchronization
         run: go test -count=1 -v -run '^TestSynchronizeImportedSequencesPostgres$' ./internal/op/backup
+      - name: PostgreSQL relay log binary and error text persistence
+        run: go test -count=1 -v -tags=jsoniter -run '^TestRelayLogPostgres' ./internal/op/relaylog
   build-and-test:
     runs-on: ubuntu-latest
     env:
@@ -81,6 +83,9 @@ jobs:
 
       - name: Test relay package（含 budget 预算拆分回归测试）
         run: go test -tags=jsoniter ./internal/relay/...
+
+      - name: Gemini error decoding with production JSON codec
+        run: go test -tags=jsoniter ./internal/transformer/model ./internal/transformer/outbound/gemini
 
       - name: Token estimate benchmark（400KB 中英混合文本，仅留档不设阈值）
         # v2.8.13：为估算采样阈值与慢告警线提供校准数据。

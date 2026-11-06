@@ -1,5 +1,11 @@
 package model
 
+import (
+	"bytes"
+	"encoding/json"
+	"strconv"
+)
+
 // GeminiGenerateContentRequest represents a Gemini API request
 // Shared by both inbound and outbound transformers.
 type GeminiGenerateContentRequest struct {
@@ -149,9 +155,48 @@ type GeminiGenerateContentResponse struct {
 // calls and Code Assist proxies use this shape, even inside otherwise 200 OK
 // SSE data frames.
 type GeminiErrorEnvelope struct {
-	Code    int    `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
-	Status  string `json:"status,omitempty"`
+	Code    GeminiFlexibleErrorCode `json:"code,omitempty"`
+	Message string                  `json:"message,omitempty"`
+	Status  string                  `json:"status,omitempty"`
+	Type    string                  `json:"type,omitempty"`
+
+	// HTTPStatus preserves a proxy-provided status without treating it as a
+	// Gemini code. Official Gemini uses code/status; some OpenAI-compatible
+	// proxies use type/http_status instead.
+	HTTPStatus int `json:"http_status,omitempty"`
+}
+
+// GeminiFlexibleErrorCode accepts the numeric code used by the Gemini API and
+// the symbolic codes used by OpenAI-compatible Gemini proxies. Values the
+// provider adds later are kept as their raw JSON fragment instead of failing
+// the whole error envelope and masking the provider's message.
+type GeminiFlexibleErrorCode string
+
+func (code *GeminiFlexibleErrorCode) UnmarshalJSON(data []byte) error {
+	payload := bytes.TrimSpace(data)
+	if len(payload) == 0 || bytes.Equal(payload, []byte("null")) {
+		*code = ""
+		return nil
+	}
+
+	var number int64
+	if err := json.Unmarshal(payload, &number); err == nil {
+		*code = GeminiFlexibleErrorCode(strconv.FormatInt(number, 10))
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(payload, &text); err == nil {
+		*code = GeminiFlexibleErrorCode(text)
+		return nil
+	}
+
+	*code = GeminiFlexibleErrorCode(payload)
+	return nil
+}
+
+func (code GeminiFlexibleErrorCode) String() string {
+	return string(code)
 }
 
 // GeminiCandidate represents a generated response candidate

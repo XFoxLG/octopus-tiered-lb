@@ -808,6 +808,9 @@ func RelayLogAttemptsAdd(ctx context.Context, relayLogID int64, attempts []model
 	if len(rows) == 0 {
 		return nil
 	}
+	for i := range rows {
+		escapeRelayLogRowText(&rows[i])
+	}
 
 	conn := db.GetLogDB()
 	if conn == nil {

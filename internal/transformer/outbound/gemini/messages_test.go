@@ -249,7 +249,7 @@ func TestMessagesOutboundTransformStreamDistinguishesEmptyFrameAndTerminalMarker
 func TestConvertGeminiResponseMapsErrorFrameToFailureTerminal(t *testing.T) {
 	internalResponse := convertGeminiToLLMResponse(&model.GeminiGenerateContentResponse{
 		Error: &model.GeminiErrorEnvelope{
-			Code:    400,
+			Code:    model.GeminiFlexibleErrorCode("400"),
 			Message: "contents is not specified",
 			Status:  "INVALID_ARGUMENT",
 		},
