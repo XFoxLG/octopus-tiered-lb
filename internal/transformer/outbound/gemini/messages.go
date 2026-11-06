@@ -753,13 +753,17 @@ func geminiResponseError(envelope *model.GeminiErrorEnvelope, httpStatus int) *m
 	if httpStatus == 0 {
 		httpStatus = envelope.HTTPStatus
 	}
+	errorType := strings.TrimSpace(envelope.Status)
+	if errorType == "" {
+		errorType = strings.TrimSpace(envelope.Type)
+	}
 
 	return &model.ResponseError{
 		StatusCode: httpStatus,
 		Detail: model.ErrorDetail{
 			Message: strings.TrimSpace(envelope.Message),
 			Code:    envelope.Code.String(),
-			Type:    geminiErrorProviderReason(envelope),
+			Type:    errorType,
 		},
 	}
 }
@@ -772,6 +776,13 @@ func geminiErrorProviderReason(envelope *model.GeminiErrorEnvelope) string {
 		return providerType
 	}
 	if code := envelope.Code.String(); code != "" {
+		var numeric int64
+		if err := transformer.Unmarshal([]byte(code), &numeric); err == nil {
+			if numeric != 0 {
+				return fmt.Sprintf("HTTP %d", numeric)
+			}
+			return "GEMINI_ERROR"
+		}
 		return code
 	}
 	return "GEMINI_ERROR"

@@ -99,6 +99,18 @@ func TestMessagesOutboundTransformStreamRejectsMalformedJSON(testContext *testin
 	}
 }
 
+func TestGeminiNumericErrorWithoutStatusKeepsLegacyPresentation(t *testing.T) {
+	for _, tc := range []struct{ code, reason string }{{"503", "HTTP 503"}, {"0", "GEMINI_ERROR"}} {
+		response, err := (&MessagesOutbound{}).TransformStream(context.Background(), []byte(`{"error":{"code":`+tc.code+`,"message":"fixture failed"}}`))
+		if err != nil || response == nil || response.Error == nil {
+			t.Fatalf("missing error: %v %#v", err, response)
+		}
+		if response.Termination.ProviderReason != tc.reason || response.Error.Detail.Type != "" || response.Error.Detail.Code != tc.code {
+			t.Fatalf("legacy presentation changed: %#v %#v", response.Termination, response.Error)
+		}
+	}
+}
+
 func TestMessagesOutboundTransformResponsePreservesProviderError(testContext *testing.T) {
 	testCases := []struct {
 		name           string

@@ -235,7 +235,7 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 		// Delete-and-recreate makes retries idempotent and keeps parent, attempts,
 		// and boundary references inside one transaction.
 		if err := transaction.Where("relay_log_id IN ?", relayLogIDs).Delete(&model.RelayLogAttempt{}).Error; err != nil {
-			return err
+			return fmt.Errorf("replace relay log attempts: %w", err)
 		}
 		attemptRows := relayLogContentAttempts(relayLogs)
 		for i := range attemptRows {
@@ -251,7 +251,7 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 		}
 
 		if err := transaction.Where("relay_log_id IN ?", relayLogIDs).Delete(&model.RelayLogContentRef{}).Error; err != nil {
-			return err
+			return fmt.Errorf("replace relay log content references: %w", err)
 		}
 		for relayLogIndex := range relayLogs {
 			relayLog := &relayLogs[relayLogIndex]
@@ -297,18 +297,21 @@ func persistRelayLogBatch(ctx context.Context, connection *gorm.DB, relayLogs []
 				diagnostics.PersistenceState = model.RelayLogPersistenceReady
 				payload, err := json.Marshal(diagnostics)
 				if err != nil {
-					return err
+					return fmt.Errorf("encode relay log diagnostics: %w", err)
 				}
 				updates["diagnostics"] = string(payload)
 			}
 			if err := transaction.Model(&model.RelayLog{}).
 				Where("id = ?", relayLog.ID).
 				Updates(updates).Error; err != nil {
-				return err
+				return fmt.Errorf("finalize relay log persistence: %w", err)
 			}
 		}
 
-		return deleteUnreferencedRelayLogContentBlobs(transaction)
+		if err := deleteUnreferencedRelayLogContentBlobs(transaction); err != nil {
+			return fmt.Errorf("clean unreferenced relay log blobs: %w", err)
+		}
+		return nil
 	})
 }
 
