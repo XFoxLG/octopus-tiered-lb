@@ -325,6 +325,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				if rerankPlan != nil {
 					rerankPlanEndpoint = rerankPlan.Endpoint
 				}
+				c.Set(mediaRerankUsageKey, mediaRerankUsage{})
 				statusCode, fwdErr := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, span.AttemptNumber(), rerankPlanEndpoint)
 				if channel.MaxConcurrency > 0 {
 					rl.ReleaseChannelSlot(channel.ID)
@@ -341,7 +342,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				if errors.Is(fwdErr, errClientDisconnected) {
 					span.End(dbmodel.AttemptCancelled, statusCode, "client disconnected")
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, errClientDisconnected, clientIP, mediaReportedIP, userAgent, requestTrace)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, errClientDisconnected, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
 					return
 				}
 
@@ -388,7 +389,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					balancer.SetSticky(apiKeyID, requestModel, channel.ID, usedKey.ID, resolvedModel)
 
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, nil, clientIP, mediaReportedIP, userAgent, requestTrace)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, nil, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
 					return
 				}
 
@@ -436,14 +437,14 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				case ScopeNone:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
 					// 与 LLM relay 一致：客户端错误原样回给下游，不吞成 502。
 					writeClientTerminalError(c, channel, channel.Type, decision.Code, fwdErr)
 					return
 				case ScopeAbortAll:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
 					return
 				case ScopeSameChannel:
 					lastErr = fwdErr
@@ -485,7 +486,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				default:
 					lastErr = fwdErr
 					allAttempts = append(allAttempts, routeIter.Attempts()...)
-					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace)
+					recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, channel.ID, channel.Name, resolvedModel, time.Since(startTime), allAttempts, fwdErr, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
 					resp.Error(c, http.StatusBadGateway, lastErr.Error())
 					return
 				}
@@ -494,7 +495,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
 	}
 	// All route rounds exhausted
-	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaReportedIP, userAgent, requestTrace)
+	if lastErr == nil {
+		lastErr = errors.New("no available channel for this endpoint")
+	}
+	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
 	// 对外返回通用文案，上游错误细节仅入日志（同 chat 路径）。
 	resp.Error(c, http.StatusBadGateway, "all channels failed")
 	return
@@ -504,12 +508,12 @@ mediaExhausted:
 	if routeIter != nil {
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
 	}
-	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaReportedIP, userAgent, requestTrace)
+	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
 	resp.Error(c, http.StatusBadGateway, "all channels failed")
 }
 
 // recordMediaRelayLog creates a RelayLog entry and updates global stats for media endpoints.
-func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string, bodyBytes []byte, channelID int, channelName string, resolvedModel string, duration time.Duration, attempts []dbmodel.ChannelAttempt, relayErr error, clientIP string, reportedIP reportedClientIP, userAgent string, requestTrace *relayRequestTrace) {
+func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string, bodyBytes []byte, channelID int, channelName string, resolvedModel string, duration time.Duration, attempts []dbmodel.ChannelAttempt, relayErr error, clientIP string, reportedIP reportedClientIP, userAgent string, requestTrace *relayRequestTrace, usage ...mediaRerankUsage) {
 	ctx, cancel := newRelayPersistenceContext()
 	defer cancel()
 
@@ -532,9 +536,20 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		UseTime:                int(duration.Milliseconds()),
 		Attempts:               attempts,
 		TotalAttempts:          totalAttempts,
-		// 媒体端点（生图/生文/转写等）没有 Token 用量概念，诚实标注不适用，
-		// 前端不再显示成"未知"。
+		// Preserve the existing media default; rerank reports token usage separately.
 		UsageState: dbmodel.RelayLogUsageNotApplicable,
+	}
+	if endpointType == dbmodel.EndpointTypeRerank {
+		relayLog.UsageState = dbmodel.RelayLogUsageNotReported
+		if len(usage) > 0 && usage[0].reported {
+			relayLog.InputTokens = usage[0].input
+			relayLog.OutputTokens = usage[0].output
+			relayLog.UsageState = dbmodel.RelayLogUsageReported
+		} else if errors.Is(relayErr, errClientDisconnected) {
+			relayLog.UsageState = dbmodel.RelayLogUsageClientDisconnect
+		} else if relayErr != nil {
+			relayLog.UsageState = dbmodel.RelayLogUsageFailedNoResponse
+		}
 	}
 
 	if apiKey, getErr := ak.Get(apiKeyID, ctx); getErr == nil {
@@ -558,13 +573,19 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		relayLog.Error = relayErr.Error()
 	}
 
-	if _, logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
+	if requestTrace != nil {
+		// The middleware owns persistence after the final downstream write, as in
+		// the chat path. This also attaches the trace and complete egress evidence.
+		requestTrace.stageRelayLog(relayLog)
+	} else if _, logErr := relaylog.RelayLogAdd(ctx, relayLog); logErr != nil {
 		log.Warnf("failed to save media relay log: %v", logErr)
 	}
 
-	// Record global and API-key stats (media endpoints don't have token/cost data)
+	// Only upstream-reported rerank tokens enter accounting; no cost estimate.
 	stats := dbmodel.StatsMetrics{
-		WaitTime: int64(duration.Milliseconds()),
+		WaitTime:    int64(duration.Milliseconds()),
+		InputToken:  int64(relayLog.InputTokens),
+		OutputToken: int64(relayLog.OutputTokens),
 	}
 	if relayErr == nil {
 		stats.RequestSuccess = 1
@@ -576,6 +597,9 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 			requestModel, duration.Milliseconds(), len(attempts), relayErr)
 	}
 
+	if channelID > 0 && relayLog.UsageState == dbmodel.RelayLogUsageReported {
+		st.ChannelUpdate(channelID, dbmodel.StatsMetrics{InputToken: stats.InputToken, OutputToken: stats.OutputToken})
+	}
 	st.TotalUpdate(stats)
 	st.HourlyUpdate(stats)
 	if statsErr := st.DailyUpdate(ctx, stats); statsErr != nil {
@@ -814,6 +838,9 @@ func forwardMediaRequestJSON(
 	}
 	if isMediaSSEResponse(response) {
 		return handleSSEResponse(c, response)
+	}
+	if cfg.UpstreamPath == "/v1/rerank" {
+		return handleRerankResponse(c, response)
 	}
 	return handleJSONResponse(c, response)
 }
