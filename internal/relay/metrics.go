@@ -553,6 +553,11 @@ func resolveUsageState(resp *transformerModel.InternalLLMResponse, relayErr erro
 	if resp != nil && resp.Usage != nil && resp.Usage.PromptTokens > 0 {
 		return model.RelayLogUsageReported
 	}
+	if termination, ok := terminalCauseFromError(relayErr); ok && termination.Cause == transformerModel.TerminationCauseTokenLimit {
+		// A received length terminal is an upstream response even when its
+		// bounded tail window expires before the provider reports usage.
+		return model.RelayLogUsageNotReported
+	}
 	if relayErr != nil {
 		return model.RelayLogUsageFailedNoResponse
 	}
