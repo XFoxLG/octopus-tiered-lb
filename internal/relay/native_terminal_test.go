@@ -20,14 +20,14 @@ func TestNativeTerminalEndsWithoutSocketEOF(t *testing.T) {
 		name    string
 		adapter outbound.OutboundType
 		frames  string
-		failure bool
+		failure string
 	}{
-		{"responses_complete", outbound.OutboundTypeOpenAIResponse, `{"type":"response.output_text.delta","delta":"answer","output_index":0,"content_index":0}` + "\n" + `{"type":"response.completed","response":{"id":"r","status":"completed","usage":{"input_tokens":2,"output_tokens":3}}}`, false},
-		{"responses_length", outbound.OutboundTypeOpenAIResponse, `{"type":"response.output_text.delta","delta":"partial","output_index":0,"content_index":0}` + "\n" + `{"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":2,"output_tokens":3}}}`, false},
-		{"responses_failed", outbound.OutboundTypeOpenAIResponse, `{"type":"response.failed","response":{"id":"r","status":"failed","error":{"type":"server_error","message":"fixture failed"}}}`, true},
-		{"messages", outbound.OutboundTypeAnthropic, `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"answer"}}` + "\n" + `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}` + "\n" + `{"type":"message_stop"}`, false},
-		{"gemini", outbound.OutboundTypeGemini, `{"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"answer"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}`, false},
-		{"chat_usage_tail", outbound.OutboundTypeOpenAIChat, `{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}` + "\n" + `{"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`, false},
+		{"responses_complete", outbound.OutboundTypeOpenAIResponse, `{"type":"response.output_text.delta","delta":"answer","output_index":0,"content_index":0}` + "\n" + `{"type":"response.completed","response":{"id":"r","status":"completed","usage":{"input_tokens":2,"output_tokens":3}}}`, ""},
+		{"responses_length", outbound.OutboundTypeOpenAIResponse, `{"type":"response.output_text.delta","delta":"partial","output_index":0,"content_index":0}` + "\n" + `{"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":2,"output_tokens":3}}}`, "token_limit"},
+		{"responses_failed", outbound.OutboundTypeOpenAIResponse, `{"type":"response.failed","response":{"id":"r","status":"failed","error":{"type":"server_error","message":"fixture failed"}}}`, "fixture failed"},
+		{"messages", outbound.OutboundTypeAnthropic, `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"answer"}}` + "\n" + `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}` + "\n" + `{"type":"message_stop"}`, ""},
+		{"gemini", outbound.OutboundTypeGemini, `{"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"answer"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":3,"totalTokenCount":5}}`, ""},
+		{"chat_usage_tail", outbound.OutboundTypeOpenAIChat, `{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}` + "\n" + `{"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}`, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -50,16 +50,28 @@ func TestNativeTerminalEndsWithoutSocketEOF(t *testing.T) {
 				}()
 				select {
 				case err := <-done:
-					if tc.failure != (err != nil) {
+					if tc.failure == "" && err != nil {
 						t.Fatalf("terminal outcome: %v body=%s", err, recorder.Body.String())
+					}
+					if tc.failure != "" {
+						termination, ok := terminalCauseFromError(err)
+						if !ok {
+							t.Fatalf("typed terminal lost: %v body=%s", err, recorder.Body.String())
+						}
+						if tc.failure == "token_limit" && termination.Cause != tm.TerminationCauseTokenLimit {
+							t.Fatalf("token-limit terminal = %#v body=%s", termination, recorder.Body.String())
+						}
+						if tc.failure != "token_limit" && !strings.Contains(err.Error(), tc.failure) {
+							t.Fatalf("typed failure %q lost: %v body=%s", tc.failure, err, recorder.Body.String())
+						}
 					}
 				case <-time.After(2 * time.Second):
 					t.Fatal("native terminal waited for EOF")
 				}
-				if !tc.failure && strings.Count(recorder.Body.String(), "data: [DONE]") != 1 {
+				if (tc.failure == "" || tc.failure == "token_limit") && strings.Count(recorder.Body.String(), "data: [DONE]") != 1 {
 					t.Fatalf("Chat conversion missing/duplicate DONE: %s", recorder.Body.String())
 				}
-				if tc.failure && strings.Contains(recorder.Body.String(), "[DONE]") {
+				if tc.failure != "" && tc.failure != "token_limit" && strings.Contains(recorder.Body.String(), "[DONE]") {
 					t.Fatal("failure became success")
 				}
 			})

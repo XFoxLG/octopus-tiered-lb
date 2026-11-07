@@ -1,5 +1,7 @@
 package model
 
+import "strings"
+
 // TerminationCause is the protocol-agnostic classification of why a model
 // response stopped. Outbound adapters decode provider-specific reasons into
 // this canonical form so that relay policy (retry, health, logging) never has
@@ -169,4 +171,54 @@ type TerminationMetadata struct {
 // HasCause reports whether a canonical cause was decoded.
 func (t TerminationMetadata) HasCause() bool {
 	return t.Cause != TerminationCauseUnspecified
+}
+
+// TerminationFromOpenAICompatFinishReason decodes the shared OpenAI-shaped
+// finish_reason vocabulary. Some OpenAI-compatible providers report token
+// truncation as "max_tokens" rather than the standard "length"; both are the
+// same canonical token-limit outcome. The verbatim reason remains in
+// ProviderReason for logs and diagnostics.
+func TerminationFromOpenAICompatFinishReason(finishReason *string) TerminationMetadata {
+	if finishReason == nil {
+		return TerminationMetadata{}
+	}
+
+	termination := TerminationMetadata{ProviderReason: *finishReason}
+	switch strings.ToLower(strings.TrimSpace(*finishReason)) {
+	case "stop":
+		termination.Cause = TerminationCauseComplete
+	case "length", "max_tokens":
+		termination.Cause = TerminationCauseTokenLimit
+	case "tool_calls", "function_call":
+		termination.Cause = TerminationCauseToolCall
+	case "content_filter":
+		termination.Cause = TerminationCauseContentFilter
+	case "refusal":
+		termination.Cause = TerminationCauseRefusal
+	case "error":
+		termination.Cause = TerminationCauseError
+	default:
+		termination.Cause = TerminationCauseUnknown
+	}
+	return termination
+}
+
+// OpenAICompatFinishReasonForTermination renders a canonical cause as the
+// standard Chat Completions finish_reason. Token limits always use "length",
+// even when the upstream used a provider-compatible alias such as
+// "max_tokens"; the alias remains available as ProviderReason.
+func OpenAICompatFinishReasonForTermination(cause TerminationCause) string {
+	switch cause {
+	case TerminationCauseComplete, TerminationCauseStopSequence:
+		return "stop"
+	case TerminationCauseToolCall:
+		return "tool_calls"
+	case TerminationCauseContentFilter,
+		TerminationCauseRecitation,
+		TerminationCausePromptBlocked,
+		TerminationCauseRefusal:
+		return "content_filter"
+	default:
+		return "length"
+	}
 }

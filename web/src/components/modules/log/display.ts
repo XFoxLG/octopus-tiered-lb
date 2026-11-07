@@ -149,6 +149,113 @@ function resolveLeadingAttemptMs(attempts: ChannelAttempt[] | undefined, firstVi
     return Math.max(0, cumulative - lastDuration);
 }
 
+export type RelayLogTokenLimitEvidenceKind = 'token_limit' | 'provider_length' | 'unknown';
+
+export interface RelayLogTokenLimitEvidence {
+    isTokenLimitTerminated: boolean;
+    evidence: RelayLogTokenLimitEvidenceKind;
+}
+
+/**
+ * 输出上限终止只认记录到的证据：规范化 token_limit，或历史行明确回报的
+ * provider length / max_tokens。不从 8192、token 数或正文长度反推。
+ */
+export function resolveTokenLimitEvidence(
+    log: Pick<RelayLog, 'termination_cause' | 'provider_termination_reason'>,
+): RelayLogTokenLimitEvidence {
+    const terminationCause = (log.termination_cause ?? '').trim().toLowerCase();
+    if (terminationCause === 'token_limit') {
+        return { isTokenLimitTerminated: true, evidence: 'token_limit' };
+    }
+    const providerReason = (log.provider_termination_reason ?? '').trim().toLowerCase();
+    if (providerReason === 'length' || providerReason === 'max_tokens') {
+        return { isTokenLimitTerminated: true, evidence: 'provider_length' };
+    }
+    return { isTokenLimitTerminated: false, evidence: 'unknown' };
+}
+
+export type OutboundMaxTokensSourceToken =
+    | 'clientMaxTokens'
+    | 'clientMaxCompletionTokens'
+    | 'clientMaxOutputTokens'
+    | 'channelMaxTokens'
+    | 'channelMaxCompletionTokens'
+    | 'groupMaxTokens'
+    | 'groupMaxCompletionTokens'
+    | 'anthropicDefault8192';
+
+const outboundMaxTokensSourceTokens: Readonly<Record<OutboundMaxTokensSourceToken, string>> = {
+    clientMaxTokens: 'client:max_tokens',
+    clientMaxCompletionTokens: 'client:max_completion_tokens',
+    clientMaxOutputTokens: 'client:max_output_tokens',
+    channelMaxTokens: 'override:channel:max_tokens',
+    channelMaxCompletionTokens: 'override:channel:max_completion_tokens',
+    groupMaxTokens: 'override:group:max_tokens',
+    groupMaxCompletionTokens: 'override:group:max_completion_tokens',
+    anthropicDefault8192: 'anthropic:default_8192',
+};
+
+export interface RelayLogOutboundMaxTokensAttempt {
+    attempt: number;
+    value: number | null;
+    source: string;
+    sourceToken: OutboundMaxTokensSourceToken | null;
+    adjusted: boolean;
+}
+
+export interface RelayLogOutboundMaxTokens {
+    value: number | null;
+    source: string;
+    sourceToken: OutboundMaxTokensSourceToken | null;
+    adjusted: boolean;
+    attempts: RelayLogOutboundMaxTokensAttempt[];
+}
+
+function resolveOutboundMaxTokensSource(source: string | null | undefined): {
+    source: string;
+    sourceToken: OutboundMaxTokensSourceToken | null;
+} {
+    const normalized = source?.trim().toLowerCase();
+    if (!normalized) return { source: '', sourceToken: null };
+    for (const [token, rawSource] of Object.entries(outboundMaxTokensSourceTokens)) {
+        if (rawSource === normalized) {
+            return { source: normalized, sourceToken: token as OutboundMaxTokensSourceToken };
+        }
+    }
+    return { source: normalized.slice(0, 64), sourceToken: null };
+}
+
+export function resolveOutboundMaxTokens(
+    diagnostics: RelayLogDetail['diagnostics'],
+): RelayLogOutboundMaxTokens {
+    const top = resolveOutboundMaxTokensSource(diagnostics?.outbound_max_tokens_source);
+    return {
+        value: typeof diagnostics?.outbound_max_tokens === 'number' ? diagnostics.outbound_max_tokens : null,
+        source: top.source,
+        sourceToken: top.sourceToken,
+        adjusted: diagnostics?.outbound_max_tokens_adjusted === true,
+        attempts: (diagnostics?.attempts ?? [])
+            .filter((attempt) => (
+                typeof attempt?.attempt === 'number' &&
+                (
+                    typeof attempt.outbound_max_tokens === 'number' ||
+                    attempt.outbound_max_tokens_source?.trim() ||
+                    attempt.outbound_max_tokens_adjusted === true
+                )
+            ))
+            .map((attempt) => {
+                const source = resolveOutboundMaxTokensSource(attempt.outbound_max_tokens_source);
+                return {
+                    attempt: attempt.attempt,
+                    value: typeof attempt.outbound_max_tokens === 'number' ? attempt.outbound_max_tokens : null,
+                    source: source.source,
+                    sourceToken: source.sourceToken,
+                    adjusted: attempt.outbound_max_tokens_adjusted === true,
+                };
+            }),
+    };
+}
+
 export function resolveLogInvestigationMarkers(
     log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes' | 'reasoning_tokens'> & {
         upstream_model?: string | null;
@@ -184,8 +291,8 @@ export function resolveLogInvestigationMarkers(
         }
     }
 
-    const providerReason = (log.provider_termination_reason ?? '').trim().toLowerCase();
-    if (providerReason === 'length' || providerReason === 'max_tokens') {
+    const tokenLimitEvidence = resolveTokenLimitEvidence(log);
+    if (tokenLimitEvidence.isTokenLimitTerminated) {
         markers.push('length_truncated');
     }
     // 空输出：后端成因标注，或「用量可信但输出 0 token」的成功日志（实测案例：
@@ -202,7 +309,11 @@ export function resolveLogInvestigationMarkers(
     // 恒为 0、实际有内容写出（实测 烁-gemini 渠道：回答 OK 却自报 completion=0）。
     // 后者标「输出量未计」，不再冒充「空输出」。
     const deliveredBytes = typeof log.client_write_bytes === 'number' ? log.client_write_bytes : null;
-    if (emptyOutputByUsage) {
+    if (tokenLimitEvidence.isTokenLimitTerminated) {
+        // 0 token / 0 字节不是反证；typed token_limit 或历史 provider length/max_tokens
+        // 已经给出更明确的成因，避免再叠加「空输出」或「输出量未计」这类泛化标签。
+        // 其他独立轴（如用量未回报、客户端中断）仍然保留。
+    } else if (emptyOutputByUsage) {
         markers.push('empty_output');
     } else if (zeroTokensReported) {
         // v2.8.13：网关已按可见正文给出估算值（≈N），「输出量未计」不再成立。

@@ -459,6 +459,26 @@ func (ra *relayAttempt) attempt() attemptResult {
 			Decision: decision,
 		}
 	}
+
+	// An accepted stream/nonstream token limit is a legal, protocol-complete
+	// provider terminal. It is an incomplete generation, but not a channel
+	// failure and not another retry: partial bytes and replay state stay intact.
+	if termination, ok := terminalCauseFromError(fwdErr); ok && termination.Cause == model.TerminationCauseTokenLimit {
+		ra.collectResponse()
+		span.End(dbmodel.AttemptFailed, statusCode, "accepted token-limit terminal, no retry")
+		return attemptResult{
+			Success: false,
+			Written: ra.streamOutputWasCommitted(),
+			Err:     fwdErr,
+			Decision: RetryDecision{
+				Scope:                 ScopeNone,
+				Reason:                "accepted token-limit terminal",
+				Code:                  statusCode,
+				IsError:               true,
+				SkipFailureAccounting: true,
+			},
+		}
+	}
 	// 截断输出重试：非流式 200 但 finish_reason=length（被 max_tokens 掐断成半截）。
 	// 与空输出同语义：不计渠道失败统计/熔断（内容质量问题而非渠道故障），
 	// 占用一次 Key 级重试名额，用完后换下一渠道；受 maxTotalAttempts 预算保护。
@@ -1391,16 +1411,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		// must be delivered as-is rather than retried with the identical
 		// request. Other empty buffered streams remain eligible for the
 		// existing no-output retry policy.
-		canReplayEmptyOutput := !ra.streamTermination.HasCause() ||
+		acceptedTokenLimit := ra.streamTermination.Cause == model.TerminationCauseTokenLimit
+		canReplayEmptyOutput := !acceptedTokenLimit && (!ra.streamTermination.HasCause() ||
 			(!ra.streamTermination.Cause.IsProviderFailure() &&
 				ra.streamTermination.Cause.AllowsIdenticalReplay() &&
-				!ra.streamTermination.Cause.IsProviderRefusal())
+				!ra.streamTermination.Cause.IsProviderRefusal()))
 		if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent && canReplayEmptyOutput && !ra.inlineReasoningExtracted {
-			if ra.streamTermination.Cause == model.TerminationCauseTokenLimit || ra.streamFinishReason == "length" {
-				log.Infof("channel %s returned empty stream truncated by max_tokens, will retry", ra.channel.Name)
-			} else {
-				log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
-			}
+			log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
 			return errEmptyOutput
 		}
 
@@ -1429,10 +1446,10 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 					return err
 				}
 				writeReasoningBuffer(ra, [][]byte{payload}, &clientDisconnected, markClientDisconnected, logClientDisconnected)
-				if clientDisconnected && ra.streamSession == nil {
-					return errClientDisconnected
-				}
 			}
+		}
+		if clientDisconnected && ra.streamSession == nil {
+			return errClientDisconnected
 		}
 
 		if ra.streamSession != nil {
@@ -1452,7 +1469,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			present := false
 			ra.streamOutputTextPresent = &present
 		}
-		if !ra.canPassthroughStream() && ra.streamTermination.Cause == model.TerminationCauseContentFilter {
+		if !ra.canPassthroughStream() &&
+			(ra.streamTermination.Cause == model.TerminationCauseContentFilter || acceptedTokenLimit) {
+			ra.collectResponse()
 			return providerTerminalFailureError(ra.streamTermination)
 		}
 		return nil
@@ -1893,6 +1912,20 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 			return nil, false, err
 		}
 	}
+	if !ra.canPassthroughStream() && ra.adapterEndpointProtocol() == "chat" {
+		if internalStream.Object == "[DONE]" && len(ra.streamFinishedChoiceIndexes) > 0 && ra.hasUnfinishedObservedStreamChoices() {
+			return nil, false, errMissingStreamTerminal
+		}
+		for i := range internalStream.Choices {
+			choice := &internalStream.Choices[i]
+			if _, finished := ra.streamFinishedChoiceIndexes[choice.Index]; finished && !chatChoiceHasContentDelta(*choice) {
+				// A repeated empty finish chunk can carry new usage, but must not
+				// finish the same choice a second time downstream.
+				choice.FinishReason = nil
+				choice.Termination = model.TerminationMetadata{}
+			}
+		}
+	}
 	internalStream = ra.deferChatFinishHints(internalStream)
 
 	if !ra.canPassthroughStream() {
@@ -1970,11 +2003,13 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 		ra.streamSawExplicitTerminalEvent = true
 	}
 	if internalStream.Termination.HasCause() &&
-		(!ra.streamStickyProviderRefusal || internalStream.Termination.Cause.IsProviderRefusal()) {
+		(!ra.streamStickyProviderRefusal || internalStream.Termination.Cause.IsProviderRefusal()) &&
+		(!ra.streamStickyTokenLimit || tokenLimitStickyAllowsReplacement(internalStream.Termination.Cause)) {
 		ra.streamSawTerminalEvent = true
 		ra.streamSawExplicitTerminalEvent = true
 		ra.streamTermination = internalStream.Termination
 		ra.streamStickyProviderRefusal = internalStream.Termination.Cause.IsProviderRefusal()
+		ra.streamStickyTokenLimit = internalStream.Termination.Cause == model.TerminationCauseTokenLimit
 	}
 
 	for _, choice := range internalStream.Choices {
@@ -2000,15 +2035,19 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 		// arrived on a terminal chunk. A function-call delta, for example, is not
 		// permission to close the whole stream early.
 		if choice.Termination.HasCause() && (internalStream.SawTerminalEvent || choice.FinishReason != nil) &&
-			(!ra.streamStickyProviderRefusal || choice.Termination.Cause.IsProviderRefusal()) {
+			(!ra.streamStickyProviderRefusal || choice.Termination.Cause.IsProviderRefusal()) &&
+			(!ra.streamStickyTokenLimit || tokenLimitStickyAllowsReplacement(choice.Termination.Cause)) {
 			ra.streamTermination = choice.Termination
 			ra.streamStickyProviderRefusal = choice.Termination.Cause.IsProviderRefusal()
+			ra.streamStickyTokenLimit = choice.Termination.Cause == model.TerminationCauseTokenLimit
 		}
 		if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
 			termination := terminationForChoice(choice)
-			if termination.Cause == model.TerminationCauseContentFilter || !ra.streamTermination.HasCause() {
+			if termination.Cause == model.TerminationCauseContentFilter || !ra.streamTermination.HasCause() ||
+				(termination.Cause == model.TerminationCauseTokenLimit && !ra.streamStickyProviderRefusal) {
 				ra.streamTermination = termination
 				ra.streamStickyProviderRefusal = termination.Cause == model.TerminationCauseContentFilter
+				ra.streamStickyTokenLimit = termination.Cause == model.TerminationCauseTokenLimit
 			}
 		}
 	}
@@ -2024,15 +2063,10 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 }
 
 func (ra *relayAttempt) hasUnfinishedObservedStreamChoices() bool {
-	if ra.streamSawExplicitTerminalEvent || len(ra.streamObservedChoiceIndexes) == 0 {
+	if len(ra.streamObservedChoiceIndexes) == 0 {
 		return false
 	}
 
-	for choiceIndex := range ra.streamObservedChoiceIndexes {
-		if _, finished := ra.streamFinishedChoiceIndexes[choiceIndex]; !finished {
-			return true
-		}
-	}
 	if ra.adapterEndpointProtocol() == "chat" && ra.relayRequest != nil && ra.internalRequest != nil {
 		var request struct {
 			N int `json:"n"`
@@ -2040,11 +2074,32 @@ func (ra *relayAttempt) hasUnfinishedObservedStreamChoices() bool {
 		if len(ra.internalRequest.RawRequest) > 0 {
 			_ = jsonAPI.Unmarshal(ra.internalRequest.RawRequest, &request)
 		}
-		if request.N > len(ra.streamFinishedChoiceIndexes) {
+		if request.N > len(ra.streamObservedChoiceIndexes) {
+			return true
+		}
+	}
+
+	for choiceIndex := range ra.streamObservedChoiceIndexes {
+		if _, finished := ra.streamFinishedChoiceIndexes[choiceIndex]; !finished {
 			return true
 		}
 	}
 	return false
+}
+
+// tokenLimitStickyAllowsReplacement keeps a completed choice's normal stop,
+// stop sequence, or tool-call terminal from erasing another choice's token-limit
+// aggregate. Provider failures and refusals still take precedence because they
+// carry stronger policy semantics than a budget cutoff.
+func tokenLimitStickyAllowsReplacement(cause model.TerminationCause) bool {
+	switch cause {
+	case model.TerminationCauseComplete,
+		model.TerminationCauseStopSequence,
+		model.TerminationCauseToolCall:
+		return false
+	default:
+		return true
+	}
 }
 
 // handleResponse 处理非流式响应
@@ -2113,8 +2168,13 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 		ra.c.Data(http.StatusOK, "application/json", inResponse)
 		return providerTerminalFailureError(termination)
 	}
-
 	ra.c.Data(http.StatusOK, "application/json", inResponse)
+	if termination, limited := responseTokenLimit(internalResponse); limited {
+		// A 200 length/max_tokens body is a legal provider terminal. Deliver it,
+		// but do not report an incomplete generation as channel or cache success.
+		ra.collectResponse()
+		return providerTerminalFailureError(termination)
+	}
 	return nil
 }
 

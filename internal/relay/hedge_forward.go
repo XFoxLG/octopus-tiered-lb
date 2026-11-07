@@ -374,7 +374,7 @@ func recordUnselectedHedgeFailure(lane *relayAttempt, status int, err error, dur
 		return
 	}
 	decision := ClassifyRelayError(status, err, false)
-	if termination, ok := terminalCauseFromError(err); ok && customErrorIsDeterministicFailure(termination) {
+	if termination, ok := terminalCauseFromError(err); ok && (customErrorIsDeterministicFailure(termination) || termination.Cause == model.TerminationCauseTokenLimit) {
 		return
 	}
 	decision = applyErrorPolicy(decision, lane.channel, status, extractUpstreamErrorDetail(err))
@@ -406,14 +406,14 @@ func (ra *relayAttempt) hedgeTerminalChunk() bool {
 		return false
 	}
 	cause := ra.streamTermination.Cause
-	return cause.IsProviderRefusal() || !cause.AllowsIdenticalReplay() || customErrorIsDeterministicFailure(ra.streamTermination)
+	return cause == model.TerminationCauseTokenLimit || cause.IsProviderRefusal() || !cause.AllowsIdenticalReplay() || customErrorIsDeterministicFailure(ra.streamTermination)
 }
 
 func hedgeMustStop(lane *relayAttempt, status int, err error) bool {
 	if err == nil || errors.Is(err, errEmptyOutput) || errors.Is(err, errTruncatedOutput) {
 		return false
 	}
-	if termination, ok := terminalCauseFromError(err); ok && customErrorIsDeterministicFailure(termination) {
+	if termination, ok := terminalCauseFromError(err); ok && (customErrorIsDeterministicFailure(termination) || termination.Cause == model.TerminationCauseTokenLimit) {
 		return true
 	}
 	decision := applyErrorPolicy(ClassifyRelayError(status, err, false), lane.channel, status, extractUpstreamErrorDetail(err))

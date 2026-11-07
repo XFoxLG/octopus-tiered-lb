@@ -19,6 +19,7 @@ import {
     readableLogBody,
     resolveContentFilterTextEvidence,
 } from './body-preview';
+import { resolveOutboundMaxTokens, resolveTokenLimitEvidence } from './display.ts';
 
 interface BoundaryDetailsProps {
     detail: RelayLogDetail | null;
@@ -194,6 +195,14 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
         .map((content) => content.protocol)
         .filter(Boolean)));
     const hasBoundaryRecords = contents.length > 0;
+    const tokenLimitEvidence = resolveTokenLimitEvidence(detail);
+    const outboundBudget = resolveOutboundMaxTokens(detail.diagnostics);
+    const outboundBudgetValueText = outboundBudget.value === null
+        ? t('unknown')
+        : outboundBudget.value.toLocaleString('en-US');
+    const outboundBudgetSourceText = outboundBudget.sourceToken
+        ? t('outboundMaxTokensSources.' + outboundBudget.sourceToken)
+        : (outboundBudget.source || t('unknown'));
     const isContentFilterTerminal = detail.termination_cause?.trim().toLowerCase() === 'content_filter';
     const selectedAttemptNumber = (() => {
         const responseAttempts = forwardedAttempts.filter(attempt => (
@@ -221,6 +230,19 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
     return (
         <div className="min-h-0 space-y-4 pb-1">
             <p className="text-xs text-muted-foreground">{t('previewHint')}</p>
+            {tokenLimitEvidence.isTokenLimitTerminated ? (
+                <div role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
+                    <div className="flex items-start gap-2">
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                        <div className="min-w-0 space-y-1">
+                            <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                                {t('tokenLimitIncomplete')}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{t('tokenLimitHint')}</p>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {(['client_ingress', 'client_egress'] as const).map(boundary => {
                     const record = recordsFor(boundary).find(item => item.kind === 'body');
@@ -252,7 +274,51 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                 <StatusAxis label={t('axes.content')} value={detail.content_state} />
                 <StatusAxis label={t('axes.persistence')} value={detail.persistence_state} />
                 <StatusAxis label={t('axes.delivery')} value={detail.client_delivery_state} />
+                <StatusAxis
+                    label={t('outboundMaxTokens')}
+                    text={outboundBudgetValueText}
+                    hint={t('outboundMaxTokensHint')}
+                />
+                <StatusAxis
+                    label={t('outboundMaxTokensSource')}
+                    text={outboundBudgetSourceText}
+                    hint={t('outboundMaxTokensSourceHint')}
+                />
             </div>
+            {outboundBudget.attempts.length > 0 ? (
+                <div className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {t('attemptBudgets')}
+                    </div>
+                    <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        {outboundBudget.attempts.map((budget) => {
+                            const sourceText = budget.sourceToken
+                                ? t('outboundMaxTokensSources.' + budget.sourceToken)
+                                : (budget.source || t('unknown'));
+                            return (
+                                <div key={budget.attempt} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                    <span className="text-foreground">{t('attempt', { number: budget.attempt })}</span>
+                                    <span>
+                                        {t('outboundMaxTokens')}:
+                                        {' '}
+                                        <span className="font-mono text-foreground">
+                                            {budget.value === null ? t('unknown') : budget.value.toLocaleString('en-US')}
+                                        </span>
+                                    </span>
+                                    <span>
+                                        {t('outboundMaxTokensSource')}:
+                                        {' '}
+                                        <span className="font-mono text-foreground">{sourceText}</span>
+                                    </span>
+                                    {budget.adjusted ? (
+                                        <Badge variant="outline">{t('outboundMaxTokensAdjusted')}</Badge>
+                                    ) : null}
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            ) : null}
 
             <div className="flex shrink-0 flex-wrap gap-x-4 gap-y-1 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
                 <span>{t('traceId')}: <span className="font-mono text-foreground">{detail.trace_id || '-'}</span></span>
