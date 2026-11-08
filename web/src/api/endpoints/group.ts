@@ -183,6 +183,7 @@ export interface Group {
 }
 
 export interface GroupTestResult {
+	channel_key_id?: number;
     endpoint_id?: string;
     protocol?: import('./channel').EndpointProtocol;
     source?: 'draft' | 'saved';

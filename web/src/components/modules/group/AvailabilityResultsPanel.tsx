@@ -79,6 +79,7 @@ export function AvailabilityResultsPanel({
                                             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                                 {result.status_code > 0 ? <span>HTTP {result.status_code}</span> : null}
                                                 <span>{t('detail.availability.resultAttempts', { count: result.attempts })}</span>
+                                                {result.channel_key_id ? <span>Key ID: {result.channel_key_id}</span> : null}
                                                 {result.source ? <span>source: {result.source}</span> : null}
                                                 {result.protocol ? <span>protocol: {result.protocol}</span> : null}
                                                 {result.endpoint_id ? <span className="break-all">endpoint: {result.endpoint_id}</span> : null}

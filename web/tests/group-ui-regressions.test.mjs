@@ -431,6 +431,7 @@ test('category changes hide chat fields without clearing the complete draft',()=
     assert.equal(byId(tree,'group-attempt-time-out').props.disabled,true);
     assert.equal(byId(tree,'group-first-token-time-out').props.disabled,true);
     assert.equal(byId(tree,'group-request-timeout').props.disabled,undefined);
+    assert.equal(treeNodes(tree,node=>node.props?.value==='X-Test')[0].node.props.disabled,false,'rerank headers execute on the runtime path');
     assert.equal(fixture.draft().default_reasoning_effort,'high');
     byId(tree,'group-endpoint-type').props.onChange({target:{value:'chat'}});
     tree=fixture.render();

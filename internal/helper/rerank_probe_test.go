@@ -51,7 +51,7 @@ func TestGroupRerankProbeUsesRerankAndRedactsHeaderSecrets(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.URL.Path != "/v1/rerank" || r.Header.Get("X-Channel") != "fixture-channel-secret" || r.Header.Get("X-Endpoint") != "fixture-endpoint-secret" {
+		if r.URL.Path != "/v1/rerank" || r.Header.Get("X-Channel") != "fixture-channel-secret" || r.Header.Get("X-Endpoint") != "fixture-endpoint-secret" || r.Header.Get("X-Group") != "fixture-group-secret" {
 			t.Errorf("wrong group probe endpoint/headers: %s", r.URL.Path)
 		}
 		var body map[string]json.RawMessage
@@ -67,8 +67,8 @@ func TestGroupRerankProbeUsesRerankAndRedactsHeaderSecrets(t *testing.T) {
 		Keys:             []m.ChannelKey{{ID: 872, Enabled: true, ChannelKey: "fixture-api-key"}},
 		CustomHeader:     []m.CustomHeader{{HeaderKey: "X-Channel", HeaderValue: "fixture-channel-secret"}},
 		ConnectionConfig: &m.ConnectionConfig{Version: 1, Selection: "same_protocol", Catalog: m.ModelCatalog{Format: "manual"}, Endpoints: []m.ChannelEndpoint{{ID: "rank", Protocol: "rerank", URL: server.URL, URLMode: "base", Auth: "bearer", Headers: []m.CustomHeader{{HeaderKey: "X-Endpoint", HeaderValue: "fixture-endpoint-secret"}}}}}}
-	result := testGroupModelItemWithGroup(context.Background(), &m.Group{EndpointType: m.EndpointTypeRerank, DefaultReasoningEffort: "high", RelayRetryCount: 3}, m.GroupItem{ID: 873, ChannelID: ch.ID, ModelName: "rerank-model"}, map[int]m.Channel{ch.ID: ch})
-	if !result.Passed || result.Protocol != "rerank" || result.EndpointID != "rank" || result.Attempts != 1 || calls.Load() != 1 {
+	result := testGroupModelItemWithGroup(context.Background(), &m.Group{EndpointType: m.EndpointTypeRerank, DefaultReasoningEffort: "high", RelayRetryCount: 3, CustomHeader: []m.CustomHeader{{HeaderKey: "X-Group", HeaderValue: "fixture-group-secret"}}}, m.GroupItem{ID: 873, ChannelID: ch.ID, ModelName: "rerank-model"}, map[int]m.Channel{ch.ID: ch})
+	if !result.Passed || result.Protocol != "rerank" || result.EndpointID != "rank" || result.Attempts != 1 || calls.Load() != 1 || result.ChannelKeyID != 872 {
 		t.Fatalf("invalid group probe result: %#v calls=%d", result, calls.Load())
 	}
 	logs, _ := relaylog.GetCacheAndLock()

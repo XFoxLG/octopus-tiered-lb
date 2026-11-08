@@ -264,6 +264,7 @@ func TestForwardMediaRequestMultipartRewritesModelAndStreamsFiles(t *testing.T) 
 	status, err := forwardMediaRequestMultipart(
 		ctx,
 		getMediaEndpointConfig(MediaEndpointAudioTranscription),
+		dbmodel.Group{},
 		&dbmodel.Channel{BaseUrls: []dbmodel.BaseUrl{{URL: upstream.URL}}},
 		"sk-test",
 		"whisper-1",
