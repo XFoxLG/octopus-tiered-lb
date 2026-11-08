@@ -379,7 +379,9 @@ func decodeRelayLogContentBlob(blob *model.RelayLogContentBlob) ([]byte, error) 
 	var decoded []byte
 	switch blob.Encoding {
 	case "", "identity":
-		decoded = append([]byte(nil), blob.Payload...)
+		// An existing zero-byte blob is valid content. nil is reserved by the
+		// retrieval API for content that was not captured or is no longer stored.
+		decoded = append([]byte{}, blob.Payload...)
 	case "gzip":
 		reader, err := gzip.NewReader(bytes.NewReader(blob.Payload))
 		if err != nil {
@@ -462,6 +464,8 @@ func relayLogContentIsTextual(contentType string) bool {
 		strings.Contains(normalized, "yaml")
 }
 
+var ErrRelayLogContentCorrupt = errors.New("log content is corrupt")
+
 func RelayLogContentGet(ctx context.Context, referenceID int64) (*model.RelayLogContentRef, []byte, error) {
 	connection := db.GetLogDB()
 	if connection == nil {
@@ -482,13 +486,15 @@ func RelayLogContentGet(ctx context.Context, referenceID int64) (*model.RelayLog
 	var blob model.RelayLogContentBlob
 	if err := connection.WithContext(ctx).Where("digest = ?", contentRef.BlobDigest).First(&blob).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			contentRef.State = model.RelayLogContentStateUnavailable
+			contentRef.Error = "content blob is missing"
 			return &contentRef, nil, nil
 		}
 		return nil, nil, err
 	}
 	payload, err := decodeRelayLogContentBlob(&blob)
 	if err != nil {
-		return nil, nil, err
+		return &contentRef, nil, fmt.Errorf("%w: %v", ErrRelayLogContentCorrupt, err)
 	}
 	return &contentRef, payload, nil
 }
