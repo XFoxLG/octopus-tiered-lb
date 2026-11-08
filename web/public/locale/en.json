@@ -2453,7 +2453,7 @@
         "resultTitle": "Check details",
         "resultPassed": "Passed",
         "resultFailed": "Failed",
-        "resultAttempts": "Retried {count} times",
+        "resultAttempts": "{count} request(s)",
         "toggleDetails": "Toggle error details",
         "waitingResults": "Waiting for test results...",
         "noResults": "No test results yet",
