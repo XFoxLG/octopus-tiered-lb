@@ -1036,28 +1036,7 @@ func (i *ResponseInbound) setStreamTermination(termination model.TerminationMeta
 }
 
 func terminationForChatFinishReason(finishReason *string) model.TerminationMetadata {
-	if finishReason == nil {
-		return model.TerminationMetadata{}
-	}
-
-	termination := model.TerminationMetadata{
-		ProviderReason: *finishReason,
-	}
-	switch strings.ToLower(strings.TrimSpace(*finishReason)) {
-	case "stop":
-		termination.Cause = model.TerminationCauseComplete
-	case "length":
-		termination.Cause = model.TerminationCauseTokenLimit
-	case "tool_calls", "function_call":
-		termination.Cause = model.TerminationCauseToolCall
-	case "content_filter":
-		termination.Cause = model.TerminationCauseContentFilter
-	case "error":
-		termination.Cause = model.TerminationCauseError
-	default:
-		termination.Cause = model.TerminationCauseUnknown
-	}
-	return termination
+	return model.TerminationFromOpenAICompatFinishReason(finishReason)
 }
 
 func responsesTerminalEventForTermination(termination model.TerminationMetadata) (string, string, *ResponsesIncompleteDetails, *ResponsesError) {
