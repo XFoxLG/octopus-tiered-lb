@@ -98,22 +98,9 @@ func (o *MessagesOutbound) TransformResponse(ctx context.Context, response *http
 
 	// Check for error response
 	if response.StatusCode >= 400 {
-		var errResp struct {
-			Error struct {
-				Message string `json:"message"`
-				Code    int    `json:"code"`
-				Status  string `json:"status"`
-			} `json:"error"`
-		}
-		if err := transformer.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
-			return nil, &model.ResponseError{
-				StatusCode: response.StatusCode,
-				Detail: model.ErrorDetail{
-					Message: errResp.Error.Message,
-					Code:    fmt.Sprintf("%d", errResp.Error.Code),
-					Type:    errResp.Error.Status,
-				},
-			}
+		var errResp model.GeminiGenerateContentResponse
+		if err := transformer.Unmarshal(body, &errResp); err == nil && errResp.Error != nil && errResp.Error.Message != "" {
+			return nil, geminiResponseError(errResp.Error, response.StatusCode)
 		}
 		return nil, fmt.Errorf("HTTP error %d: %s", response.StatusCode, string(body))
 	}
@@ -577,26 +564,14 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 	// with a real failure cause instead of falling through to missing_terminal
 	// when the socket later ends cleanly.
 	if geminiResp.Error != nil {
-		providerReason := strings.TrimSpace(geminiResp.Error.Status)
-		if providerReason == "" && geminiResp.Error.Code != 0 {
-			providerReason = fmt.Sprintf("HTTP %d", geminiResp.Error.Code)
-		}
-		if providerReason == "" {
-			providerReason = "GEMINI_ERROR"
-		}
+		providerReason := geminiErrorProviderReason(geminiResp.Error)
 		resp.Termination = model.TerminationMetadata{
 			Cause:          model.TerminationCauseError,
 			ProviderReason: providerReason,
 			Detail:         strings.TrimSpace(geminiResp.Error.Message),
 		}
 		resp.SawTerminalEvent = true
-		resp.Error = &model.ResponseError{
-			Detail: model.ErrorDetail{
-				Message: strings.TrimSpace(geminiResp.Error.Message),
-				Code:    fmt.Sprintf("%d", geminiResp.Error.Code),
-				Type:    geminiResp.Error.Status,
-			},
-		}
+		resp.Error = geminiResponseError(geminiResp.Error, 0)
 		return resp
 	}
 
@@ -772,6 +747,45 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 	}
 
 	return resp
+}
+
+func geminiResponseError(envelope *model.GeminiErrorEnvelope, httpStatus int) *model.ResponseError {
+	if httpStatus == 0 {
+		httpStatus = envelope.HTTPStatus
+	}
+	errorType := strings.TrimSpace(envelope.Status)
+	if errorType == "" {
+		errorType = strings.TrimSpace(envelope.Type)
+	}
+
+	return &model.ResponseError{
+		StatusCode: httpStatus,
+		Detail: model.ErrorDetail{
+			Message: strings.TrimSpace(envelope.Message),
+			Code:    envelope.Code.String(),
+			Type:    errorType,
+		},
+	}
+}
+
+func geminiErrorProviderReason(envelope *model.GeminiErrorEnvelope) string {
+	if status := strings.TrimSpace(envelope.Status); status != "" {
+		return status
+	}
+	if providerType := strings.TrimSpace(envelope.Type); providerType != "" {
+		return providerType
+	}
+	if code := envelope.Code.String(); code != "" {
+		var numeric int64
+		if err := transformer.Unmarshal([]byte(code), &numeric); err == nil {
+			if numeric != 0 {
+				return fmt.Sprintf("HTTP %d", numeric)
+			}
+			return "GEMINI_ERROR"
+		}
+		return code
+	}
+	return "GEMINI_ERROR"
 }
 
 // geminiTerminationForFinishReason translates Gemini's provider-specific enum
