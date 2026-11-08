@@ -19,6 +19,10 @@ import (
 const rerankProbeTimeout = 25 * time.Second
 
 func sendRerankProbe(ctx context.Context, channel *m.Channel, key string, scope probeKeyScope, modelName string) *probeRequestOutcome {
+	return sendRerankProbeWithHeaders(ctx, channel, key, scope, modelName, nil)
+}
+
+func sendRerankProbeWithHeaders(ctx context.Context, channel *m.Channel, key string, scope probeKeyScope, modelName string, headers []m.CustomHeader) *probeRequestOutcome {
 	stream, budget := false, rerankProbeTimeout.Milliseconds()
 	out := &probeRequestOutcome{Verdict: m.ProbeVerdictUnknown, Protocol: "rerank", KeyScope: scope.String(), RequestStream: &stream, RequestBudgetMS: &budget}
 	if channel == nil {
@@ -68,6 +72,11 @@ func sendRerankProbe(ctx context.Context, channel *m.Channel, key string, scope 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(key))
+	for _, header := range headers {
+		if strings.TrimSpace(header.HeaderKey) != "" {
+			req.Header.Set(header.HeaderKey, header.HeaderValue)
+		}
+	}
 	channel.ApplyConnectionHeaders(req, m.ConnectionPlan{Endpoint: endpoint, AdapterType: -1}, strings.TrimSpace(key))
 	out.EndpointURL = auditProbeEndpointURL(req.URL, key)
 	out.RequestFingerprint = probeFingerprint(req, body)
@@ -148,10 +157,14 @@ func testRerankGroupItem(ctx context.Context, group *m.Group, item m.GroupItem, 
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(group.RequestTimeoutSeconds)*time.Second)
 		defer cancel()
 	}
-	out := sendRerankProbe(ctx, channel, key.ChannelKey, probeKeyScope{Index: -1, KeyID: key.ID}, item.ModelName)
+	out := sendRerankProbeWithHeaders(ctx, channel, key.ChannelKey, probeKeyScope{Index: -1, KeyID: key.ID}, item.ModelName, group.CustomHeader)
+	result.ChannelKeyID = key.ID
 	result.Protocol, result.EndpointID = out.Protocol, out.EndpointID
 	result.StatusCode, result.Passed = out.StatusCode, out.Verdict == m.ProbeVerdictPass
 	secrets := []string{key.ChannelKey}
+	for _, header := range group.CustomHeader {
+		secrets = append(secrets, header.HeaderValue)
+	}
 	for _, header := range channel.CustomHeader {
 		secrets = append(secrets, header.HeaderValue)
 	}

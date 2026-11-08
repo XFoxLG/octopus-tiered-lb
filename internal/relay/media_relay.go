@@ -736,7 +736,7 @@ func forwardMediaRequest(
 	rerankEndpoint *dbmodel.ChannelEndpoint,
 ) (int, error) {
 	if cfg.MultipartInput && len(bodyBytes) == 0 {
-		return forwardMediaRequestMultipart(c, cfg, channel, key, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, attemptNumber)
+		return forwardMediaRequestMultipart(c, cfg, group, channel, key, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, attemptNumber)
 	}
 	return forwardMediaRequestJSON(c, cfg, group, channel, key, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, attemptNumber, rerankEndpoint)
 }
@@ -807,7 +807,7 @@ func forwardMediaRequestJSON(
 		return 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	copyMediaForwardHeaders(req, c, channel, key, "application/json", streamRequested)
+	copyMediaForwardHeaders(req, c, group, channel, key, "application/json", streamRequested)
 	if rerankEndpoint != nil {
 		channel.ApplyConnectionHeaders(req, dbmodel.ConnectionPlan{Endpoint: rerankEndpoint, AdapterType: -1}, key)
 	}
@@ -872,6 +872,7 @@ func forwardMediaRequestJSON(
 func forwardMediaRequestMultipart(
 	c *gin.Context,
 	cfg mediaEndpointConfig,
+	group dbmodel.Group,
 	channel *dbmodel.Channel,
 	key string,
 	requestModel string,
@@ -898,7 +899,7 @@ func forwardMediaRequestMultipart(
 		return 0, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	copyMediaForwardHeaders(req, c, channel, key, contentType, streamRequested)
+	copyMediaForwardHeaders(req, c, group, channel, key, contentType, streamRequested)
 
 	// SSRF 防护（issue #219）
 	safeCtx, err := xurl.AssertSafeRequestWithPin(req)
@@ -1071,7 +1072,7 @@ func applyChannelHeaders(req *http.Request, channel *dbmodel.Channel) {
 	}
 }
 
-func copyMediaForwardHeaders(req *http.Request, c *gin.Context, channel *dbmodel.Channel, key string, contentType string, streamRequested bool) {
+func copyMediaForwardHeaders(req *http.Request, c *gin.Context, group dbmodel.Group, channel *dbmodel.Channel, key string, contentType string, streamRequested bool) {
 	for headerKey, values := range c.Request.Header {
 		if hopByHopHeaders[strings.ToLower(headerKey)] {
 			continue
@@ -1092,6 +1093,11 @@ func copyMediaForwardHeaders(req *http.Request, c *gin.Context, channel *dbmodel
 	}
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	for _, header := range group.CustomHeader {
+		if strings.TrimSpace(header.HeaderKey) != "" {
+			req.Header.Set(header.HeaderKey, header.HeaderValue)
+		}
 	}
 	applyChannelHeaders(req, channel)
 }

@@ -83,6 +83,7 @@ type GroupModelTestResult struct {
 	ClientID     string `json:"client_id,omitempty"`
 	ItemID       int    `json:"item_id"`
 	ChannelID    int    `json:"channel_id"`
+	ChannelKeyID int    `json:"channel_key_id,omitempty"`
 	ChannelName  string `json:"channel_name"`
 	ModelName    string `json:"model_name"`
 	Passed       bool   `json:"passed"`
@@ -530,9 +531,12 @@ func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, ite
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
 		return result
 	}
+	result.ChannelKeyID = usedKey.ID
+	probeCtx, probeCancel := groupProbeContext(ctx, group, &channel)
+	defer probeCancel()
 
 	if endpointType == appmodel.EndpointTypeRerank {
-		return testRerankGroupItem(ctx, group, item, &channel, usedKey, result)
+		return testRerankGroupItem(probeCtx, group, item, &channel, usedKey, result)
 	}
 	if outbound.Get(channel.Type) == nil {
 		result.Message = fmt.Sprintf("unsupported channel type: %d", channel.Type)
@@ -575,8 +579,6 @@ func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, ite
 	var lastInternalResp *transmodel.InternalLLMResponse
 
 	attemptNum := 0
-	probeCtx, probeCancel := context.WithTimeout(ctx, 25*time.Second)
-	defer probeCancel()
 	for _, plan := range plans {
 		adapterType := plan.AdapterType
 		outAdapter := plan.Adapter()
@@ -615,13 +617,14 @@ func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, ite
 			}
 
 			logAttempts = append(logAttempts, appmodel.ChannelAttempt{
-				ChannelID:   channel.ID,
-				ChannelName: channel.Name,
-				ModelName:   item.ModelName,
-				AttemptNum:  attemptNum,
-				Status:      attemptStatus,
-				Duration:    attemptDuration,
-				Msg:         attemptMsg,
+				ChannelID:    channel.ID,
+				ChannelKeyID: usedKey.ID,
+				ChannelName:  channel.Name,
+				ModelName:    item.ModelName,
+				AttemptNum:   attemptNum,
+				Status:       attemptStatus,
+				Duration:     attemptDuration,
+				Msg:          attemptMsg,
 			})
 
 			if err == nil {
@@ -639,6 +642,19 @@ func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, ite
 	recordTestLog(ctx, endpointType, item, result, channel, logAttempts, useTimeMs, requestJSON, lastInternalResp)
 
 	return result
+}
+
+func groupProbeContext(ctx context.Context, group *appmodel.Group, channel *appmodel.Channel) (context.Context, context.CancelFunc) {
+	budget := 25 * time.Second
+	if group != nil {
+		for _, seconds := range []int{group.RequestTimeoutSeconds, channel.EffectiveAttemptTimeOut(group.AttemptTimeOut), channel.EffectiveFirstTokenTimeOut(group.FirstTokenTimeOut)} {
+			if seconds > 0 && seconds < int(budget/time.Second) {
+				budget = time.Duration(seconds) * time.Second
+			}
+		}
+	}
+	// WithTimeout also retains an earlier parent/batch deadline.
+	return context.WithTimeout(ctx, budget)
 }
 
 // recordTestLog 将分组模型测试结果记录到日志系统（issue #82：测试模型可显示日志）。

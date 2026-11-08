@@ -984,7 +984,7 @@ export function GroupEditor({
                                             <Hint text={t('form.customHeader.hint')} />
                                         </span>
                                         <button
-                                            disabled={!fieldCapabilities.llmPath}
+                                            disabled={!fieldCapabilities.known}
                                             type="button"
                                             onClick={() => setCustomHeaders([...customHeaders, { header_key: '', header_value: '' }])}
                                             className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/8"
@@ -1000,7 +1000,7 @@ export function GroupEditor({
                                             {customHeaders.map((header, index) => (
                                                 <div key={index} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 @[28rem]/group-settings:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto]">
                                                     <Input
-                                                        disabled={!fieldCapabilities.llmPath}
+                                                        disabled={!fieldCapabilities.known}
                                                         value={header.header_key}
                                                         onChange={(event) => {
                                                             const nextHeaders = [...customHeaders];
@@ -1012,7 +1012,7 @@ export function GroupEditor({
                                                         aria-label={t('form.customHeader.keyPlaceholder')}
                                                     />
                                                     <Input
-                                                        disabled={!fieldCapabilities.llmPath}
+                                                        disabled={!fieldCapabilities.known}
                                                         value={header.header_value}
                                                         onChange={(event) => {
                                                             const nextHeaders = [...customHeaders];
@@ -1024,7 +1024,7 @@ export function GroupEditor({
                                                         aria-label={t('form.customHeader.valuePlaceholder')}
                                                     />
                                                     <button
-                                                        disabled={!fieldCapabilities.llmPath}
+                                                        disabled={!fieldCapabilities.known}
                                                         type="button"
                                                         onClick={() => setCustomHeaders(customHeaders.filter((_, headerIndex) => headerIndex !== index))}
                                                         className="col-start-2 row-start-1 rounded-md p-2 text-muted-foreground transition-colors hover:bg-destructive/8 hover:text-destructive @[28rem]/group-settings:col-start-3"
