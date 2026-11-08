@@ -2409,7 +2409,7 @@
         "resultTitle": "检测明细",
         "resultPassed": "通过",
         "resultFailed": "失败",
-        "resultAttempts": "重试 {count} 次",
+        "resultAttempts": "请求 {count} 次",
         "toggleDetails": "展开或收起错误详情",
         "waitingResults": "等待检测结果…",
         "noResults": "暂无检测结果",
