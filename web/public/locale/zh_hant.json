@@ -2402,7 +2402,7 @@
         "resultTitle": "????",
         "resultPassed": "??",
         "resultFailed": "??",
-        "resultAttempts": "?? {count} ?",
+        "resultAttempts": "請求 {count} 次",
         "toggleDetails": "展開或收起錯誤詳情",
         "waitingResults": "等待檢測結果…",
         "noResults": "暫無檢測結果",
@@ -2427,6 +2427,15 @@
       }
     },
     "form": {
+      "categoryFields": {
+          "embeddingHeaderTimeout": "回應標頭等待逾時（嵌入）",
+          "embeddingHeaderTimeoutHint": "從派發上游請求到收到回應標頭計時，不包括讀取完整向量回應。0 保持現有繼承規則。",
+          "embeddingNotice": "對話專用設定已隱藏並保留。單次轉發和回應標頭逾時可被渠道設定覆寫。",
+          "mediaNotice": "此 API 路徑暫不套用分組的單次轉發逾時、首個輸出逾時和自訂請求標頭，已有值保留。整個請求預算與重試設定仍生效。",
+          "unknownNotice": "此 API 分類尚未識別，僅啟用通用設定，已有值保留。",
+          "embeddingConflict": "既有對話協定限制可能導致嵌入請求無法找到路由。可明確修改下列草稿設定，再儲存。",
+          "resetEmbeddingProtocol": "在草稿中使用嵌入轉換模式"
+      },
       "requestTimeout": {"label":"整個請求時限（秒）","hint":"包含排隊、重試與串流；0 繼承其他限制，最短時限優先。"},
       "relayRetryCount": {"label":"候選內 Key 重試次數","hint":"分組級覆寫。填 -1 跟隨渠道或全域設定；0 表示同一候選不再更換 Key。"},
       "relayRouteRetries": {"label":"路由輪次覆寫","hint":"分組級覆寫。填 -1 跟隨全域設定；控制完整候選輪次可執行多少次。"},

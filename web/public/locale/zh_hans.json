@@ -2409,7 +2409,7 @@
         "resultTitle": "检测明细",
         "resultPassed": "通过",
         "resultFailed": "失败",
-        "resultAttempts": "重试 {count} 次",
+        "resultAttempts": "请求 {count} 次",
         "toggleDetails": "展开或收起错误详情",
         "waitingResults": "等待检测结果…",
         "noResults": "暂无检测结果",
@@ -2434,6 +2434,15 @@
       }
     },
     "form": {
+      "categoryFields": {
+          "embeddingHeaderTimeout": "响应头等待超时（嵌入）",
+          "embeddingHeaderTimeoutHint": "从派发上游请求到收到响应头计时，不包括读取完整向量响应。0 保持现有继承规则。",
+          "embeddingNotice": "对话专用设置已隐藏并保留。单次转发和响应头等待超时可被渠道配置覆盖。",
+          "mediaNotice": "此 API 路径暂不应用分组的单次转发超时、首个输出超时和自定义请求头，已有值保留。整请求预算与重试设置仍生效。",
+          "unknownNotice": "此 API 分类尚未识别，仅启用通用设置，已有值保留。",
+          "embeddingConflict": "存量对话协议限制可能导致嵌入请求无法找到路由。可明确修改下列草稿设置，再保存。",
+          "resetEmbeddingProtocol": "在草稿中使用嵌入转换模式"
+      },
       "requestTimeout": {"label":"整请求超时（秒）","hint":"包含排队、全部尝试和流式交付。0 继承其它期限；多个期限取最短值。"},
       "relayRetryCount": {"label":"候选内 Key 重试次数","hint":"分组级覆盖。填 -1 跟随渠道或全局设置；0 表示该候选不重复换 Key。"},
       "relayRouteRetries": {"label":"路由轮次覆盖","hint":"分组级覆盖。填 -1 跟随全局设置；控制完整候选轮次可执行多少次。"},

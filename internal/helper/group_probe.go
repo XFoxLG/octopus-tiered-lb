@@ -531,6 +531,9 @@ func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, ite
 		return result
 	}
 
+	if endpointType == appmodel.EndpointTypeRerank {
+		return testRerankGroupItem(ctx, group, item, &channel, usedKey, result)
+	}
 	if outbound.Get(channel.Type) == nil {
 		result.Message = fmt.Sprintf("unsupported channel type: %d", channel.Type)
 		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, nil, nil)
@@ -675,6 +678,16 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 	}
 	if !result.Passed {
 		relayLog.Error = result.Message
+	}
+	if normalizedEndpointType == appmodel.EndpointTypeRerank {
+		relayLog.UsageState = appmodel.RelayLogUsageNotReported
+		if !result.Passed {
+			relayLog.UsageState = appmodel.RelayLogUsageFailedNoResponse
+		}
+		if input, output, reported := ParseRerankTokenUsage([]byte(result.ResponseText)); reported {
+			relayLog.InputTokens, relayLog.OutputTokens = input, output
+			relayLog.UsageState = appmodel.RelayLogUsageReported
+		}
 	}
 
 	// Usage / Cost：复用正常转发流程的计算口径（见 relay/metrics.go SetInternalResponse）。

@@ -16,7 +16,7 @@ import { getModelIcon } from '@/lib/model-icons';
 import { GroupMode } from '@/api/endpoints/group';
 import type { SelectedMember } from './ItemList';
 import { MemberList } from './ItemList';
-import { CHAT_ENDPOINT_PROVIDER_OPTIONS, OUTBOUND_FORMAT_OPTIONS, matchesGroupName, memberKey, MODE_LABELS, MUSIC_ENDPOINT_PROVIDER_OPTIONS, VIDEO_ENDPOINT_PROVIDER_OPTIONS, IMAGE_ENDPOINT_PROVIDER_OPTIONS, AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS, ENDPOINT_TYPE_OPTIONS, filterEnabledModelChannels, normalizeEndpointProvider, normalizeEndpointType, normalizeOutboundFormat, normalizeKey } from './utils';
+import { CHAT_ENDPOINT_PROVIDER_OPTIONS, OUTBOUND_FORMAT_OPTIONS, matchesGroupName, memberKey, MODE_LABELS, MUSIC_ENDPOINT_PROVIDER_OPTIONS, VIDEO_ENDPOINT_PROVIDER_OPTIONS, IMAGE_ENDPOINT_PROVIDER_OPTIONS, AUDIO_SPEECH_ENDPOINT_PROVIDER_OPTIONS, ENDPOINT_TYPE_OPTIONS, filterEnabledModelChannels, groupEditorCapabilities, hasEmbeddingProtocolConflict, normalizeEndpointProvider, normalizeEndpointType, normalizeOutboundFormat, normalizeKey } from './utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
 import { HelpCircle } from 'lucide-react';
 
@@ -415,17 +415,18 @@ export function GroupEditor({
         setRemovingIds(new Set());
     }, []);
 
-    const supportsProviderSelection = endpointType === 'music_generation' || endpointType === 'chat' || endpointType === 'video_generation' || endpointType === 'audio_speech' || endpointType === 'image_generation';
+    const fieldCapabilities = groupEditorCapabilities(endpointType);
+    const embeddingProtocolConflict = hasEmbeddingProtocolConflict(endpointType, forwardMode, outboundFormat);
     const supportsOutboundFormat = endpointType === 'chat';
-    const hedgeDelayValid = hedgeDelayMs >= 0 && hedgeDelayMs <= 30000;
+    const hedgeDelayValid = !fieldCapabilities.chat || (hedgeDelayMs >= 0 && hedgeDelayMs <= 30000);
     const isValid = groupKey.length > 0 && selectedMembers.length > 0 && !regexError && hedgeDelayValid;
 
     const draftValues = useMemo<GroupEditorValues>(() => ({
         name: groupName,
         category: category.trim(),
         endpoint_type: endpointType,
-        endpoint_provider: supportsProviderSelection ? endpointProvider : '',
-        outbound_format: supportsOutboundFormat ? outboundFormat : '',
+        endpoint_provider: endpointProvider,
+        outbound_format: outboundFormat,
         match_regex: regexKey,
         mode,
         first_token_time_out: firstTokenTimeOut,
@@ -453,8 +454,7 @@ export function GroupEditor({
         forwardMode, groupName, hedgeDelayMs, hedgeEnabled, mode, outboundFormat,
         paramOverride, reasoningBufferStrategy, reasoningForceOverride,
         regexKey, relayRetryCount, relayRouteRetries, requestTimeout, selectedMembers, sessionKeepTime,
-        streamIdleTimeout, streamKeepalive, supportsOutboundFormat,
-        supportsProviderSelection,
+        streamIdleTimeout, streamKeepalive,
     ]);
 
     useEffect(() => {
@@ -531,6 +531,7 @@ export function GroupEditor({
                                         onChange={(e) => setEndpointType(normalizeEndpointType(e.target.value))}
                                         className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
                                     >
+                                        {!fieldCapabilities.known && <option value={endpointType}>{endpointType}</option>}
                                         {ENDPOINT_TYPE_OPTIONS.map((option) => (
                                             <option key={option.value} value={option.value}>
                                                 {t(option.labelKey)}
@@ -663,6 +664,18 @@ export function GroupEditor({
                                 ) : null}
                             </div>
 
+                            {!fieldCapabilities.known && <p role="status" className="text-sm text-muted-foreground">{t('form.categoryFields.unknownNotice')}</p>}
+                            {embeddingProtocolConflict && (
+                                <div role="alert" className="min-w-0 space-y-2 rounded-lg border border-amber-500/40 p-3 text-sm">
+                                    <p>{t('form.categoryFields.embeddingConflict')}</p>
+                                    <p className="break-words font-mono text-xs">{forwardMode} / {outboundFormat || 'auto'}</p>
+                                    <Button type="button" variant="secondary" className="h-auto whitespace-normal" onClick={() => {
+                                        setForwardMode('convert');
+                                        setOutboundFormat('');
+                                    }}>{t('form.categoryFields.resetEmbeddingProtocol')}</Button>
+                                </div>
+                            )}
+
                             {/* ── 高级配置（低频字段折叠） ── */}
                             <Accordion type="single" collapsible className="w-full">
                                 <AccordionItem value="advanced" className="border-none">
@@ -691,11 +704,12 @@ export function GroupEditor({
                                 </Field>
                                 <Field>
                                     <FieldLabel htmlFor="group-first-token-time-out">
-                                        {t('form.firstTokenTimeOut')}
-                                        <Hint text={t('form.firstTokenTimeOutHint')} />
+                                        {t(fieldCapabilities.embedding ? 'form.categoryFields.embeddingHeaderTimeout' : 'form.firstTokenTimeOut')}
+                                        <Hint text={t(fieldCapabilities.embedding ? 'form.categoryFields.embeddingHeaderTimeoutHint' : 'form.firstTokenTimeOutHint')} />
                                     </FieldLabel>
                                     <Input
                                         id="group-first-token-time-out"
+                                        disabled={!fieldCapabilities.llmPath}
                                         type="number"
                                         inputMode="numeric"
                                         min={0}
@@ -720,6 +734,7 @@ export function GroupEditor({
                                     </FieldLabel>
                                     <Input
                                         id="group-attempt-time-out"
+                                        disabled={!fieldCapabilities.llmPath}
                                         type="number"
                                         inputMode="numeric"
                                         min={0}
@@ -737,39 +752,41 @@ export function GroupEditor({
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />
                                 </Field>
-                                <Field>
-                                    <FieldLabel htmlFor="group-stream-idle-timeout">
-                                        {t('form.streamIdleTimeout')}
-                                        <TooltipProvider>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <HelpCircle className="size-4 cursor-help text-muted-foreground" />
-                                                </TooltipTrigger>
-                                                <TooltipContent>
-                                                    {t('form.streamIdleTimeoutHint')}
-                                                </TooltipContent>
-                                            </Tooltip>
-                                        </TooltipProvider>
-                                    </FieldLabel>
-                                    <Input
-                                        id="group-stream-idle-timeout"
-                                        type="number"
-                                        inputMode="numeric"
-                                        min={0}
-                                        step={1}
-                                        value={String(streamIdleTimeout)}
-                                        onChange={(event) => {
-                                            const rawValue = event.target.value;
-                                            if (rawValue.trim() === '') {
-                                                setStreamIdleTimeout(0);
-                                                return;
-                                            }
-                                            const timeoutSeconds = Number.parseInt(rawValue, 10);
-                                            setStreamIdleTimeout(Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0);
-                                        }}
-                                        className="h-10 rounded-lg text-sm md:h-11"
-                                    />
-                                </Field>
+                                {fieldCapabilities.chat && (
+                                    <Field>
+                                        <FieldLabel htmlFor="group-stream-idle-timeout">
+                                            {t('form.streamIdleTimeout')}
+                                            <TooltipProvider>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <HelpCircle className="size-4 cursor-help text-muted-foreground" />
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        {t('form.streamIdleTimeoutHint')}
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </TooltipProvider>
+                                        </FieldLabel>
+                                        <Input
+                                            id="group-stream-idle-timeout"
+                                            type="number"
+                                            inputMode="numeric"
+                                            min={0}
+                                            step={1}
+                                            value={String(streamIdleTimeout)}
+                                            onChange={(event) => {
+                                                const rawValue = event.target.value;
+                                                if (rawValue.trim() === '') {
+                                                    setStreamIdleTimeout(0);
+                                                    return;
+                                                }
+                                                const timeoutSeconds = Number.parseInt(rawValue, 10);
+                                                setStreamIdleTimeout(Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 0);
+                                            }}
+                                            className="h-10 rounded-lg text-sm md:h-11"
+                                        />
+                                    </Field>
+                                )}
                                 <Field>
                                     <FieldLabel htmlFor="group-request-timeout">{t('form.requestTimeout.label')}<Hint text={t('form.requestTimeout.hint')} /></FieldLabel>
                                     <Input id="group-request-timeout" type="number" min={0} max={86400} step={1} value={requestTimeout}
@@ -793,23 +810,29 @@ export function GroupEditor({
                                             setRelayRouteRetries(Number.isFinite(parsed) ? Math.max(-1, parsed) : -1);
                                         }} />
                                 </Field>
-                                <Field>
-                                    <FieldLabel htmlFor="group-forward-mode">{t('form.forwardMode.label')}<Hint text={t('form.forwardMode.hint')} /></FieldLabel>
-                                    <select id="group-forward-mode" value={forwardMode} onChange={(event) => setForwardMode(event.target.value as GroupEditorValues['forward_mode'])}
-                                        className="h-10 w-full min-w-0 rounded-lg border border-border/40 bg-card px-3 text-sm">
-                                        {(['inherit', 'convert', 'passthrough', 'raw'] as const).map((value) => <option key={value} value={value}>{t(`form.forwardMode.${value}`)}</option>)}
-                                    </select>
-                                </Field>
-                                <Field className="col-span-full">
-                                    <FieldLabel htmlFor="group-stream-keepalive">{t('form.streamKeepalive.label')}<Hint text={t('form.streamKeepalive.hint')} /></FieldLabel>
-                                    <Switch id="group-stream-keepalive" checked={streamKeepalive} onCheckedChange={setStreamKeepalive} />
-                                </Field>
-                                <Field className="col-span-full">
-                                    <FieldLabel htmlFor="group-assistant-prefill">{t('form.assistantPrefill.label')}<Hint text={t('form.assistantPrefill.hint')} /></FieldLabel>
-                                    <Switch id="group-assistant-prefill" checked={assistantPrefill} onCheckedChange={setAssistantPrefill} />
-                                </Field>
+                                {fieldCapabilities.chat && (
+                                    <Field>
+                                        <FieldLabel htmlFor="group-forward-mode">{t('form.forwardMode.label')}<Hint text={t('form.forwardMode.hint')} /></FieldLabel>
+                                        <select id="group-forward-mode" value={forwardMode} onChange={(event) => setForwardMode(event.target.value as GroupEditorValues['forward_mode'])}
+                                            className="h-10 w-full min-w-0 rounded-lg border border-border/40 bg-card px-3 text-sm">
+                                            {(['inherit', 'convert', 'passthrough', 'raw'] as const).map((value) => <option key={value} value={value}>{t(`form.forwardMode.${value}`)}</option>)}
+                                        </select>
+                                    </Field>
+                                )}
+                                {fieldCapabilities.chat && (
+                                    <Field className="col-span-full">
+                                        <FieldLabel htmlFor="group-stream-keepalive">{t('form.streamKeepalive.label')}<Hint text={t('form.streamKeepalive.hint')} /></FieldLabel>
+                                        <Switch id="group-stream-keepalive" checked={streamKeepalive} onCheckedChange={setStreamKeepalive} />
+                                    </Field>
+                                )}
+                                {fieldCapabilities.chat && (
+                                    <Field className="col-span-full">
+                                        <FieldLabel htmlFor="group-assistant-prefill">{t('form.assistantPrefill.label')}<Hint text={t('form.assistantPrefill.hint')} /></FieldLabel>
+                                        <Switch id="group-assistant-prefill" checked={assistantPrefill} onCheckedChange={setAssistantPrefill} />
+                                    </Field>
+                                )}
                                 <p className="col-span-full text-xs leading-5 text-muted-foreground">
-                                    {t('form.channelOverrideNotice')}
+                                    {t(fieldCapabilities.chat ? 'form.channelOverrideNotice' : fieldCapabilities.embedding ? 'form.categoryFields.embeddingNotice' : 'form.categoryFields.mediaNotice')}
                                 </p>
                                 <Field>
                                     <FieldLabel htmlFor="group-session-keep-time">
@@ -835,113 +858,125 @@ export function GroupEditor({
                                         className="h-10 rounded-lg text-sm md:h-11"
                                     />
                                 </Field>
-                                <Field className="col-span-full">
-                                    <FieldLabel htmlFor="group-hedge-enabled">
-                                        {t('form.hedgeEnabled')}
-                                        <Hint text={t('form.hedgeEnabledHint')} />
-                                    </FieldLabel>
-                                    <div className="flex min-h-10 items-center gap-3 rounded-lg border border-border/40 bg-card px-3 py-2 md:min-h-11">
-                                        <Switch
-                                            id="group-hedge-enabled"
-                                            checked={hedgeEnabled}
-                                            onCheckedChange={setHedgeEnabled}
+                                {fieldCapabilities.chat && (
+                                    <Field className="col-span-full">
+                                        <FieldLabel htmlFor="group-hedge-enabled">
+                                            {t('form.hedgeEnabled')}
+                                            <Hint text={t('form.hedgeEnabledHint')} />
+                                        </FieldLabel>
+                                        <div className="flex min-h-10 items-center gap-3 rounded-lg border border-border/40 bg-card px-3 py-2 md:min-h-11">
+                                            <Switch
+                                                id="group-hedge-enabled"
+                                                checked={hedgeEnabled}
+                                                onCheckedChange={setHedgeEnabled}
+                                            />
+                                            <span className="text-sm text-muted-foreground">{t('form.hedgeEnabled')}</span>
+                                        </div>
+                                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('form.hedgeEnabledHint')}</p>
+                                    </Field>
+                                )}
+                                {fieldCapabilities.chat && (
+                                    <Field>
+                                        <FieldLabel htmlFor="group-hedge-delay-ms">
+                                            {t('form.hedgeDelayMs')}
+                                            <Hint text={t('form.hedgeDelayMsHint')} />
+                                        </FieldLabel>
+                                        <Input
+                                            id="group-hedge-delay-ms"
+                                            type="number"
+                                            inputMode="numeric"
+                                            min={0}
+                                            max={30000}
+                                            step={1}
+                                            value={String(hedgeDelayMs)}
+                                            aria-invalid={showValidation && !hedgeDelayValid ? true : undefined}
+                                            onChange={(event) => {
+                                                const raw = event.target.value;
+                                                const parsed = raw.trim() === '' ? 0 : Number.parseInt(raw, 10);
+                                                setHedgeDelayMs(Number.isFinite(parsed) ? parsed : 0);
+                                            }}
+                                            className={cn('h-10 rounded-lg text-sm md:h-11', showValidation && !hedgeDelayValid && 'border-destructive focus-visible:ring-destructive/20')}
                                         />
-                                        <span className="text-sm text-muted-foreground">{t('form.hedgeEnabled')}</span>
-                                    </div>
-                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{t('form.hedgeEnabledHint')}</p>
-                                </Field>
-                                <Field>
-                                    <FieldLabel htmlFor="group-hedge-delay-ms">
-                                        {t('form.hedgeDelayMs')}
-                                        <Hint text={t('form.hedgeDelayMsHint')} />
-                                    </FieldLabel>
-                                    <Input
-                                        id="group-hedge-delay-ms"
-                                        type="number"
-                                        inputMode="numeric"
-                                        min={0}
-                                        max={30000}
-                                        step={1}
-                                        value={String(hedgeDelayMs)}
-                                        aria-invalid={showValidation && !hedgeDelayValid ? true : undefined}
-                                        onChange={(event) => {
-                                            const raw = event.target.value;
-                                            const parsed = raw.trim() === '' ? 0 : Number.parseInt(raw, 10);
-                                            setHedgeDelayMs(Number.isFinite(parsed) ? parsed : 0);
-                                        }}
-                                        className={cn('h-10 rounded-lg text-sm md:h-11', showValidation && !hedgeDelayValid && 'border-destructive focus-visible:ring-destructive/20')}
-                                    />
-                                    {showValidation && !hedgeDelayValid ? <p className="mt-1 text-xs text-destructive">{t('form.hedgeDelayMsInvalid')}</p> : null}
-                                </Field>
-                                <Field>
-                                    <FieldLabel htmlFor="group-reasoning-buffer-strategy">
-                                        {t('form.reasoningBufferStrategy.label')}
-                                        <Hint text={t('form.reasoningBufferStrategy.hint')} />
-                                        <Hint text={t('form.reasoningBufferStrategy.groupHint')} />
-                                    </FieldLabel>
-                                    <select
-                                        id="group-reasoning-buffer-strategy"
-                                        value={reasoningBufferStrategy}
-                                        onChange={(event) => setReasoningBufferStrategy(event.target.value)}
-                                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
-                                    >
-                                        <option value="">{t('form.reasoningBufferStrategy.useGlobal')}</option>
-                                        <option value="buffer">{t('form.reasoningBufferStrategy.buffer')}</option>
-                                        <option value="immediate">{t('form.reasoningBufferStrategy.immediate')}</option>
-                                    </select>
-                                </Field>
-                                <Field>
-                                    <FieldLabel htmlFor="group-default-reasoning-effort">
-                                        {t('form.defaultReasoningEffort.label')}
-                                        <Hint text={t('form.defaultReasoningEffort.hint')} />
-                                    </FieldLabel>
-                                    <select
-                                        id="group-default-reasoning-effort"
-                                        value={defaultReasoningEffort}
-                                        onChange={(event) => setDefaultReasoningEffort(event.target.value)}
-                                        className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
-                                    >
-                                        <option value="">{t('form.defaultReasoningEffort.off')}</option>
-                                        <option value="auto">{t('form.defaultReasoningEffort.auto')}</option>
-                                        <option value="minimal">{t('form.defaultReasoningEffort.minimal')}</option>
-                                        <option value="low">{t('form.defaultReasoningEffort.low')}</option>
-                                        <option value="medium">{t('form.defaultReasoningEffort.medium')}</option>
-                                        <option value="high">{t('form.defaultReasoningEffort.high')}</option>
-                                        <option value="xhigh">{t('form.defaultReasoningEffort.xhigh')}</option>
-                                        <option value="max">{t('form.defaultReasoningEffort.max')}</option>
-                                    </select>
-                                </Field>
-                                <Field className="col-span-full">
-                                    <span className="inline-flex items-center gap-2 text-sm font-medium leading-none">
-                                        {t('form.reasoningForceOverride.label')}
-                                        <Hint text={t('form.reasoningForceOverride.hint')} />
-                                    </span>
-                                    <label
-                                        htmlFor="group-reasoning-force-override"
-                                        className="flex min-w-0 items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground"
-                                    >
-                                        <Switch
-                                            id="group-reasoning-force-override"
-                                            checked={reasoningForceOverride}
-                                            onCheckedChange={setReasoningForceOverride}
+                                        {showValidation && !hedgeDelayValid ? <p className="mt-1 text-xs text-destructive">{t('form.hedgeDelayMsInvalid')}</p> : null}
+                                    </Field>
+                                )}
+                                {fieldCapabilities.chat && (
+                                    <Field>
+                                        <FieldLabel htmlFor="group-reasoning-buffer-strategy">
+                                            {t('form.reasoningBufferStrategy.label')}
+                                            <Hint text={t('form.reasoningBufferStrategy.hint')} />
+                                            <Hint text={t('form.reasoningBufferStrategy.groupHint')} />
+                                        </FieldLabel>
+                                        <select
+                                            id="group-reasoning-buffer-strategy"
+                                            value={reasoningBufferStrategy}
+                                            onChange={(event) => setReasoningBufferStrategy(event.target.value)}
+                                            className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
+                                        >
+                                            <option value="">{t('form.reasoningBufferStrategy.useGlobal')}</option>
+                                            <option value="buffer">{t('form.reasoningBufferStrategy.buffer')}</option>
+                                            <option value="immediate">{t('form.reasoningBufferStrategy.immediate')}</option>
+                                        </select>
+                                    </Field>
+                                )}
+                                {fieldCapabilities.chat && (
+                                    <Field>
+                                        <FieldLabel htmlFor="group-default-reasoning-effort">
+                                            {t('form.defaultReasoningEffort.label')}
+                                            <Hint text={t('form.defaultReasoningEffort.hint')} />
+                                        </FieldLabel>
+                                        <select
+                                            id="group-default-reasoning-effort"
+                                            value={defaultReasoningEffort}
+                                            onChange={(event) => setDefaultReasoningEffort(event.target.value)}
+                                            className="h-10 w-full rounded-lg border border-border/40 bg-card px-3 text-sm shadow-sm transition-[border-color,box-shadow,background-color] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:h-11"
+                                        >
+                                            <option value="">{t('form.defaultReasoningEffort.off')}</option>
+                                            <option value="auto">{t('form.defaultReasoningEffort.auto')}</option>
+                                            <option value="minimal">{t('form.defaultReasoningEffort.minimal')}</option>
+                                            <option value="low">{t('form.defaultReasoningEffort.low')}</option>
+                                            <option value="medium">{t('form.defaultReasoningEffort.medium')}</option>
+                                            <option value="high">{t('form.defaultReasoningEffort.high')}</option>
+                                            <option value="xhigh">{t('form.defaultReasoningEffort.xhigh')}</option>
+                                            <option value="max">{t('form.defaultReasoningEffort.max')}</option>
+                                        </select>
+                                    </Field>
+                                )}
+                                {fieldCapabilities.chat && (
+                                    <Field className="col-span-full">
+                                        <span className="inline-flex items-center gap-2 text-sm font-medium leading-none">
+                                            {t('form.reasoningForceOverride.label')}
+                                            <Hint text={t('form.reasoningForceOverride.hint')} />
+                                        </span>
+                                        <label
+                                            htmlFor="group-reasoning-force-override"
+                                            className="flex min-w-0 items-center gap-2 rounded-lg border border-border/20 bg-card px-3 py-2 text-sm text-card-foreground"
+                                        >
+                                            <Switch
+                                                id="group-reasoning-force-override"
+                                                checked={reasoningForceOverride}
+                                                onCheckedChange={setReasoningForceOverride}
+                                            />
+                                            <span className="min-w-0">{t('form.reasoningForceOverride.enable')}</span>
+                                        </label>
+                                    </Field>
+                                )}
+                                {fieldCapabilities.chat && (
+                                    <Field className="col-span-full">
+                                        <FieldLabel htmlFor="group-param-override">
+                                            {t('form.paramOverride.label')}
+                                            <Hint text={t('form.paramOverride.hint')} />
+                                        </FieldLabel>
+                                        <textarea
+                                            id="group-param-override"
+                                            value={paramOverride}
+                                            onChange={(event) => setParamOverride(event.target.value)}
+                                            rows={3}
+                                            placeholder={t.raw('form.paramOverride.placeholder')}
+                                            className="min-w-0 w-full max-w-full resize-y rounded-lg border border-border/40 bg-card px-3 py-2 font-mono text-xs shadow-sm transition-[border-color,box-shadow] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:text-sm"
                                         />
-                                        <span className="min-w-0">{t('form.reasoningForceOverride.enable')}</span>
-                                    </label>
-                                </Field>
-                                <Field className="col-span-full">
-                                    <FieldLabel htmlFor="group-param-override">
-                                        {t('form.paramOverride.label')}
-                                        <Hint text={t('form.paramOverride.hint')} />
-                                    </FieldLabel>
-                                    <textarea
-                                        id="group-param-override"
-                                        value={paramOverride}
-                                        onChange={(event) => setParamOverride(event.target.value)}
-                                        rows={3}
-                                        placeholder={t.raw('form.paramOverride.placeholder')}
-                                        className="min-w-0 w-full max-w-full resize-y rounded-lg border border-border/40 bg-card px-3 py-2 font-mono text-xs shadow-sm transition-[border-color,box-shadow] duration-300 outline-none hover:border-primary/15 focus-visible:border-ring focus-visible:ring-4 focus-visible:ring-ring/20 md:text-sm"
-                                    />
-                                </Field>
+                                    </Field>
+                                )}
                                 <Field className="col-span-full" aria-labelledby="group-custom-headers-label">
                                     <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                                         <span id="group-custom-headers-label" className="inline-flex items-center gap-2 text-sm font-medium">
@@ -949,6 +984,7 @@ export function GroupEditor({
                                             <Hint text={t('form.customHeader.hint')} />
                                         </span>
                                         <button
+                                            disabled={!fieldCapabilities.llmPath}
                                             type="button"
                                             onClick={() => setCustomHeaders([...customHeaders, { header_key: '', header_value: '' }])}
                                             className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/8"
@@ -964,6 +1000,7 @@ export function GroupEditor({
                                             {customHeaders.map((header, index) => (
                                                 <div key={index} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 @[28rem]/group-settings:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto]">
                                                     <Input
+                                                        disabled={!fieldCapabilities.llmPath}
                                                         value={header.header_key}
                                                         onChange={(event) => {
                                                             const nextHeaders = [...customHeaders];
@@ -975,6 +1012,7 @@ export function GroupEditor({
                                                         aria-label={t('form.customHeader.keyPlaceholder')}
                                                     />
                                                     <Input
+                                                        disabled={!fieldCapabilities.llmPath}
                                                         value={header.header_value}
                                                         onChange={(event) => {
                                                             const nextHeaders = [...customHeaders];
@@ -986,6 +1024,7 @@ export function GroupEditor({
                                                         aria-label={t('form.customHeader.valuePlaceholder')}
                                                     />
                                                     <button
+                                                        disabled={!fieldCapabilities.llmPath}
                                                         type="button"
                                                         onClick={() => setCustomHeaders(customHeaders.filter((_, headerIndex) => headerIndex !== index))}
                                                         className="col-start-2 row-start-1 rounded-md p-2 text-muted-foreground transition-colors hover:bg-destructive/8 hover:text-destructive @[28rem]/group-settings:col-start-3"

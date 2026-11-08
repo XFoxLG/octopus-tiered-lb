@@ -2453,7 +2453,7 @@
         "resultTitle": "Check details",
         "resultPassed": "Passed",
         "resultFailed": "Failed",
-        "resultAttempts": "Retried {count} times",
+        "resultAttempts": "{count} request(s)",
         "toggleDetails": "Toggle error details",
         "waitingResults": "Waiting for test results...",
         "noResults": "No test results yet",
@@ -2478,6 +2478,15 @@
       }
     },
     "form": {
+      "categoryFields": {
+          "embeddingHeaderTimeout": "Response header timeout (embeddings)",
+          "embeddingHeaderTimeoutHint": "Time from dispatch until upstream response headers arrive. This does not cover reading the complete vector response. 0 retains existing inheritance behavior.",
+          "embeddingNotice": "Chat-only settings are hidden and retained. Attempt and response-header timeouts may be overridden by the channel.",
+          "mediaNotice": "Attempt timeout, first-output timeout and group request headers are not applied by this API path. Existing values are retained. Request budget and retries still apply.",
+          "unknownNotice": "This API category is not recognized. Only shared controls are enabled; existing values are retained.",
+          "embeddingConflict": "Stored chat protocol restrictions may prevent embedding requests from finding a route. You can change these draft settings explicitly before saving.",
+          "resetEmbeddingProtocol": "Use embedding conversion in this draft"
+      },
       "requestTimeout": {"label":"Whole request timeout (seconds)","hint":"Includes queueing, attempts and streaming. Zero inherits other limits; the shortest deadline wins."},
       "relayRetryCount": {"label":"Key retries per candidate","hint":"Group override. -1 inherits the channel or global setting; 0 prevents another key from being tried for the same candidate."},
       "relayRouteRetries": {"label":"Route-round override","hint":"Group override. -1 inherits the global setting; controls how many complete candidate rounds may run."},
