@@ -89,6 +89,9 @@ func minFailureHintTTL(ttl time.Duration, ratelimitCooldown int) time.Duration {
 }
 
 func recordFailureHint(channelID, keyID int, modelName string, decision RetryDecision, err error, ratelimitCooldown int) {
+	if decision.SkipFailureAccounting {
+		return
+	}
 	ttl, ok := shouldStoreFailureHint(decision.Code, err)
 	if !ok {
 		return

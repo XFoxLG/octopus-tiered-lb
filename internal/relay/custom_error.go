@@ -136,8 +136,19 @@ func matchBuiltinRetryScope(upstreamText string) (RetryScope, string, bool) {
 //   - 渠道显式配置的不可重试码优先级最高。
 //   - 放宽方向永远是「不再重试 → 可重试」;默认已可重试的决策保持不动。
 //   - 确定性失败(如 context_length_exceeded)在调用方已提前终态,不会到这里。
-func applyErrorPolicy(decision RetryDecision, ch *dbmodel.Channel, statusCode int, upstreamText string) RetryDecision {
+func applyErrorPolicy(decision RetryDecision, ch *dbmodel.Channel, statusCode int, upstreamText string) (result RetryDecision) {
+	defer func() {
+		result.UpstreamError = decision.UpstreamError
+		result.RetryAfter = decision.RetryAfter
+		result.RateLimitScope = decision.RateLimitScope
+		result.SkipFailureAccounting = result.SkipFailureAccounting || decision.SkipFailureAccounting
+	}()
 	if decision.Scope == ScopeAbortAll || !decision.IsError {
+		return decision
+	}
+	// Preserve structured recovery evidence and local cancellation. Text rules
+	// are only a fallback for otherwise unclassified upstream HTTP failures.
+	if decision.SkipFailureAccounting && decision.UpstreamError == nil {
 		return decision
 	}
 
@@ -159,6 +170,9 @@ func applyErrorPolicy(decision RetryDecision, ch *dbmodel.Channel, statusCode in
 			Code:    statusCode,
 			IsError: true,
 		}
+	}
+	if decision.UpstreamError != nil && decision.UpstreamError.Category != "" {
+		return decision
 	}
 
 	// A supported reasoning option may be incompatible with this particular

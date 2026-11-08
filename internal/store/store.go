@@ -29,6 +29,10 @@ type KVStore interface {
 	Set(ctx context.Context, key string, val []byte, ttl time.Duration) error
 	// Get 读取 key。found=false 表示 key 不存在或已过期。
 	Get(ctx context.Context, key string) (val []byte, found bool, err error)
+	// CompareAndSwap updates only the observed value. nil old means absent;
+	// nil next deletes. A nonempty absentKey must not exist in the same atomic
+	// operation. Used to fence recovery probes against newly recorded cooldowns.
+	CompareAndSwap(ctx context.Context, key string, old, next []byte, ttl time.Duration, absentKey string) (bool, error)
 	// Del 删除指定 key。
 	Del(ctx context.Context, keys ...string) error
 	// DelByPrefix 删除所有以 prefix 开头的 key（渠道/key 删除时用）。

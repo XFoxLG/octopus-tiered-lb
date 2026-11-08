@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 	"strings"
@@ -10,6 +11,38 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/utils/ratelimit"
 )
+
+func (m *memoryKV) CompareAndSwap(ctx context.Context, key string, old, next []byte, ttl time.Duration, absentKey string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if guard, found := m.entries[absentKey]; absentKey != "" && found && !expiredLocked(guard) {
+		return false, nil
+	}
+	entry, found := m.entries[key]
+	if found && expiredLocked(entry) {
+		delete(m.entries, key)
+		found = false
+	}
+	if (old == nil && found) || (old != nil && (!found || !bytes.Equal(old, entry.val))) {
+		return false, nil
+	}
+	if next == nil {
+		delete(m.entries, key)
+		return true, nil
+	}
+	if m.entries == nil {
+		m.entries = make(map[string]memoryKVEntry)
+	}
+	entry = memoryKVEntry{val: append([]byte(nil), next...)}
+	if ttl > 0 {
+		entry.expiresAt = time.Now().Add(ttl)
+	}
+	m.entries[key] = entry
+	return true, nil
+}
 
 // memory.go 包含所有存储接口的进程内内存实现。
 //

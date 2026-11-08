@@ -3,7 +3,6 @@ package balancer
 import (
 	"context"
 	"fmt"
-	"github.com/lingyuins/octopus/internal/utils/json"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +22,9 @@ import (
 type keyCooldownEntry struct {
 	statusCode int       // 触发冷却的错误码（>= 400）
 	expiresAt  time.Time // 冷却到期时间 = 记录时刻 + cooldown
+	probeSince time.Time
+	generation string
+	expired    bool // Redis TTL is authoritative; not serialized.
 }
 
 // globalKeyCooldown 全局 key 冷却存储，key: "channelID:keyID:modelName"。
@@ -124,30 +126,8 @@ func IsKeyOnCooldown(channelID, keyID int, modelName string) bool {
 	if strings.TrimSpace(modelName) == "" {
 		return false
 	}
-	// Redis 后端：EXISTS 语义，TTL 过期由 Redis 保证。降级（err/未找到）回退内存。
-	if store.Enabled() {
-		kv := store.GetKV()
-		_, found, err := kv.Get(context.Background(), cooldownKVKey(channelID, keyID, modelName))
-		if err == nil {
-			return found
-		}
-	}
-	key := cooldownKey(channelID, keyID, modelName)
-	v, ok := globalKeyCooldown.Load(key)
-	if !ok {
-		return false
-	}
-	entry, ok := v.(*keyCooldownEntry)
-	if !ok {
-		globalKeyCooldown.Delete(key)
-		return false
-	}
-	if time.Now().Before(entry.expiresAt) {
-		return true
-	}
-	// 已过期，惰性清理
-	globalKeyCooldown.Delete(key)
-	return false
+	blocked, _ := cooldownStatus(channelID, keyID, modelName)
+	return blocked
 }
 
 // RecordKeyCooldown 记录某 (channelID, keyID, modelName) 的冷却。
@@ -168,26 +148,7 @@ func RecordKeyCooldownWithRetryAfter(channelID, keyID int, modelName string, sta
 	if cooldown <= 0 {
 		return
 	}
-	// Redis 后端：冷却记录写入 KVStore，TTL 原生过期，无需维护内存 map。
-	// statusCode 用 JSON 序列化存入（与 failureHintCache 一致的模式）。
-	if store.Enabled() {
-		entry := keyCooldownEntry{
-			statusCode: statusCode,
-			expiresAt:  time.Now().Add(cooldown),
-		}
-		if data, err := json.Marshal(entry); err == nil {
-			if err := store.GetKV().Set(context.Background(),
-				cooldownKVKey(channelID, keyID, modelName), data, cooldown); err == nil {
-				return
-			}
-		}
-		// 序列化/写入失败回退内存路径，保证冷却不丢（容错）。
-	}
-	key := cooldownKey(channelID, keyID, modelName)
-	globalKeyCooldown.Store(key, &keyCooldownEntry{
-		statusCode: statusCode,
-		expiresAt:  time.Now().Add(cooldown),
-	})
+	storeCooldown(channelID, keyID, modelName, statusCode, time.Now().Add(cooldown))
 }
 
 // ClearKeyCooldown 清除指定 (channelID, keyID, modelName) 的冷却。
@@ -198,6 +159,7 @@ func ClearKeyCooldown(channelID, keyID int, modelName string) {
 	}
 	if store.Enabled() {
 		_ = store.GetKV().Del(context.Background(), cooldownKVKey(channelID, keyID, modelName))
+		_ = store.GetKV().Del(context.Background(), recoveryKVKey(channelID, keyID, modelName))
 	}
 	globalKeyCooldown.Delete(cooldownKey(channelID, keyID, modelName))
 }
@@ -218,7 +180,7 @@ func PurgeExpiredKeyCooldowns() int {
 			removed++
 			return true
 		}
-		if now.After(entry.expiresAt) {
+		if now.After(entry.expiresAt.Add(cooldownRecoveryRetention)) {
 			globalKeyCooldown.Delete(key)
 			removed++
 		}
@@ -235,6 +197,7 @@ func RemoveChannelKeyCooldowns(channelID int) {
 		// 按前缀删除：octopus:cooldown:{channelID}:*
 		_ = store.GetKV().DelByPrefix(context.Background(),
 			fmt.Sprintf("%s%d:", cooldownKVKeyPrefix, channelID))
+		_ = store.GetKV().DelByPrefix(context.Background(), fmt.Sprintf("recovery:%s%d:", cooldownKVKeyPrefix, channelID))
 		return
 	}
 	prefix := buildKeyPrefix(channelID)
@@ -258,6 +221,7 @@ func RemoveKeyCooldowns(keyID int) {
 	if store.Enabled() {
 		// 在 cooldown 命名空间下按子串删除（KVStore.DelBySubstring 内部 SCAN + 客户端过滤）。
 		_ = store.GetKV().DelBySubstring(context.Background(), cooldownKVKeyPrefix, needle)
+		_ = store.GetKV().DelBySubstring(context.Background(), "recovery:"+cooldownKVKeyPrefix, needle)
 		return
 	}
 	globalKeyCooldown.Range(func(key, _ any) bool {

@@ -155,10 +155,14 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 	maxRouteRetries := getMaxRouteRetries(&group)
 	ratelimitCooldown := getRatelimitCooldown()
 	maxTotalAttempts := getMaxTotalAttempts()
+	budget := newRelayBudget(maxTotalAttempts)
 	rateLimitHoldCfg := getRateLimitHoldConfig()
 
 	var allAttempts []dbmodel.ChannelAttempt
 	var lastErr error
+	coolingCandidates := make(recoveryCandidates)
+	completedCandidateScan := false
+	requestRejectedTargets := make(map[string]bool)
 	var routeIter *balancer.Iterator
 
 	// 追踪最后一次实际转发的通道信息，用于全部失败时的日志记录
@@ -167,6 +171,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 	var lastResolvedModel string
 
 	for routeRound := 1; routeRound <= maxRouteRetries; routeRound++ {
+		if budget.shouldFastFail(routeRound) {
+			break
+		}
+		budget.markRoundStart()
 		if err := operationCtx.Err(); err != nil {
 			lastErr = err
 			log.Infof("relay operation ended before media request completed: %v", err)
@@ -183,10 +191,6 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 		routeIter = balancer.NewIterator(group, apiKeyID, requestModel, parseExcludedChannels(c.GetString("excluded_channels")))
 
 		for routeIter.Next() {
-			if maxTotalAttempts > 0 && len(allAttempts) >= maxTotalAttempts {
-				lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
-				goto mediaExhausted
-			}
 			if err := operationCtx.Err(); err != nil {
 				lastErr = err
 				log.Infof("relay operation ended before media retry completed: %v", err)
@@ -223,6 +227,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				routeIter.Skip(channel.ID, 0, channel.Name, "model not found in channel")
 				continue
 			}
+			coolingCandidates.observe(channel, resolvedModel)
 			if rateLimited, remaining := balancer.IsChannelRateLimited(channel.ID, resolvedModel); rateLimited {
 				message := "channel rate limit active"
 				if remaining > 0 {
@@ -262,10 +267,6 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 			rateLimitHoldWaited := time.Duration(0)
 		keyRetryLoop:
 			for keyRound := 1; keyRound <= maxKeyRetriesPerRoute; keyRound++ {
-				if maxTotalAttempts > 0 && len(allAttempts) >= maxTotalAttempts {
-					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
-					goto mediaExhausted
-				}
 				if err := operationCtx.Err(); err != nil {
 					lastErr = err
 					log.Infof("relay operation ended: %v", err)
@@ -299,6 +300,18 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					break
 				}
 
+				if requestRejectedTargets[recoveryTargetKey(channel.ID, usedKey.ID, resolvedModel)] {
+					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
+					routeIter.Skip(channel.ID, usedKey.ID, channel.Name, "request-specific upstream rejection already observed")
+					keyRound--
+					continue
+				}
+				// Availability checks do not consume the forwarding budget. Inspect
+				// all cooling candidates before claiming a global recovery time.
+				if budget.reachedMaxForwarded(routeIter) {
+					lastErr = fmt.Errorf("reached relay max total attempts: %d", maxTotalAttempts)
+					goto mediaExhausted
+				}
 				// 熔断跳过不消耗 Key 重试配额
 				if routeIter.SkipCircuitBreak(channel.ID, usedKey.ID, channel.Name, resolvedModel) {
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
@@ -326,7 +339,24 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					rerankPlanEndpoint = rerankPlan.Endpoint
 				}
 				c.Set(mediaRerankUsageKey, mediaRerankUsage{})
-				statusCode, fwdErr := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, span.AttemptNumber(), rerankPlanEndpoint)
+				statusCode, fwdErr := func() (int, error) {
+					finish, allowed, recoveryErr := balancer.AcquireCooldownProbe(operationCtx, channel.ID, usedKey.ID, resolvedModel)
+					if recoveryErr != nil {
+						return 0, fmt.Errorf("%w: %v", errRecoveryProbeUnavailable, recoveryErr)
+					}
+					if !allowed {
+						return 0, errRecoveryProbeUnavailable
+					}
+					stopCancel := context.AfterFunc(operationCtx, func() { finish(false) })
+					defer stopCancel()
+					requestTrace.startDiagnosticAttempt(span.AttemptNumber(), channel.ID, channel.Type.String(), operationCtx)
+					status, err := forwardMediaRequest(c, cfg, group, channel, usedKey.ChannelKey, bodyBytes, requestModel, resolvedModel, streamRequested, operationCtx, requestTrace, span.AttemptNumber(), rerankPlanEndpoint)
+					recordUpstreamRecovery(channel.ID, usedKey.ID, resolvedModel, ClassifyRelayError(status, err, false))
+					requestTrace.recordUpstreamError(span.AttemptNumber(), err)
+					requestTrace.endDiagnosticAttempt(span.AttemptNumber(), operationCtx, false, nil)
+					finish(err == nil)
+					return status, err
+				}()
 				if channel.MaxConcurrency > 0 {
 					rl.ReleaseChannelSlot(channel.ID)
 				}
@@ -363,14 +393,15 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				// 基于 context.Background() 与 clientCtx 完全解耦（context.go），
 				// 因此判定断连必须查 c.Request.Context()，不能查 operationCtx。
 				markClientCancelIfGone(&decision, c.Request.Context(), fwdErr)
-
-				// key 冷却按 (channelID, keyID, model) 维度记录（见 issue #94），不再写整 key 共享的
-				// StatusCode/LastUseTimeStamp —— 那样会让某模型 429 拖累该 key 上其他模型。
-				if statusCode >= 400 {
-					balancer.RecordKeyCooldownWithRetryAfter(channel.ID, usedKey.ID, resolvedModel, statusCode, retryAfterFromError(fwdErr))
+				if decision.Scope == ScopeChannelCapacity {
+					lastErr = fwdErr
+					span.End(dbmodel.AttemptSkipped, statusCode, decision.Reason)
+					break keyRetryLoop
 				}
-				// 可用度衰减：按错误类型加权，仅 availability 策略生效。
-				balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, false)
+
+				if !decision.SkipFailureAccounting {
+					balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, false)
+				}
 
 				if decision.Scope == ScopeNone && !decision.IsError {
 					ch.KeyUpdate(usedKey)
@@ -387,7 +418,6 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 						})
 					}
 					balancer.RecordSuccess(channel.ID, usedKey.ID, resolvedModel)
-					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModel)
 					// 离群窗口：记录成功样本（与熔断器同级）。
 					balancer.OutlierReport(channel.ID, true, statusCode, time.Now())
 					balancer.RecordKeyAvailability(channel.ID, usedKey.ID, resolvedModel, statusCode, true)
@@ -426,20 +456,10 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					// 离群窗口：记录失败样本（与熔断器同级）。
 					balancer.OutlierReport(channel.ID, false, decision.Code, time.Now())
 				}
-				if decision.Code == http.StatusTooManyRequests {
-					channelRateLimited, remaining := balancer.RecordChannelRateLimit(
-						channel.ID,
-						usedKey.ID,
-						resolvedModel,
-						decision.RateLimitScope == RateLimitScopeChannel,
-						decision.RetryAfter,
-					)
-					if channelRateLimited {
-						log.Warnf("media channel rate limit opened: channel=%s model=%s remaining=%s",
-							channel.Name, resolvedModel, remaining.Round(time.Second))
-					}
-				}
 
+				if requestSpecificRecoveryFailure(decision) {
+					requestRejectedTargets[recoveryTargetKey(channel.ID, usedKey.ID, resolvedModel)] = true
+				}
 				if decision.IsError {
 					log.Warnf("media relay: channel %s failed on key %d: %v (decision: %s)",
 						channel.Name, keyRound, fwdErr, decision.Scope.String())
@@ -472,13 +492,19 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 					// 可选：429 时在当前渠道内延时重试，而不是立刻换 Key/渠道。
 					// 默认关闭，保持历史「马上 failover」行为。
 					if shouldHoldOnRateLimit(rateLimitHoldCfg, decision) {
+						if blocked, remaining := balancer.KeyCooldownRemaining(channel.ID, usedKey.ID, resolvedModel); blocked {
+							if remaining <= 0 {
+								break keyRetryLoop
+							}
+							decision.RetryAfter = max(decision.RetryAfter, remaining)
+						}
 						if waitFor, canWait := rateLimitHoldWaitDuration(rateLimitHoldCfg, decision, rateLimitHoldWaited); canWait {
 							if !waitRateLimitHoldFor(c.Request.Context(), rateLimitHoldCfg, channel.Name, rateLimitHoldWaited, waitFor) {
 								lastErr = c.Request.Context().Err()
 								log.Infof("request context canceled during rate limit hold, stopping media key retry")
 								goto mediaExhausted
 							}
-							balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModel)
+							// Cooldown expiry and its single recovery probe remain authoritative.
 							failedKeyIDs = failedKeyIDs[:len(failedKeyIDs)-1]
 							rateLimitHoldWaited += waitFor
 							if rateLimitHoldWaited > rateLimitHoldCfg.MaxWait {
@@ -505,23 +531,43 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 			}
 		}
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
+		budget.markRoundEnd(routeIter)
+		completedCandidateScan = true
+		if until := coolingCandidates.earliestRecovery(); !until.IsZero() {
+			lastErr = &candidatesCoolingError{until}
+			break
+		}
 	}
 	// All route rounds exhausted
 	if lastErr == nil {
 		lastErr = errors.New("no available channel for this endpoint")
 	}
+	if until := coolingCandidates.earliestRecovery(); !until.IsZero() && operationCtx.Err() == nil {
+		lastErr = &candidatesCoolingError{until}
+	}
 	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
 	// 对外返回通用文案，上游错误细节仅入日志（同 chat 路径）。
-	resp.Error(c, http.StatusBadGateway, "all channels failed")
+	if until := coolingCandidates.earliestRecovery(); !until.IsZero() && operationCtx.Err() == nil {
+		writeCandidatesCooling(c, &candidatesCoolingError{until})
+	} else {
+		resp.Error(c, http.StatusBadGateway, "all channels failed")
+	}
 	return
 
 mediaExhausted:
 	// Only reached via goto from within the relay loop (context canceled / max attempts)
-	if routeIter != nil {
+	if !budget.roundCompleted() && routeIter != nil {
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
 	}
+	if until := coolingCandidates.earliestRecovery(); completedCandidateScan && !until.IsZero() && operationCtx.Err() == nil {
+		lastErr = &candidatesCoolingError{until}
+	}
 	recordMediaRelayLog(apiKeyID, requestModel, logEndpointType, bodyBytes, lastChannelID, lastChannelName, lastResolvedModel, time.Since(startTime), allAttempts, lastErr, clientIP, mediaReportedIP, userAgent, requestTrace, mediaRerankUsageFromContext(c))
-	resp.Error(c, http.StatusBadGateway, "all channels failed")
+	if until := coolingCandidates.earliestRecovery(); completedCandidateScan && !until.IsZero() && operationCtx.Err() == nil {
+		writeCandidatesCooling(c, &candidatesCoolingError{until})
+	} else {
+		resp.Error(c, http.StatusBadGateway, "all channels failed")
+	}
 }
 
 // recordMediaRelayLog creates a RelayLog entry and updates global stats for media endpoints.

@@ -294,6 +294,24 @@ func (trace *relayRequestTrace) startDiagnosticAttempt(attempt, channel int, pro
 	trace.diagnostics.Attempts = append(trace.diagnostics.Attempts, item)
 }
 
+func (trace *relayRequestTrace) recordUpstreamError(attempt int, err error) {
+	if trace == nil {
+		return
+	}
+	evidence := upstreamErrorEvidence(err)
+	if evidence == nil {
+		return
+	}
+	trace.mutex.Lock()
+	defer trace.mutex.Unlock()
+	for i := range trace.ensureDiagnosticsLocked().Attempts {
+		if trace.diagnostics.Attempts[i].Attempt == attempt {
+			trace.diagnostics.Attempts[i].UpstreamError = evidence
+			return
+		}
+	}
+}
+
 func (trace *relayRequestTrace) endDiagnosticAttempt(attempt int, ctx context.Context, terminal bool, outputTextPresent *bool) {
 	if trace == nil {
 		return

@@ -284,11 +284,14 @@ func TestHandlerRateLimitHoldStopsAtBudgetOrOperationDeadline(testContext *testi
 			if time.Since(startedAt) >= 5*time.Second {
 				testContext.Error("rate-limit wait outlived the operation deadline or an exhausted attempt budget")
 			}
-			expectedStatus := http.StatusBadGateway
-			if maximumAttempts > 1 {
-				expectedStatus = http.StatusGatewayTimeout
-			}
-			if recorder.Code != expectedStatus || upstreamCalls != 1 {
+			// The only candidate is now known to be cooling past the 2s
+			// operation budget. Return its recovery ETA immediately rather than
+			// waiting for the request deadline or disguising it as a generic 502.
+			expectedStatus := http.StatusServiceUnavailable
+			if maximumAttempts == 1 {
+				expectedStatus = http.StatusBadGateway
+			} // attempt budget stops before a complete candidate scan
+			if recorder.Code != expectedStatus || (maximumAttempts > 1 && recorder.Header().Get("Retry-After") == "") || upstreamCalls != 1 {
 				testContext.Fatalf("status=%d calls=%d body=%s", recorder.Code, upstreamCalls, recorder.Body.String())
 			}
 			logs, cacheLock := relaylog.GetCacheAndLock()

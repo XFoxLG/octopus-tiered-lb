@@ -381,13 +381,7 @@ func recordUnselectedHedgeFailure(lane *relayAttempt, status int, err error, dur
 	if decision.SkipFailureAccounting {
 		return
 	}
-	if status == http.StatusTooManyRequests {
-		balancer.RecordChannelRateLimit(lane.channel.ID, lane.usedKey.ID, lane.internalRequest.Model,
-			decision.RateLimitScope == RateLimitScopeChannel, decision.RetryAfter)
-	}
-	if status >= 400 {
-		balancer.RecordKeyCooldownWithRetryAfter(lane.channel.ID, lane.usedKey.ID, lane.internalRequest.Model, status, retryAfterFromError(err))
-	}
+
 	balancer.RecordKeyAvailability(lane.channel.ID, lane.usedKey.ID, lane.internalRequest.Model, status, false)
 	if shouldRecordChannelFailure(decision) {
 		balancer.RecordFailure(lane.channel.ID, lane.usedKey.ID, lane.internalRequest.Model)

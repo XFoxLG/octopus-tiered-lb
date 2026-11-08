@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -59,8 +60,18 @@ func TestIsKeyOnCooldownFalseAfterExpiry(t *testing.T) {
 	if IsKeyOnCooldown(1, 1, "gpt-4o") {
 		t.Fatal("expired cooldown should report not on cooldown")
 	}
+	// Expiry now retains evidence for a single half-open recovery, instead of
+	// deleting it and admitting every concurrent request.
+	finish, allowed, err := AcquireCooldownProbe(context.Background(), 1, 1, "gpt-4o")
+	if err != nil || !allowed {
+		t.Fatalf("expired cooldown must allow recovery: %t %v", allowed, err)
+	}
+	if _, another, err := AcquireCooldownProbe(context.Background(), 1, 1, "gpt-4o"); err != nil || another {
+		t.Fatal("expired cooldown admitted simultaneous recovery")
+	}
+	finish(true)
 	if _, ok := globalKeyCooldown.Load(key); ok {
-		t.Fatal("expired cooldown entry should be lazily purged")
+		t.Fatal("successful probe should clear retained evidence")
 	}
 }
 
@@ -90,7 +101,7 @@ func TestPurgeExpiredKeyCooldownsRemovesExpired(t *testing.T) {
 	// 回退 stale 条目到期时间
 	key := cooldownKey(1, 1, "stale")
 	if v, ok := globalKeyCooldown.Load(key); ok {
-		v.(*keyCooldownEntry).expiresAt = time.Now().Add(-time.Second)
+		v.(*keyCooldownEntry).expiresAt = time.Now().Add(-cooldownRecoveryRetention - time.Second)
 	}
 
 	removed := PurgeExpiredKeyCooldowns()
