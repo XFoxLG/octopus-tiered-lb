@@ -59,6 +59,7 @@ func (trace *relayRequestTrace) recordOutboundMaxTokens(attempt int, request *tr
 	diagnostics := trace.ensureDiagnosticsLocked()
 	diagnostics.OutboundMaxTokens = &value
 	diagnostics.OutboundMaxTokensSource = source
+	diagnostics.OutboundMaxTokensField = request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensField]
 	diagnostics.OutboundMaxTokensAdjusted =
 		request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensAdjusted] == "true"
 	for i := range diagnostics.Attempts {
@@ -66,6 +67,7 @@ func (trace *relayRequestTrace) recordOutboundMaxTokens(attempt int, request *tr
 		if item.Attempt == attempt {
 			item.OutboundMaxTokens = &value
 			item.OutboundMaxTokensSource = diagnostics.OutboundMaxTokensSource
+			item.OutboundMaxTokensField = diagnostics.OutboundMaxTokensField
 			item.OutboundMaxTokensAdjusted = diagnostics.OutboundMaxTokensAdjusted
 			break
 		}

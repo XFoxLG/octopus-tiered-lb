@@ -485,6 +485,9 @@ func ConvertToResponsesRequest(req *model.InternalLLMRequest) *ResponsesRequest 
 		MaxOutputTokens:   req.EffectiveMaxTokens(),
 		ParallelToolCalls: req.ParallelToolCalls,
 	}
+	if result.MaxOutputTokens != nil {
+		req.RecordOutboundMaxTokensField("max_output_tokens")
+	}
 
 	// Convert instructions from system messages
 	result.Instructions = convertInstructionsFromMessages(req.Messages)

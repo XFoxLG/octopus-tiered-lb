@@ -3047,6 +3047,7 @@
         "tokenLimitHint": "上游因輸出預算停止，回答未完成。已生成內容的接收與儲存情況請在用戶端確認。",
         "outboundMaxTokens": "出站 Token 上限",
         "outboundMaxTokensHint": "閘道實際發往上游的輸出預算；未記錄時顯示未知。",
+        "outboundMaxTokensField": "出站預算欄位",
         "outboundMaxTokensSource": "上限來源",
         "outboundMaxTokensSourceHint": "最終出站 Token 上限的欄位或規則來源。無法識別的值原樣展示。",
         "outboundMaxTokensAdjusted": "已調整",

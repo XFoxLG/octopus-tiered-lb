@@ -169,6 +169,7 @@ export interface RelayLogDetail extends RelayLog {
         terminal_source?: string;
         outbound_max_tokens?: number;
         outbound_max_tokens_source?: string;
+        outbound_max_tokens_field?: string;
         outbound_max_tokens_adjusted?: boolean;
         robin_envelope_kind?: string;
         robin_envelope_reason?: string;
@@ -208,6 +209,7 @@ export interface RelayLogDetail extends RelayLog {
             cancel_reason?: string;
             outbound_max_tokens?: number;
             outbound_max_tokens_source?: string;
+            outbound_max_tokens_field?: string;
             outbound_max_tokens_adjusted?: boolean;
             robin_envelope_kind?: string;
             robin_envelope_reason?: string;

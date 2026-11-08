@@ -1004,7 +1004,7 @@ func TestChatOutboundTransformRequest_SetsDefaultMimoMaxCompletionTokens(t *test
 	}
 }
 
-func TestChatOutboundTransformRequest_RaisesSmallMimoMaxTokens(t *testing.T) {
+func TestChatOutboundTransformRequest_PreservesSmallMimoMaxTokens(t *testing.T) {
 	outbound := &ChatOutbound{}
 	maxTokens := int64(50)
 	request := &model.InternalLLMRequest{
@@ -1034,11 +1034,11 @@ func TestChatOutboundTransformRequest_RaisesSmallMimoMaxTokens(t *testing.T) {
 		t.Fatalf("failed to unmarshal outbound body: %v", err)
 	}
 
-	if got.MaxCompletionTokens == nil || *got.MaxCompletionTokens != 10926 {
-		t.Fatalf("expected max_completion_tokens 10926, got %#v", got.MaxCompletionTokens)
+	if got.MaxCompletionTokens != nil {
+		t.Fatalf("unexpected max_completion_tokens alias: %#v", got.MaxCompletionTokens)
 	}
-	if got.MaxTokens != nil {
-		t.Fatalf("expected max_tokens to be omitted after upgrade, got %#v", got.MaxTokens)
+	if got.MaxTokens == nil || *got.MaxTokens != maxTokens {
+		t.Fatalf("expected explicit max_tokens 50, got %#v", got.MaxTokens)
 	}
 }
 

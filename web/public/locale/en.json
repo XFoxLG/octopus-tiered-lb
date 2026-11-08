@@ -3091,6 +3091,7 @@
         "tokenLimitHint": "The upstream stopped at its output budget, leaving the answer incomplete. Check your client to confirm that the generated content was received and saved.",
         "outboundMaxTokens": "Outbound token limit",
         "outboundMaxTokensHint": "The output budget actually sent upstream. Unrecorded values are shown as unknown.",
+        "outboundMaxTokensField": "Outbound budget field",
         "outboundMaxTokensSource": "Limit source",
         "outboundMaxTokensSourceHint": "The field or rule that supplied the final outbound token budget. Unrecognized values are shown verbatim.",
         "outboundMaxTokensAdjusted": "Adjusted",
