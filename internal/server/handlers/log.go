@@ -214,6 +214,10 @@ func logContent(c *gin.Context) {
 	}
 	contentRef, payload, err := relaylog.RelayLogContentGet(c.Request.Context(), referenceID)
 	if err != nil {
+		if errors.Is(err, relaylog.ErrRelayLogContentCorrupt) {
+			resp.Error(c, http.StatusInternalServerError, "log content is corrupt")
+			return
+		}
 		logReadError(c, err)
 		return
 	}
@@ -222,7 +226,11 @@ func logContent(c *gin.Context) {
 		return
 	}
 	if payload == nil {
-		resp.Error(c, http.StatusGone, "log content is no longer available")
+		message := "log content is unavailable: " + contentRef.State
+		if contentRef.Error == "content blob is missing" {
+			message = "log content blob is missing"
+		}
+		resp.Error(c, http.StatusGone, message)
 		return
 	}
 
