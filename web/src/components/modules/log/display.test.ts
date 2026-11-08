@@ -11,6 +11,8 @@ import {
     resolveFirstTokenMilestones,
     resolveLogDisplayFields,
     resolveLogInvestigationMarkers,
+    resolveOutboundMaxTokens,
+    resolveTokenLimitEvidence,
 } from './display.ts';
 
 test('formatLogDuration renders a dash when the metric was not recorded', () => {
@@ -750,6 +752,119 @@ test('resolveLogInvestigationMarkers maps usage_state causes to markers', () => 
         build('reported', { provider_termination_reason: 'MAX_TOKENS' }),
         ['length_truncated'],
     );
+});
+
+test('resolveTokenLimitEvidence only trusts recorded termination evidence', () => {
+    assert.deepEqual(
+        resolveTokenLimitEvidence({ termination_cause: 'TOKEN_LIMIT', provider_termination_reason: '' }),
+        { isTokenLimitTerminated: true, evidence: 'token_limit' },
+    );
+    assert.deepEqual(
+        resolveTokenLimitEvidence({ termination_cause: '', provider_termination_reason: 'LENGTH' }),
+        { isTokenLimitTerminated: true, evidence: 'provider_length' },
+    );
+    assert.deepEqual(
+        resolveTokenLimitEvidence({ termination_cause: '', provider_termination_reason: 'MAX_TOKENS' }),
+        { isTokenLimitTerminated: true, evidence: 'provider_length' },
+    );
+    assert.deepEqual(
+        resolveTokenLimitEvidence({ termination_cause: '', provider_termination_reason: 'stop' }),
+        { isTokenLimitTerminated: false, evidence: 'unknown' },
+    );
+    assert.deepEqual(
+        resolveTokenLimitEvidence({ termination_cause: 'content_filter', provider_termination_reason: 'stop' }),
+        { isTokenLimitTerminated: false, evidence: 'unknown' },
+    );
+});
+
+test('resolveLogInvestigationMarkers treats token limit as length without inferring empty output', () => {
+    // 规范化 token_limit：0 token / 0 字节不是反证，也不能再叠加空输出。
+    const zeroBodyTokenLimit = resolveLogInvestigationMarkers({
+        ftut: 0,
+        use_time: 1_200,
+        output_tokens: 0,
+        usage_state: 'reported',
+        provider_termination_reason: '',
+        termination_cause: 'token_limit',
+        client_write_bytes: 0,
+    });
+    assert.deepEqual(zeroBodyTokenLimit, ['length_truncated']);
+
+    // 历史行没有规范化 token_limit 时，仍只认明确的 provider length / max_tokens。
+    const historicalProviderLength = resolveLogInvestigationMarkers({
+        ftut: 0,
+        use_time: 1_200,
+        output_tokens: 0,
+        usage_state: 'reported',
+        provider_termination_reason: 'MAX_TOKENS',
+        termination_cause: '',
+        client_write_bytes: 0,
+    });
+    assert.deepEqual(historicalProviderLength, ['length_truncated']);
+
+    // 输出上限是独立成因轴；用量等其他轴不被遮蔽。
+    const tokenLimitWithOtherAxis = resolveLogInvestigationMarkers({
+        ftut: 0,
+        use_time: 1_200,
+        output_tokens: 0,
+        usage_state: 'not_reported',
+        provider_termination_reason: '',
+        termination_cause: 'token_limit',
+    });
+    assert.deepEqual(tokenLimitWithOtherAxis, ['length_truncated', 'usage_not_reported']);
+});
+
+test('resolveOutboundMaxTokens preserves zero and maps known provenance', () => {
+    const diagnostics = {
+        version: 1,
+        outbound_max_tokens: 0,
+        outbound_max_tokens_source: ' client:max_tokens ',
+        outbound_max_tokens_adjusted: true,
+        attempts: [
+            {
+                attempt: 2,
+                outbound_max_tokens: 2_048,
+                outbound_max_tokens_source: 'override:channel:max_tokens',
+                outbound_max_tokens_adjusted: false,
+            },
+            {
+                attempt: 3,
+                outbound_max_tokens_source: 'not-a-known-source',
+            },
+        ],
+    } satisfies NonNullable<RelayLogDetail['diagnostics']>;
+    const result = resolveOutboundMaxTokens(diagnostics);
+
+    assert.equal(result.value, 0);
+    assert.equal(result.source, 'client:max_tokens');
+    assert.equal(result.sourceToken, 'clientMaxTokens');
+    assert.equal(result.adjusted, true);
+    assert.deepEqual(result.attempts, [
+        {
+            attempt: 2,
+            value: 2_048,
+            source: 'override:channel:max_tokens',
+            sourceToken: 'channelMaxTokens',
+            adjusted: false,
+        },
+        {
+            attempt: 3,
+            value: null,
+            source: 'not-a-known-source',
+            sourceToken: null,
+            adjusted: false,
+        },
+    ]);
+
+    const unknownBudget = resolveOutboundMaxTokens({
+        version: 1,
+        outbound_max_tokens: 4_096,
+        outbound_max_tokens_source: '  unknown-source  ',
+    });
+    assert.equal(unknownBudget.value, 4_096);
+    assert.equal(unknownBudget.source, 'unknown-source');
+    assert.equal(unknownBudget.sourceToken, null);
+    assert.equal(resolveOutboundMaxTokens(undefined).value, null);
 });
 
 test('resolveLogInvestigationMarkers flags trusted zero-output successes as empty output', () => {

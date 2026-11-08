@@ -215,33 +215,7 @@ func terminationForChoice(choice model.Choice) model.TerminationMetadata {
 	if choice.Termination.HasCause() {
 		return choice.Termination
 	}
-	if choice.FinishReason == nil {
-		return model.TerminationMetadata{}
-	}
-
-	termination := model.TerminationMetadata{
-		ProviderReason: *choice.FinishReason,
-	}
-	switch strings.ToLower(strings.TrimSpace(*choice.FinishReason)) {
-	case "stop":
-		termination.Cause = model.TerminationCauseComplete
-	case "length":
-		termination.Cause = model.TerminationCauseTokenLimit
-	case "tool_calls", "function_call":
-		termination.Cause = model.TerminationCauseToolCall
-	case "content_filter":
-		termination.Cause = model.TerminationCauseContentFilter
-	case "refusal":
-		// Some OpenAI-compatible providers emit "refusal" as a chat
-		// finish_reason; treat it the same as the canonical model refusal so
-		// relay policy keeps it out of empty-output retries.
-		termination.Cause = model.TerminationCauseRefusal
-	case "error":
-		termination.Cause = model.TerminationCauseError
-	default:
-		termination.Cause = model.TerminationCauseUnknown
-	}
-	return termination
+	return model.TerminationFromOpenAICompatFinishReason(choice.FinishReason)
 }
 
 func responseHasProviderRefusal(resp *model.InternalLLMResponse) bool {
@@ -312,18 +286,23 @@ func isEmptyOutputResponse(resp *model.InternalLLMResponse) bool {
 // 空响应不在此判定——那属于 isEmptyOutputResponse 的职责，两条路径互斥：
 // 先空输出后截断的顺序由调用方保证（relay.go 先判空再判截断）。
 func isTruncatedOutput(resp *model.InternalLLMResponse) bool {
+	_, limited := responseTokenLimit(resp)
+	return limited
+}
+
+func responseTokenLimit(resp *model.InternalLLMResponse) (model.TerminationMetadata, bool) {
 	if resp == nil {
-		return false
+		return model.TerminationMetadata{}, false
 	}
 	if resp.Termination.Cause == model.TerminationCauseTokenLimit {
-		return true
+		return resp.Termination, true
 	}
 	for _, choice := range resp.Choices {
-		if terminationForChoice(choice).Cause == model.TerminationCauseTokenLimit {
-			return true
+		if termination := terminationForChoice(choice); termination.Cause == model.TerminationCauseTokenLimit {
+			return termination, true
 		}
 	}
-	return false
+	return model.TerminationMetadata{}, false
 }
 
 // streamChunkHasVisibleContent 检查流式 chunk（Delta）是否包含可见内容。
@@ -484,6 +463,7 @@ type relayAttempt struct {
 	// upstream stream. It is internal-only and never serialized to clients.
 	streamTermination           model.TerminationMetadata
 	streamStickyProviderRefusal bool
+	streamStickyTokenLimit      bool
 	streamOutputTextPresent     *bool
 	streamAnswerText            string
 	streamAnswerBypass          bool

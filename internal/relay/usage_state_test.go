@@ -17,6 +17,9 @@ func TestResolveUsageState(t *testing.T) {
 		ProviderReason: "server_error",
 		Detail:         "upstream failed",
 	})
+	tokenLimit := providerTerminalFailureError(transformerModel.TerminationMetadata{
+		Cause: transformerModel.TerminationCauseTokenLimit, ProviderReason: "max_tokens",
+	})
 
 	testCases := []struct {
 		name string
@@ -30,6 +33,8 @@ func TestResolveUsageState(t *testing.T) {
 		{"empty output", responseWithUsage, errEmptyOutput, model.RelayLogUsageEmptyOutput},
 		{"empty Robin envelope", responseWithUsage, errRobinInsufficientOutput, model.RelayLogUsageEmptyOutput},
 		{"provider failure with usage", responseWithUsage, providerFailure, model.RelayLogUsageProviderFailed},
+		{"length terminal with usage", responseWithUsage, tokenLimit, model.RelayLogUsageReported},
+		{"length terminal without usage", responseWithoutUsage, tokenLimit, model.RelayLogUsageNotReported},
 		{"unknown provider failure with usage", responseWithUsage, providerTerminalFailureError(transformerModel.TerminationMetadata{
 			Cause: transformerModel.TerminationCauseUnknown,
 		}), model.RelayLogUsageProviderFailed},

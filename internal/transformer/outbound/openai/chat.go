@@ -376,6 +376,7 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 		return nil, fmt.Errorf("upstream chat response contains no choices")
 	}
 	normalizeOpenAICompatUsage(&resp)
+	normalizeOpenAICompatFinishReasons(&resp)
 	return &resp, nil
 }
 
@@ -395,7 +396,33 @@ func (o *ChatOutbound) TransformStream(ctx context.Context, eventData []byte) (*
 		return nil, fmt.Errorf("failed to unmarshal stream chunk: %w", err)
 	}
 	normalizeOpenAICompatUsage(&resp)
+	normalizeOpenAICompatFinishReasons(&resp)
 	return &resp, nil
+}
+
+// normalizeOpenAICompatFinishReasons records the shared Chat terminal mapping
+// on internal choices before relay policy sees them. Provider-compatible
+// token-limit aliases are canonicalized to Chat's "length" on the wire without
+// discarding the original value in Termination.ProviderReason.
+func normalizeOpenAICompatFinishReasons(resp *model.InternalLLMResponse) {
+	if resp == nil {
+		return
+	}
+	for i := range resp.Choices {
+		choice := &resp.Choices[i]
+		if choice.FinishReason == nil {
+			continue
+		}
+		termination := model.TerminationFromOpenAICompatFinishReason(choice.FinishReason)
+		if !choice.Termination.HasCause() || choice.Termination.Cause == model.TerminationCauseUnknown {
+			choice.Termination = termination
+		}
+		if choice.Termination.Cause == model.TerminationCauseTokenLimit &&
+			!strings.EqualFold(strings.TrimSpace(*choice.FinishReason), "length") {
+			canonicalLength := "length"
+			choice.FinishReason = &canonicalLength
+		}
+	}
 }
 
 func parseChatResponseError(payload []byte, statusCode int) error {

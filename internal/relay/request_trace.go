@@ -948,7 +948,7 @@ func relayLogOutcomes(relayLog model.RelayLog) (generationOutcome string, upstre
 		return model.RelayLogGenerationSuccess, model.RelayLogUpstreamSuccess
 	}
 	switch relayLog.TerminationCause {
-	case "content_filter", "prompt_blocked", "recitation", "refusal":
+	case "content_filter", "prompt_blocked", "recitation", "refusal", "token_limit":
 		for _, attempt := range relayLog.Attempts {
 			if attempt.HTTPStatus >= 200 && attempt.HTTPStatus < 300 {
 				return model.RelayLogGenerationFailed, model.RelayLogUpstreamSuccess

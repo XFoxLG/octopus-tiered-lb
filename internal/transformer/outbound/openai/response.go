@@ -954,21 +954,8 @@ func convertResponsesFinishReason(cause model.TerminationCause) *string {
 	switch cause {
 	case model.TerminationCauseUnspecified:
 		return nil
-	case model.TerminationCauseComplete, model.TerminationCauseStopSequence:
-		return lo.ToPtr("stop")
-	case model.TerminationCauseToolCall:
-		return lo.ToPtr("tool_calls")
-	case model.TerminationCauseContentFilter,
-		model.TerminationCauseRecitation,
-		model.TerminationCausePromptBlocked,
-		model.TerminationCauseRefusal:
-		return lo.ToPtr("content_filter")
-	default:
-		// Chat Completions does not expose a general failure finish_reason.
-		// `length` is the standard conservative indication that the visible
-		// result is not known to be a complete assistant turn.
-		return lo.ToPtr("length")
 	}
+	return lo.ToPtr(model.OpenAICompatFinishReasonForTermination(cause))
 }
 
 func convertResponsesUsage(usage *ResponsesUsage) *model.Usage {

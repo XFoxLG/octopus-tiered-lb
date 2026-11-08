@@ -117,21 +117,7 @@ func materializeResponseTerminationForChat(response *model.InternalLLMResponse, 
 }
 
 func chatFinishReasonForTermination(cause model.TerminationCause) string {
-	switch cause {
-	case model.TerminationCauseComplete, model.TerminationCauseStopSequence:
-		return "stop"
-	case model.TerminationCauseToolCall:
-		return "tool_calls"
-	case model.TerminationCauseContentFilter,
-		model.TerminationCauseRecitation,
-		model.TerminationCausePromptBlocked,
-		model.TerminationCauseRefusal:
-		return "content_filter"
-	default:
-		// Chat Completions exposes no general failed status. `length` remains
-		// the least misleading legacy signal for an incomplete answer.
-		return "length"
-	}
+	return model.OpenAICompatFinishReasonForTermination(cause)
 }
 
 // streamChoice renders a chat.completion.chunk choice. The Delta field shadows
