@@ -324,6 +324,7 @@ func convertToAnthropicRequest(req *model.InternalLLMRequest) *anthropicModel.Me
 		System:      convertSystemPrompt(req),
 	}
 	req.RecordOutboundMaxTokensProvenance(resolvedMaxTokens.value, resolvedMaxTokens.source, false)
+	req.RecordOutboundMaxTokensField("max_tokens")
 
 	if req.Metadata != nil && req.Metadata["user_id"] != "" {
 		result.Metadata = &anthropicModel.AnthropicMetadata{UserID: req.Metadata["user_id"]}

@@ -284,6 +284,10 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                     text={outboundBudgetSourceText}
                     hint={t('outboundMaxTokensSourceHint')}
                 />
+                <StatusAxis
+                    label={t('outboundMaxTokensField')}
+                    text={detail.diagnostics?.outbound_max_tokens_field || t('unknown')}
+                />
             </div>
             {outboundBudget.attempts.length > 0 ? (
                 <div className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2">
@@ -303,6 +307,7 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                                         {' '}
                                         <span className="font-mono text-foreground">
                                             {budget.value === null ? t('unknown') : budget.value.toLocaleString('en-US')}
+                                            {' '}{detail.diagnostics?.attempts?.find((attempt) => attempt.attempt === budget.attempt)?.outbound_max_tokens_field}
                                         </span>
                                     </span>
                                     <span>

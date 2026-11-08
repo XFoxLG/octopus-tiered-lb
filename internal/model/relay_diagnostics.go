@@ -15,6 +15,7 @@ type RelayDiagnostics struct {
 	TerminalSource            string                    `json:"terminal_source,omitempty"`
 	OutboundMaxTokens         *int64                    `json:"outbound_max_tokens,omitempty"`
 	OutboundMaxTokensSource   string                    `json:"outbound_max_tokens_source,omitempty"`
+	OutboundMaxTokensField    string                    `json:"outbound_max_tokens_field,omitempty"`
 	OutboundMaxTokensAdjusted bool                      `json:"outbound_max_tokens_adjusted,omitempty"`
 	OutputTextPresent         *bool                     `json:"output_text_present,omitempty"`
 	RobinEnvelopeKind         string                    `json:"robin_envelope_kind,omitempty"`
@@ -59,6 +60,7 @@ type RelayAttemptDiagnostics struct {
 	// attempt. Source identifies client, override, or adapter default.
 	OutboundMaxTokens         *int64 `json:"outbound_max_tokens,omitempty"`
 	OutboundMaxTokensSource   string `json:"outbound_max_tokens_source,omitempty"`
+	OutboundMaxTokensField    string `json:"outbound_max_tokens_field,omitempty"`
 	OutboundMaxTokensAdjusted bool   `json:"outbound_max_tokens_adjusted,omitempty"`
 	OutputTextPresent         *bool  `json:"output_text_present,omitempty"`
 	// RobinEnvelopeReason is a bounded classification, never tool arguments or

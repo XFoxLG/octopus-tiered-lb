@@ -48,6 +48,11 @@ func (o *ChatOutbound) TransformRequest(ctx context.Context, request *model.Inte
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+	if compatRequest.MaxTokens != nil && compatRequest.MaxCompletionTokens == nil {
+		request.RecordOutboundMaxTokensField("max_tokens")
+	} else if compatRequest.MaxCompletionTokens != nil && compatRequest.MaxTokens == nil {
+		request.RecordOutboundMaxTokensField("max_completion_tokens")
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "", bytes.NewReader(body))
 	if err != nil {
@@ -97,7 +102,6 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 	}
 
 	normalizeDeepSeekReasoningCompat(request, baseURL, isMimoChannel)
-	applyReasoningCompatTokenBudget(request, baseURL, isMimoChannel)
 
 	// Only apply generic reasoning-effort normalization to non-provider-specific
 	// reasoning-compatible targets. DeepSeek and Mimo already handle effort
@@ -113,12 +117,13 @@ func SanitizeRequestForOpenAICompat(request *model.InternalLLMRequest, baseURL s
 	}
 
 	preserveDeepSeekReasoning := shouldPreserveDeepSeekReasoning(baseURL, request, isMimoChannel)
-	if preserveDeepSeekReasoning {
+	preserveClientReasoning := request.RawAPIFormat == model.APIFormatOpenAIChatCompletion
+	if preserveDeepSeekReasoning && !preserveClientReasoning {
 		attachStandaloneDeepSeekReasoningMessages(request)
 	}
 
 	for i := range request.Messages {
-		sanitizeMessageForOpenAICompat(&request.Messages[i], preserveDeepSeekReasoning)
+		sanitizeMessageForOpenAICompat(&request.Messages[i], preserveDeepSeekReasoning, preserveClientReasoning)
 	}
 
 	if !isReasoningCompatRequest(baseURL, request, isMimoChannel) {
@@ -162,49 +167,25 @@ func marshalOpenAICompatRequest(request *model.InternalLLMRequest) ([]byte, erro
 	return transformer.Marshal(payload)
 }
 
-func applyReasoningCompatTokenBudget(request *model.InternalLLMRequest, baseURL string, isMimoChannel bool) {
-	if request == nil || !isReasoningCompatRequest(baseURL, request, isMimoChannel) {
-		return
-	}
-
-	const minReasoningMaxCompletionTokens int64 = 10926
-
-	if request.MaxCompletionTokens != nil {
-		if *request.MaxCompletionTokens < minReasoningMaxCompletionTokens {
-			v := minReasoningMaxCompletionTokens
-			request.MaxCompletionTokens = &v
-		}
-		return
-	}
-
-	if request.MaxTokens != nil {
-		if *request.MaxTokens < minReasoningMaxCompletionTokens {
-			v := minReasoningMaxCompletionTokens
-			request.MaxCompletionTokens = &v
-			request.MaxTokens = nil
-		}
-		return
-	}
-
-	// Client did not specify any token limit — do not inject a default.
-	// Let the upstream provider use its own default to avoid truncating
-	// reasoning-heavy outputs (e.g. codeplan models).
-}
-
-func sanitizeMessageForOpenAICompat(msg *model.Message, preserveDeepSeekReasoning bool) {
+func sanitizeMessageForOpenAICompat(msg *model.Message, preserveDeepSeekReasoning, preserveClientReasoning bool) {
 	if msg == nil {
+		return
+	}
+	// Chat clients own their historical reasoning fields, including an explicit
+	// empty value. Do not merge messages or invent reasoning for later tool calls.
+	// Signatures belong to their source protocol, never the Chat wire format.
+	if preserveClientReasoning {
+		msg.ReasoningSignature = nil
 		return
 	}
 
 	reasoningContent := msg.GetReasoningContent()
-	reasoningSignature := msg.ReasoningSignature
 	shouldKeepReasoning := shouldKeepDeepSeekReasoningContent(msg, preserveDeepSeekReasoning, reasoningContent)
 
 	msg.ClearHelpFields()
 
 	if shouldKeepReasoning {
 		msg.ReasoningContent = &reasoningContent
-		msg.ReasoningSignature = reasoningSignature
 	}
 }
 

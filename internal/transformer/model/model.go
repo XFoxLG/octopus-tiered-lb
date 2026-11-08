@@ -31,6 +31,7 @@ const (
 	TransformerMetadataOutboundMaxTokensValue    = "outbound_max_tokens_value"
 	TransformerMetadataOutboundMaxTokensSource   = "outbound_max_tokens_source"
 	TransformerMetadataOutboundMaxTokensAdjusted = "outbound_max_tokens_adjusted"
+	TransformerMetadataOutboundMaxTokensField    = "outbound_max_tokens_field"
 )
 
 // Outbound max-token provenance values. They identify the field that won, not
@@ -472,6 +473,15 @@ func (r *InternalLLMRequest) RecordOutboundMaxTokensProvenance(value int64, sour
 	r.TransformerMetadata[TransformerMetadataOutboundMaxTokensValue] = strconv.FormatInt(value, 10)
 	r.TransformerMetadata[TransformerMetadataOutboundMaxTokensSource] = source
 	r.TransformerMetadata[TransformerMetadataOutboundMaxTokensAdjusted] = strconv.FormatBool(adjusted)
+}
+
+// RecordOutboundMaxTokensField is called by the serializer that chooses the
+// actual wire field. The winning source can use a different protocol's alias.
+func (r *InternalLLMRequest) RecordOutboundMaxTokensField(field string) {
+	if r.TransformerMetadata == nil {
+		r.TransformerMetadata = make(map[string]string)
+	}
+	r.TransformerMetadata[TransformerMetadataOutboundMaxTokensField] = field
 }
 
 type TransformOptions struct {

@@ -15,6 +15,7 @@ func TestRelayDiagnosticsRecordsOutboundMaxTokensSnapshot(t *testing.T) {
 	request := &transmodel.InternalLLMRequest{
 		TransformerMetadata: map[string]string{
 			transmodel.TransformerMetadataOutboundMaxTokensValue:    "8192",
+			transmodel.TransformerMetadataOutboundMaxTokensField:    "max_tokens",
 			transmodel.TransformerMetadataOutboundMaxTokensSource:   transmodel.OutboundMaxTokensSourceAnthropicDefault,
 			transmodel.TransformerMetadataOutboundMaxTokensAdjusted: "true",
 		},
@@ -35,6 +36,9 @@ func TestRelayDiagnosticsRecordsOutboundMaxTokensSnapshot(t *testing.T) {
 		t.Fatalf("outbound max_tokens source = %q, want %q",
 			diagnostics.OutboundMaxTokensSource, transmodel.OutboundMaxTokensSourceAnthropicDefault)
 	}
+	if diagnostics.OutboundMaxTokensField != "max_tokens" {
+		t.Fatalf("wire field = %q", diagnostics.OutboundMaxTokensField)
+	}
 	if !diagnostics.OutboundMaxTokensAdjusted {
 		t.Fatal("outbound max_tokens adjusted = false, want true")
 	}
@@ -44,6 +48,7 @@ func TestRelayDiagnosticsRecordsOutboundMaxTokensSnapshot(t *testing.T) {
 	attempt := diagnostics.Attempts[0]
 	if attempt.OutboundMaxTokens == nil || *attempt.OutboundMaxTokens != 8192 ||
 		attempt.OutboundMaxTokensSource != transmodel.OutboundMaxTokensSourceAnthropicDefault ||
+		attempt.OutboundMaxTokensField != "max_tokens" ||
 		!attempt.OutboundMaxTokensAdjusted {
 		t.Fatalf("attempt max-token provenance = %#v", attempt)
 	}
