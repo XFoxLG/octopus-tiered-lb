@@ -395,7 +395,7 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 				markClientCancelIfGone(&decision, c.Request.Context(), fwdErr)
 				if decision.Scope == ScopeChannelCapacity {
 					lastErr = fwdErr
-					span.End(dbmodel.AttemptCancelled, statusCode, decision.Reason)
+					span.End(dbmodel.AttemptSkipped, statusCode, decision.Reason)
 					break keyRetryLoop
 				}
 

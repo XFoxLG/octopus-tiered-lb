@@ -1,12 +1,14 @@
 package balancer
 
 import (
+	"context"
 	"testing"
 	"time"
 )
 
 func clearChannelRateLimitForTest(channelID int, modelName string) {
 	globalChannelRateLimits.Delete(channelRateLimitKey(channelID, modelName))
+	globalKeyCooldown.Delete(cooldownKey(channelID, 0, modelName))
 }
 
 func TestChannelRateLimitOpensAfterRepeated429s(t *testing.T) {
@@ -24,7 +26,13 @@ func TestChannelRateLimitOpensAfterRepeated429s(t *testing.T) {
 		t.Fatalf("IsChannelRateLimited() = (%t, %v), want active quarantine", blocked, remaining)
 	}
 
-	RecordChannelRateLimitSuccess(channelID, modelName)
+	// Only a successful probe of the expired generation clears its cooldown.
+	storeCooldown(channelID, 0, modelName, 429, time.Now().Add(-time.Second))
+	finish, allowed, err := AcquireCooldownProbe(context.Background(), channelID, 11, modelName)
+	if err != nil || !allowed {
+		t.Fatalf("probe=%t %v", allowed, err)
+	}
+	finish(true)
 	if blocked, _ := IsChannelRateLimited(channelID, modelName); blocked {
 		t.Fatal("successful request should clear channel rate-limit state")
 	}

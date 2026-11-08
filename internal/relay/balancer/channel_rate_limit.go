@@ -147,22 +147,6 @@ func RecordChannelRateLimit(channelID, keyID int, modelName string, explicitChan
 	return true, remaining
 }
 
-// RecordChannelRateLimitSuccess clears the short-lived aggregate after a
-// successful request. A healthy response is stronger evidence than stale 429s
-// and prevents a recovered channel from being skipped for the whole window.
-func RecordChannelRateLimitSuccess(channelID int, modelName string) {
-	if channelID == 0 || strings.TrimSpace(modelName) == "" {
-		return
-	}
-	key := channelRateLimitKey(channelID, modelName)
-	globalChannelRateLimits.Delete(key)
-	globalKeyCooldown.Delete(cooldownKey(channelID, 0, modelName))
-	if store.Enabled() {
-		_ = store.GetKV().Del(context.Background(), channelRateLimitKVKey(channelID, modelName))
-		_ = store.GetKV().Del(context.Background(), recoveryKVKey(channelID, 0, modelName))
-	}
-}
-
 // PurgeIdleChannelRateLimits bounds memory when clients submit unbounded model
 // names. Active blocked entries are retained until their cooldown expires.
 func PurgeIdleChannelRateLimits(idleFor time.Duration) int {

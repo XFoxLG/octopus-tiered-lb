@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
+	llmmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
 func TestAllCandidatesCoolingReturnsAccurate503(t *testing.T) {
@@ -88,5 +89,23 @@ func TestUpstreamRecoveryEvidencePersistsWithoutMessage(t *testing.T) {
 	d := trace.diagnosticsSnapshot().Attempts[0].UpstreamError
 	if d == nil || d.StatusCode != 429 || d.Category != "model_cooldown" || d.Source != "upstream_http_error" || d.RecoveryAt == 0 {
 		t.Fatalf("evidence=%+v", d)
+	}
+}
+
+func TestRecoveryAdmissionRejectionDoesNotConsumeForwardBudget(t *testing.T) {
+	ra := newTerminationFidelityRelayAttempt(httptest.NewRecorder(), nil, nil)
+	ra.channel.ID = 91004
+	ra.usedKey = model.ChannelKey{ID: 91004, Enabled: true, ChannelKey: "synthetic"}
+	ra.internalRequest = &llmmodel.InternalLLMRequest{Model: "fixture"}
+	ra.iter = balancer.NewIterator(model.Group{}, 0, "fixture", nil)
+	balancer.RecordKeyCooldownWithRetryAfter(91004, 91004, "fixture", 429, time.Minute)
+	t.Cleanup(func() { balancer.ClearKeyCooldown(91004, 91004, "fixture") })
+	result := ra.attempt()
+	if result.Decision.Scope != ScopeChannelCapacity || ra.iter.ForwardedAttempts() != 0 {
+		t.Fatalf("decision=%+v forwarded=%d", result.Decision, ra.iter.ForwardedAttempts())
+	}
+	attempts := ra.iter.Attempts()
+	if len(attempts) != 1 || attempts[0].Status != model.AttemptSkipped {
+		t.Fatalf("attempts=%+v", attempts)
 	}
 }

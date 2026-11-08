@@ -517,6 +517,10 @@ func (ra *relayAttempt) attempt() attemptResult {
 	if !written {
 		decision = applyErrorPolicy(decision, ra.channel, statusCode, extractUpstreamErrorDetail(fwdErr))
 	}
+	if decision.Scope == ScopeChannelCapacity {
+		span.End(dbmodel.AttemptSkipped, statusCode, decision.Reason)
+		return attemptResult{Err: fwdErr, Written: written, Decision: decision}
+	}
 
 	if !decision.SkipFailureAccounting {
 		balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, false)
@@ -2599,7 +2603,6 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				}
 				currentAttempts := append(allAttempts, req.iter.Attempts()...)
 				if result.Success {
-					balancer.RecordChannelRateLimitSuccess(channel.ID, resolvedModelName)
 					// 离群窗口：记录成功样本（与熔断器同级证据）。
 					balancer.OutlierReport(channel.ID, true, result.Decision.Code, time.Now())
 					req.metrics.Save(true, nil, currentAttempts)
