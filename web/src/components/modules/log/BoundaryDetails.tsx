@@ -289,6 +289,25 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                     text={detail.diagnostics?.outbound_max_tokens_field || t('unknown')}
                 />
             </div>
+            {detail.diagnostics?.attempts?.some((attempt) => attempt.upstream_error) ? (
+                <div className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('upstreamRecovery')}</div>
+                    <div className="mt-2 space-y-2 text-xs">
+                        {detail.diagnostics.attempts.filter((attempt) => attempt.upstream_error).map((attempt) => {
+                            const evidence = attempt.upstream_error!;
+                            return (
+                                <div key={attempt.attempt} className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 break-all">
+                                    <span>{t('attempt', { number: attempt.attempt })}</span>
+                                    <span className="font-mono">HTTP {evidence.status_code} · {evidence.code || evidence.type || t('unknown')}</span>
+                                    <span>{t('upstreamErrorCategory')}: {evidence.category || t('unknown')}</span>
+                                    <span>{t('recoveryTime')}: {evidence.recovery_at ? new Date(evidence.recovery_at).toLocaleString() : t('unknown')}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">{t('recoveryTimeHint')}</p>
+                </div>
+            ) : null}
             {outboundBudget.attempts.length > 0 ? (
                 <div className="rounded-xl border border-border/50 bg-muted/20 px-3 py-2">
                     <div className="text-[10px] uppercase tracking-wide text-muted-foreground">

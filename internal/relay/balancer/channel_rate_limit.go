@@ -16,11 +16,11 @@ import (
 // remains a key-scoped event; repeated failures in a short window indicate
 // that the channel/account pool itself has no usable capacity.
 type channelRateLimitEntry struct {
-	mu            sync.Mutex
-	keyFailures   map[int]time.Time
-	failureTimes  []time.Time
-	blockedUntil  time.Time
-	lastActivity  time.Time
+	mu           sync.Mutex
+	keyFailures  map[int]time.Time
+	failureTimes []time.Time
+	blockedUntil time.Time
+	lastActivity time.Time
 }
 
 var globalChannelRateLimits sync.Map // key: "channelID:modelName" -> *channelRateLimitEntry
@@ -101,45 +101,7 @@ func IsChannelRateLimited(channelID int, modelName string) (bool, time.Duration)
 		return false, 0
 	}
 
-	if store.Enabled() {
-		_, found, err := store.GetKV().Get(context.Background(), channelRateLimitKVKey(channelID, modelName))
-		if err == nil && found {
-			if entry, ok := globalChannelRateLimits.Load(channelRateLimitKey(channelID, modelName)); ok {
-				if local, ok := entry.(*channelRateLimitEntry); ok {
-					local.mu.Lock()
-					remaining := time.Until(local.blockedUntil)
-					local.mu.Unlock()
-					if remaining > 0 {
-						return true, remaining
-					}
-				}
-			}
-			return true, 0
-		}
-	}
-
-	value, ok := globalChannelRateLimits.Load(channelRateLimitKey(channelID, modelName))
-	if !ok {
-		return false, 0
-	}
-	entry, ok := value.(*channelRateLimitEntry)
-	if !ok {
-		globalChannelRateLimits.Delete(channelRateLimitKey(channelID, modelName))
-		return false, 0
-	}
-
-	now := time.Now()
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-	if entry.blockedUntil.After(now) {
-		return true, time.Until(entry.blockedUntil)
-	}
-	if !entry.blockedUntil.IsZero() {
-		entry.blockedUntil = time.Time{}
-		entry.failureTimes = nil
-		entry.keyFailures = make(map[int]time.Time)
-	}
-	return false, 0
+	return cooldownStatus(channelID, 0, modelName)
 }
 
 // RecordChannelRateLimit records one 429. explicitChannelScope is set when
@@ -181,9 +143,7 @@ func RecordChannelRateLimit(channelID, keyID int, modelName string, explicitChan
 		entry.blockedUntil = blockedUntil
 	}
 	remaining := time.Until(entry.blockedUntil)
-	if store.Enabled() {
-		_ = store.GetKV().Set(context.Background(), channelRateLimitKVKey(channelID, modelName), []byte("1"), remaining)
-	}
+	storeCooldown(channelID, 0, modelName, 429, entry.blockedUntil)
 	return true, remaining
 }
 
@@ -196,8 +156,10 @@ func RecordChannelRateLimitSuccess(channelID int, modelName string) {
 	}
 	key := channelRateLimitKey(channelID, modelName)
 	globalChannelRateLimits.Delete(key)
+	globalKeyCooldown.Delete(cooldownKey(channelID, 0, modelName))
 	if store.Enabled() {
 		_ = store.GetKV().Del(context.Background(), channelRateLimitKVKey(channelID, modelName))
+		_ = store.GetKV().Del(context.Background(), recoveryKVKey(channelID, 0, modelName))
 	}
 }
 
@@ -234,6 +196,7 @@ func RemoveChannelRateLimitEntries(channelID int) {
 	prefix := fmt.Sprintf("%s%d:", channelRateLimitKVPrefix, channelID)
 	if store.Enabled() {
 		_ = store.GetKV().DelByPrefix(context.Background(), prefix)
+		_ = store.GetKV().DelByPrefix(context.Background(), "recovery:"+prefix)
 	}
 	localPrefix := fmt.Sprintf("%d:", channelID)
 	globalChannelRateLimits.Range(func(key, _ any) bool {

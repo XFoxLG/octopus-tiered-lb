@@ -207,6 +207,14 @@ export interface RelayLogDetail extends RelayLog {
             deadline_at?: number;
             terminal_source?: string;
             cancel_reason?: string;
+			upstream_error?: {
+				status_code: number;
+				code?: string;
+				type?: string;
+				category?: string;
+				source: string;
+				recovery_at?: number;
+			};
             outbound_max_tokens?: number;
             outbound_max_tokens_source?: string;
             outbound_max_tokens_field?: string;

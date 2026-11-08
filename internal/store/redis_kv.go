@@ -18,6 +18,33 @@ type redisKV struct {
 
 func newRedisKV(c *redis.Client) *redisKV { return &redisKV{c: c} }
 
+var compareKVScript = redis.NewScript(`
+if KEYS[2] ~= '' and redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+local current = redis.call('GET', KEYS[1])
+if ARGV[1] == 'absent' then
+  if current then return 0 end
+elseif not current or current ~= ARGV[2] then return 0 end
+if ARGV[3] == 'delete' then redis.call('DEL', KEYS[1])
+elseif tonumber(ARGV[5]) > 0 then redis.call('SET', KEYS[1], ARGV[4], 'PX', ARGV[5])
+else redis.call('SET', KEYS[1], ARGV[4]) end
+return 1
+`)
+
+func (r *redisKV) CompareAndSwap(ctx context.Context, key string, old, next []byte, ttl time.Duration, absentKey string) (bool, error) {
+	match, action := "value", "set"
+	if old == nil {
+		match = "absent"
+	}
+	if next == nil {
+		action = "delete"
+	}
+	if absentKey != "" {
+		absentKey = withPrefix(absentKey)
+	}
+	n, err := compareKVScript.Run(ctx, r.c, []string{withPrefix(key), absentKey}, match, string(old), action, string(next), ttl.Milliseconds()).Int()
+	return n == 1, err
+}
+
 func (r *redisKV) Set(ctx context.Context, key string, val []byte, ttl time.Duration) error {
 	if ttl <= 0 {
 		return r.c.Set(ctx, withPrefix(key), val, 0).Err()

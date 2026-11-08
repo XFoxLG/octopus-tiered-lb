@@ -48,14 +48,15 @@ type RelayDiagnostics struct {
 }
 
 type RelayAttemptDiagnostics struct {
-	Attempt        int    `json:"attempt"`
-	ChannelID      int    `json:"channel_id,omitempty"`
-	Protocol       string `json:"protocol,omitempty"`
-	StartedAt      int64  `json:"started_at,omitempty"`
-	EndedAt        int64  `json:"ended_at,omitempty"`
-	DeadlineAt     int64  `json:"deadline_at,omitempty"`
-	TerminalSource string `json:"terminal_source,omitempty"`
-	CancelReason   string `json:"cancel_reason,omitempty"`
+	Attempt        int                 `json:"attempt"`
+	ChannelID      int                 `json:"channel_id,omitempty"`
+	Protocol       string              `json:"protocol,omitempty"`
+	StartedAt      int64               `json:"started_at,omitempty"`
+	EndedAt        int64               `json:"ended_at,omitempty"`
+	DeadlineAt     int64               `json:"deadline_at,omitempty"`
+	TerminalSource string              `json:"terminal_source,omitempty"`
+	CancelReason   string              `json:"cancel_reason,omitempty"`
+	UpstreamError  *RelayUpstreamError `json:"upstream_error,omitempty"`
 	// OutboundMaxTokens is the final limit observed on the wire for this
 	// attempt. Source identifies client, override, or adapter default.
 	OutboundMaxTokens         *int64 `json:"outbound_max_tokens,omitempty"`
@@ -67,4 +68,15 @@ type RelayAttemptDiagnostics struct {
 	// generated content.
 	RobinEnvelopeKind   string `json:"robin_envelope_kind,omitempty"`
 	RobinEnvelopeReason string `json:"robin_envelope_reason,omitempty"`
+}
+
+// RelayUpstreamError contains protocol evidence only, never response messages,
+// request content, headers, or credentials.
+type RelayUpstreamError struct {
+	StatusCode int    `json:"status_code"`
+	Code       string `json:"code,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Category   string `json:"category,omitempty"`
+	Source     string `json:"source"`
+	RecoveryAt int64  `json:"recovery_at,omitempty"`
 }

@@ -202,8 +202,7 @@ func IsTripped(channelID, keyID int, modelName string) (tripped bool, remaining 
 		// 但若试探请求被中途放弃（客户端断连、响应关键词拦截等未记录结果路径），
 		// 状态会卡死在 HalfOpen 永远跳过该渠道（issue #162）。超过探测超时后，
 		// 视为"试探已丢失"，允许一次新的试探并刷新超时窗口，避免永久跳过。
-		probeTimeout := halfOpenProbeTimeoutFunc()
-		if probeTimeout > 0 && time.Since(entry.HalfOpenSince) >= probeTimeout {
+		if !probePending(entry.HalfOpenSince, time.Now()) {
 			entry.HalfOpenSince = time.Now()
 			log.Infof("circuit breaker [%s] HalfOpen probe timed out, allowing a new probe", key)
 			return false, 0

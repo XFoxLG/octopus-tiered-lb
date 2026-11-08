@@ -518,19 +518,9 @@ func (ra *relayAttempt) attempt() attemptResult {
 		decision = applyErrorPolicy(decision, ra.channel, statusCode, extractUpstreamErrorDetail(fwdErr))
 	}
 
-	// 记录按模型粒度的 key 冷却：某模型触发错误时，仅冷却该 (keyID, model) 组合，
-	// 不影响该 key 上其它模型的可用性（见 issue #94）。仅错误响应（≥400）才冷却。
-	if statusCode >= 400 && !(ra.protocolFallbackRemaining && !written && decision.Scope == ScopeNextChannel) {
-		balancer.RecordKeyCooldownWithRetryAfter(
-			ra.channel.ID,
-			ra.usedKey.ID,
-			ra.internalRequest.Model,
-			statusCode,
-			retryAfterFromError(fwdErr),
-		)
+	if !decision.SkipFailureAccounting {
+		balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, false)
 	}
-	// 记录可用度衰减：按错误类型加权（401/403 重扣、429/5xx 轻扣），仅 availability 策略生效。
-	balancer.RecordKeyAvailability(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, statusCode, false)
 
 	if decision.Scope == ScopeNone && !decision.IsError {
 		// ====== 成功 ======
@@ -553,7 +543,6 @@ func (ra *relayAttempt) attempt() attemptResult {
 
 		// 熔断器：记录成功
 		balancer.RecordSuccess(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
-		balancer.RecordChannelRateLimitSuccess(ra.channel.ID, ra.internalRequest.Model)
 		// Auto策略：记录成功
 		balancer.RecordAutoSuccess(ra.channel.ID, ra.internalRequest.Model)
 		// Auto策略：记录延迟（毫秒）
@@ -689,7 +678,7 @@ func parseRequest(inboundType inbound.InboundType, c *gin.Context) (*model.Inter
 }
 
 // forward 转发请求到上游服务
-func (ra *relayAttempt) forward() (int, error) {
+func (ra *relayAttempt) forward() (statusCode int, resultErr error) {
 	ctx := ra.operationCtx
 
 	// 单次转发尝试超时（issue #122）：当分组配置了 attempt_time_out 时，
@@ -700,6 +689,26 @@ func (ra *relayAttempt) forward() (int, error) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(ra.attemptTimeOutSec)*time.Second)
 		defer cancel()
 	}
+	finishRecovery, allowed, recoveryErr := balancer.AcquireCooldownProbe(ctx, ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model)
+	if recoveryErr != nil {
+		return 0, fmt.Errorf("%w: %v", errRecoveryProbeUnavailable, recoveryErr)
+	}
+	if !allowed {
+		return 0, errRecoveryProbeUnavailable
+	}
+	stopRecoveryCancel := context.AfterFunc(ctx, func() { finishRecovery(false) })
+	defer func() {
+		stopRecoveryCancel()
+		decision := ClassifyRelayError(statusCode, resultErr, false)
+		if !(ra.protocolFallbackRemaining && decision.Scope == ScopeNextChannel) {
+			recordUpstreamRecovery(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, decision)
+		}
+		if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+			trace.recordUpstreamError(ra.logAttemptNumber, resultErr)
+		}
+		_, providerTerminal := terminalCauseFromError(resultErr)
+		finishRecovery(resultErr == nil || (statusCode >= 200 && statusCode < 300 && providerTerminal))
+	}()
 	requestForOutbound := ra.internalRequest
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
 		trace.startDiagnosticAttempt(ra.logAttemptNumber, ra.channel.ID, ra.adapterType.String(), ctx)
@@ -777,7 +786,7 @@ func (ra *relayAttempt) forward() (int, error) {
 	}
 
 	// 检查响应状态
-	statusCode, err := ra.handleForwardResponse(response)
+	statusCode, err = ra.handleForwardResponse(response)
 	if err != nil {
 		return statusCode, err
 	}
@@ -2285,6 +2294,9 @@ func handleClientDisconnect(req *relayRequest, allAttempts []dbmodel.ChannelAtte
 func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) error {
 	var allAttempts []dbmodel.ChannelAttempt
 	var lastErr error
+	coolingCandidates := make(recoveryCandidates)
+	completedCandidateScan := false
+	requestRejectedTargets := make(map[string]bool)
 	attemptNumberBase := 0
 	rateLimitHoldCfg := getRateLimitHoldConfig()
 
@@ -2409,6 +2421,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 				lastErr = fmt.Errorf("channel %s type not preferred for zen model prefix", channel.Name)
 				continue
 			}
+			coolingCandidates.observe(channel, resolvedModelName)
 			if rateLimited, remaining := balancer.IsChannelRateLimited(channel.ID, resolvedModelName); rateLimited {
 				message := "channel rate limit active"
 				if remaining > 0 {
@@ -2489,6 +2502,12 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 						lastErr = fmt.Errorf("channel %s: no available key (all keys in cooldown or disabled)", channel.Name)
 					}
 					break
+				}
+				if requestRejectedTargets[recoveryTargetKey(channel.ID, usedKey.ID, resolvedModelName)] {
+					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
+					routeIter.Skip(channel.ID, usedKey.ID, channel.Name, "request-specific upstream rejection already observed")
+					keyRound--
+					continue
 				}
 				if hint, ok := globalFailureHintCache.get(channel.ID, usedKey.ID, resolvedModelName); ok {
 					failedKeyIDs = append(failedKeyIDs, usedKey.ID)
@@ -2603,26 +2622,9 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					goto exhausted
 				}
 
-				if result.Decision.Code == http.StatusTooManyRequests {
-					channelRateLimited, remaining := balancer.RecordChannelRateLimit(
-						channel.ID,
-						usedKey.ID,
-						resolvedModelName,
-						result.Decision.RateLimitScope == RateLimitScopeChannel,
-						result.Decision.RetryAfter,
-					)
-					if channelRateLimited {
-						log.Warnf("channel rate limit opened: channel=%s model=%s remaining=%s",
-							channel.Name, resolvedModelName, remaining.Round(time.Second))
-					}
+				if requestSpecificRecoveryFailure(result.Decision) {
+					requestRejectedTargets[recoveryTargetKey(channel.ID, usedKey.ID, resolvedModelName)] = true
 				}
-
-				// 熔断器和 Auto 策略：在所有 adapter 类型（如 Responses→Chat）均失败后才记录，
-				// 避免 Response adapter 降级到 Chat 的过程中误触发熔断。
-				// 守卫统一交给 shouldRecordChannelFailure（type.go），它负责排除
-				// SkipFailureAccounting（客户端断连、内容拦截）——这些不是渠道故障。
-				// 历史上这里只看 Scope，而断连分支恰好产出 ScopeAbortAll，导致每次
-				// 转发中途的客户端断连都给熔断器 +1，阈值默认 5 次后健康渠道被误熔断。
 				if shouldRecordChannelFailure(result.Decision) {
 					balancer.RecordFailure(channel.ID, usedKey.ID, resolvedModelName)
 					balancer.RecordAutoFailure(channel.ID, resolvedModelName)
@@ -2674,6 +2676,12 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					// 可选：429 时在当前渠道内延时重试，而不是立刻换 Key/渠道。
 					// 默认关闭，保持历史「马上 failover」行为。
 					if shouldHoldOnRateLimit(rateLimitHoldCfg, result.Decision) {
+						if blocked, remaining := balancer.KeyCooldownRemaining(channel.ID, usedKey.ID, resolvedModelName); blocked {
+							if remaining <= 0 {
+								break keyRetryLoop
+							}
+							result.Decision.RetryAfter = max(result.Decision.RetryAfter, remaining)
+						}
 						if budget.reachedMaxForwarded(routeIter) {
 							goto exhausted
 						}
@@ -2695,7 +2703,7 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 								lastErr = req.operationCtx.Err()
 								goto exhausted
 							}
-							balancer.ClearKeyCooldown(channel.ID, usedKey.ID, resolvedModelName)
+							// Cooldown expiry and its single recovery probe remain authoritative.
 							// The held key is eligible again after the wait; keep other
 							// failed keys excluded but remove this key from the retry set.
 							failedKeyIDs = failedKeyIDs[:len(failedKeyIDs)-1]
@@ -2727,6 +2735,11 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 		allAttempts = append(allAttempts, routeIter.Attempts()...)
 		attemptNumberBase = routeIter.LastAttemptNumber()
 		budget.markRoundEnd(routeIter)
+		completedCandidateScan = true
+		if until := coolingCandidates.earliestRecovery(); !until.IsZero() {
+			lastErr = &candidatesCoolingError{until}
+			goto exhausted
+		}
 	}
 
 exhausted:
@@ -2736,13 +2749,19 @@ exhausted:
 	if !budget.roundCompleted() && req.iter != nil {
 		allAttempts = append(allAttempts, req.iter.Attempts()...)
 	}
+	if until := coolingCandidates.earliestRecovery(); completedCandidateScan && !until.IsZero() && req.operationCtx.Err() == nil {
+		lastErr = &candidatesCoolingError{until}
+	}
 	req.metrics.Save(false, lastErr, allAttempts)
 	log.Warnf("[%s] all channels exhausted: model=%s, attempts=%d, last_error=%v",
 		req.internalRequest.RawAPIFormat, requestModel, len(allAttempts), lastErr)
 	// 对外返回通用文案，避免把上游内部错误体（可能含上游实现细节）回显给客户端；
 	// 完整错误已写入上方日志与 relay_log。
 	if !relaySemanticWritten(req.c) {
-		if errors.Is(req.operationCtx.Err(), context.DeadlineExceeded) {
+		var cooling *candidatesCoolingError
+		if errors.As(lastErr, &cooling) {
+			writeCandidatesCooling(req.c, cooling)
+		} else if errors.Is(req.operationCtx.Err(), context.DeadlineExceeded) {
 			writeClientTerminalError(req.c, nil, outbound.OutboundTypeOpenAIChat, http.StatusGatewayTimeout, errors.New("relay operation timed out"))
 		} else {
 			// 走到这里说明所有候选渠道都已尝试且失败(自愈未成功)。按三级分级

@@ -571,6 +571,7 @@ type RetryDecision struct {
 	IsError        bool           // 是否是错误（非成功）
 	RateLimitScope RateLimitScope // 429 的影响范围；其它状态码为 Unknown
 	RetryAfter     time.Duration  // 上游 Retry-After 建议等待时间
+	UpstreamError  *dbmodel.RelayUpstreamError
 
 	// SkipFailureAccounting 标记本次失败不是渠道故障（客户端主动停止、内容拦截等），
 	// 因此不计入熔断器连续失败与 Auto 策略失败率窗口。
@@ -647,7 +648,8 @@ func isSSEDoneMarker(data string) bool {
 //   - written: 是否已开始向客户端写出响应；仅表示后续不能安全重试，不等同于失败
 //
 // 返回：RetryDecision 决策结果
-func ClassifyRelayError(statusCode int, err error, written bool) RetryDecision {
+func ClassifyRelayError(statusCode int, err error, written bool) (decision RetryDecision) {
+	defer func() { decision.UpstreamError = upstreamErrorEvidence(err) }()
 	// 成功：无需重试。流式成功完成即使已经写出响应，也不应视为失败。
 	if err == nil && statusCode >= 200 && statusCode < 300 {
 		return RetryDecision{
@@ -666,6 +668,17 @@ func ClassifyRelayError(statusCode int, err error, written bool) RetryDecision {
 			Code:    statusCode,
 			IsError: true,
 		}
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		decision = classifyNonHTTPError(err)
+		decision.SkipFailureAccounting = true
+		return decision
+	}
+	if errors.Is(err, errRecoveryProbeUnavailable) {
+		return RetryDecision{Scope: ScopeChannelCapacity, Reason: err.Error(), IsError: true, SkipFailureAccounting: true}
+	}
+	if decision, ok := classifyStructuredUpstreamError(statusCode, err); ok {
+		return decision
 	}
 
 	// A clean EOF with no provider terminal marker is a proxy/upstream stream
