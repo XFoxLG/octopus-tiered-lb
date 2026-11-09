@@ -34,7 +34,16 @@ type OpenAIEmbeddingResponse struct {
 	Created int64                   `json:"created"`
 	Model   string                  `json:"model"`
 	Data    []model.EmbeddingObject `json:"data"` // 客户端期望 "data"
-	Usage   *model.Usage            `json:"usage,omitempty"`
+	Usage   *embeddingUsage         `json:"usage,omitempty"`
+}
+
+type embeddingUsage struct {
+	PromptTokens            int64                          `json:"prompt_tokens"`
+	CompletionTokens        *int64                         `json:"completion_tokens,omitempty"`
+	TotalTokens             int64                          `json:"total_tokens"`
+	PromptTokensDetails     *model.PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *model.CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+	WebSearchUsage          *model.WebSearchUsage          `json:"web_search_usage,omitempty"`
 }
 
 func (i *EmbeddingInbound) TransformRequest(ctx context.Context, body []byte) (*model.InternalLLMRequest, error) {
@@ -66,7 +75,13 @@ func (i *EmbeddingInbound) TransformResponse(ctx context.Context, response *mode
 		Created: response.Created,
 		Model:   response.Model,
 		Data:    response.EmbeddingData, // 使用 "data" 返回给客户端
-		Usage:   response.Usage,
+	}
+	if usage := response.Usage; usage != nil {
+		openAIResp.Usage = &embeddingUsage{PromptTokens: usage.PromptTokens, TotalTokens: usage.TotalTokens,
+			PromptTokensDetails: usage.PromptTokensDetails, CompletionTokensDetails: usage.CompletionTokensDetails, WebSearchUsage: usage.WebSearchUsage}
+		if usage.CompletionTokens != 0 || (usage.NonChatOutputReported != nil && *usage.NonChatOutputReported) {
+			openAIResp.Usage.CompletionTokens = &usage.CompletionTokens
+		}
 	}
 
 	body, err := transformer.Marshal(openAIResp)

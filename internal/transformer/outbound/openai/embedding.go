@@ -129,7 +129,12 @@ func (o *EmbeddingOutbound) TransformResponse(ctx context.Context, response *htt
 		Created:       openAIResp.Created,
 		Model:         openAIResp.Model,
 		EmbeddingData: openAIResp.Data, // 上游返回 "data"，映射到内部字段
-		Usage:         openAIResp.Usage,
+		Usage:         model.ParseNonChatTokenUsage(body),
+	}
+	if resp.Usage != nil && openAIResp.Usage != nil {
+		resp.Usage.PromptTokensDetails = openAIResp.Usage.PromptTokensDetails
+		resp.Usage.CompletionTokensDetails = openAIResp.Usage.CompletionTokensDetails
+		resp.Usage.WebSearchUsage = openAIResp.Usage.WebSearchUsage
 	}
 
 	return resp, nil

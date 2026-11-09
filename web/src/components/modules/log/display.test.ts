@@ -13,7 +13,32 @@ import {
     resolveLogInvestigationMarkers,
     resolveOutboundMaxTokens,
     resolveTokenLimitEvidence,
+    resolveNonChatTokenDisplay,
+    isReportedTokenUsage,
 } from './display.ts';
+
+test('embedding and rerank result bytes are not missing generated output tokens', () => {
+    for (const endpoint of ['embeddings', 'rerank']) {
+        const log = { endpoint_type: endpoint, input_tokens: 451, output_tokens: 0,
+            usage_state: 'reported', client_write_bytes: 704350, ftut: 0, use_time: 3600 } as RelayLog;
+        const markers = resolveLogInvestigationMarkers(log);
+        assert.ok(!markers.includes('empty_output'));
+        assert.ok(!markers.includes('output_uncounted'));
+    }
+});
+
+test('non-chat output presence distinguishes input-only, explicit zero and old ambiguous rows', () => {
+    for (const endpoint of ['embeddings', 'rerank']) {
+        for (const state of ['reported_input_only', 'reported', undefined]) {
+            assert.equal(resolveNonChatTokenDisplay({endpoint_type: endpoint, usage_state: state, output_tokens: 0}).outputUnspecified, true);
+        }
+        assert.equal(resolveNonChatTokenDisplay({endpoint_type: endpoint, usage_state: 'reported_full', output_tokens: 0}).outputUnspecified, false);
+        assert.equal(resolveNonChatTokenDisplay({endpoint_type: endpoint, usage_state: 'reported', output_tokens: 3}).outputUnspecified, false);
+    }
+    assert.equal(resolveNonChatTokenDisplay({endpoint_type: 'chat', usage_state: 'reported', output_tokens: 0}).outputUnspecified, false);
+    for (const state of ['reported', 'reported_full', 'reported_input_only']) assert.equal(isReportedTokenUsage(state), true);
+    assert.equal(isReportedTokenUsage('not_reported'), false);
+});
 
 test('formatLogDuration renders a dash when the metric was not recorded', () => {
     assert.equal(formatLogDuration(0), '—');

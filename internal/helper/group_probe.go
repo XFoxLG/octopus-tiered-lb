@@ -700,9 +700,12 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 		if !result.Passed {
 			relayLog.UsageState = appmodel.RelayLogUsageFailedNoResponse
 		}
-		if input, output, reported := ParseRerankTokenUsage([]byte(result.ResponseText)); reported {
-			relayLog.InputTokens, relayLog.OutputTokens = input, output
-			relayLog.UsageState = appmodel.RelayLogUsageReported
+		if usage := transmodel.ParseNonChatTokenUsage([]byte(result.ResponseText)); usage != nil {
+			relayLog.InputTokens, relayLog.OutputTokens = int(usage.PromptTokens), int(usage.CompletionTokens)
+			relayLog.UsageState = appmodel.RelayLogUsageReportedInputOnly
+			if *usage.NonChatOutputReported {
+				relayLog.UsageState = appmodel.RelayLogUsageReportedFull
+			}
 		}
 	}
 
@@ -712,6 +715,12 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 		usage := internalResp.Usage
 		relayLog.InputTokens = int(usage.PromptTokens)
 		relayLog.OutputTokens = int(usage.CompletionTokens)
+		if usage.NonChatOutputReported != nil {
+			relayLog.UsageState = appmodel.RelayLogUsageReportedInputOnly
+			if *usage.NonChatOutputReported {
+				relayLog.UsageState = appmodel.RelayLogUsageReportedFull
+			}
+		}
 
 		modelPrice := price.GetLLMPrice(item.ModelName)
 		if modelPrice != nil {

@@ -603,7 +603,10 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 		if len(usage) > 0 && usage[0].reported {
 			relayLog.InputTokens = usage[0].input
 			relayLog.OutputTokens = usage[0].output
-			relayLog.UsageState = dbmodel.RelayLogUsageReported
+			relayLog.UsageState = dbmodel.RelayLogUsageReportedInputOnly
+			if usage[0].outputReported {
+				relayLog.UsageState = dbmodel.RelayLogUsageReportedFull
+			}
 		} else if errors.Is(relayErr, errClientDisconnected) {
 			relayLog.UsageState = dbmodel.RelayLogUsageClientDisconnect
 		} else if relayErr != nil {
@@ -656,7 +659,7 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 			requestModel, duration.Milliseconds(), len(attempts), relayErr)
 	}
 
-	if channelID > 0 && relayLog.UsageState == dbmodel.RelayLogUsageReported {
+	if channelID > 0 && len(usage) > 0 && usage[0].reported {
 		st.ChannelUpdate(channelID, dbmodel.StatsMetrics{InputToken: stats.InputToken, OutputToken: stats.OutputToken})
 	}
 	st.TotalUpdate(stats)

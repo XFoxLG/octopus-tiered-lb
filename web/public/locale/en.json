@@ -2956,6 +2956,7 @@
       "clientDisconnectedHint": "This request was cancelled by the client itself; the channel is not at fault.",
       "firstToken": "TTFT",
       "totalTime": "Total",
+      "nonChatOutputUnspecifiedHint": "No separate output-token count was recorded. Embeddings return vectors and reranking returns scores; their dimensions and result counts are not output tokens. Reported input usage remains counted.",
       "input": "Input",
       "output": "Output",
       "totalTokens": "Total",

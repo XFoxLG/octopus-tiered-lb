@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
-import { formatLogDuration, isUpstreamModelMismatch, reportedIPSourceToken, resolveEffectiveTokenCounts, resolveFirstTokenMilestones, resolveLogDisplayFields, resolveLogInvestigationMarkers, type RelayLogInvestigationMarker } from './display';
+import { formatLogDuration, isUpstreamModelMismatch, isReportedTokenUsage, reportedIPSourceToken, resolveEffectiveTokenCounts, resolveFirstTokenMilestones, resolveLogDisplayFields, resolveLogInvestigationMarkers, resolveNonChatTokenDisplay, type RelayLogInvestigationMarker } from './display';
 import { BoundaryDetails } from './BoundaryDetails';
 import { logIssueSummary } from './body-preview';
 import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
@@ -304,6 +304,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
     const semanticCacheHit = displayFields.semanticCacheHit;
     // v2.8.13：上游漏报的方向优先使用网关估算值（est > 0），其余显示上报值。
     const tokenCounts = resolveEffectiveTokenCounts(log);
+    const nonChatTokens = resolveNonChatTokenDisplay(log);
     const effectiveInputTokens = Math.max(0, tokenCounts.inputTokens - cacheReadTokens);
     const inputLabel = cacheReadTokens > 0 ? t('realInput') : t('input');
     const displayChannelName = displayFields.channelName || '-';
@@ -331,11 +332,11 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
 
     const responseContent = detail?.response_content;
     // usageKnown 判定该条日志的用量是否可信。后端 usage_state 有值时按成因直接判定
-    //（reported=可信，其余成因=不可信）；历史行无标注（空值）退回旧启发式：
+    //（reported 及非对话字段存在性状态=可信）；历史行无标注（空值）退回旧启发式：
     // 有 token/费用/错误即视为"已知"，否则再探测响应里的 usage 块。
     const usageKnown = useMemo(() => {
         if (log.usage_state) {
-            return log.usage_state === 'reported';
+            return isReportedTokenUsage(log.usage_state);
         }
         if (log.input_tokens > 0 || log.output_tokens > 0 || Number(log.cost) > 0) {
             return true;
@@ -356,7 +357,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
 
     // 不可信时的成因文案：按 usage_state 显示真实原因，而不是笼统的"未知"。
     const usageStateHint = useMemo(() => {
-        if (!log.usage_state || log.usage_state === 'reported') return '';
+        if (!log.usage_state || isReportedTokenUsage(log.usage_state)) return '';
         return t(`usageState.${log.usage_state}`);
     }, [log.usage_state, t]);
 
@@ -367,11 +368,13 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
         : usageKnown
             ? fmt(formatCount(effectiveInputTokens).formatted)
             : (usageStateHint || tCommon('unknown'));
-    const outputTokenDisplay = tokenCounts.outputEstimated
+    const outputTokenDisplay = nonChatTokens.outputUnspecified ? '—' : tokenCounts.outputEstimated
         ? `≈${fmt(formatCount(tokenCounts.outputTokens).formatted)}`
         : usageKnown
             ? fmt(formatCount(tokenCounts.outputTokens).formatted)
             : (usageStateHint || tCommon('unknown'));
+    const outputTokenHint = nonChatTokens.outputUnspecified ? t('nonChatOutputUnspecifiedHint')
+        : tokenCounts.outputEstimated ? estimatedHint : undefined;
     // 总消耗 = 真实输入 + 缓存输入 + 输出 = input_tokens(含缓存) + output_tokens（issue #107）
     const totalTokenDisplay = tokenCounts.estimated
         ? `≈${fmt(formatCount(tokenCounts.totalTokens).formatted)}`
@@ -527,7 +530,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                     <Cpu className="size-3.5 shrink-0 text-blue-500" />
                                     <span>{t('totalTime')} {formatDuration(log.use_time)}</span>
                                 </div>
-                                {vis.tps && (
+                                {vis.tps && !nonChatTokens.nonChat && (
                                     <div className="flex items-center gap-1.5">
                                         <Gauge className="size-3.5 shrink-0 text-lime-500" />
                                         <span>{t('tps')} {formatTPS(tokenCounts.outputTokens, log.use_time)}</span>
@@ -559,7 +562,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 )}
                                 <div className="flex items-center gap-1.5">
                                     <ArrowUpFromLine className="size-3.5 shrink-0 text-purple-500" />
-                                    <span title={tokenCounts.outputEstimated ? estimatedHint : undefined}>
+                                    <span title={outputTokenHint}>
                                         {t('output')} {outputTokenDisplay}
                                     </span>
                                 </div>
@@ -926,7 +929,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 <Cpu className="size-3.5 text-blue-500" />
                                 <span>{t('totalTime')}: {formatDuration(log.use_time)}</span>
                             </div>
-                            {vis.tps && (
+                            {vis.tps && !nonChatTokens.nonChat && (
                                 <div className="flex items-center gap-1.5">
                                     <Gauge className="size-3.5 text-lime-500" />
                                     <span>{t('tps')}: {formatTPS(tokenCounts.outputTokens, log.use_time)}</span>
@@ -946,7 +949,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                             </div>
                             <div className="flex items-center gap-1.5">
                                 <ArrowUpFromLine className="size-3.5 text-purple-500" />
-                                <span title={tokenCounts.outputEstimated ? estimatedHint : undefined}>
+                                <span title={outputTokenHint}>
                                     {t('output')}: {outputTokenDisplay}
                                 </span>
                             </div>

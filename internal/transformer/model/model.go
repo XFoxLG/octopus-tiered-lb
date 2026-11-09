@@ -898,7 +898,7 @@ type ResponseMeta struct {
 }
 
 // Usage Represents the total token usage per request to OpenAI.
-// For embedding requests, CompletionTokens is always 0.
+// Non-chat responses may omit completion usage; absence is not an explicit zero.
 type Usage struct {
 	PromptTokens            int64                    `json:"prompt_tokens"`
 	CompletionTokens        int64                    `json:"completion_tokens"`
@@ -914,6 +914,9 @@ type Usage struct {
 	// Anthropic specific fields
 	AnthropicUsage           bool  `json:"-"`
 	CacheCreationInputTokens int64 `json:"-"`
+	// Set only after validating a non-chat token envelope. nil keeps the existing
+	// chat usage contract; false means the provider reported input only.
+	NonChatOutputReported *bool `json:"-"`
 }
 
 func (u *Usage) GetCompletionTokens() *int64 {

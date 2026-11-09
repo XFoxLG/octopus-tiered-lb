@@ -550,6 +550,12 @@ func resolveUsageState(resp *transformerModel.InternalLLMResponse, relayErr erro
 		// report, even when the same terminal envelope includes token counts.
 		return model.RelayLogUsageProviderFailed
 	}
+	if resp != nil && resp.Usage != nil && resp.Usage.NonChatOutputReported != nil {
+		if *resp.Usage.NonChatOutputReported {
+			return model.RelayLogUsageReportedFull
+		}
+		return model.RelayLogUsageReportedInputOnly
+	}
 	if resp != nil && resp.Usage != nil && resp.Usage.PromptTokens > 0 {
 		return model.RelayLogUsageReported
 	}
