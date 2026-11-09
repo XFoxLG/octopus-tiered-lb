@@ -26,7 +26,11 @@ process = None
 log_file = None
 
 def run(args, **kwargs):
-    return subprocess.run(args, check=True, capture_output=True, **kwargs)
+    result = subprocess.run(args, capture_output=True, **kwargs)
+    if result.returncode:
+        detail = result.stderr if isinstance(result.stderr, str) else result.stderr.decode(errors="replace")
+        raise RuntimeError(f"{args[0]} exited {result.returncode}: " + detail.replace(password, "[redacted]").replace(secret, "[redacted]"))
+    return result
 
 def dsn(database):
     return urlunsplit(parsed._replace(path="/" + database))
@@ -95,9 +99,10 @@ try:
         request("/api/v1/stats/total", token=token)
         stop()
         sql(original, "INSERT INTO stats_totals (id,input_token,output_token,request_success) VALUES (1,451,0,1) ON CONFLICT (id) DO UPDATE SET input_token=451,output_token=0,request_success=1")
-        backup = directory / "synthetic.dump"
-        run(["pg_dump", dsn(original), "-Fc", "-f", str(backup)])
-        run(["pg_restore", "--no-owner", "--exit-on-error", "-d", dsn(restored), str(backup)])
+        # Match the CI server major; ubuntu-latest's installed client may be older.
+        postgres = ["docker", "run", "--rm", "--network", "host", "-v", str(directory) + ":/backup", "postgres:17-alpine"]
+        run(postgres + ["pg_dump", dsn(original), "-Fc", "-f", "/backup/synthetic.dump"])
+        run(postgres + ["pg_restore", "--no-owner", "--exit-on-error", "-d", dsn(restored), "/backup/synthetic.dump"])
         token = start(restored, False, directory)
         data = request("/api/v1/stats/total", token=token)
         assert data["input_token"] == 451 and data["unattributed_token"] == 0, data

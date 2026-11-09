@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/apikey"
 	"github.com/lingyuins/octopus/internal/op/stats"
 )
 
@@ -18,6 +20,8 @@ func TestAPIKeyAuthMaxTokensCountsTotalOnly(t *testing.T) {
 		t.Fatalf("init fixture database: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	stats.ClearAllCachesForTest()
+	t.Cleanup(stats.ClearAllCachesForTest)
 
 	apiKey := model.APIKey{
 		ID:        9,
@@ -26,6 +30,7 @@ func TestAPIKeyAuthMaxTokensCountsTotalOnly(t *testing.T) {
 		Enabled:   true,
 		MaxTokens: 128,
 	}
+	apiKey.APIKeyHash = apikey.HashAPIKey(apiKey.APIKey)
 	if err := db.GetDB().Create(&apiKey).Error; err != nil {
 		t.Fatalf("seed API key: %v", err)
 	}
@@ -51,5 +56,17 @@ func TestAPIKeyAuthMaxTokensCountsTotalOnly(t *testing.T) {
 
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := stats.APIKeyUpdate(apiKey.ID, model.StatsMetrics{
+		NonChatMetrics: model.NonChatMetrics{UnattributedToken: 1},
+	}); err != nil {
+		t.Fatalf("reach quota: %v", err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/protected", nil)
+	request.Header.Set("Authorization", "Bearer "+apiKey.APIKey)
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "max token limit") {
+		t.Fatalf("total-only increment must reach quota: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
