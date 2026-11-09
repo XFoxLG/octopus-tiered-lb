@@ -97,7 +97,7 @@ func APIKeyAuth() gin.HandlerFunc {
 		}
 		// Token 用量上限（issue #108）：累计 Token = 输入 + 输出，超限则拒绝
 		if apiKeyObj.MaxTokens > 0 {
-			usedTokens := statsAPIKey.StatsMetrics.InputToken + statsAPIKey.StatsMetrics.OutputToken
+			usedTokens := statsAPIKey.StatsMetrics.TotalTokens()
 			if usedTokens >= apiKeyObj.MaxTokens {
 				resp.Error(c, http.StatusUnauthorized, "API key has reached the max token limit")
 				c.Abort()

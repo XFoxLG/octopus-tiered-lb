@@ -23,6 +23,7 @@ func TestEmbeddingUsagePresenceSurvivesConversionAndAccounting(t *testing.T) {
 		{"explicit_zero", `{"prompt_tokens":451,"completion_tokens":0,"total_tokens":451}`, m.RelayLogUsageReportedFull, 451, 0, true},
 		{"reported_output", `{"prompt_tokens":451,"completion_tokens":3,"total_tokens":454}`, m.RelayLogUsageReportedFull, 451, 3, true},
 		{"all_zero", `{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`, m.RelayLogUsageReportedFull, 0, 0, true},
+		{"total_only", `{"total_tokens":1000}`, m.RelayLogUsageReported, 0, 0, false},
 		{"missing", `null`, m.RelayLogUsageNotReported, 0, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,6 +43,12 @@ func TestEmbeddingUsagePresenceSurvivesConversionAndAccounting(t *testing.T) {
 			raw, err := (&in.EmbeddingInbound{}).TransformResponse(context.Background(), response)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if string(raw) != body {
+				t.Fatalf("response bytes changed: %s", raw)
+			}
+			if tc.name == "total_only" && metrics.Stats.TotalTokens() != 1000 {
+				t.Fatalf("total-only usage lost: %+v", metrics.Stats)
 			}
 			var wire struct {
 				Data []struct {

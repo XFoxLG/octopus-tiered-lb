@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"io"
 	"math"
 	"net/http"
@@ -56,7 +57,7 @@ func sendRerankProbeWithHeaders(ctx context.Context, channel *m.Channel, key str
 		out.Summary = err.Error()
 		return out
 	}
-	body, _ := json.Marshal(map[string]any{"model": modelName, "query": "Which document describes a blue sky?", "documents": []string{"The sky is blue.", "A red apple is on the table."}, "top_n": 2})
+	body := rerankProbeRequest(modelName)
 	probeCtx, cancel := context.WithTimeout(ctx, rerankProbeTimeout)
 	defer cancel()
 	if deadline, ok := probeCtx.Deadline(); ok {
@@ -186,6 +187,11 @@ func testRerankGroupItem(ctx context.Context, group *m.Group, item m.GroupItem, 
 		result.Attempts = 0
 		attempts = nil
 	}
-	recordTestLog(ctx, m.EndpointTypeRerank, item, result, *channel, attempts, int(out.LatencyMS), nil, nil)
+	recordTestLog(ctx, m.EndpointTypeRerank, item, result, *channel, attempts, int(out.LatencyMS), rerankProbeRequest(item.ModelName), &transmodel.InternalLLMResponse{NonChatObservation: transmodel.ObserveNonChatResponse(strings.NewReader(out.Body), "rerank")})
 	return result
+}
+
+func rerankProbeRequest(modelName string) []byte {
+	body, _ := json.Marshal(map[string]any{"model": modelName, "query": "Which document describes a blue sky?", "documents": []string{"The sky is blue.", "A red apple is on the table."}, "top_n": 2})
+	return body
 }

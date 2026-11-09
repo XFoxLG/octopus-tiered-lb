@@ -376,6 +376,11 @@ func cloneEmbeddingInput(input *EmbeddingInput) *EmbeddingInput {
 	cloned := *input
 	cloned.Single = clonePointer(input.Single)
 	cloned.Multiple = cloneSlice(input.Multiple)
+	cloned.Tokens = cloneSlice(input.Tokens)
+	cloned.TokenBatches = cloneSlice(input.TokenBatches)
+	for i := range cloned.TokenBatches {
+		cloned.TokenBatches[i] = cloneSlice(input.TokenBatches[i])
+	}
 	return &cloned
 }
 

@@ -30,7 +30,6 @@ type OpenAIEmbeddingResponse struct {
 	Created int64                   `json:"created"`
 	Model   string                  `json:"model"`
 	Data    []model.EmbeddingObject `json:"data"` // 上游返回 "data"
-	Usage   *model.Usage            `json:"usage,omitempty"`
 }
 
 func (o *EmbeddingOutbound) TransformRequest(ctx context.Context, request *model.InternalLLMRequest, baseUrl, key string) (*http.Request, error) {
@@ -124,18 +123,30 @@ func (o *EmbeddingOutbound) TransformResponse(ctx context.Context, response *htt
 
 	// 转换为内部格式
 	resp := &model.InternalLLMResponse{
-		ID:            openAIResp.ID,
-		Object:        openAIResp.Object,
-		Created:       openAIResp.Created,
-		Model:         openAIResp.Model,
-		EmbeddingData: openAIResp.Data, // 上游返回 "data"，映射到内部字段
-		Usage:         model.ParseNonChatTokenUsage(body),
+		ID:                 openAIResp.ID,
+		Object:             openAIResp.Object,
+		Created:            openAIResp.Created,
+		Model:              openAIResp.Model,
+		EmbeddingData:      openAIResp.Data, // 上游返回 "data"，映射到内部字段
+		RawNonChatResponse: body,
+		NonChatObservation: model.ObserveNonChatResponse(bytes.NewReader(body), "embeddings"),
 	}
-	if resp.Usage != nil && openAIResp.Usage != nil {
-		resp.Usage.PromptTokensDetails = openAIResp.Usage.PromptTokensDetails
-		resp.Usage.CompletionTokensDetails = openAIResp.Usage.CompletionTokensDetails
-		resp.Usage.WebSearchUsage = openAIResp.Usage.WebSearchUsage
+	resp.Usage = resp.NonChatObservation.Usage()
+	// Preserve existing cache accounting without making invalid usage metadata a
+	// business-response decoding failure.
+	if resp.Usage != nil && resp.NonChatObservation.Summary.Basis == "processing" {
+		var details struct {
+			Usage struct {
+				PromptTokensDetails *model.PromptTokensDetails `json:"prompt_tokens_details"`
+			} `json:"usage"`
+		}
+		if err := transformer.Unmarshal(body, &details); err == nil {
+			resp.Usage.PromptTokensDetails = details.Usage.PromptTokensDetails
+		} else {
+			resp.NonChatObservation.Issues = append(resp.NonChatObservation.Issues, model.NonChatUsageIssue{Path: "usage.prompt_tokens_details", Reason: "invalid_token_details"})
+		}
 	}
+	model.ApplyNonChatTiming(resp.NonChatObservation, response)
 
 	return resp, nil
 }

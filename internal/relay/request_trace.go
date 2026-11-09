@@ -878,7 +878,11 @@ func saveUnclaimedRelayTrace(ginContext *gin.Context, trace *relayRequestTrace) 
 	relayLog.PersistenceState = model.RelayLogPersistencePending
 	relayLog.ClientDeliveryState = relayLogClientDeliveryState(clientWriteBytes, clientWriteComplete, clientWriteError)
 	relayLog.Attempts = trace.annotateAttempts(relayLog.Attempts)
+	oldDiagnostics := relayLog.Diagnostics
 	relayLog.Diagnostics = trace.diagnosticsSnapshot()
+	if oldDiagnostics != nil {
+		relayLog.Diagnostics.NonChatUsage = oldDiagnostics.NonChatUsage
+	}
 	if relayLog.GenerationOutcome == "" || relayLog.UpstreamOutcome == "" {
 		generationOutcome, upstreamOutcome := relayLogOutcomes(relayLog)
 		if relayLog.GenerationOutcome == "" {

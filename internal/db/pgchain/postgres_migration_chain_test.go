@@ -28,7 +28,7 @@ import (
 
 // latestAfterMigrationVersion 是最新的 after-migration 版本号。新增迁移时同步
 // 上调即可；它同时用来证明 after 链确实执行过（而不是空跑通过）。
-const latestAfterMigrationVersion = 82
+const latestAfterMigrationVersion = 83
 
 func TestFullMigrationChainOnFreshPostgres(t *testing.T) {
 	dsn := os.Getenv("OCTOPUS_TEST_POSTGRES_DSN")
@@ -85,7 +85,8 @@ func TestFullMigrationChainOnFreshPostgres(t *testing.T) {
 	for table, columns := range map[string][]string{
 		"groups":                {"request_timeout_seconds", "stream_keepalive_enabled", "assistant_prefill_compat", "forward_mode"},
 		"api_keys":              {"request_timeout_seconds"},
-		"relay_logs":            {"diagnostics"},
+		"relay_logs":            {"diagnostics", "non_chat_usage", "unattributed_token", "embedding_vectors", "rerank_results_observed"},
+		"stats_totals":          {"unattributed_token", "billed_token", "rerank_results_observed"},
 		"channel_probe_results": {"protocol", "request_stream", "request_budget_ms", "request_fingerprint"},
 	} {
 		for _, column := range columns {

@@ -51,6 +51,12 @@ jobs:
         run: go test -count=1 -v -run '^TestSynchronizeImportedSequencesPostgres$' ./internal/op/backup
       - name: PostgreSQL relay log binary and error text persistence
         run: go test -count=1 -v -tags=jsoniter -run '^TestRelayLogPostgres' ./internal/op/relaylog
+      - name: Released-image backup upgrade and rollback compatibility
+        run: |
+          mkdir -p static/out
+          touch static/out/.keep
+          go build -tags=jsoniter -o /tmp/octopus-nonchat-ci .
+          python3 scripts/test_nonchat_postgres_upgrade.py /tmp/octopus-nonchat-ci
   build-and-test:
     runs-on: ubuntu-latest
     env:

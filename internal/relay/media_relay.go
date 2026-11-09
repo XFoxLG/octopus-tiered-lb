@@ -33,6 +33,7 @@ import (
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	"github.com/lingyuins/octopus/internal/relay/condition"
 	"github.com/lingyuins/octopus/internal/server/resp"
+	transformerModel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/telemetry"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
@@ -411,10 +412,8 @@ func MediaHandler(endpointType MediaEndpointType, c *gin.Context) {
 						RequestSuccess: 1,
 					})
 					if logEndpointType == dbmodel.EndpointTypeRerank {
-						usage := mediaRerankUsageFromContext(c)
 						st.ModelRecord(channel.ID, resolvedModel, dbmodel.StatsMetrics{
 							WaitTime: span.Duration().Milliseconds(), RequestSuccess: 1,
-							InputToken: int64(usage.input), OutputToken: int64(usage.output),
 						})
 					}
 					balancer.RecordSuccess(channel.ID, usedKey.ID, resolvedModel)
@@ -600,16 +599,15 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 	}
 	if endpointType == dbmodel.EndpointTypeRerank {
 		relayLog.UsageState = dbmodel.RelayLogUsageNotReported
-		if len(usage) > 0 && usage[0].reported {
-			relayLog.InputTokens = usage[0].input
-			relayLog.OutputTokens = usage[0].output
-			relayLog.UsageState = dbmodel.RelayLogUsageReportedInputOnly
-			if usage[0].outputReported {
-				relayLog.UsageState = dbmodel.RelayLogUsageReportedFull
-			}
-		} else if errors.Is(relayErr, errClientDisconnected) {
+		observation := transformerModel.ObserveNonChatResponse(bytes.NewReader([]byte(`{}`)), "rerank")
+		observation.ResponseState = "not_observed"
+		if len(usage) > 0 && usage[0].observation != nil {
+			observation = usage[0].observation
+		}
+		relayLog.SetNonChatObservation(observation, transformerModel.ObserveNonChatRequest(bodyBytes, "rerank"))
+		if observation.Summary.TotalTokens == nil && errors.Is(relayErr, errClientDisconnected) {
 			relayLog.UsageState = dbmodel.RelayLogUsageClientDisconnect
-		} else if relayErr != nil {
+		} else if observation.Summary.TotalTokens == nil && relayErr != nil {
 			relayLog.UsageState = dbmodel.RelayLogUsageFailedNoResponse
 		}
 	}
@@ -645,9 +643,10 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 
 	// Only upstream-reported rerank tokens enter accounting; no cost estimate.
 	stats := dbmodel.StatsMetrics{
-		WaitTime:    int64(duration.Milliseconds()),
-		InputToken:  int64(relayLog.InputTokens),
-		OutputToken: int64(relayLog.OutputTokens),
+		WaitTime:       int64(duration.Milliseconds()),
+		NonChatMetrics: relayLog.NonChatMetrics,
+		InputToken:     relayLog.InputTokens,
+		OutputToken:    relayLog.OutputTokens,
 	}
 	if relayErr == nil {
 		stats.RequestSuccess = 1
@@ -659,8 +658,10 @@ func recordMediaRelayLog(apiKeyID int, requestModel string, endpointType string,
 			requestModel, duration.Milliseconds(), len(attempts), relayErr)
 	}
 
-	if channelID > 0 && len(usage) > 0 && usage[0].reported {
-		st.ChannelUpdate(channelID, dbmodel.StatsMetrics{InputToken: stats.InputToken, OutputToken: stats.OutputToken})
+	if channelID > 0 && endpointType == dbmodel.EndpointTypeRerank {
+		amount := dbmodel.StatsMetrics{InputToken: stats.InputToken, OutputToken: stats.OutputToken, NonChatMetrics: stats.NonChatMetrics}
+		st.ChannelUpdate(channelID, amount)
+		st.ModelRecord(channelID, resolvedModel, amount)
 	}
 	st.TotalUpdate(stats)
 	st.HourlyUpdate(stats)
@@ -881,6 +882,9 @@ func forwardMediaRequestJSON(
 		return 0, fmt.Errorf("failed to get http client: %w", err)
 	}
 
+	if cfg.UpstreamPath == "/v1/rerank" {
+		req = transformerModel.StartNonChatTiming(req)
+	}
 	response, err := httpClient.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("failed to send request: %w", err)
@@ -893,6 +897,7 @@ func forwardMediaRequestJSON(
 	//
 	// 必须在下面的 defer **之前**替换：Go 在 defer 语句执行时就固定方法接收者，
 	// 先包装才能让 defer 调到 watchdog 的 Close（否则 watchdog 收不到退出信号）。
+	transformerModel.AttachNonChatTiming(response, req)
 	response.Body = wrapMediaResponseBody(response.Body, mediaBodyIdleTimeout)
 	defer response.Body.Close()
 

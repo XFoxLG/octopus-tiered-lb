@@ -26,6 +26,10 @@ func newRedisStats(c *redis.Client) *redisStats { return &redisStats{c: c} }
 // counterFields 是用 HINCRBY 累加的整型计数器字段。
 var counterFields = []string{
 	"input_token", "output_token",
+	"unattributed_token", "billed_token",
+	"usage_reported_requests", "usage_partial_requests", "usage_billed_requests", "usage_invalid_requests",
+	"embedding_input_items", "embedding_input_observed", "embedding_vectors", "embedding_vectors_observed",
+	"rerank_documents", "rerank_documents_observed", "rerank_results", "rerank_results_observed",
 	"wait_time", "request_success", "request_failed",
 	"histogram_lt_100", "histogram_100_500", "histogram_500_1k", "histogram_1k_5k", "histogram_gt_5k",
 }
@@ -69,7 +73,12 @@ func (s *redisStats) IncrMetrics(ctx context.Context, scope, id string, m model.
 	// 计数器字段：HINCRBY pipeline（int 计数器 + float cost）。
 	pipe := s.c.Pipeline()
 	intVals := []int64{
-		m.InputToken, m.OutputToken, m.WaitTime, m.RequestSuccess, m.RequestFailed,
+		m.InputToken, m.OutputToken,
+		m.UnattributedToken, m.BilledToken,
+		m.UsageReportedRequests, m.UsagePartialRequests, m.UsageBilledRequests, m.UsageInvalidRequests,
+		m.EmbeddingInputItems, m.EmbeddingInputObserved, m.EmbeddingVectors, m.EmbeddingVectorsObserved,
+		m.RerankDocuments, m.RerankDocumentsObserved, m.RerankResults, m.RerankResultsObserved,
+		m.WaitTime, m.RequestSuccess, m.RequestFailed,
 		m.HistogramLt100, m.Histogram100to500, m.Histogram500to1k, m.Histogram1kto5k, m.HistogramGt5k,
 	}
 	for i, field := range counterFields {
@@ -148,6 +157,20 @@ func parseStatsHash(raw map[string]string) model.StatsMetrics {
 	var m model.StatsMetrics
 	m.InputToken, _ = strconv.ParseInt(raw["input_token"], 10, 64)
 	m.OutputToken, _ = strconv.ParseInt(raw["output_token"], 10, 64)
+	m.UnattributedToken, _ = strconv.ParseInt(raw["unattributed_token"], 10, 64)
+	m.BilledToken, _ = strconv.ParseInt(raw["billed_token"], 10, 64)
+	m.UsageReportedRequests, _ = strconv.ParseInt(raw["usage_reported_requests"], 10, 64)
+	m.UsagePartialRequests, _ = strconv.ParseInt(raw["usage_partial_requests"], 10, 64)
+	m.UsageBilledRequests, _ = strconv.ParseInt(raw["usage_billed_requests"], 10, 64)
+	m.UsageInvalidRequests, _ = strconv.ParseInt(raw["usage_invalid_requests"], 10, 64)
+	m.EmbeddingInputItems, _ = strconv.ParseInt(raw["embedding_input_items"], 10, 64)
+	m.EmbeddingInputObserved, _ = strconv.ParseInt(raw["embedding_input_observed"], 10, 64)
+	m.EmbeddingVectors, _ = strconv.ParseInt(raw["embedding_vectors"], 10, 64)
+	m.EmbeddingVectorsObserved, _ = strconv.ParseInt(raw["embedding_vectors_observed"], 10, 64)
+	m.RerankDocuments, _ = strconv.ParseInt(raw["rerank_documents"], 10, 64)
+	m.RerankDocumentsObserved, _ = strconv.ParseInt(raw["rerank_documents_observed"], 10, 64)
+	m.RerankResults, _ = strconv.ParseInt(raw["rerank_results"], 10, 64)
+	m.RerankResultsObserved, _ = strconv.ParseInt(raw["rerank_results_observed"], 10, 64)
 	m.InputCost, _ = strconv.ParseFloat(raw["input_cost"], 64)
 	m.OutputCost, _ = strconv.ParseFloat(raw["output_cost"], 64)
 	m.WaitTime, _ = strconv.ParseInt(raw["wait_time"], 10, 64)
