@@ -1,5 +1,7 @@
 'use client';
 
+import { NonChatStats } from '@/components/common/NonChatStats';
+
 import { BarChart3, Boxes, CircleCheckBig, Coins, DollarSign, GitBranchPlus, KeyRound, Radio } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useAnalyticsOverview, type AnalyticsRange } from '@/api/endpoints/analytics';
@@ -86,6 +88,7 @@ export function Overview({ range }: { range: AnalyticsRange }) {
                         <MetricCard key={card.title} {...card} />
                     ))}
                 </div>
+                <NonChatStats metrics={data} />
             </QueryState>
         </section>
     );

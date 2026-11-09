@@ -1,3 +1,4 @@
+import { totalAccountedTokens } from '../nonchat';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../client';
 import { REFETCH_INTERVAL_DEFAULT } from '../constants';
@@ -403,9 +404,10 @@ export function useChannelList() {
                 keys: item.keys ?? [],
             }) satisfies Channel,
             formatted: {
+                non_chat: item.stats,
                 input_token: formatCount(item.stats?.input_token ?? 0),
                 output_token: formatCount(item.stats?.output_token ?? 0),
-                total_token: formatCount((item.stats?.input_token ?? 0) + (item.stats?.output_token ?? 0)),
+                total_token: formatCount(totalAccountedTokens(item.stats)),
                 input_cost: formatMoney(item.stats?.input_cost ?? 0),
                 output_cost: formatMoney(item.stats?.output_cost ?? 0),
                 total_cost: formatMoney((item.stats?.input_cost ?? 0) + (item.stats?.output_cost ?? 0)),

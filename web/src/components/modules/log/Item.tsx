@@ -12,6 +12,7 @@ import { cn, formatCount, formatMoney } from '@/lib/utils';
 import { formatUnixSeconds } from '@/lib/time';
 import { endpointTypeLabelKey } from '@/components/modules/group/utils';
 import { formatLogDuration, isUpstreamModelMismatch, isReportedTokenUsage, reportedIPSourceToken, resolveEffectiveTokenCounts, resolveFirstTokenMilestones, resolveLogDisplayFields, resolveLogInvestigationMarkers, resolveNonChatTokenDisplay, type RelayLogInvestigationMarker } from './display';
+import { NonChatUsage } from './NonChatUsage';
 import { BoundaryDetails } from './BoundaryDetails';
 import { logIssueSummary } from './body-preview';
 import { useLogFieldVisibility, useLogFieldVisibilityStore } from './ui-store';
@@ -262,6 +263,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
 }) {
     const t = useTranslations('log.card');
     const tCommon = useTranslations('common');
+    const tNonChat = useTranslations('nonChat');
     const tGroup = useTranslations('group');
     const { detail, error: detailError, isLoading: isDetailLoading, fetchDetail, reset: resetDetail } = useLogDetail();
     const hasError = !!log.error;
@@ -357,13 +359,14 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
 
     // 不可信时的成因文案：按 usage_state 显示真实原因，而不是笼统的"未知"。
     const usageStateHint = useMemo(() => {
+        if (log.non_chat_usage?.completeness === 'invalid') return tNonChat('completeness.invalid');
         if (!log.usage_state || isReportedTokenUsage(log.usage_state)) return '';
         return t(`usageState.${log.usage_state}`);
-    }, [log.usage_state, t]);
+    }, [log.usage_state, log.non_chat_usage?.completeness, t, tNonChat]);
 
     // v2.8.13：估算行以「≈」前缀标注并挂估算说明 tooltip；费用与统计仍按上报值计算。
     const estimatedHint = t('investigation.estimatedHint');
-    const inputTokenDisplay = tokenCounts.inputEstimated
+    const inputTokenDisplay = nonChatTokens.inputUnspecified ? '—' : tokenCounts.inputEstimated
         ? `≈${fmt(formatCount(effectiveInputTokens).formatted)}`
         : usageKnown
             ? fmt(formatCount(effectiveInputTokens).formatted)
@@ -509,7 +512,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                         )}
                                     </div>
                                 )}
-                                <div className="flex items-center gap-1.5">
+                                {!nonChatTokens.nonChat && <div className="flex items-center gap-1.5">
                                     <Zap className="size-3.5 shrink-0 text-amber-500" />
                                     {log.ftut > 0 ? (
                                         <span>{t('firstToken')} {formatLogDuration(log.ftut)}</span>
@@ -525,7 +528,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                             </TooltipContent>
                                         </Tooltip>
                                     )}
-                                </div>
+                                </div>}
                                 <div className="flex items-center gap-1.5">
                                     <Cpu className="size-3.5 shrink-0 text-blue-500" />
                                     <span>{t('totalTime')} {formatDuration(log.use_time)}</span>
@@ -620,6 +623,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                     </div>
                                 )}
                             </div>
+                            <NonChatUsage summary={log.non_chat_usage} requestMS={log.use_time} />
                             {hasError && (
                                 <div
                                     className={cn(
@@ -871,6 +875,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                         </AnimatePresence>
                                     </div>
                                 )}
+                                <NonChatUsage summary={detail?.non_chat_usage ?? log.non_chat_usage} requestMS={log.use_time} evidence={detail?.diagnostics?.non_chat_usage} details />
                                 <BoundaryDetails detail={detail} error={detailError} isLoading={isDetailLoading} />
                             </div>
                         </MorphingDialogDescription>
@@ -896,7 +901,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                     </span>
                                 </div>
                             )}
-                            <div className="flex items-center gap-1.5">
+                            {!nonChatTokens.nonChat && <div className="flex items-center gap-1.5">
                                 <Zap className="size-3.5 text-amber-500" />
                                 {log.ftut > 0 ? (
                                     <span>{t('firstTokenTime')}: {formatLogDuration(log.ftut)}</span>
@@ -912,14 +917,14 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                         </TooltipContent>
                                     </Tooltip>
                                 )}
-                            </div>
-                            {firstTokenMilestones.upstreamFirstVisibleMs > 0 && (
+                            </div>}
+                            {!nonChatTokens.nonChat && firstTokenMilestones.upstreamFirstVisibleMs > 0 && (
                                 <div className="flex items-center gap-1.5">
                                     <ArrowDown className="size-3.5 text-sky-500" />
                                     <span>{t('upstreamFirstToken')}: {formatLogDuration(firstTokenMilestones.upstreamFirstVisibleMs)}</span>
                                 </div>
                             )}
-                            {firstTokenMilestones.clientFirstFlushMs > 0 && (
+                            {!nonChatTokens.nonChat && firstTokenMilestones.clientFirstFlushMs > 0 && (
                                 <div className="flex items-center gap-1.5">
                                     <ArrowUpFromLine className="size-3.5 text-emerald-500" />
                                     <span>{t('clientFirstFlush')}: {formatLogDuration(firstTokenMilestones.clientFirstFlushMs)}</span>

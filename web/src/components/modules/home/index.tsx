@@ -2,6 +2,7 @@
 
 import { Suspense, lazy } from 'react';
 import { Activity } from './activity';
+import { NonChatDaily } from './nonchat-daily';
 import { HomeHero } from './hero';
 import { HomeAnalyticsOverview } from './analytics-overview';
 import { Rank } from './rank';
@@ -26,6 +27,7 @@ export function Home() {
         <PageWrapper className="h-full min-h-0 overflow-y-auto overscroll-contain space-y-4 md:space-y-5 xl:space-y-6 rounded-t-xl pb-3 md:pb-4">
             <HomeHero />
             <HomeAnalyticsOverview />
+            <NonChatDaily />
             <Suspense fallback={<ChartSkeleton />}>
                 <StatsChart />
             </Suspense>

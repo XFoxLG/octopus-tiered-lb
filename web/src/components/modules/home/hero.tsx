@@ -1,5 +1,8 @@
 'use client';
 
+import { totalAccountedTokens } from '@/api/nonchat';
+import { NonChatStats } from '@/components/common/NonChatStats';
+
 import { motion } from 'motion/react';
 import { Waves } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -18,7 +21,7 @@ export function HomeHero() {
     const requestCount = (statsToday?.request_success ?? 0) + (statsToday?.request_failed ?? 0);
     const successCount = statsToday?.request_success ?? 0;
     const totalCost = (statsToday?.input_cost ?? 0) + (statsToday?.output_cost ?? 0);
-    const totalTokens = (statsToday?.input_token ?? 0) + (statsToday?.output_token ?? 0);
+    const totalTokens = totalAccountedTokens(statsToday);
     const totalWaitTime = statsToday?.wait_time ?? 0;
     const successRate = requestCount > 0 ? (successCount / requestCount) * 100 : 0;
     const avgWait = requestCount > 0 ? totalWaitTime / requestCount : 0;
@@ -125,6 +128,7 @@ export function HomeHero() {
                         </article>
                     ))}
                 </div>
+                {statsToday && <NonChatStats metrics={statsToday} />}
             </div>
         </motion.section>
     );

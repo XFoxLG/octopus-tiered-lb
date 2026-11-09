@@ -1,3 +1,4 @@
+import type { NonChatMetrics, NonChatUsageSummary, NonChatUsageEvidence } from '../nonchat';
 import type { InfiniteData } from '@tanstack/react-query';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../client';
@@ -42,7 +43,8 @@ export interface ChannelAttempt {
 /**
  * 日志数据（列表条目，不含 request_content / response_content）
  */
-export interface RelayLog {
+export interface RelayLog extends NonChatMetrics {
+    non_chat_usage?: NonChatUsageSummary;
     id: string | number;
     id_str?: string;
     trace_id?: string;
@@ -157,6 +159,7 @@ export interface LiveRequest {
 
 export interface RelayLogDetail extends RelayLog {
     diagnostics?: {
+        non_chat_usage?: NonChatUsageEvidence;
         version: number;
         request_id?: string;
         instance_id?: string;

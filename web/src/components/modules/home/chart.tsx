@@ -46,7 +46,7 @@ export function StatsChart() {
             return total > 0 ? (stat.request_success.raw / total) * 100 : 0;
         }
         if (type === 'count') return stat.request_count.raw;
-        return stat.input_token.raw + stat.output_token.raw;
+        return stat.total_token.raw;
     };
 
     const chartData = useMemo(() => {
@@ -80,7 +80,7 @@ export function StatsChart() {
             if (!statsHourly) return { requests: 0, cost: 0, tokens: 0, successRate: 0 };
             const requests = statsHourly.reduce((acc, stat) => acc + stat.request_count.raw, 0);
             const cost = statsHourly.reduce((acc, stat) => acc + stat.total_cost.raw, 0);
-            const tokens = statsHourly.reduce((acc, stat) => acc + stat.input_token.raw + stat.output_token.raw, 0);
+            const tokens = statsHourly.reduce((acc, stat) => acc + stat.total_token.raw, 0);
             const success = statsHourly.reduce((acc, stat) => acc + stat.request_success.raw, 0);
             const failed = statsHourly.reduce((acc, stat) => acc + stat.request_failed.raw, 0);
             return {
@@ -94,7 +94,7 @@ export function StatsChart() {
             const recentStats = sortedDaily.slice(-days);
             const requests = recentStats.reduce((acc, stat) => acc + stat.request_success.raw + stat.request_failed.raw, 0);
             const cost = recentStats.reduce((acc, stat) => acc + stat.total_cost.raw, 0);
-            const tokens = recentStats.reduce((acc, stat) => acc + stat.input_token.raw + stat.output_token.raw, 0);
+            const tokens = recentStats.reduce((acc, stat) => acc + stat.total_token.raw, 0);
             const success = recentStats.reduce((acc, stat) => acc + stat.request_success.raw, 0);
             const failed = recentStats.reduce((acc, stat) => acc + stat.request_failed.raw, 0);
             return {

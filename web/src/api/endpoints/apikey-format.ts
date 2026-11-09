@@ -1,3 +1,4 @@
+import { totalAccountedTokens } from '../nonchat.ts';
 import { formatCount, formatMoney, formatTime } from '../../lib/utils.ts';
 import type { StatsAPIKey, StatsAPIKeyFormatted } from './stats';
 
@@ -20,9 +21,10 @@ export function formatAPIKeyStatsResponse<TInfo>(
     return {
         stats: {
             api_key_id: data.stats.api_key_id,
+            non_chat: data.stats,
             input_token: formatCount(data.stats.input_token),
             output_token: formatCount(data.stats.output_token),
-            total_token: formatCount(data.stats.input_token + data.stats.output_token),
+            total_token: formatCount(totalAccountedTokens(data.stats)),
             input_cost: formatMoney(data.stats.input_cost),
             output_cost: formatMoney(data.stats.output_cost),
             total_cost: formatMoney(data.stats.input_cost + data.stats.output_cost),

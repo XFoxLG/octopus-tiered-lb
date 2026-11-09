@@ -1,3 +1,4 @@
+import { NonChatStats } from '@/components/common/NonChatStats';
 import { useMemo, useState } from 'react';
 import {
     Trash2,
@@ -426,6 +427,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                         </dd>
                                     </div>
                                 </dl>
+                                <NonChatStats metrics={stats.non_chat} />
 
                                 <section className={sectionClassName}>
                                     <h4 className="mb-3 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
