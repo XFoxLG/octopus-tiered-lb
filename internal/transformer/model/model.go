@@ -315,7 +315,7 @@ func (r *InternalLLMRequest) Validate() error {
 
 	// 验证 embedding 请求
 	if isEmbeddingRequest {
-		if r.EmbeddingInput.Single == nil && len(r.EmbeddingInput.Multiple) == 0 {
+		if r.EmbeddingInput.Single == nil && len(r.EmbeddingInput.Multiple) == 0 && len(r.EmbeddingInput.Tokens) == 0 && len(r.EmbeddingInput.TokenBatches) == 0 {
 			return errors.New("input cannot be empty")
 		}
 	}
@@ -765,7 +765,9 @@ type ResponseFormatJSONSchema struct {
 // And other llm provider should convert the response to this format.
 // NOTE: the OpenAI stream and non-stream response reuse same struct.
 type InternalLLMResponse struct {
-	ID string `json:"id"`
+	NonChatObservation *NonChatObservation `json:"-"`
+	RawNonChatResponse []byte              `json:"-"`
+	ID                 string              `json:"id"`
 
 	// A list of chat completion choices. Can be more than one if `n` is greater
 	// than 1.
@@ -914,9 +916,6 @@ type Usage struct {
 	// Anthropic specific fields
 	AnthropicUsage           bool  `json:"-"`
 	CacheCreationInputTokens int64 `json:"-"`
-	// Set only after validating a non-chat token envelope. nil keeps the existing
-	// chat usage contract; false means the provider reported input only.
-	NonChatOutputReported *bool `json:"-"`
 }
 
 func (u *Usage) GetCompletionTokens() *int64 {
@@ -1154,10 +1153,22 @@ type ImageGeneration struct {
 }
 
 // EmbeddingInput represents the input for embedding requests.
-// It can be a single string or an array of strings.
+// It accepts text or token IDs, individually or in batches.
 type EmbeddingInput struct {
-	Single   *string
-	Multiple []string
+	Single       *string
+	Multiple     []string
+	Tokens       []int64
+	TokenBatches [][]int64
+}
+
+func (i EmbeddingInput) ItemCount() int64 {
+	if i.Single != nil || i.Tokens != nil {
+		return 1
+	}
+	if i.TokenBatches != nil {
+		return int64(len(i.TokenBatches))
+	}
+	return int64(len(i.Multiple))
 }
 
 func (i EmbeddingInput) MarshalJSON() ([]byte, error) {
@@ -1165,14 +1176,24 @@ func (i EmbeddingInput) MarshalJSON() ([]byte, error) {
 		return transformer.Marshal(i.Single)
 	}
 
-	if len(i.Multiple) > 0 {
+	if i.Multiple != nil {
 		return transformer.Marshal(i.Multiple)
+	}
+	if i.Tokens != nil {
+		return transformer.Marshal(i.Tokens)
+	}
+	if i.TokenBatches != nil {
+		return transformer.Marshal(i.TokenBatches)
 	}
 
 	return []byte("null"), nil
 }
 
 func (i *EmbeddingInput) UnmarshalJSON(data []byte) error {
+	*i = EmbeddingInput{}
+	if strings.TrimSpace(string(data)) == "null" {
+		return errors.New("embedding input must not be null")
+	}
 	var str string
 
 	err := transformer.Unmarshal(data, &str)
@@ -1186,6 +1207,31 @@ func (i *EmbeddingInput) UnmarshalJSON(data []byte) error {
 	err = transformer.Unmarshal(data, &strs)
 	if err == nil {
 		i.Multiple = strs
+		return nil
+	}
+	var tokens []int64
+	if transformer.Unmarshal(data, &tokens) == nil {
+		for _, id := range tokens {
+			if id < 0 {
+				return errors.New("embedding token IDs must be nonnegative")
+			}
+		}
+		i.Tokens = tokens
+		return nil
+	}
+	var batches [][]int64
+	if transformer.Unmarshal(data, &batches) == nil {
+		for _, row := range batches {
+			if len(row) == 0 {
+				return errors.New("embedding token batch must not be empty")
+			}
+			for _, id := range row {
+				if id < 0 {
+					return errors.New("embedding token IDs must be nonnegative")
+				}
+			}
+		}
+		i.TokenBatches = batches
 		return nil
 	}
 

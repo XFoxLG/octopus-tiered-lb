@@ -695,17 +695,14 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 	if !result.Passed {
 		relayLog.Error = result.Message
 	}
-	if normalizedEndpointType == appmodel.EndpointTypeRerank {
-		relayLog.UsageState = appmodel.RelayLogUsageNotReported
-		if !result.Passed {
-			relayLog.UsageState = appmodel.RelayLogUsageFailedNoResponse
+	if normalizedEndpointType == appmodel.EndpointTypeRerank || normalizedEndpointType == appmodel.EndpointTypeEmbeddings {
+		observation := transmodel.ObserveNonChatResponse(strings.NewReader(result.ResponseText), normalizedEndpointType)
+		if internalResp != nil && internalResp.NonChatObservation != nil {
+			observation = internalResp.NonChatObservation
 		}
-		if usage := transmodel.ParseNonChatTokenUsage([]byte(result.ResponseText)); usage != nil {
-			relayLog.InputTokens, relayLog.OutputTokens = int(usage.PromptTokens), int(usage.CompletionTokens)
-			relayLog.UsageState = appmodel.RelayLogUsageReportedInputOnly
-			if *usage.NonChatOutputReported {
-				relayLog.UsageState = appmodel.RelayLogUsageReportedFull
-			}
+		relayLog.SetNonChatObservation(observation, transmodel.ObserveNonChatRequest(requestJSON, normalizedEndpointType))
+		if !result.Passed && observation.Summary.TotalTokens == nil {
+			relayLog.UsageState = appmodel.RelayLogUsageFailedNoResponse
 		}
 	}
 
@@ -713,14 +710,8 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 	// 测试请求不累加到全站统计，只落日志，因此这里仅填充日志字段，不调用 stats.*Update。
 	if internalResp != nil && internalResp.Usage != nil {
 		usage := internalResp.Usage
-		relayLog.InputTokens = int(usage.PromptTokens)
-		relayLog.OutputTokens = int(usage.CompletionTokens)
-		if usage.NonChatOutputReported != nil {
-			relayLog.UsageState = appmodel.RelayLogUsageReportedInputOnly
-			if *usage.NonChatOutputReported {
-				relayLog.UsageState = appmodel.RelayLogUsageReportedFull
-			}
-		}
+		relayLog.InputTokens = usage.PromptTokens
+		relayLog.OutputTokens = usage.CompletionTokens
 
 		modelPrice := price.GetLLMPrice(item.ModelName)
 		if modelPrice != nil {

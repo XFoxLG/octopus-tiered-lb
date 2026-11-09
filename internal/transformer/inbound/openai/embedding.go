@@ -67,6 +67,9 @@ func (i *EmbeddingInbound) TransformRequest(ctx context.Context, body []byte) (*
 func (i *EmbeddingInbound) TransformResponse(ctx context.Context, response *model.InternalLLMResponse) ([]byte, error) {
 	// Store the response for later retrieval
 	i.storedResponse = response
+	if response.RawNonChatResponse != nil {
+		return response.RawNonChatResponse, nil
+	}
 
 	// 转换为 OpenAI 标准格式
 	openAIResp := OpenAIEmbeddingResponse{
@@ -79,7 +82,7 @@ func (i *EmbeddingInbound) TransformResponse(ctx context.Context, response *mode
 	if usage := response.Usage; usage != nil {
 		openAIResp.Usage = &embeddingUsage{PromptTokens: usage.PromptTokens, TotalTokens: usage.TotalTokens,
 			PromptTokensDetails: usage.PromptTokensDetails, CompletionTokensDetails: usage.CompletionTokensDetails, WebSearchUsage: usage.WebSearchUsage}
-		if usage.CompletionTokens != 0 || (usage.NonChatOutputReported != nil && *usage.NonChatOutputReported) {
+		if usage.CompletionTokens != 0 || (response.NonChatObservation != nil && response.NonChatObservation.Summary.OutputTokens != nil) {
 			openAIResp.Usage.CompletionTokens = &usage.CompletionTokens
 		}
 	}

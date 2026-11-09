@@ -1,5 +1,7 @@
 package model
 
+import transmodel "github.com/lingyuins/octopus/internal/transformer/model"
+
 // AttemptStatus 尝试状态
 type AttemptStatus string
 
@@ -45,23 +47,26 @@ type RelayLog struct {
 	// 仅用于日志展示；client_ip 保持 Gin 安全解析语义（限流/白名单）。见迁移 061。
 	ReportedClientIP       string `json:"reported_client_ip,omitempty" gorm:"column:reported_client_ip"`
 	ReportedClientIPSource string `json:"reported_client_ip_source,omitempty" gorm:"column:reported_client_ip_source;size:24"`
-	UserAgent              string `json:"user_agent,omitempty" gorm:"column:user_agent"`                                  // 客户端自报 User-Agent（详情页展示来源）
-	EndpointType           string `json:"endpoint_type" gorm:"column:endpoint_type"`                                      // 命中的端点分类
-	ChannelId              int    `json:"channel" gorm:"column:channel_id;index:idx_relay_logs_channel_time,priority:1"`  // 实际使用的渠道ID
-	ChannelName            string `json:"channel_name" gorm:"column:channel_name"`                                        // 渠道名称
-	ActualModelName        string `json:"actual_model_name" gorm:"column:actual_model_name"`                              // 实际使用模型名称
-	UpstreamModel          string `json:"upstream_model,omitempty" gorm:"column:upstream_model"`                          // 上游响应自报模型（v2.9.0，空=未回报；与请求模型不一致时前端打「模型不一致」标记）
-	InputTokens            int    `json:"input_tokens" gorm:"column:input_tokens"`                                        // 输入Token
-	OutputTokens           int    `json:"output_tokens" gorm:"column:output_tokens"`                                      // 输出 Token
-	InputTokensEst         int    `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est;not null;default:0"`   // 输入 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
-	OutputTokensEst        int    `json:"output_tokens_est,omitempty" gorm:"column:output_tokens_est;not null;default:0"` // 输出 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
-	ImageCount             int    `json:"image_count,omitempty" gorm:"column:image_count;not null;default:0"`             // 客户端请求内的图片数量（0=无图，v2.8.14 含图标注）
-	SemanticCacheHit       bool   `json:"semantic_cache_hit" gorm:"column:semantic_cache_hit"`                            // 语义缓存命中（写入时落库，避免列表查询重解析大字段）
-	CacheReadTokens        int    `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`                              // 提供方提示缓存命中 Token（写入时落库）
-	ReasoningEffort        string `json:"reasoning_effort" gorm:"column:reasoning_effort"`                                // 出站最终思考强度（effective）
-	ReasoningTokens        int    `json:"reasoning_tokens" gorm:"column:reasoning_tokens"`                                // 上游返回的思考 Token（usage，确定性）
-	ReasoningChars         int    `json:"reasoning_chars" gorm:"column:reasoning_chars"`                                  // 思考文本字符数（无官方 token 时的估算回退，UTF-8 rune 数）
-	UsageState             string `json:"usage_state,omitempty" gorm:"column:usage_state;size:24"`                        // 用量可信度标注（reported/成因），见 log_content.go RelayLogUsage*
+	UserAgent              string `json:"user_agent,omitempty" gorm:"column:user_agent"`                                 // 客户端自报 User-Agent（详情页展示来源）
+	EndpointType           string `json:"endpoint_type" gorm:"column:endpoint_type"`                                     // 命中的端点分类
+	ChannelId              int    `json:"channel" gorm:"column:channel_id;index:idx_relay_logs_channel_time,priority:1"` // 实际使用的渠道ID
+	ChannelName            string `json:"channel_name" gorm:"column:channel_name"`                                       // 渠道名称
+	ActualModelName        string `json:"actual_model_name" gorm:"column:actual_model_name"`                             // 实际使用模型名称
+	UpstreamModel          string `json:"upstream_model,omitempty" gorm:"column:upstream_model"`                         // 上游响应自报模型（v2.9.0，空=未回报；与请求模型不一致时前端打「模型不一致」标记）
+	InputTokens            int64  `json:"input_tokens" gorm:"column:input_tokens"`                                       // 输入Token
+	OutputTokens           int64  `json:"output_tokens" gorm:"column:output_tokens"`                                     // 输出 Token
+	NonChatMetrics
+	NonChatUsage *transmodel.NonChatUsageSummary `json:"non_chat_usage,omitempty" gorm:"serializer:json;type:text"`
+
+	InputTokensEst   int    `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est;not null;default:0"`   // 输入 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
+	OutputTokensEst  int    `json:"output_tokens_est,omitempty" gorm:"column:output_tokens_est;not null;default:0"` // 输出 Token 估算（仅上游漏报时 >0，见 v2.8.13 usage_estimate）
+	ImageCount       int    `json:"image_count,omitempty" gorm:"column:image_count;not null;default:0"`             // 客户端请求内的图片数量（0=无图，v2.8.14 含图标注）
+	SemanticCacheHit bool   `json:"semantic_cache_hit" gorm:"column:semantic_cache_hit"`                            // 语义缓存命中（写入时落库，避免列表查询重解析大字段）
+	CacheReadTokens  int    `json:"cache_read_tokens" gorm:"column:cache_read_tokens"`                              // 提供方提示缓存命中 Token（写入时落库）
+	ReasoningEffort  string `json:"reasoning_effort" gorm:"column:reasoning_effort"`                                // 出站最终思考强度（effective）
+	ReasoningTokens  int    `json:"reasoning_tokens" gorm:"column:reasoning_tokens"`                                // 上游返回的思考 Token（usage，确定性）
+	ReasoningChars   int    `json:"reasoning_chars" gorm:"column:reasoning_chars"`                                  // 思考文本字符数（无官方 token 时的估算回退，UTF-8 rune 数）
+	UsageState       string `json:"usage_state,omitempty" gorm:"column:usage_state;size:24"`                        // 用量可信度标注（reported/成因），见 log_content.go RelayLogUsage*
 
 	// Unix milliseconds; zero means this milestone was not observed.
 	UpstreamFirstVisibleAt int64 `json:"upstream_first_visible_at,omitempty" gorm:"column:upstream_first_visible_at;not null;default:0"`
@@ -96,23 +101,26 @@ type RelayLog struct {
 
 // RelayLogListItem 日志列表轻量条目，排除了 RequestContent 和 ResponseContent 大字段
 type RelayLogListItem struct {
-	ID                        int64            `json:"id" gorm:"column:id"`
-	TraceID                   string           `json:"trace_id,omitempty" gorm:"column:trace_id"`
-	Time                      int64            `json:"time" gorm:"column:time;index:idx_relay_logs_time"`
-	RequestModelName          string           `json:"request_model_name" gorm:"column:request_model_name"`
-	RequestAPIKeyID           int              `json:"request_api_key_id" gorm:"column:request_api_key_id"`
-	RequestAPIKeyName         string           `json:"request_api_key_name" gorm:"column:request_api_key_name"`
-	ClientIP                  string           `json:"client_ip" gorm:"column:client_ip"`
-	ReportedClientIP          string           `json:"reported_client_ip,omitempty" gorm:"column:reported_client_ip"`
-	ReportedClientIPSource    string           `json:"reported_client_ip_source,omitempty" gorm:"column:reported_client_ip_source;size:24"`
-	EndpointType              string           `json:"endpoint_type" gorm:"column:endpoint_type"`
-	ChannelId                 int              `json:"channel" gorm:"column:channel_id"`
-	ChannelName               string           `json:"channel_name" gorm:"column:channel_name"`
-	ActualModelName           string           `json:"actual_model_name" gorm:"column:actual_model_name"`
-	UpstreamModel             string           `json:"upstream_model,omitempty" gorm:"column:upstream_model"`
-	InputTokens               int              `json:"input_tokens" gorm:"column:input_tokens"`
-	OutputTokens              int              `json:"output_tokens" gorm:"column:output_tokens"`
-	InputTokensEst            int              `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est"`
+	ID                     int64  `json:"id" gorm:"column:id"`
+	TraceID                string `json:"trace_id,omitempty" gorm:"column:trace_id"`
+	Time                   int64  `json:"time" gorm:"column:time;index:idx_relay_logs_time"`
+	RequestModelName       string `json:"request_model_name" gorm:"column:request_model_name"`
+	RequestAPIKeyID        int    `json:"request_api_key_id" gorm:"column:request_api_key_id"`
+	RequestAPIKeyName      string `json:"request_api_key_name" gorm:"column:request_api_key_name"`
+	ClientIP               string `json:"client_ip" gorm:"column:client_ip"`
+	ReportedClientIP       string `json:"reported_client_ip,omitempty" gorm:"column:reported_client_ip"`
+	ReportedClientIPSource string `json:"reported_client_ip_source,omitempty" gorm:"column:reported_client_ip_source;size:24"`
+	EndpointType           string `json:"endpoint_type" gorm:"column:endpoint_type"`
+	ChannelId              int    `json:"channel" gorm:"column:channel_id"`
+	ChannelName            string `json:"channel_name" gorm:"column:channel_name"`
+	ActualModelName        string `json:"actual_model_name" gorm:"column:actual_model_name"`
+	UpstreamModel          string `json:"upstream_model,omitempty" gorm:"column:upstream_model"`
+	InputTokens            int64  `json:"input_tokens" gorm:"column:input_tokens"`
+	OutputTokens           int64  `json:"output_tokens" gorm:"column:output_tokens"`
+	InputTokensEst         int    `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est"`
+	NonChatMetrics
+	NonChatUsage *transmodel.NonChatUsageSummary `json:"non_chat_usage,omitempty" gorm:"serializer:json;type:text"`
+
 	OutputTokensEst           int              `json:"output_tokens_est,omitempty" gorm:"column:output_tokens_est"`
 	ImageCount                int              `json:"image_count,omitempty" gorm:"column:image_count"`
 	SemanticCacheHit          bool             `json:"semantic_cache_hit" gorm:"column:semantic_cache_hit"`
@@ -223,5 +231,14 @@ func (r *RelayLog) ToListItem() RelayLogListItem {
 		Attempts:                  r.Attempts,
 		TotalAttempts:             r.TotalAttempts,
 		IsTest:                    r.IsTest,
+		NonChatMetrics:            r.NonChatMetrics,
+		NonChatUsage:              r.NonChatUsage,
 	}
+}
+
+// TotalTokens adds the non-attributed evidence token count to the legacy
+// prompt/completion totals. BilledToken is a classification of counted tokens
+// and is intentionally excluded.
+func (r *RelayLog) TotalTokens() int64 {
+	return r.InputTokens + r.OutputTokens + r.UnattributedToken
 }

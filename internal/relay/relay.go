@@ -535,13 +535,20 @@ func (ra *relayAttempt) attempt() attemptResult {
 		span.End(dbmodel.AttemptSuccess, statusCode, "")
 
 		// Channel 维度统计
-		updateChannelSuccessStats(ra.channel.ID, span.Duration().Milliseconds(), ra.metrics.Stats)
+		attemptAccounting := ra.metrics.Stats
+		if ra.internalRequest.EmbeddingInput != nil {
+			// Non-chat quantities and usage belong to the business request, once.
+			// Save also accounts for a completed upstream response whose downstream write failed.
+			attemptAccounting = dbmodel.StatsMetrics{}
+		}
+		updateChannelSuccessStats(ra.channel.ID, span.Duration().Milliseconds(), attemptAccounting)
 		st.ModelRecord(ra.channel.ID, ra.internalRequest.Model, dbmodel.StatsMetrics{
 			WaitTime:       span.Duration().Milliseconds(),
-			InputToken:     ra.metrics.Stats.InputToken,
-			OutputToken:    ra.metrics.Stats.OutputToken,
-			InputCost:      ra.metrics.Stats.InputCost,
-			OutputCost:     ra.metrics.Stats.OutputCost,
+			NonChatMetrics: attemptAccounting.NonChatMetrics,
+			InputToken:     attemptAccounting.InputToken,
+			OutputToken:    attemptAccounting.OutputToken,
+			InputCost:      attemptAccounting.InputCost,
+			OutputCost:     attemptAccounting.OutputCost,
 			RequestSuccess: 1,
 		})
 
@@ -1020,11 +1027,15 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, *firstVi
 		trace.markUpstreamSendStarted(ra.logAttemptNumber)
 	}
 
+	if ra.internalRequest.IsEmbeddingRequest() {
+		req = model.StartNonChatTiming(req)
+	}
 	response, err := httpClient.Do(req)
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to send request: %v", err)
 		return nil, dispatchGuard, err
 	}
+	model.AttachNonChatTiming(response, req)
 	dispatchGuard.ResponseHeadersReceived()
 
 	return response, dispatchGuard, nil

@@ -7,6 +7,7 @@ import (
 
 func updateChannelSuccessStats(channelID int, waitTimeMs int64, metrics dbmodel.StatsMetrics) {
 	stats.ChannelUpdate(channelID, dbmodel.StatsMetrics{
+		NonChatMetrics: metrics.NonChatMetrics,
 		WaitTime:       waitTimeMs,
 		InputToken:     metrics.InputToken,
 		OutputToken:    metrics.OutputToken,

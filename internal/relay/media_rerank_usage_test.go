@@ -48,6 +48,7 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 		status, input, output int
 		noEndpoint            bool
 	}{
+		{"total_only", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"total_tokens":1000}}`, m.RelayLogUsageReported, 200, 0, 0, false},
 		{"reported", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":245,"total_tokens":245}}`, m.RelayLogUsageReportedInputOnly, 200, 245, 0, false},
 		{"reported_output", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"input_tokens":245,"output_tokens":3,"total_tokens":248}}`, m.RelayLogUsageReportedFull, 200, 245, 3, false},
 		{"tokens_envelope", `{"results":[{"index":0,"relevance_score":0.9}],"tokens":{"input_tokens":245,"output_tokens":3}}`, m.RelayLogUsageReportedFull, 200, 245, 3, false},
@@ -112,7 +113,7 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 					t.Fatalf("unroutable request recorded as success: error=%q before=%#v after=%#v", got.Error, before, after)
 				}
 			}
-			if got.UsageState != tc.state || got.InputTokens != tc.input || got.OutputTokens != tc.output {
+			if got.UsageState != tc.state || got.InputTokens != int64(tc.input) || got.OutputTokens != int64(tc.output) {
 				t.Fatalf("usage=%s %d/%d", got.UsageState, got.InputTokens, got.OutputTokens)
 			}
 			if tc.status == 200 && (rr.Body.String() != tc.body || got.ClientWriteBytes != int64(len(tc.body)) || !got.ClientWriteComplete) {
@@ -122,9 +123,19 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 			if tc.status == 200 {
 				wantSuccess, wantFailed = 1, 0
 			}
+			wantUnattributed := int64(0)
+			if tc.name == "total_only" {
+				wantUnattributed = 1000
+			}
+			if got.NonChatUsage == nil || got.Diagnostics == nil || got.Diagnostics.NonChatUsage == nil {
+				t.Fatal("missing retained non-chat evidence")
+			}
+			if tc.status == 200 && (got.RerankResultsObserved != 1 || got.RerankResults != 1 || got.NonChatUsage.FirstByteMS == nil || got.NonChatUsage.ResponseMS == nil) {
+				t.Fatalf("missing result or timing observations: %+v", got.NonChatUsage)
+			}
 			checkMetrics := func(label string, got m.StatsMetrics) {
 				t.Helper()
-				if got.InputToken != int64(tc.input) || got.OutputToken != int64(tc.output) || got.RequestSuccess != wantSuccess || got.RequestFailed != wantFailed {
+				if got.UnattributedToken != wantUnattributed || got.RerankDocuments != 1 || got.RerankDocumentsObserved != 1 || got.InputToken != int64(tc.input) || got.OutputToken != int64(tc.output) || got.RequestSuccess != wantSuccess || got.RequestFailed != wantFailed {
 					t.Errorf("%s: got %#v, want tokens=%d success=%d failed=%d", label, got, tc.input, wantSuccess, wantFailed)
 				}
 			}
@@ -171,30 +182,26 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 
 func TestRerankUsageDoesNotInventTokens(t *testing.T) {
 	for _, body := range []string{
-		`{}`, `{"usage":null}`, `{"usage":{"total_tokens":245}}`,
+		`{}`, `{"usage":null}`,
 		`{"usage":{"prompt_tokens":1.5}}`, `{"usage":{"prompt_tokens":2,"input_tokens":3}}`,
 		`{"usage":{"prompt_tokens":2,"total_tokens":1}}`, `{"error":{},"usage":{"prompt_tokens":2}}`,
 		`{"usage":{"prompt_tokens":2}} trailing`,
 	} {
-		if got := parseMediaRerankUsage([]byte(body)); got.reported {
+		if got := parseMediaRerankUsage([]byte(body)); got.observation.Summary.TotalTokens != nil {
 			t.Errorf("invented valid usage for %s", body)
 		}
 	}
 	for _, body := range []string{`{"usage":{"input_tokens":0,"output_tokens":0}}`, `{"usage":{"prompt_tokens":0,"total_tokens":0}}`} {
-		if got := parseMediaRerankUsage([]byte(body)); !got.reported || got.input != 0 || got.output != 0 {
+		if got := parseMediaRerankUsage([]byte(body)); got.observation.Summary.TotalTokens == nil || *got.observation.Summary.TotalTokens != 0 {
 			t.Errorf("lost explicit zero: %s", body)
 		}
 	}
-	capture := &mediaRerankUsageCapture{}
-	payload := []byte(strings.Repeat("x", mediaRerankUsageMaxBytes+1))
-	if n, err := capture.Write(payload); err != nil || n != len(payload) || !capture.oversized || capture.Len() != 0 {
-		t.Fatal("usage capture truncated forwarding or kept oversized content")
-	}
+
 }
 
 func TestRerankUsageReadsProviderTokensEnvelope(t *testing.T) {
 	got := parseMediaRerankUsage([]byte(`{"results":[{"index":0,"relevance_score":0.9}],"tokens":{"input_tokens":245,"output_tokens":3}}`))
-	if !got.reported || got.input != 245 || got.output != 3 {
+	if got.observation.Usage() == nil || got.observation.Usage().PromptTokens != 245 || got.observation.Usage().CompletionTokens != 3 {
 		t.Fatalf("lost provider tokens envelope: %#v", got)
 	}
 }

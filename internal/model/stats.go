@@ -1,6 +1,8 @@
 package model
 
 type StatsMetrics struct {
+	NonChatMetrics
+
 	InputToken     int64   `json:"input_token" gorm:"bigint"`
 	OutputToken    int64   `json:"output_token" gorm:"bigint"`
 	InputCost      float64 `json:"input_cost" gorm:"type:real"`
@@ -91,6 +93,7 @@ type StatsAPIKey struct {
 
 // Add aggregates another StatsMetrics into the current one.
 func (s *StatsMetrics) Add(delta StatsMetrics) {
+	s.NonChatMetrics.Add(delta.NonChatMetrics)
 	s.InputToken += delta.InputToken
 	s.OutputToken += delta.OutputToken
 	s.InputCost += delta.InputCost
@@ -142,7 +145,8 @@ func (s *StatsMetrics) Add(delta StatsMetrics) {
 // at startup, so dropping a non-zero entry would make that model's stats
 // "disappear" from the UI until the next restart.
 func (s StatsMetrics) IsZero() bool {
-	return s.InputToken == 0 &&
+	return s.NonChatMetrics.IsZero() &&
+		s.InputToken == 0 &&
 		s.OutputToken == 0 &&
 		s.InputCost == 0 &&
 		s.OutputCost == 0 &&
@@ -161,4 +165,11 @@ func (s StatsMetrics) IsZero() bool {
 		s.Histogram500to1k == 0 &&
 		s.Histogram1kto5k == 0 &&
 		s.HistogramGt5k == 0
+}
+
+// TotalTokens is the additive token count for authorization and display.
+// BilledToken is a classification of already-counted fallback tokens and is
+// therefore not added a second time.
+func (s StatsMetrics) TotalTokens() int64 {
+	return s.InputToken + s.OutputToken + s.UnattributedToken
 }

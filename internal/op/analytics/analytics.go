@@ -23,6 +23,7 @@ import (
 const analyticsRouteHealthFailureWindow = 24 * time.Hour
 
 type analyticsSummaryRow struct {
+	model.NonChatMetrics
 	InputTokens    int64   `gorm:"column:input_tokens"`
 	OutputTokens   int64   `gorm:"column:output_tokens"`
 	TotalCost      float64 `gorm:"column:total_cost"`
@@ -32,7 +33,38 @@ type analyticsSummaryRow struct {
 	FallbackCount  int64   `gorm:"column:fallback_count"`
 }
 
+var analyticsNonChatColumns = []string{
+	"unattributed_token",
+	"billed_token",
+	"usage_reported_requests",
+	"usage_partial_requests",
+	"usage_billed_requests",
+	"usage_invalid_requests",
+	"embedding_input_items",
+	"embedding_input_observed",
+	"embedding_vectors",
+	"embedding_vectors_observed",
+	"rerank_documents",
+	"rerank_documents_observed",
+	"rerank_results",
+	"rerank_results_observed",
+}
+
+func analyticsNonChatSelect(prefix string) string {
+	expressions := make([]string, 0, len(analyticsNonChatColumns))
+	for _, columnName := range analyticsNonChatColumns {
+		column := columnName
+		if prefix != "" {
+			column = prefix + "." + columnName
+		}
+		expressions = append(expressions, "COALESCE(SUM("+column+"), 0) AS "+columnName)
+	}
+	return strings.Join(expressions, ", ")
+}
+
 type analyticsProviderAggregateRow struct {
+	model.NonChatMetrics
+
 	ChannelID      int     `gorm:"column:channel_id"`
 	ChannelName    string  `gorm:"column:channel_name"`
 	InputTokens    int64   `gorm:"column:input_tokens"`
@@ -43,6 +75,8 @@ type analyticsProviderAggregateRow struct {
 }
 
 type analyticsModelAggregateRow struct {
+	model.NonChatMetrics
+
 	ModelName      string  `gorm:"column:model_name"`
 	InputTokens    int64   `gorm:"column:input_tokens"`
 	OutputTokens   int64   `gorm:"column:output_tokens"`
@@ -52,6 +86,8 @@ type analyticsModelAggregateRow struct {
 }
 
 type analyticsAPIKeyAggregateRow struct {
+	model.NonChatMetrics
+
 	APIKeyID       int     `gorm:"column:api_key_id"`
 	Name           string  `gorm:"column:name"`
 	InputTokens    int64   `gorm:"column:input_tokens"`
@@ -62,6 +98,8 @@ type analyticsAPIKeyAggregateRow struct {
 }
 
 type analyticsChannelModelAggregateRow struct {
+	model.NonChatMetrics
+
 	ChannelID      int     `gorm:"column:channel_id"`
 	ChannelName    string  `gorm:"column:channel_name"`
 	ModelName      string  `gorm:"column:model_name"`
@@ -439,12 +477,13 @@ func buildAnalyticsOverview(
 
 	return model.AnalyticsOverview{
 		AnalyticsMetrics: model.AnalyticsMetrics{
-			RequestCount: requestCount,
-			TotalTokens:  metrics.InputToken + metrics.OutputToken,
-			InputTokens:  metrics.InputToken,
-			OutputTokens: metrics.OutputToken,
-			TotalCost:    metrics.InputCost + metrics.OutputCost,
-			SuccessRate:  successRate,
+			NonChatMetrics: metrics.NonChatMetrics,
+			RequestCount:   requestCount,
+			TotalTokens:    metrics.TotalTokens(),
+			InputTokens:    metrics.InputToken,
+			OutputTokens:   metrics.OutputToken,
+			TotalCost:      metrics.InputCost + metrics.OutputCost,
+			SuccessRate:    successRate,
 		},
 		ProviderCount:        providerCount,
 		APIKeyCount:          apiKeyCount,
@@ -486,12 +525,13 @@ func buildProviderBreakdown(rows map[int]*analyticsProviderAggregateRow, channel
 			ChannelName: channelName,
 			Enabled:     enabled,
 			AnalyticsMetrics: model.AnalyticsMetrics{
-				RequestCount: requestCount,
-				TotalTokens:  row.InputTokens + row.OutputTokens,
-				InputTokens:  row.InputTokens,
-				OutputTokens: row.OutputTokens,
-				TotalCost:    row.TotalCost,
-				SuccessRate:  successRate,
+				NonChatMetrics: row.NonChatMetrics,
+				RequestCount:   requestCount,
+				TotalTokens:    model.StatsMetrics{InputToken: row.InputTokens, OutputToken: row.OutputTokens, NonChatMetrics: row.NonChatMetrics}.TotalTokens(),
+				InputTokens:    row.InputTokens,
+				OutputTokens:   row.OutputTokens,
+				TotalCost:      row.TotalCost,
+				SuccessRate:    successRate,
 			},
 		})
 	}
@@ -529,12 +569,13 @@ func buildModelBreakdown(rows map[string]*analyticsModelAggregateRow) []model.An
 		items = append(items, model.AnalyticsModelBreakdownItem{
 			ModelName: modelName,
 			AnalyticsMetrics: model.AnalyticsMetrics{
-				RequestCount: requestCount,
-				TotalTokens:  row.InputTokens + row.OutputTokens,
-				InputTokens:  row.InputTokens,
-				OutputTokens: row.OutputTokens,
-				TotalCost:    row.TotalCost,
-				SuccessRate:  successRate,
+				NonChatMetrics: row.NonChatMetrics,
+				RequestCount:   requestCount,
+				TotalTokens:    model.StatsMetrics{InputToken: row.InputTokens, OutputToken: row.OutputTokens, NonChatMetrics: row.NonChatMetrics}.TotalTokens(),
+				InputTokens:    row.InputTokens,
+				OutputTokens:   row.OutputTokens,
+				TotalCost:      row.TotalCost,
+				SuccessRate:    successRate,
 			},
 		})
 	}
@@ -576,12 +617,13 @@ func buildAPIKeyBreakdown(rows map[string]*analyticsAPIKeyAggregateRow) []model.
 		item := model.AnalyticsAPIKeyBreakdownItem{
 			Name: name,
 			AnalyticsMetrics: model.AnalyticsMetrics{
-				RequestCount: requestCount,
-				TotalTokens:  row.InputTokens + row.OutputTokens,
-				InputTokens:  row.InputTokens,
-				OutputTokens: row.OutputTokens,
-				TotalCost:    row.TotalCost,
-				SuccessRate:  successRate,
+				NonChatMetrics: row.NonChatMetrics,
+				RequestCount:   requestCount,
+				TotalTokens:    model.StatsMetrics{InputToken: row.InputTokens, OutputToken: row.OutputTokens, NonChatMetrics: row.NonChatMetrics}.TotalTokens(),
+				InputTokens:    row.InputTokens,
+				OutputTokens:   row.OutputTokens,
+				TotalCost:      row.TotalCost,
+				SuccessRate:    successRate,
 			},
 		}
 		if row.APIKeyID > 0 {
@@ -634,12 +676,13 @@ func buildChannelModelBreakdown(rows map[string]*analyticsChannelModelAggregateR
 			ModelName:   row.ModelName,
 			Enabled:     enabled,
 			AnalyticsMetrics: model.AnalyticsMetrics{
-				RequestCount: requestCount,
-				TotalTokens:  row.InputTokens + row.OutputTokens,
-				InputTokens:  row.InputTokens,
-				OutputTokens: row.OutputTokens,
-				TotalCost:    row.TotalCost,
-				SuccessRate:  successRate,
+				NonChatMetrics: row.NonChatMetrics,
+				RequestCount:   requestCount,
+				TotalTokens:    model.StatsMetrics{InputToken: row.InputTokens, OutputToken: row.OutputTokens, NonChatMetrics: row.NonChatMetrics}.TotalTokens(),
+				InputTokens:    row.InputTokens,
+				OutputTokens:   row.OutputTokens,
+				TotalCost:      row.TotalCost,
+				SuccessRate:    successRate,
 			},
 		})
 	}
@@ -1045,6 +1088,7 @@ func loadAnalyticsChannelModelRows(ctx context.Context, r model.AnalyticsRange, 
 			model_name,
 			COALESCE(SUM(input_token), 0) AS input_tokens,
 			COALESCE(SUM(output_token), 0) AS output_tokens,
+				` + analyticsNonChatSelect("") + `,
 			COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
 			COALESCE(SUM(request_success), 0) AS request_success,
 			COALESCE(SUM(request_failed), 0) AS request_failed
@@ -1084,6 +1128,7 @@ func loadAnalyticsChannelModelRows(ctx context.Context, r model.AnalyticsRange, 
 func mergeRelayLogIntoChannelModelRows(rows map[string]*analyticsChannelModelAggregateRow, log *model.RelayLog, inScope func(int, string) bool) {
 	success := log.Error == ""
 	if len(log.Attempts) > 0 {
+		nonChat := !log.NonChatMetrics.IsZero()
 		for _, a := range log.Attempts {
 			if a.ChannelID == 0 {
 				continue
@@ -1111,7 +1156,7 @@ func mergeRelayLogIntoChannelModelRows(rows map[string]*analyticsChannelModelAgg
 			if a.Status == model.AttemptSuccess {
 				row.RequestSuccess++
 				// token/cost 仅在整体成功时计入该渠道（避免重复计入）。
-				if success {
+				if success && !nonChat {
 					row.InputTokens += int64(log.InputTokens)
 					row.OutputTokens += int64(log.OutputTokens)
 					row.TotalCost += log.Cost
@@ -1120,6 +1165,9 @@ func mergeRelayLogIntoChannelModelRows(rows map[string]*analyticsChannelModelAgg
 			if row.ChannelName == "" {
 				row.ChannelName = a.ChannelName
 			}
+		}
+		if nonChat {
+			addNonChatChannelModelAmounts(rows, log, inScope)
 		}
 		return
 	}
@@ -1137,17 +1185,43 @@ func mergeRelayLogIntoChannelModelRows(rows map[string]*analyticsChannelModelAgg
 		row = &analyticsChannelModelAggregateRow{ChannelID: log.ChannelId, ModelName: modelName}
 		rows[key] = row
 	}
+	row.NonChatMetrics.Add(log.NonChatMetrics)
 	if success {
 		row.RequestSuccess++
-		row.InputTokens += int64(log.InputTokens)
-		row.OutputTokens += int64(log.OutputTokens)
-		row.TotalCost += log.Cost
 	} else {
 		row.RequestFailed++
+	}
+	if success || !log.NonChatMetrics.IsZero() {
+		row.InputTokens += log.InputTokens
+		row.OutputTokens += log.OutputTokens
+		row.TotalCost += log.Cost
 	}
 	if row.ChannelName == "" {
 		row.ChannelName = log.ChannelName
 	}
+}
+
+func addNonChatChannelModelAmounts(rows map[string]*analyticsChannelModelAggregateRow, entry *model.RelayLog, inScope func(int, string) bool) {
+	name := strings.TrimSpace(entry.ActualModelName)
+	if name == "" {
+		name = strings.TrimSpace(entry.RequestModelName)
+	}
+	if entry.ChannelId == 0 || name == "" || !inScope(entry.ChannelId, name) {
+		return
+	}
+	key := strconv.Itoa(entry.ChannelId) + "\x00" + name
+	row := rows[key]
+	if row == nil {
+		row = &analyticsChannelModelAggregateRow{ChannelID: entry.ChannelId, ModelName: name}
+		rows[key] = row
+	}
+	if row.ChannelName == "" {
+		row.ChannelName = entry.ChannelName
+	}
+	row.NonChatMetrics.Add(entry.NonChatMetrics)
+	row.InputTokens += entry.InputTokens
+	row.OutputTokens += entry.OutputTokens
+	row.TotalCost += entry.Cost
 }
 
 func loadAnalyticsProviderRows(ctx context.Context, r model.AnalyticsRange) (map[int]*analyticsProviderAggregateRow, error) {
@@ -1165,6 +1239,7 @@ func loadAnalyticsProviderRows(ctx context.Context, r model.AnalyticsRange) (map
 			MAX(channel_name) AS channel_name,
 			COALESCE(SUM(input_token), 0) AS input_tokens,
 			COALESCE(SUM(output_token), 0) AS output_tokens,
+			` + analyticsNonChatSelect("") + `,
 			COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
 			COALESCE(SUM(request_success), 0) AS request_success,
 			COALESCE(SUM(request_failed), 0) AS request_failed
@@ -1207,6 +1282,7 @@ func loadAnalyticsModelRows(ctx context.Context, r model.AnalyticsRange) (map[st
 			model_name,
 			COALESCE(SUM(input_token), 0) AS input_tokens,
 			COALESCE(SUM(output_token), 0) AS output_tokens,
+			` + analyticsNonChatSelect("") + `,
 			COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
 			COALESCE(SUM(request_success), 0) AS request_success,
 			COALESCE(SUM(request_failed), 0) AS request_failed
@@ -1255,6 +1331,7 @@ func loadAnalyticsAPIKeyRows(ctx context.Context, r model.AnalyticsRange) (map[s
 			MAX(name) AS name,
 			COALESCE(SUM(input_token), 0) AS input_tokens,
 			COALESCE(SUM(output_token), 0) AS output_tokens,
+			` + analyticsNonChatSelect("") + `,
 			COALESCE(SUM(input_cost + output_cost), 0) AS total_cost,
 			COALESCE(SUM(request_success), 0) AS request_success,
 			COALESCE(SUM(request_failed), 0) AS request_failed
@@ -1294,7 +1371,7 @@ func loadAnalyticsProviderRowsFromRelayLogs(ctx context.Context, r model.Analyti
 	if keepEnabled {
 		var dbRows []analyticsProviderAggregateRow
 		query := relayLogReadConn().WithContext(ctx).Model(&model.RelayLog{}).
-			Select(`channel_id, channel_name, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(cost), 0) AS total_cost, COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success, COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed`).
+			Select(`channel_id, channel_name, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, ` + analyticsNonChatSelect("") + `, COALESCE(SUM(cost), 0) AS total_cost, COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success, COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed`).
 			Group("channel_id, channel_name")
 		if startUnix != nil {
 			query = query.Where("time >= ?", *startUnix)
@@ -1321,6 +1398,7 @@ func loadAnalyticsProviderRowsFromRelayLogs(ctx context.Context, r model.Analyti
 		}
 		row.InputTokens += int64(logItem.InputTokens)
 		row.OutputTokens += int64(logItem.OutputTokens)
+		row.NonChatMetrics.Add(logItem.NonChatMetrics)
 		row.TotalCost += logItem.Cost
 		if logItem.Error == "" {
 			row.RequestSuccess++
@@ -1345,7 +1423,7 @@ func loadAnalyticsModelRowsFromRelayLogs(ctx context.Context, r model.AnalyticsR
 		var dbRows []analyticsModelAggregateRow
 		modelExpr := "COALESCE(NULLIF(actual_model_name, ''), request_model_name)"
 		query := relayLogReadConn().WithContext(ctx).Model(&model.RelayLog{}).
-			Select(modelExpr + ` AS model_name, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(cost), 0) AS total_cost, COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success, COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed`).
+			Select(modelExpr + ` AS model_name, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, ` + analyticsNonChatSelect("") + `, COALESCE(SUM(cost), 0) AS total_cost, COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success, COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed`).
 			Group(modelExpr)
 		if startUnix != nil {
 			query = query.Where("time >= ?", *startUnix)
@@ -1384,6 +1462,7 @@ func loadAnalyticsModelRowsFromRelayLogs(ctx context.Context, r model.AnalyticsR
 		}
 		row.InputTokens += int64(logItem.InputTokens)
 		row.OutputTokens += int64(logItem.OutputTokens)
+		row.NonChatMetrics.Add(logItem.NonChatMetrics)
 		row.TotalCost += logItem.Cost
 		if logItem.Error == "" {
 			row.RequestSuccess++
@@ -1404,7 +1483,7 @@ func loadAnalyticsAPIKeyRowsFromRelayLogs(ctx context.Context, r model.Analytics
 	if keepEnabled {
 		var dbRows []analyticsAPIKeyAggregateRow
 		query := relayLogReadConn().WithContext(ctx).Model(&model.RelayLog{}).
-			Select(`request_api_key_id AS api_key_id, request_api_key_name AS name, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, COALESCE(SUM(cost), 0) AS total_cost, COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success, COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed`).
+			Select(`request_api_key_id AS api_key_id, request_api_key_name AS name, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, ` + analyticsNonChatSelect("") + `, COALESCE(SUM(cost), 0) AS total_cost, COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success, COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed`).
 			Group("request_api_key_id, request_api_key_name")
 		if startUnix != nil {
 			query = query.Where("time >= ?", *startUnix)
@@ -1434,6 +1513,7 @@ func loadAnalyticsAPIKeyRowsFromRelayLogs(ctx context.Context, r model.Analytics
 		}
 		row.InputTokens += int64(logItem.InputTokens)
 		row.OutputTokens += int64(logItem.OutputTokens)
+		row.NonChatMetrics.Add(logItem.NonChatMetrics)
 		row.TotalCost += logItem.Cost
 		if logItem.Error == "" {
 			row.RequestSuccess++
@@ -1504,6 +1584,7 @@ func loadChannelModelRowsFromAttemptsTable(
 	inScope func(int, string) bool,
 ) error {
 	type attemptAggRow struct {
+		model.NonChatMetrics
 		ChannelID      int     `gorm:"column:channel_id"`
 		ChannelName    string  `gorm:"column:channel_name"`
 		ModelName      string  `gorm:"column:model_name"`
@@ -1521,9 +1602,9 @@ func loadChannelModelRowsFromAttemptsTable(
 			a.channel_id,
 			MAX(a.channel_name) AS channel_name,
 			COALESCE(NULLIF(a.model_name, ''), NULLIF(l.actual_model_name, ''), l.request_model_name) AS model_name,
-			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' THEN l.input_tokens ELSE 0 END), 0) AS input_tokens,
-			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' THEN l.output_tokens ELSE 0 END), 0) AS output_tokens,
-			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' THEN l.cost ELSE 0 END), 0) AS total_cost,
+			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' AND l.embedding_input_observed = 0 AND l.rerank_documents_observed = 0 THEN l.input_tokens ELSE 0 END), 0) AS input_tokens,
+			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' AND l.embedding_input_observed = 0 AND l.rerank_documents_observed = 0 THEN l.output_tokens ELSE 0 END), 0) AS output_tokens,
+			COALESCE(SUM(CASE WHEN a.status = ? AND l.error = '' AND l.embedding_input_observed = 0 AND l.rerank_documents_observed = 0 THEN l.cost ELSE 0 END), 0) AS total_cost,
 			COALESCE(SUM(CASE WHEN a.status = ? THEN 1 ELSE 0 END), 0) AS request_success,
 			COALESCE(SUM(CASE WHEN a.status = ? THEN 1 ELSE 0 END), 0) AS request_failed
 		`, string(model.AttemptSuccess), string(model.AttemptSuccess), string(model.AttemptSuccess), string(model.AttemptSuccess), string(model.AttemptFailed)).
@@ -1542,6 +1623,7 @@ func loadChannelModelRowsFromAttemptsTable(
 		}
 		key := strconv.Itoa(row.ChannelID) + "\x00" + modelName
 		rows[key] = &analyticsChannelModelAggregateRow{
+			NonChatMetrics: row.NonChatMetrics,
 			ChannelID:      row.ChannelID,
 			ChannelName:    strings.TrimSpace(row.ChannelName),
 			ModelName:      modelName,
@@ -1551,6 +1633,22 @@ func loadChannelModelRowsFromAttemptsTable(
 			RequestSuccess: row.RequestSuccess,
 			RequestFailed:  row.RequestFailed,
 		}
+	}
+	// Aggregate each non-chat parent once; retries and cancelled lanes only affect health above.
+	var amounts []model.RelayLog
+	amountQuery := conn.WithContext(ctx).Model(&model.RelayLog{}).
+		Select("channel_id, MAX(channel_name) AS channel_name, COALESCE(NULLIF(actual_model_name, ''), request_model_name) AS actual_model_name, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(cost) AS cost, " + analyticsNonChatSelect("")).
+		Where("embedding_input_observed > 0 OR rerank_documents_observed > 0").
+		Where("EXISTS (SELECT 1 FROM relay_log_attempts a WHERE a.relay_log_id = relay_logs.id)").
+		Group("channel_id, COALESCE(NULLIF(actual_model_name, ''), request_model_name)")
+	if startUnix != nil {
+		amountQuery = amountQuery.Where("time >= ?", *startUnix)
+	}
+	if err := amountQuery.Scan(&amounts).Error; err != nil {
+		return err
+	}
+	for i := range amounts {
+		addNonChatChannelModelAmounts(rows, &amounts[i], inScope)
 	}
 	return nil
 }
@@ -1573,6 +1671,7 @@ func loadChannelModelRowsFromTopLevelMissingAttempts(
 			` + modelExpr + ` AS model_name,
 			COALESCE(SUM(input_tokens), 0) AS input_tokens,
 			COALESCE(SUM(output_tokens), 0) AS output_tokens,
+			` + analyticsNonChatSelect("") + `,
 			COALESCE(SUM(cost), 0) AS total_cost,
 			COALESCE(SUM(CASE WHEN error = '' THEN 1 ELSE 0 END), 0) AS request_success,
 			COALESCE(SUM(CASE WHEN error <> '' THEN 1 ELSE 0 END), 0) AS request_failed
@@ -1599,6 +1698,7 @@ func loadChannelModelRowsFromTopLevelMissingAttempts(
 		if existing, ok := rows[key]; ok {
 			existing.InputTokens += row.InputTokens
 			existing.OutputTokens += row.OutputTokens
+			existing.NonChatMetrics.Add(row.NonChatMetrics)
 			existing.TotalCost += row.TotalCost
 			existing.RequestSuccess += row.RequestSuccess
 			existing.RequestFailed += row.RequestFailed
@@ -1629,13 +1729,14 @@ func loadChannelModelRowsFromAttemptsJSONBatched(
 	onlyMissingAttemptsTable bool,
 ) error {
 	type rowWithID struct {
+		model.NonChatMetrics
 		ID               int64                  `gorm:"column:id"`
 		ChannelId        int                    `gorm:"column:channel_id"`
 		ChannelName      string                 `gorm:"column:channel_name"`
 		RequestModelName string                 `gorm:"column:request_model_name"`
 		ActualModelName  string                 `gorm:"column:actual_model_name"`
-		InputTokens      int                    `gorm:"column:input_tokens"`
-		OutputTokens     int                    `gorm:"column:output_tokens"`
+		InputTokens      int64                  `gorm:"column:input_tokens"`
+		OutputTokens     int64                  `gorm:"column:output_tokens"`
 		Cost             float64                `gorm:"column:cost"`
 		Error            string                 `gorm:"column:error"`
 		Attempts         []model.ChannelAttempt `gorm:"column:attempts;serializer:json"`
@@ -1644,7 +1745,7 @@ func loadChannelModelRowsFromAttemptsJSONBatched(
 	for {
 		var idBatch []rowWithID
 		query := conn.WithContext(ctx).Table("relay_logs").
-			Select("id", "channel_id", "channel_name", "request_model_name", "actual_model_name", "input_tokens", "output_tokens", "cost", "error", "attempts").
+			Select("id", "channel_id", "channel_name", "request_model_name", "actual_model_name", "input_tokens", "output_tokens", "unattributed_token", "billed_token", "usage_reported_requests", "usage_partial_requests", "usage_billed_requests", "usage_invalid_requests", "embedding_input_items", "embedding_input_observed", "embedding_vectors", "embedding_vectors_observed", "rerank_documents", "rerank_documents_observed", "rerank_results", "rerank_results_observed", "cost", "error", "attempts").
 			Where("attempts IS NOT NULL AND attempts <> '' AND attempts <> 'null' AND attempts <> '[]'").
 			Order("id ASC").
 			Limit(channelModelAttemptsJSONBatchSize)
@@ -1670,6 +1771,7 @@ func loadChannelModelRowsFromAttemptsJSONBatched(
 				continue
 			}
 			mergeRelayLogIntoChannelModelRows(rows, &model.RelayLog{
+				NonChatMetrics:   lite.NonChatMetrics,
 				ChannelId:        lite.ChannelId,
 				ChannelName:      lite.ChannelName,
 				RequestModelName: lite.RequestModelName,

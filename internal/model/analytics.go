@@ -31,6 +31,8 @@ func ParseAnalyticsRange(raw string) (AnalyticsRange, error) {
 }
 
 type AnalyticsMetrics struct {
+	NonChatMetrics
+
 	RequestCount int64   `json:"request_count"`
 	TotalTokens  int64   `json:"total_tokens"`
 	InputTokens  int64   `json:"input_tokens"`

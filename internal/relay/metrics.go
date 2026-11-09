@@ -60,7 +60,7 @@ type RelayMetrics struct {
 }
 
 func NewRelayMetrics(apiKeyID int, requestModel string, requestedEndpointType string, matchedGroupEndpointType string, clientIP string, userAgent string, req *transformerModel.InternalLLMRequest) *RelayMetrics {
-	return &RelayMetrics{
+	m := &RelayMetrics{
 		APIKeyID:        apiKeyID,
 		RequestModel:    requestModel,
 		EndpointType:    resolveRelayLogEndpointType(requestedEndpointType, matchedGroupEndpointType),
@@ -69,6 +69,11 @@ func NewRelayMetrics(apiKeyID int, requestModel string, requestedEndpointType st
 		StartTime:       time.Now(),
 		InternalRequest: req,
 	}
+	if req != nil && req.EmbeddingInput != nil {
+		m.Stats.EmbeddingInputItems = req.EmbeddingInput.ItemCount()
+		m.Stats.EmbeddingInputObserved = 1
+	}
+	return m
 }
 
 func (m *RelayMetrics) SetUpstreamFirstVisibleTime(t time.Time) {
@@ -115,6 +120,17 @@ func (m *RelayMetrics) SetInternalResponse(resp *transformerModel.InternalLLMRes
 	m.InternalResponse = resp
 	m.ActualModel = actualModel
 
+	if resp != nil && resp.NonChatObservation != nil {
+		summary := resp.NonChatObservation.Summary
+		if m.InternalRequest != nil && m.InternalRequest.EmbeddingInput != nil {
+			n := m.InternalRequest.EmbeddingInput.ItemCount()
+			summary.Counts.EmbeddingInputItems = &n
+		}
+		m.Stats.NonChatMetrics = model.NonChatAccounting(summary).NonChatMetrics
+		if len(resp.NonChatObservation.Issues) > 0 {
+			m.Stats.UsageInvalidRequests = 1
+		}
+	}
 	if resp == nil || resp.Usage == nil {
 		return
 	}
@@ -170,11 +186,12 @@ func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAtt
 	useTimeMs := duration.Milliseconds()
 
 	globalStats := model.StatsMetrics{
-		WaitTime:    useTimeMs,
-		InputToken:  m.Stats.InputToken,
-		OutputToken: m.Stats.OutputToken,
-		InputCost:   m.Stats.InputCost,
-		OutputCost:  m.Stats.OutputCost,
+		NonChatMetrics: m.Stats.NonChatMetrics,
+		WaitTime:       useTimeMs,
+		InputToken:     m.Stats.InputToken,
+		OutputToken:    m.Stats.OutputToken,
+		InputCost:      m.Stats.InputCost,
+		OutputCost:     m.Stats.OutputCost,
 	}
 	if success {
 		globalStats.RequestSuccess = 1
@@ -212,6 +229,14 @@ func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAtt
 	globalStats.LatencyP99 = int64(snap.P99LatencyMs)
 
 	channelID, channelName := finalChannel(attempts)
+	if m.InternalRequest != nil && m.InternalRequest.EmbeddingInput != nil && m.ActualModel == "" {
+		for i := len(attempts) - 1; i >= 0; i-- {
+			if attempts[i].ChannelID == channelID && attempts[i].ModelName != "" {
+				m.ActualModel = attempts[i].ModelName
+				break
+			}
+		}
+	}
 	stats.TotalUpdate(globalStats)
 	stats.HourlyUpdate(globalStats)
 	if statsErr := stats.DailyUpdate(ctx, globalStats); statsErr != nil {
@@ -222,6 +247,13 @@ func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAtt
 	actualModel := m.ActualModel
 	if actualModel == "" {
 		actualModel = m.RequestModel
+	}
+	if channelID != 0 && m.InternalRequest != nil && m.InternalRequest.EmbeddingInput != nil {
+		amount := model.StatsMetrics{NonChatMetrics: m.Stats.NonChatMetrics,
+			InputToken: m.Stats.InputToken, OutputToken: m.Stats.OutputToken,
+			InputCost: m.Stats.InputCost, OutputCost: m.Stats.OutputCost}
+		stats.ChannelUpdate(channelID, amount)
+		stats.ModelRecord(channelID, actualModel, amount)
 	}
 	m.recordDailyDimensions(ctx, globalStats, attempts, channelID, channelName, actualModel)
 
@@ -317,6 +349,7 @@ func (m *RelayMetrics) recordDailyChannelModelDimensions(ctx context.Context, re
 		}
 		return
 	}
+	nonChat := !requestStats.NonChatMetrics.IsZero()
 	for _, attempt := range attempts {
 		if attempt.ChannelID == 0 {
 			continue
@@ -332,10 +365,12 @@ func (m *RelayMetrics) recordDailyChannelModelDimensions(ctx context.Context, re
 		switch attempt.Status {
 		case model.AttemptSuccess:
 			attemptStats.RequestSuccess = 1
-			attemptStats.InputToken = requestStats.InputToken
-			attemptStats.OutputToken = requestStats.OutputToken
-			attemptStats.InputCost = requestStats.InputCost
-			attemptStats.OutputCost = requestStats.OutputCost
+			if !nonChat {
+				attemptStats.InputToken = requestStats.InputToken
+				attemptStats.OutputToken = requestStats.OutputToken
+				attemptStats.InputCost = requestStats.InputCost
+				attemptStats.OutputCost = requestStats.OutputCost
+			}
 		case model.AttemptFailed:
 			attemptStats.RequestFailed = 1
 		case model.AttemptCancelled:
@@ -347,6 +382,14 @@ func (m *RelayMetrics) recordDailyChannelModelDimensions(ctx context.Context, re
 		}
 		if err := stats.DailyDimensionChannelModelUpdate(ctx, attempt.ChannelID, attempt.ChannelName, modelName, attemptStats); err != nil {
 			log.Warnf("failed to update daily channel-model stats: %v", err)
+		}
+	}
+	if nonChat && channelID != 0 {
+		amount := model.StatsMetrics{NonChatMetrics: requestStats.NonChatMetrics,
+			InputToken: requestStats.InputToken, OutputToken: requestStats.OutputToken,
+			InputCost: requestStats.InputCost, OutputCost: requestStats.OutputCost}
+		if err := stats.DailyDimensionChannelModelUpdate(ctx, channelID, channelName, actualModel, amount); err != nil {
+			log.Warnf("failed to update daily channel-model quantities: %v", err)
 		}
 	}
 }
@@ -410,8 +453,8 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 
 	// Usage
 	if m.InternalResponse != nil && m.InternalResponse.Usage != nil {
-		relayLog.InputTokens = int(m.Stats.InputToken)
-		relayLog.OutputTokens = int(m.Stats.OutputToken)
+		relayLog.InputTokens = m.Stats.InputToken
+		relayLog.OutputTokens = m.Stats.OutputToken
 		relayLog.Cost = m.Stats.InputCost + m.Stats.OutputCost
 		if m.InternalResponse.Usage.CompletionTokensDetails != nil {
 			relayLog.ReasoningTokens = int(max(0, m.InternalResponse.Usage.CompletionTokensDetails.ReasoningTokens))
@@ -420,7 +463,22 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 
 	// v2.8.13：上游漏报某个方向的用量时，按可见文本估算填充（只做展示补充，
 	// 不参与计费、统计聚合与 usage_state 判定，见 usage_estimate.go）。
-	applyUsageEstimate(&relayLog, m, actualModel)
+	if m.InternalResponse != nil && m.InternalResponse.NonChatObservation != nil {
+		counts := transformerModel.NonChatCounts{}
+		if m.InternalRequest != nil && m.InternalRequest.EmbeddingInput != nil {
+			n := m.InternalRequest.EmbeddingInput.ItemCount()
+			counts.EmbeddingInputItems = &n
+		}
+		relayLog.SetNonChatObservation(m.InternalResponse.NonChatObservation, counts)
+	} else if m.InternalRequest != nil && m.InternalRequest.EmbeddingInput != nil {
+		n := m.InternalRequest.EmbeddingInput.ItemCount()
+		absent := &transformerModel.NonChatObservation{ResponseState: "not_observed", Summary: transformerModel.NonChatUsageSummary{Basis: "missing", Completeness: "missing"}}
+		previousState := relayLog.UsageState
+		relayLog.SetNonChatObservation(absent, transformerModel.NonChatCounts{EmbeddingInputItems: &n})
+		relayLog.UsageState = previousState
+	} else {
+		applyUsageEstimate(&relayLog, m, actualModel)
+	}
 
 	// v2.8.14：客户端请求内的图片数量（日志「含图 ×N」标注与 has_image 筛选，
 	// 与内容留存开关无关，见 metrics_image_count.go）。
@@ -550,12 +608,20 @@ func resolveUsageState(resp *transformerModel.InternalLLMResponse, relayErr erro
 		// report, even when the same terminal envelope includes token counts.
 		return model.RelayLogUsageProviderFailed
 	}
-	if resp != nil && resp.Usage != nil && resp.Usage.NonChatOutputReported != nil {
-		if *resp.Usage.NonChatOutputReported {
+	if resp != nil && resp.NonChatObservation != nil {
+		s := resp.NonChatObservation.Summary
+		if s.TotalTokens == nil {
+			return model.RelayLogUsageNotReported
+		}
+		if s.InputTokens != nil && s.OutputTokens != nil {
 			return model.RelayLogUsageReportedFull
 		}
-		return model.RelayLogUsageReportedInputOnly
+		if s.InputTokens != nil {
+			return model.RelayLogUsageReportedInputOnly
+		}
+		return model.RelayLogUsageReported
 	}
+
 	if resp != nil && resp.Usage != nil && resp.Usage.PromptTokens > 0 {
 		return model.RelayLogUsageReported
 	}

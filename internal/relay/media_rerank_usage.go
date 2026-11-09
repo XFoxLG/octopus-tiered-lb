@@ -2,66 +2,76 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
-
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/transformer/model"
+	"io"
+	"net/http"
 )
 
 const mediaRerankUsageKey = "relay_rerank_usage"
-const mediaRerankUsageMaxBytes = 1 << 20
 
-type mediaRerankUsage struct {
-	input, output  int
-	reported       bool
-	outputReported bool
-}
+type mediaRerankUsage struct{ observation *model.NonChatObservation }
 
 func mediaRerankUsageFromContext(c *gin.Context) mediaRerankUsage {
-	value, _ := c.Get(mediaRerankUsageKey)
-	usage, _ := value.(mediaRerankUsage)
-	return usage
+	v, _ := c.Get(mediaRerankUsageKey)
+	u, _ := v.(mediaRerankUsage)
+	return u
 }
 
-// This bounded observation never truncates or rewrites the downstream response.
-// Oversized or incomplete JSON simply has no trustworthy usage observation.
-type mediaRerankUsageCapture struct {
-	bytes.Buffer
-	oversized bool
+type rerankForwardReader struct {
+	body   io.Reader
+	writer io.Writer
+	err    error
 }
 
-func (capture *mediaRerankUsageCapture) Write(payload []byte) (int, error) {
-	if !capture.oversized {
-		if capture.Len()+len(payload) > mediaRerankUsageMaxBytes {
-			capture.oversized = true
-			capture.Reset()
-		} else {
-			_, _ = capture.Buffer.Write(payload)
+func (r *rerankForwardReader) Read(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+	n, e := r.body.Read(p)
+	if n > 0 {
+		written, we := r.writer.Write(p[:n])
+		if we == nil && written != n {
+			we = io.ErrShortWrite
+		}
+		if we != nil {
+			r.err = we
+			return 0, we
 		}
 	}
-	return len(payload), nil
+	if e != nil && e != io.EOF {
+		r.err = e
+	}
+	return n, e
 }
-
 func handleRerankResponse(c *gin.Context, response *http.Response) (int, error) {
 	if ct := response.Header.Get("Content-Type"); ct != "" {
 		c.Header("Content-Type", ct)
 	}
-	var capture mediaRerankUsageCapture
-	if _, err := io.Copy(c.Writer, io.TeeReader(response.Body, &capture)); err != nil {
-		return 0, writeErrorOutcome(c, fmt.Errorf("failed to stream response: %w", err))
+	stop := context.AfterFunc(c.Request.Context(), func() { _ = response.Body.Close() })
+	defer stop()
+	r := &rerankForwardReader{body: response.Body, writer: c.Writer}
+	o := model.ObserveNonChatResponse(r, "rerank")
+	// Observation failures do not alter the original response bytes.
+	if r.err == nil {
+		_, _ = io.Copy(io.Discard, r)
 	}
-	if !capture.oversized {
-		c.Set(mediaRerankUsageKey, parseMediaRerankUsage(capture.Bytes()))
+	if r.err != nil {
+		o.ResponseState = "interrupted"
+		o.Summary.Completeness = "invalid"
+		o.Summary.NonChatCounters = model.NonChatCounters{}
+		o.Summary.Counts = model.NonChatCounts{}
+		o.Issues = append(o.Issues, model.NonChatUsageIssue{Path: "$", Reason: "response_interrupted"})
+	}
+	model.ApplyNonChatTiming(o, response)
+	c.Set(mediaRerankUsageKey, mediaRerankUsage{observation: o})
+	if r.err != nil {
+		return 0, writeErrorOutcome(c, fmt.Errorf("failed to stream response: %w", r.err))
 	}
 	return response.StatusCode, nil
 }
-
 func parseMediaRerankUsage(body []byte) mediaRerankUsage {
-	usage := model.ParseNonChatTokenUsage(body)
-	if usage == nil {
-		return mediaRerankUsage{}
-	}
-	return mediaRerankUsage{input: int(usage.PromptTokens), output: int(usage.CompletionTokens), reported: true, outputReported: *usage.NonChatOutputReported}
+	return mediaRerankUsage{observation: model.ObserveNonChatResponse(bytes.NewReader(body), "rerank")}
 }
