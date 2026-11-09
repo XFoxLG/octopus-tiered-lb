@@ -48,8 +48,10 @@ func TestRerankRequestPersistsOneLogWithReportedUsage(t *testing.T) {
 		status, input, output int
 		noEndpoint            bool
 	}{
-		{"reported", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":245,"total_tokens":245}}`, m.RelayLogUsageReported, 200, 245, 0, false},
-		{"reported_output", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"input_tokens":245,"output_tokens":3,"total_tokens":248}}`, m.RelayLogUsageReported, 200, 245, 3, false},
+		{"reported", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":245,"total_tokens":245}}`, m.RelayLogUsageReportedInputOnly, 200, 245, 0, false},
+		{"reported_output", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"input_tokens":245,"output_tokens":3,"total_tokens":248}}`, m.RelayLogUsageReportedFull, 200, 245, 3, false},
+		{"tokens_envelope", `{"results":[{"index":0,"relevance_score":0.9}],"tokens":{"input_tokens":245,"output_tokens":3}}`, m.RelayLogUsageReportedFull, 200, 245, 3, false},
+		{"explicit_zero_output", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"input_tokens":245,"output_tokens":0}}`, m.RelayLogUsageReportedFull, 200, 245, 0, false},
 		{"missing", `{"results":[{"index":0,"relevance_score":0.9}]}`, m.RelayLogUsageNotReported, 200, 0, 0, false},
 		{"invalid_usage", `{"results":[{"index":0,"relevance_score":0.9}],"usage":{"prompt_tokens":-1}}`, m.RelayLogUsageNotReported, 200, 0, 0, false},
 		{"upstream_error", `{"error":{"message":"invalid request"}}`, m.RelayLogUsageFailedNoResponse, 400, 0, 0, false},
@@ -187,5 +189,12 @@ func TestRerankUsageDoesNotInventTokens(t *testing.T) {
 	payload := []byte(strings.Repeat("x", mediaRerankUsageMaxBytes+1))
 	if n, err := capture.Write(payload); err != nil || n != len(payload) || !capture.oversized || capture.Len() != 0 {
 		t.Fatal("usage capture truncated forwarding or kept oversized content")
+	}
+}
+
+func TestRerankUsageReadsProviderTokensEnvelope(t *testing.T) {
+	got := parseMediaRerankUsage([]byte(`{"results":[{"index":0,"relevance_score":0.9}],"tokens":{"input_tokens":245,"output_tokens":3}}`))
+	if !got.reported || got.input != 245 || got.output != 3 {
+		t.Fatalf("lost provider tokens envelope: %#v", got)
 	}
 }

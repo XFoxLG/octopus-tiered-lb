@@ -2912,6 +2912,7 @@
       "clientDisconnectedHint": "這次請求是用戶端自己取消的，不是渠道故障",
       "firstToken": "首字",
       "totalTime": "總耗時",
+      "nonChatOutputUnspecifiedHint": "這條記錄沒有單獨的輸出 Token 計數。嵌入回傳向量，重排回傳分數；維度與結果筆數不是輸出 Token。已回報的輸入用量仍計入統計。",
       "input": "輸入",
       "totalTokens": "總消耗",
       "cacheHit": "命中快取",

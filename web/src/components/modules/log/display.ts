@@ -257,7 +257,7 @@ export function resolveOutboundMaxTokens(
 }
 
 export function resolveLogInvestigationMarkers(
-    log: Pick<RelayLog, 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes' | 'reasoning_tokens'> & {
+    log: Pick<RelayLog, 'endpoint_type' | 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes' | 'reasoning_tokens'> & {
         upstream_model?: string | null;
         actual_model_name?: string | null;
     },
@@ -302,6 +302,7 @@ export function resolveLogInvestigationMarkers(
     const explainedNoOutput = ['content_filter', 'refusal', 'prompt_blocked'].includes(terminationCause);
     const emptyOutputByUsage = usageState === 'empty_output';
     const zeroTokensReported =
+        !isNonChatTokenEndpoint(log.endpoint_type) &&
         outputTokens === 0 &&
         (usageState === 'reported' || usageState === 'not_reported') &&
         !explainedNoOutput;
@@ -377,6 +378,27 @@ export function resolveEffectiveTokenCounts(
         outputEstimated: outputEst > 0,
         estimated: inputEst > 0 || outputEst > 0,
     };
+}
+
+function isNonChatTokenEndpoint(endpoint: string | undefined): boolean {
+    return endpoint === 'embeddings' || endpoint === 'rerank';
+}
+
+export function isReportedTokenUsage(state: string | undefined): boolean {
+    return state === 'reported' || state === 'reported_input_only' || state === 'reported_full';
+}
+
+/** Old non-chat rows did not retain output-field presence. A stored zero alone
+ * cannot distinguish an explicit zero from an omitted provider counter. */
+export function resolveNonChatTokenDisplay(
+    log: Pick<RelayLog, 'endpoint_type' | 'usage_state' | 'output_tokens'>,
+) {
+    const nonChat = isNonChatTokenEndpoint(log.endpoint_type);
+    const outputUnspecified = nonChat && (
+        log.usage_state === 'reported_input_only' ||
+        ((!log.usage_state || log.usage_state === 'reported') && log.output_tokens === 0)
+    );
+    return { nonChat, outputUnspecified };
 }
 
 export type ReportedIPSourceToken = 'cf' | 'tru' | 'xff' | '';

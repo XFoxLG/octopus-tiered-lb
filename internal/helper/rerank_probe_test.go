@@ -72,7 +72,7 @@ func TestGroupRerankProbeUsesRerankAndRedactsHeaderSecrets(t *testing.T) {
 		t.Fatalf("invalid group probe result: %#v calls=%d", result, calls.Load())
 	}
 	logs, _ := relaylog.GetCacheAndLock()
-	if len(logs) != 1 || !logs[0].IsTest || logs[0].InputTokens != 7 || logs[0].UsageState != m.RelayLogUsageReported {
+	if len(logs) != 1 || !logs[0].IsTest || logs[0].InputTokens != 7 || logs[0].UsageState != m.RelayLogUsageReportedInputOnly {
 		t.Fatalf("group rerank probe log/usage: %#v", logs)
 	}
 	for _, secret := range []string{"fixture-api-key", "fixture-channel-secret", "fixture-endpoint-secret"} {

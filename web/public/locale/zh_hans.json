@@ -2912,6 +2912,7 @@
       "clientDisconnectedHint": "这次请求是客户端自己取消的，不是渠道故障",
       "firstToken": "首字",
       "totalTime": "总耗时",
+      "nonChatOutputUnspecifiedHint": "这条记录没有单独的输出 Token 计数。嵌入返回向量，重排返回分数；维度和结果条数不是输出 Token。已报告的输入用量仍计入统计。",
       "input": "输入",
       "totalTokens": "总消耗",
       "cacheHit": "命中缓存",

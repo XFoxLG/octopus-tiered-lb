@@ -7,15 +7,16 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lingyuins/octopus/internal/helper"
+	"github.com/lingyuins/octopus/internal/transformer/model"
 )
 
 const mediaRerankUsageKey = "relay_rerank_usage"
 const mediaRerankUsageMaxBytes = 1 << 20
 
 type mediaRerankUsage struct {
-	input, output int
-	reported      bool
+	input, output  int
+	reported       bool
+	outputReported bool
 }
 
 func mediaRerankUsageFromContext(c *gin.Context) mediaRerankUsage {
@@ -58,6 +59,9 @@ func handleRerankResponse(c *gin.Context, response *http.Response) (int, error) 
 }
 
 func parseMediaRerankUsage(body []byte) mediaRerankUsage {
-	input, output, reported := helper.ParseRerankTokenUsage(body)
-	return mediaRerankUsage{input: input, output: output, reported: reported}
+	usage := model.ParseNonChatTokenUsage(body)
+	if usage == nil {
+		return mediaRerankUsage{}
+	}
+	return mediaRerankUsage{input: int(usage.PromptTokens), output: int(usage.CompletionTokens), reported: true, outputReported: *usage.NonChatOutputReported}
 }

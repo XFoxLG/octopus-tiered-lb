@@ -41,14 +41,16 @@ const (
 // 上游不回报 usage / 流提前中断 / 客户端断连 / 空输出等情况都会造成"未知"，
 // 但成因完全不同——诚实标注成因而不是笼统显示未知。
 const (
-	RelayLogUsageReported         = "reported"           // 上游回报了有效 usage（token>0）
-	RelayLogUsageClientDisconnect = "client_disconnected" // 客户端中断，输出不完整，用量不可信
-	RelayLogUsageMissingTerminal  = "missing_terminal"    // 上游流未发终止事件即结束，用量不可信
-	RelayLogUsageEmptyOutput      = "empty_output"        // 上游返回空输出，无用量可言
-	RelayLogUsageNotReported      = "not_reported"        // 请求成功但上游未回报 usage
-	RelayLogUsageFailedNoResponse = "failed_no_response"  // 请求失败（无成功响应），无用量
-	RelayLogUsageProviderFailed   = "provider_failed"     // 上游明确返回失败终态；即使附带 usage 也不可信
-	RelayLogUsageNotApplicable    = "not_applicable"      // 端点无 Token 概念（媒体生成等）
+	RelayLogUsageReported          = "reported"            // 上游回报了有效 usage（token>0）
+	RelayLogUsageReportedInputOnly = "reported_input_only" // 非对话：只回报输入，未单列输出
+	RelayLogUsageReportedFull      = "reported_full"       // 非对话：两个方向均明确回报（包括0）
+	RelayLogUsageClientDisconnect  = "client_disconnected" // 客户端中断，输出不完整，用量不可信
+	RelayLogUsageMissingTerminal   = "missing_terminal"    // 上游流未发终止事件即结束，用量不可信
+	RelayLogUsageEmptyOutput       = "empty_output"        // 上游返回空输出，无用量可言
+	RelayLogUsageNotReported       = "not_reported"        // 请求成功但上游未回报 usage
+	RelayLogUsageFailedNoResponse  = "failed_no_response"  // 请求失败（无成功响应），无用量
+	RelayLogUsageProviderFailed    = "provider_failed"     // 上游明确返回失败终态；即使附带 usage 也不可信
+	RelayLogUsageNotApplicable     = "not_applicable"      // 端点无 Token 概念（媒体生成等）
 )
 
 const (
