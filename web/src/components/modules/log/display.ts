@@ -257,7 +257,7 @@ export function resolveOutboundMaxTokens(
 }
 
 export function resolveLogInvestigationMarkers(
-    log: Pick<RelayLog, 'endpoint_type' | 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes' | 'reasoning_tokens'> & {
+    log: Pick<RelayLog, 'endpoint_type' | 'ftut' | 'use_time' | 'output_tokens' | 'output_tokens_est' | 'usage_state' | 'non_chat_usage' | 'provider_termination_reason' | 'termination_cause' | 'attempts' | 'client_write_bytes' | 'reasoning_tokens'> & {
         upstream_model?: string | null;
         actual_model_name?: string | null;
     },
@@ -329,7 +329,7 @@ export function resolveLogInvestigationMarkers(
     }
     if (usageState === 'missing_terminal') markers.push('stream_interrupted');
     if (usageState === 'client_disconnected') markers.push('client_interrupted');
-    if (usageState === 'not_reported') markers.push('usage_not_reported');
+    if (usageState === 'not_reported' && log.non_chat_usage?.completeness !== 'invalid') markers.push('usage_not_reported');
     // v2.9.0：上游响应自报模型与出站实际模型不一致（GPT-Load rc.34/#412 同类能力）。
     // 判据与后端 upstreamModelConsistency 一致，避免把带 vendor 前缀的别名误报。
     if (isUpstreamModelMismatch(log.upstream_model, log.actual_model_name)) {
@@ -362,8 +362,13 @@ export function isUpstreamModelMismatch(
  * 上游上报值计算。
  */
 export function resolveEffectiveTokenCounts(
-    log: Pick<RelayLog, 'input_tokens' | 'output_tokens' | 'input_tokens_est' | 'output_tokens_est'>,
+    log: Pick<RelayLog, 'input_tokens' | 'output_tokens' | 'input_tokens_est' | 'output_tokens_est' | 'unattributed_token' | 'non_chat_usage'>,
 ) {
+    if (log.non_chat_usage) {
+        const usage = log.non_chat_usage;
+        return { inputTokens: usage.input_tokens ?? 0, outputTokens: usage.output_tokens ?? 0,
+            totalTokens: usage.total_tokens ?? 0, inputEstimated: false, outputEstimated: false, estimated: false };
+    }
     const inputEst = typeof log.input_tokens_est === 'number' && log.input_tokens_est > 0 ? log.input_tokens_est : 0;
     const outputEst = typeof log.output_tokens_est === 'number' && log.output_tokens_est > 0 ? log.output_tokens_est : 0;
     const reportedInput = typeof log.input_tokens === 'number' ? log.input_tokens : 0;
@@ -373,7 +378,7 @@ export function resolveEffectiveTokenCounts(
     return {
         inputTokens,
         outputTokens,
-        totalTokens: inputTokens + outputTokens,
+        totalTokens: inputTokens + outputTokens + (log.unattributed_token ?? 0),
         inputEstimated: inputEst > 0,
         outputEstimated: outputEst > 0,
         estimated: inputEst > 0 || outputEst > 0,
@@ -391,14 +396,15 @@ export function isReportedTokenUsage(state: string | undefined): boolean {
 /** Old non-chat rows did not retain output-field presence. A stored zero alone
  * cannot distinguish an explicit zero from an omitted provider counter. */
 export function resolveNonChatTokenDisplay(
-    log: Pick<RelayLog, 'endpoint_type' | 'usage_state' | 'output_tokens'>,
+    log: Pick<RelayLog, 'endpoint_type' | 'usage_state' | 'output_tokens' | 'non_chat_usage'>,
 ) {
     const nonChat = isNonChatTokenEndpoint(log.endpoint_type);
-    const outputUnspecified = nonChat && (
+    const inputUnspecified = nonChat && !!log.non_chat_usage && log.non_chat_usage.input_tokens == null;
+    const outputUnspecified = nonChat && (log.non_chat_usage ? log.non_chat_usage.output_tokens == null : (
         log.usage_state === 'reported_input_only' ||
         ((!log.usage_state || log.usage_state === 'reported') && log.output_tokens === 0)
-    );
-    return { nonChat, outputUnspecified };
+    ));
+    return { nonChat, inputUnspecified, outputUnspecified };
 }
 
 export type ReportedIPSourceToken = 'cf' | 'tru' | 'xff' | '';

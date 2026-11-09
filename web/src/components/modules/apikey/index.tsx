@@ -1,5 +1,7 @@
 'use client';
 
+import { NonChatStats } from '@/components/common/NonChatStats';
+
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AnimatePresence, motion } from 'motion/react';
@@ -91,7 +93,7 @@ function APIKeyCard({
         ? ((stats.request_success.raw / requestTotal) * 100).toFixed(1)
         : null;
     const totalTokens = stats
-        ? stats.input_token.raw + stats.output_token.raw
+        ? stats.total_token.raw
         : 0;
     const totalCost = stats
         ? stats.input_cost.raw + stats.output_cost.raw
@@ -235,6 +237,7 @@ function APIKeyCard({
                         ) : (
                             <div className="pt-1 text-xs text-muted-foreground">{t('apiKey.page.noStats')}</div>
                         )}
+                        <NonChatStats metrics={stats?.non_chat} />
                     </motion.div>
                 ) : null}
             </AnimatePresence>

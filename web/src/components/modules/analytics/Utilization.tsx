@@ -1,5 +1,7 @@
 'use client';
 
+import { NonChatStats } from '@/components/common/NonChatStats';
+
 import type { ReactNode } from 'react';
 import { ArrowDownUp, KeyRound, Layers3, Radio, Waves } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -91,6 +93,7 @@ function BreakdownCard({
                                 </div>
                             </div>
                         </div>
+                        <NonChatStats metrics={item} />
                     </div>
                 ))}
             </div>

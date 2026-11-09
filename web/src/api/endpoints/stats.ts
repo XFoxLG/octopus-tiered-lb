@@ -1,3 +1,4 @@
+import { totalAccountedTokens, type NonChatMetrics } from '../nonchat';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../client';
 import { REFETCH_INTERVAL_CONFIG, REFETCH_INTERVAL_SLOW } from '../constants';
@@ -6,7 +7,7 @@ import { formatCount, formatMoney, formatTime } from '@/lib/utils';
 /**
  * 统计数据
  */
-interface StatsMetrics {
+interface StatsMetrics extends NonChatMetrics {
     input_token: number;
     output_token: number;
     input_cost: number;
@@ -35,6 +36,7 @@ interface StatsMetrics {
 }
 
 export interface StatsMetricsFormatted {
+    non_chat?: NonChatMetrics;
     input_token: ReturnType<typeof formatCount>;
     output_token: ReturnType<typeof formatCount>;
     input_cost: ReturnType<typeof formatMoney>;
@@ -139,9 +141,10 @@ export function useStatsDaily(options?: { refetchIntervalMs?: number | false }) 
             return apiClient.get<StatsDaily[]>('/api/v1/stats/daily');
         },
         select: (data) => data.map((item): StatsDailyFormatted => ({
+            non_chat: item,
             input_token: formatCount(item.input_token),
             output_token: formatCount(item.output_token),
-            total_token: formatCount(item.input_token + item.output_token),
+            total_token: formatCount(totalAccountedTokens(item)),
             input_cost: formatMoney(item.input_cost),
             output_cost: formatMoney(item.output_cost),
             total_cost: formatMoney(item.input_cost + item.output_cost),
@@ -179,9 +182,10 @@ export function useStatsHourly(options?: { refetchIntervalMs?: number | false })
         select: (data) => data.map((item): StatsHourlyFormatted => ({
             hour: item.hour,
             date: item.date,
+            non_chat: item,
             input_token: formatCount(item.input_token),
             output_token: formatCount(item.output_token),
-            total_token: formatCount(item.input_token + item.output_token),
+            total_token: formatCount(totalAccountedTokens(item)),
             input_cost: formatMoney(item.input_cost),
             output_cost: formatMoney(item.output_cost),
             total_cost: formatMoney(item.input_cost + item.output_cost),
@@ -214,9 +218,10 @@ export function useStatsTotal(options?: { refetchIntervalMs?: number | false }) 
             return apiClient.get<StatsTotal>('/api/v1/stats/total');
         },
         select: (data) => ({
+            non_chat: data,
             input_token: formatCount(data.input_token),
             output_token: formatCount(data.output_token),
-            total_token: formatCount(data.input_token + data.output_token),
+            total_token: formatCount(totalAccountedTokens(data)),
             input_cost: formatMoney(data.input_cost),
             output_cost: formatMoney(data.output_cost),
             total_cost: formatMoney(data.input_cost + data.output_cost),
@@ -257,9 +262,10 @@ export function useStatsAPIKey(options?: { enabled?: boolean; refetchIntervalMs?
         select: (data) => data.map((item): StatsAPIKeyFormatted => ({
             api_key_id: item.api_key_id,
             name: item.name,
+            non_chat: item,
             input_token: formatCount(item.input_token),
             output_token: formatCount(item.output_token),
-            total_token: formatCount(item.input_token + item.output_token),
+            total_token: formatCount(totalAccountedTokens(item)),
             input_cost: formatMoney(item.input_cost),
             output_cost: formatMoney(item.output_cost),
             total_cost: formatMoney(item.input_cost + item.output_cost),
@@ -297,9 +303,10 @@ export function useStatsChannel(options?: { enabled?: boolean; refetchIntervalMs
             channel_id: item.channel_id,
             channel_name: item.channel_name,
             enabled: item.enabled,
+            non_chat: item,
             input_token: formatCount(item.input_token),
             output_token: formatCount(item.output_token),
-            total_token: formatCount(item.input_token + item.output_token),
+            total_token: formatCount(totalAccountedTokens(item)),
             input_cost: formatMoney(item.input_cost),
             output_cost: formatMoney(item.output_cost),
             total_cost: formatMoney(item.input_cost + item.output_cost),

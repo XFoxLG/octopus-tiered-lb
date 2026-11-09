@@ -1,5 +1,7 @@
 'use client';
 
+import type { NonChatMetrics } from '../nonchat';
+
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../client';
@@ -38,7 +40,7 @@ function cacheTtlParam(ttl: AnalyticsCacheTtl): Record<string, string> {
     return { cache_ttl: ttl };
 }
 
-export interface AnalyticsMetrics {
+export interface AnalyticsMetrics extends NonChatMetrics {
     request_count: number;
     total_tokens: number;
     input_tokens: number;
