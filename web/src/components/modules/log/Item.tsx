@@ -875,12 +875,11 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                         </AnimatePresence>
                                     </div>
                                 )}
-                                <NonChatUsage summary={detail?.non_chat_usage ?? log.non_chat_usage} requestMS={log.use_time} evidence={detail?.diagnostics?.non_chat_usage} details />
                                 <BoundaryDetails detail={detail} error={detailError} isLoading={isDetailLoading} />
                             </div>
                         </MorphingDialogDescription>
 
-                        <div className="shrink-0 border-t border-border/50 pt-3 text-xs text-muted-foreground">
+                        <div className="max-h-[40dvh] shrink-0 space-y-3 overflow-y-auto overscroll-contain border-t border-border/50 pt-3 text-xs text-muted-foreground">
                             {investigationMarkers.length > 0 && (
                                 <div className="mb-2 flex flex-wrap gap-1.5">
                                     {investigationMarkers.map((marker) => (
@@ -1024,6 +1023,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 </div>
                             )}
                             </div>
+                            <NonChatUsage summary={detail?.non_chat_usage ?? log.non_chat_usage} requestMS={log.use_time} evidence={detail?.diagnostics?.non_chat_usage} details />
                         </div>
                     </MorphingDialogContent>
                 </MorphingDialogContainer>
