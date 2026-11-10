@@ -7,10 +7,11 @@ import React from 'react';
 import * as jsx from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as intl from 'next-intl';
+import * as icons from 'lucide-react';
 
 export function nonChatComponents() {
  const compile=(file,deps={})=>{const m={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync(new URL(file,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports:m.exports,module:m,require:name=>{if(!(name in deps))throw Error(`Unexpected dependency ${name}`);return deps[name];}});return m.exports;};
- const deps={'react/jsx-runtime':jsx,'next-intl':intl,'@/api/nonchat':compile('../src/api/nonchat.ts')};
+ const deps={'react/jsx-runtime':jsx,'next-intl':intl,'lucide-react':icons,'@/api/nonchat':compile('../src/api/nonchat.ts')};
  return {...compile('../src/components/modules/log/NonChatUsage.tsx',deps),...compile('../src/components/common/NonChatStats.tsx',deps)};
 }
 export function renderNonChat(element,locale='zh_hans') { const messages=JSON.parse(fs.readFileSync(new URL(`../public/locale/${locale}.json`,import.meta.url),'utf8'));return renderToStaticMarkup(React.createElement(intl.NextIntlClientProvider,{locale:locale==='zh_hans'?'zh-CN':locale==='zh_hant'?'zh-TW':'en',messages,timeZone:'UTC'},element)); }
