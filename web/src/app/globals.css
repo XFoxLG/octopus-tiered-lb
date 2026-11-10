@@ -327,4 +327,11 @@ html.dark,
     animation-duration: 0s !important;
     transition-duration: 0s !important;
   }
+
+  /* DnD commits the drop on transitionend. Zero suppresses that event and
+     leaves the item floating (and its save pending) until the next scroll.
+     Keep a non-visible transition so reduced motion still completes drops. */
+  [data-rfd-draggable-id] {
+    transition-duration: 1ms !important;
+  }
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { CircleAlert, CircleCheck, Dot, GripVertical, Loader2, Trash2, Waves, X } from 'lucide-react';
 import { DragDropContext, Draggable, Droppable, type DraggableProvided, type DropResult } from '@hello-pangea/dnd';
 import { AnimatePresence, motion } from 'motion/react';
@@ -376,7 +376,31 @@ export function MemberList({
                     onDragStart={() => onDragStart?.()}
                     onDragEnd={handleDragEnd}
                 >
-                    <Droppable droppableId={`members-${layoutScope}`}>
+                    <Droppable
+                        droppableId={`members-${layoutScope}`}
+                        // The virtual grid positions rows with transform. Render the drag
+                        // clone in DnD's body portal so fixed positioning and drop animation
+                        // are independent of that transformed, scrollable ancestor.
+                        renderClone={(provided, snapshot, rubric) => {
+                            const member = members[rubric.source.index];
+                            return (
+                                <MemberItem
+                                    member={member}
+                                    onRemove={onRemove}
+                                    onWeightChange={onWeightChange}
+                                    onRetryOverrideChange={onRetryOverrideChange}
+                                    index={rubric.source.index}
+                                    showWeight={showWeight}
+                                    showRetryOverride={showRetryOverride}
+                                    showConfirmDelete={showConfirmDelete}
+                                    layoutScope={layoutScope}
+                                    dnd={provided}
+                                    isDragging={snapshot.isDragging}
+                                    availability={availabilityById[member.id]}
+                                />
+                            );
+                        }}
+                    >
                         {(droppableProvided) => (
                             <div
                                 ref={droppableProvided.innerRef}
