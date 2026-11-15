@@ -223,6 +223,7 @@ func buildProbeResult(
 	result.RequestStream = outcome.RequestStream
 	result.RequestBudgetMS = outcome.RequestBudgetMS
 	result.RequestFingerprint = outcome.RequestFingerprint
+	result.Evidence = outcome.Evidence
 	result.Verdict = outcome.Verdict
 	result.StatusCode = outcome.StatusCode
 	result.LatencyMS = outcome.LatencyMS

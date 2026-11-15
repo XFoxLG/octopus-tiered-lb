@@ -68,6 +68,12 @@ func TestChannelProbeProtocolMigrationKeepsHistoryUnknown(t *testing.T) {
 	if after.Protocol != nil || after.KeyScope != nil {
 		t.Fatalf("rerun backfilled history: %+v", after)
 	}
+	// The production chain includes 084 after 082. Add that nullable column
+	// before writing through the current model; the historical row above stays
+	// NULL, which is what 084's own regression verifies.
+	if err := addChannelProbeEvidence(database); err != nil {
+		t.Fatal(err)
+	}
 
 	stream := false
 	budget := int64(25000)

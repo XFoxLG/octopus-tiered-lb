@@ -192,10 +192,11 @@ func StartGroupModelTest(group *appmodel.Group, channels map[int]appmodel.Channe
 
 	id := uuid.NewString()
 	progress := &GroupModelTestProgress{
-		ID:      id,
-		Source:  "saved",
-		Total:   len(group.Items),
-		Results: make([]GroupModelTestResult, 0, len(group.Items)),
+		ID:           id,
+		Source:       "saved",
+		SnapshotHash: savedGroupSnapshotHash(group, channels),
+		Total:        len(group.Items),
+		Results:      make([]GroupModelTestResult, 0, len(group.Items)),
 	}
 	storeGroupModelProgress(progress)
 	log.Infof("start group test: group=%s progress_id=%s items=%d channels=%d", group.Name, id, len(group.Items), len(channels))
@@ -233,6 +234,38 @@ func StartGroupModelTest(group *appmodel.Group, channels map[int]appmodel.Channe
 
 	cloned := cloneGroupModelProgress(progress)
 	return &cloned, nil
+}
+
+// savedGroupSnapshotHash freezes the configuration used at launch. The value is
+// published with every result; the raw group/channel snapshot (which may contain
+// credentials) is discarded after hashing.
+func savedGroupSnapshotHash(group *appmodel.Group, channels map[int]appmodel.Channel) string {
+	if group == nil {
+		return ""
+	}
+	type snapshot struct {
+		Group    *appmodel.Group    `json:"group"`
+		Channels []appmodel.Channel `json:"channels"`
+	}
+	used := make(map[int]bool)
+	selected := make([]appmodel.Channel, 0, len(group.Items))
+	for _, item := range group.Items {
+		if item.ChannelID <= 0 || used[item.ChannelID] {
+			continue
+		}
+		channel, ok := channels[item.ChannelID]
+		if !ok {
+			continue
+		}
+		used[item.ChannelID] = true
+		selected = append(selected, channel)
+	}
+	encoded, err := json.Marshal(snapshot{Group: group, Channels: selected})
+	if err != nil {
+		log.Warnf("failed to hash saved group test snapshot: %v", err)
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(encoded))
 }
 
 func StartDraftGroupModelTest(endpointType string, items []GroupModelDraftTestItem, channels map[int]appmodel.Channel) (*GroupModelTestProgress, error) {
