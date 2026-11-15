@@ -708,6 +708,38 @@ export type ProbeVerdict = 'pass' | 'fail' | 'unsupported' | 'unknown';
 
 export type ProbeKind = 'protocol' | 'capability';
 
+export type ChannelProbeEvidence = {
+    source?: 'saved' | 'draft';
+    configuration_fingerprint?: string;
+    transport?: string;
+    endpoint_id?: string;
+    endpoint_url?: string;
+    protocol?: EndpointProtocol;
+    model?: string;
+    key_scope?: string;
+    request_stream?: boolean;
+    request_budget_ms?: number;
+    request_started_at?: string;
+    request_start_to_dispatch_ms?: number;
+    response_headers_ms?: number;
+    first_body_byte_ms?: number;
+    first_effective_output_ms?: number;
+    response_complete_ms?: number;
+    terminal_ms?: number;
+    effective_event_count?: number;
+    response_bytes?: number;
+    terminal_observed?: boolean;
+    terminal_kind?: string;
+    generation_state?: 'completed' | 'content_filter' | 'length' | 'incomplete' | 'failed' | 'unknown';
+    done_observed?: boolean;
+    finish_reasons?: Record<string, string>;
+    chat_expected_choices?: number;
+    chat_completed_choices?: number;
+    read_state?: string;
+    parse_state?: string;
+    response_truncated?: boolean;
+};
+
 export type ChannelProbeResult = {
     endpoint_id?: string;
     /** Actual protocol for a new run; older history may not contain it. */
@@ -724,6 +756,8 @@ export type ChannelProbeResult = {
     summary?: string;
     /** 已脱敏的上游回显片段；绝不包含密钥。 */
     detail?: string;
+    /** Optional observations for rows created after evidence migration 084. */
+    evidence?: ChannelProbeEvidence;
     created_at?: string;
 };
 

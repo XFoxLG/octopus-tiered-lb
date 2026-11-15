@@ -117,6 +117,10 @@ type ChannelProbeResult struct {
 	// RequestFingerprint 是探测请求体的 SHA-256（方法 + 路径 + 正文，不含任何凭据），
 	// 用来证明两次对照发的是同一个请求体。
 	RequestFingerprint string `json:"request_fingerprint,omitempty" gorm:"size:64"`
+	// Evidence contains transport- and generation-level observations for this
+	// exact attempt. Historical rows remain NULL because older binaries did not
+	// observe these timings or terminal states.
+	Evidence *ChannelProbeEvidence `json:"evidence,omitempty" gorm:"serializer:json;type:text"`
 
 	// Summary 是给界面看的短句（已脱敏）。
 	Summary string `json:"summary,omitempty" gorm:"size:512"`
@@ -126,6 +130,45 @@ type ChannelProbeResult struct {
 }
 
 func (ChannelProbeResult) TableName() string { return "channel_probe_results" }
+
+// ChannelProbeEvidence records what the probe actually observed. It is
+// deliberately separate from the coarse pass/fail verdict: a valid
+// content_filter or length terminal proves that the protocol ended, but does
+// not prove that a normal answer was generated.
+type ChannelProbeEvidence struct {
+	Source                   string `json:"source,omitempty"`
+	ConfigurationFingerprint string `json:"configuration_fingerprint,omitempty"`
+	Transport                string `json:"transport,omitempty"`
+	EndpointID               string `json:"endpoint_id,omitempty"`
+	EndpointURL              string `json:"endpoint_url,omitempty"`
+	Protocol                 string `json:"protocol,omitempty"`
+	Model                    string `json:"model,omitempty"`
+	KeyScope                 string `json:"key_scope,omitempty"`
+
+	RequestStream   *bool  `json:"request_stream,omitempty"`
+	RequestBudgetMS *int64 `json:"request_budget_ms,omitempty"`
+
+	RequestStartedAt         time.Time `json:"request_started_at,omitempty"`
+	RequestStartToDispatchMS *int64    `json:"request_start_to_dispatch_ms,omitempty"`
+	ResponseHeadersMS        *int64    `json:"response_headers_ms,omitempty"`
+	FirstBodyByteMS          *int64    `json:"first_body_byte_ms,omitempty"`
+	FirstEffectiveOutputMS   *int64    `json:"first_effective_output_ms,omitempty"`
+	ResponseCompleteMS       *int64    `json:"response_complete_ms,omitempty"`
+	TerminalMS               *int64    `json:"terminal_ms,omitempty"`
+
+	EffectiveEventCount  int64             `json:"effective_event_count,omitempty"`
+	ResponseBytes        int64             `json:"response_bytes,omitempty"`
+	TerminalObserved     bool              `json:"terminal_observed"`
+	TerminalKind         string            `json:"terminal_kind,omitempty"`
+	GenerationState      string            `json:"generation_state,omitempty"`
+	DoneObserved         bool              `json:"done_observed"`
+	FinishReasons        map[string]string `json:"finish_reasons,omitempty"`
+	ChatExpectedChoices  int               `json:"chat_expected_choices,omitempty"`
+	ChatCompletedChoices int               `json:"chat_completed_choices,omitempty"`
+	ReadState            string            `json:"read_state,omitempty"`
+	ParseState           string            `json:"parse_state,omitempty"`
+	ResponseTruncated    bool              `json:"response_truncated"`
+}
 
 // ChannelModelCapability 是渠道×模型的能力结论（探测或人工确认的结果）。
 //

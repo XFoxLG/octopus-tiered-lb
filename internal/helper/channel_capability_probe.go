@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -223,6 +225,9 @@ type probeRequestOutcome struct {
 	Verdict            appmodel.ProbeVerdict
 	LatencyMS          int64
 	Summary            string
+	Evidence           *appmodel.ChannelProbeEvidence
+	Signals            capabilityResponseSignals
+	SignalsCollected   bool
 }
 
 // probeRequestFingerprintMaxBody 是指纹覆盖的正文上限。超过上限就不给指纹，
@@ -301,12 +306,30 @@ func sendProbeRequest(
 	request *transmodel.InternalLLMRequest,
 	capability ...string,
 ) *probeRequestOutcome {
-	outcome := &probeRequestOutcome{Verdict: appmodel.ProbeVerdictUnknown, KeyScope: scope.String()}
+	outcome := &probeRequestOutcome{
+		Verdict:  appmodel.ProbeVerdictUnknown,
+		KeyScope: scope.String(),
+		Evidence: &appmodel.ChannelProbeEvidence{
+			Transport:  "direct",
+			KeyScope:   scope.String(),
+			ReadState:  "not_started",
+			ParseState: "not_read",
+		},
+	}
+	if channel != nil {
+		if channel.ID > 0 {
+			outcome.Evidence.Source = "saved"
+		} else {
+			outcome.Evidence.Source = "draft"
+		}
+	}
 	budgetMS := capabilityProbeTimeout.Milliseconds()
 	outcome.RequestBudgetMS = &budgetMS
+	outcome.Evidence.RequestBudgetMS = &budgetMS
 	if request != nil && request.Stream != nil {
 		stream := *request.Stream
 		outcome.RequestStream = &stream
+		outcome.Evidence.RequestStream = &stream
 	}
 	if channel == nil {
 		outcome.Summary = "channel is nil"
@@ -323,14 +346,23 @@ func sendProbeRequest(
 	} else {
 		outcome.Protocol = probeProtocolForAdapter(plan.AdapterType)
 	}
+	outcome.Evidence.Protocol = outcome.Protocol
+	outcome.Evidence.EndpointID = outcome.EndpointID
+	if request != nil {
+		outcome.Evidence.Model = request.Model
+	}
 	adapter := plan.Adapter()
 	if adapter == nil {
 		outcome.Summary = fmt.Sprintf("unsupported adapter type: %d", adapterType)
 		return outcome
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, capabilityProbeTimeout)
-	defer cancel()
+	startedAt := time.Now()
+	outcome.Evidence.RequestStartedAt = startedAt
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, capabilityProbeTimeout)
+	probeCtx, requestCancel := context.WithCancel(timeoutCtx)
+	defer timeoutCancel()
+	defer requestCancel()
 
 	request, err := prepareConnectionProbeRequest(probeCtx, channel, plan, request, key)
 	if err != nil {
@@ -372,9 +404,18 @@ func sendProbeRequest(
 	channel.ApplyConnectionHeaders(httpRequest, plan, strings.TrimSpace(key))
 	// 记录「这次实际打向哪里、发的什么正文」——地址与指纹都不含凭据。
 	outcome.EndpointURL = auditProbeEndpointURL(httpRequest.URL, key)
+	outcome.Evidence.EndpointURL = outcome.EndpointURL
 	if body, ok := captureProbeRequestBody(httpRequest); ok {
 		outcome.RequestFingerprint = probeFingerprint(httpRequest, body)
 	}
+	outcome.Evidence.ConfigurationFingerprint = probeConfigurationFingerprint(
+		channel,
+		plan,
+		outcome.RequestFingerprint,
+		request.Model,
+		outcome.RequestStream,
+		outcome.RequestBudgetMS,
+	)
 
 	httpClient, err := ChannelHttpClient(channel)
 	if err != nil {
@@ -382,24 +423,41 @@ func sendProbeRequest(
 		return outcome
 	}
 
-	startedAt := time.Now()
+	outcome.Evidence.RequestStartToDispatchMS = probeElapsedMS(startedAt, time.Now())
 	response, err := httpClient.Do(httpRequest)
 	outcome.LatencyMS = time.Since(startedAt).Milliseconds()
+	outcome.Evidence.ResponseHeadersMS = probeElapsedMS(startedAt, time.Now())
 	if err != nil {
 		// 网络错误/超时：证据不足，绝不据此改写配置。
 		outcome.Verdict = appmodel.ProbeVerdictUnknown
 		outcome.Summary = truncateProbeSummary(err.Error())
+		outcome.Evidence.ReadState = "not_started"
+		outcome.Evidence.ParseState = "not_read"
 		return outcome
 	}
 	defer response.Body.Close()
+	timedBody := &probeTimedReader{body: response.Body, startedAt: startedAt, evidence: outcome.Evidence}
 
 	outcome.StatusCode = response.StatusCode
 	outcome.Summary = response.Status
 	outcome.Verdict = probeHTTPStatusVerdict(response.StatusCode)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		initialVerdict := outcome.Verdict
-		rawBody, readErr := io.ReadAll(io.LimitReader(response.Body, capabilityProbeMaxBody+1))
-		if readErr == nil && len(rawBody) <= capabilityProbeMaxBody {
+		rawBody, readErr := io.ReadAll(io.LimitReader(timedBody, capabilityProbeMaxBody+1))
+		oversized := len(rawBody) > capabilityProbeMaxBody
+		if oversized {
+			rawBody = rawBody[:capabilityProbeMaxBody]
+			outcome.ResponseTruncated = true
+			outcome.Evidence.ResponseTruncated = true
+		}
+		outcome.Evidence.ParseState = probeParseState(rawBody)
+		if readErr == nil || errors.Is(readErr, io.EOF) {
+			outcome.Evidence.ReadState = "complete"
+			markProbeResponseComplete(outcome.Evidence, startedAt)
+		} else {
+			outcome.Evidence.ReadState = "error"
+		}
+		if readErr == nil && !oversized {
 			outcome.Body = string(rawBody)
 			if initialVerdict != appmodel.ProbeVerdictUnknown {
 				if bodyVerdict, ok := classifyProbeBody(outcome.Body); ok {
@@ -412,44 +470,72 @@ func sendProbeRequest(
 
 	isStreamingProbe := len(capability) > 0 && capability[0] == appmodel.ProbeItemStreaming
 	if isStreamingProbe {
-		probeBody := io.LimitReader(response.Body, capabilityProbeMaxBody+1)
-		buffer := make([]byte, 0, 8192)
-		chunk := make([]byte, 4096)
-		for {
-			count, readErr := probeBody.Read(chunk)
-			if count > 0 {
-				buffer = append(buffer, chunk[:count]...)
-				if len(buffer) > capabilityProbeMaxBody {
-					outcome.Body = string(buffer[:capabilityProbeMaxBody])
-					outcome.ResponseTruncated = true
-					outcome.Summary = "Stream probe reached the response size limit before evidence was conclusive"
-					return outcome
-				}
-				signals := collectCapabilitySignals(string(buffer))
-				if signals.HasStreamTerminal {
-					outcome.Body = string(buffer)
-					outcome.Summary = "Received a streamed protocol terminal"
-					return outcome
-				}
-			}
-			if readErr != nil {
-				outcome.Body = string(buffer)
-				if readErr != io.EOF {
-					outcome.ResponseTruncated = true
-					outcome.Verdict = appmodel.ProbeVerdictUnknown
-					outcome.Summary = "Stream response ended before evidence was conclusive"
-				}
-				return outcome
-			}
+		rawBody, signals, readErr, truncated := readProbeStreamBody(
+			response.Body,
+			startedAt,
+			outcome.Protocol,
+			requestCancel,
+			outcome.Evidence,
+		)
+		outcome.Body = string(rawBody)
+		outcome.Signals = signals
+		outcome.SignalsCollected = true
+		outcome.ResponseTruncated = truncated
+		outcome.Evidence.EffectiveEventCount = signalsEventCount(outcome.Body)
+		outcome.Evidence.DoneObserved = signals.HasStreamDone
+		outcome.Evidence.TerminalObserved = signals.TerminalComplete(outcome.Protocol)
+		outcome.Evidence.TerminalKind = signals.StreamTerminalKind
+		if outcome.Protocol == "chat" && signals.ChatTerminalComplete() && outcome.Evidence.TerminalKind == "" {
+			outcome.Evidence.TerminalKind = "finish_reason"
 		}
+		outcome.Evidence.GenerationState = signals.GenerationState(outcome.Protocol)
+		outcome.Evidence.FinishReasons = signals.FinishReasons
+		outcome.Evidence.ChatCompletedChoices = len(signals.FinishReasons)
+		outcome.Evidence.ChatExpectedChoices = signals.ChatChoiceCount
+		outcome.Evidence.ParseState = probeStreamParseState(signals, outcome.Body)
+		if truncated {
+			outcome.Summary = "Stream probe reached the response size limit before evidence was conclusive"
+			outcome.Verdict = appmodel.ProbeVerdictUnknown
+			return outcome
+		}
+		if readErr != nil {
+			outcome.Verdict = appmodel.ProbeVerdictUnknown
+			outcome.Summary = "Stream response ended before evidence was conclusive"
+			return outcome
+		}
+		if signals.TerminalComplete(outcome.Protocol) {
+			outcome.Summary = "Received a complete streamed protocol terminal"
+		} else {
+			outcome.Verdict = appmodel.ProbeVerdictUnknown
+			outcome.Summary = "Visible streamed output arrived without a complete protocol terminal"
+		}
+		return outcome
 	}
 
-	rawBody, readErr := io.ReadAll(io.LimitReader(response.Body, capabilityProbeMaxBody+1))
-	outcome.Body = string(rawBody)
-	if readErr != nil || len(rawBody) > capabilityProbeMaxBody {
+	rawBody, readErr := io.ReadAll(io.LimitReader(timedBody, capabilityProbeMaxBody+1))
+	oversized := len(rawBody) > capabilityProbeMaxBody
+	if oversized {
+		rawBody = rawBody[:capabilityProbeMaxBody]
 		outcome.ResponseTruncated = true
+		outcome.Evidence.ResponseTruncated = true
+	}
+	outcome.Body = string(rawBody)
+	if readErr != nil || oversized {
+		outcome.ResponseTruncated = true
+		outcome.Evidence.ResponseTruncated = true
+		outcome.Evidence.ReadState = "error"
+		outcome.Evidence.ParseState = probeParseState(rawBody)
 		outcome.Summary = "Incomplete or oversized probe response"
 		return outcome
+	}
+	outcome.Evidence.ReadState = "complete"
+	markProbeResponseComplete(outcome.Evidence, startedAt)
+	outcome.Evidence.ParseState = probeParseState(rawBody)
+	outcome.Signals = collectCapabilitySignals(outcome.Body)
+	outcome.SignalsCollected = true
+	if outcome.Signals.HasEffectiveOutput() {
+		completed := time.Since(startedAt).Milliseconds()
+		outcome.Evidence.FirstEffectiveOutputMS = &completed
 	}
 	decodedResponse := *response
 	decodedResponse.Body = io.NopCloser(bytes.NewReader(rawBody))
@@ -672,6 +758,11 @@ type capabilityResponseSignals struct {
 	HasStreamFailure  bool
 	HasStreamDone     bool
 	HasFinishReason   bool
+
+	StreamTerminalKind  string
+	FinishReasons       map[string]string
+	GeminiFinishReasons []string
+	ChatChoiceCount     int
 }
 
 // collectCapabilitySignals reads answer envelopes, never metadata or echoed requests.
@@ -710,18 +801,36 @@ func collectProbeStreamTerminal(root map[string]any, signals *capabilityResponse
 		switch eventType {
 		case "response.completed":
 			signals.HasStreamTerminal = true
+			signals.StreamTerminalKind = eventType
 		case "response.failed", "response.incomplete", "response.error", "error":
 			signals.HasStreamTerminal = true
 			signals.HasStreamFailure = true
+			signals.StreamTerminalKind = eventType
 		case "message_stop":
 			signals.HasStreamTerminal = true
+			signals.StreamTerminalKind = eventType
 		}
 	}
 	if choices, ok := root["choices"].([]any); ok {
 		for _, rawChoice := range choices {
 			choice, _ := rawChoice.(map[string]any)
+			choiceIndex := 0
+			switch typed := choice["index"].(type) {
+			case float64:
+				choiceIndex = int(typed)
+			case int:
+				choiceIndex = typed
+			}
+			if choiceIndex+1 > signals.ChatChoiceCount {
+				signals.ChatChoiceCount = choiceIndex + 1
+			}
 			if reason, _ := choice["finish_reason"].(string); strings.TrimSpace(reason) != "" {
 				signals.HasFinishReason = true
+				index := strconv.Itoa(choiceIndex)
+				if signals.FinishReasons == nil {
+					signals.FinishReasons = make(map[string]string)
+				}
+				signals.FinishReasons[index] = strings.TrimSpace(reason)
 			}
 		}
 	}
@@ -730,6 +839,8 @@ func collectProbeStreamTerminal(root map[string]any, signals *capabilityResponse
 			candidate, _ := rawCandidate.(map[string]any)
 			if reason, _ := candidate["finishReason"].(string); strings.TrimSpace(reason) != "" {
 				signals.HasStreamTerminal = true
+				signals.StreamTerminalKind = "finish_reason"
+				signals.GeminiFinishReasons = append(signals.GeminiFinishReasons, strings.TrimSpace(reason))
 			}
 		}
 	}
@@ -760,7 +871,11 @@ func probeSSEDataPayloads(rawBody string) []string {
 
 func collectProbeEnvelope(root map[string]any, signals *capabilityResponseSignals) {
 	if choices, ok := root["choices"].([]any); ok && len(choices) > 0 {
-		if choice, ok := choices[0].(map[string]any); ok {
+		for _, rawChoice := range choices {
+			choice, ok := rawChoice.(map[string]any)
+			if !ok {
+				continue
+			}
 			if message, ok := choice["message"].(map[string]any); ok {
 				collectProbeAnswer(message, signals)
 				collectProbeTools(message["tool_calls"], signals)
@@ -973,7 +1088,10 @@ func judgeCapabilityResponse(item string, outcome *probeRequestOutcome) appmodel
 		}
 		return outcome.Verdict
 	}
-	signals := collectCapabilitySignals(outcome.Body)
+	signals := outcome.Signals
+	if !outcome.SignalsCollected {
+		signals = collectCapabilitySignals(outcome.Body)
+	}
 	if signals.RefusalDetected {
 		outcome.Summary = "Upstream refused this probe; capability support remains unverified"
 		return appmodel.ProbeVerdictUnknown
@@ -1016,9 +1134,12 @@ func judgeCapabilityResponse(item string, outcome *probeRequestOutcome) appmodel
 			outcome.Summary = "The response stream ended with a protocol failure"
 			return appmodel.ProbeVerdictUnknown
 		}
-		chatTerminal := signals.HasFinishReason && signals.HasStreamDone
-		otherTerminal := !signals.HasFinishReason && signals.HasStreamTerminal
-		if signals.HasStreamEnvelope && signals.HasVisibleText && (chatTerminal || otherTerminal) {
+		terminal := signals.TerminalComplete(outcome.Protocol)
+		if signals.HasStreamEnvelope && signals.HasVisibleText && terminal {
+			if state := signals.GenerationState(outcome.Protocol); state != "completed" {
+				outcome.Summary = "The stream reached a valid but incomplete generation terminal (" + state + ")"
+				return appmodel.ProbeVerdictUnknown
+			}
 			outcome.Summary = "Received visible streaming output with a protocol terminal"
 			return appmodel.ProbeVerdictPass
 		}

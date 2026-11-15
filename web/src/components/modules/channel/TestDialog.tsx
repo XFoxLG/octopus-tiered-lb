@@ -21,6 +21,7 @@ import {
     useCheckChannelKeys,
     useTestChannelModel,
     type Channel,
+    type ChannelProbeEvidence,
     type ChannelProbeResult,
     type ChannelProbeRun,
     type ProbeVerdict,
@@ -51,6 +52,11 @@ function verdictPresentation(verdict: ProbeVerdict) {
 function formatLatency(latencyMs?: number) {
     if (!latencyMs || latencyMs <= 0) return null;
     return `${latencyMs}ms`;
+}
+
+function formatObservedMilliseconds(value: number | undefined) {
+    if (value === undefined) return '—';
+    return value < 10 ? `${value.toFixed(2)}ms` : `${value}ms`;
 }
 
 /** 旧渠道（无 connection_config）按渠道类型推断端点类型；新配置渠道由调用方覆盖。 */
@@ -242,6 +248,39 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
         </details>
     );
 
+    const renderProbeEvidence = (evidence: ChannelProbeEvidence) => {
+        const terminal = evidence.terminal_observed
+            ? evidence.terminal_kind || t('terminalObserved')
+            : t('terminalNotObserved');
+        const choices = evidence.chat_expected_choices
+            ? `${evidence.chat_completed_choices ?? 0}/${evidence.chat_expected_choices}`
+            : null;
+        const metrics = [
+            evidence.source ? t('evidenceSource', { source: evidence.source }) : null,
+            evidence.transport ? t('evidenceTransport', { transport: evidence.transport }) : null,
+            t('evidenceHeaders', { value: formatObservedMilliseconds(evidence.response_headers_ms) }),
+            t('evidenceFirstBody', { value: formatObservedMilliseconds(evidence.first_body_byte_ms) }),
+            t('evidenceFirstOutput', { value: formatObservedMilliseconds(evidence.first_effective_output_ms) }),
+            t('evidenceTerminal', { value: terminal }),
+            evidence.generation_state ? t('evidenceGeneration', { value: evidence.generation_state }) : null,
+            choices ? t('evidenceChoices', { value: choices }) : null,
+            evidence.response_bytes !== undefined ? t('evidenceBytes', { value: evidence.response_bytes }) : null,
+            evidence.parse_state ? t('evidenceParse', { value: evidence.parse_state }) : null,
+        ].filter((value): value is string => Boolean(value));
+        return (
+            <details className="mt-1 min-w-0 rounded-lg border border-border/40 bg-muted/20">
+                <summary className="cursor-pointer rounded-lg px-2 py-1.5 text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {t('probeEvidence')}
+                </summary>
+                <div className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 border-t border-border/30 px-2 py-2 text-[11px] text-muted-foreground sm:grid-cols-2">
+                    {metrics.map((metric) => (
+                        <span key={metric} className="min-w-0 [overflow-wrap:anywhere]">{metric}</span>
+                    ))}
+                </div>
+            </details>
+        );
+    };
+
     const renderProbeRow = (row: ChannelProbeResult) => {
         const { Icon, className } = verdictPresentation(row.verdict);
         const latency = formatLatency(row.latency_ms);
@@ -262,6 +301,7 @@ export function TestDialog({ channel, availableModels, onClose, onKeysUnavailabl
                     {row.summary ? (
                         <p className="mt-0.5 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">{row.summary}</p>
                     ) : null}
+                    {row.evidence ? renderProbeEvidence(row.evidence) : null}
                     {row.detail ? renderDetail(row.detail) : null}
                 </div>
             </div>

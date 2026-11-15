@@ -16,6 +16,8 @@ func TestBackupExtendedConfigurationRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	stream := false
 	budget := int64(0)
+	firstBody := int64(12)
+	terminal := int64(18)
 	rows := []any{
 		&model.ProxyConfiguration{ID: 12, Name: "proxy", URL: "http://example.invalid:8080", Enabled: true},
 		&model.ModelPriceSchedule{ID: 10, Name: "schedule", RuleValue: "gemini", Enabled: true},
@@ -26,7 +28,20 @@ func TestBackupExtendedConfigurationRoundTrip(t *testing.T) {
 		&model.ChannelModelLimit{ID: 22, ChannelID: 20, ModelName: "gemini", MaxContextTokens: 32768, Source: "manual"},
 		&model.ChannelModelCapability{ID: 23, ChannelID: 20, ModelName: "gemini", Capability: model.CapabilityToolCalling, Supported: false, Source: "manual"},
 		&model.ChannelProbeRun{ID: 24, ChannelID: 20, ModelName: "gemini", StartedAt: now},
-		&model.ChannelProbeResult{ID: 25, RunID: 24, ChannelID: 20, ModelName: "gemini", Kind: model.ProbeKindProtocol, Item: model.ProbeItemProtocolChat, Verdict: model.ProbeVerdictPass, Protocol: "chat", RequestStream: &stream, RequestBudgetMS: &budget, RequestFingerprint: "fingerprint", CreatedAt: now},
+		&model.ChannelProbeResult{
+			ID: 25, RunID: 24, ChannelID: 20, ModelName: "gemini",
+			Kind: model.ProbeKindProtocol, Item: model.ProbeItemProtocolChat, Verdict: model.ProbeVerdictPass,
+			Protocol: "chat", RequestStream: &stream, RequestBudgetMS: &budget, RequestFingerprint: "fingerprint",
+			Evidence: &model.ChannelProbeEvidence{
+				Source: "saved", Transport: "direct", Protocol: "chat", Model: "gemini",
+				RequestStream: &stream, RequestBudgetMS: &budget,
+				FirstBodyByteMS: &firstBody, TerminalMS: &terminal,
+				TerminalObserved: true, TerminalKind: "finish_reason",
+				GenerationState: "completed", DoneObserved: true,
+				FinishReasons: map[string]string{"0": "stop"},
+			},
+			CreatedAt: now,
+		},
 		&model.StatsDailyChannel{Date: "20261025", ChannelID: 20, StatsMetrics: model.StatsMetrics{RequestSuccess: 3}},
 		&model.StatsDailyModel{Date: "20261025", ModelName: "gemini", StatsMetrics: model.StatsMetrics{OutputToken: 19}},
 		&model.StatsDailyAPIKey{Date: "20261025", APIKeyID: 1, StatsMetrics: model.StatsMetrics{InputToken: 17}},
@@ -90,6 +105,10 @@ func TestBackupExtendedConfigurationRoundTrip(t *testing.T) {
 	}
 	if result.Protocol != "chat" || result.RequestStream == nil || *result.RequestStream || result.RequestBudgetMS == nil || *result.RequestBudgetMS != 0 || result.RequestFingerprint != "fingerprint" {
 		t.Fatal("restore lost protocol evidence or false/zero presence")
+	}
+	if result.Evidence == nil || result.Evidence.FirstBodyByteMS == nil || *result.Evidence.FirstBodyByteMS != 12 ||
+		!result.Evidence.TerminalObserved || result.Evidence.FinishReasons["0"] != "stop" {
+		t.Fatal("restore lost structured probe evidence")
 	}
 	for _, value := range []any{&model.StatsDailyChannel{}, &model.StatsDailyModel{}, &model.StatsDailyAPIKey{}, &model.StatsDailyChannelModel{}, &model.ErrorLog{}} {
 		var count int64
