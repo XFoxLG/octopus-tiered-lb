@@ -225,6 +225,24 @@ jobs:
           echo "**Tags:** ${{ steps.images.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
           echo "**Digest:** ${{ steps.docker.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify release HTTP bytes and task lifecycle
+        env:
+          IMMUTABLE_IMAGE: ${{ env.GHCR_IMAGE }}@${{ steps.docker.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMMUTABLE_IMAGE"
+          [[ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMMUTABLE_IMAGE")" = "$RELEASE_SHA" ]]
+          python3 scripts/test_catie_tasks_http.py --image "$IMMUTABLE_IMAGE" \
+            --expected-commit "$RELEASE_SHA" --expected-version "$RELEASE_TAG" \
+            --report release-http-acceptance.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-http-acceptance
+          path: release-http-acceptance.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Generate release manifest
         env:
           RELEASE_SHA: ${{ needs.validate.outputs.sha }}
@@ -290,6 +308,12 @@ jobs:
               "gates": {
                   "ci": required_env("CI_GATE"),
                   "quality": required_env("QUALITY_GATE"),
+                  "http_acceptance": "passed",
+              },
+              "toolchain": {"go": "1.27.3", "node": "22", "pnpm": "10.22.0"},
+              "http_acceptance": {
+                  "artifact": "release-http-acceptance",
+                  "sha256": hashlib.sha256(Path("release-http-acceptance.json").read_bytes()).hexdigest(),
               },
               "run": {
                   "id": required_env("GITHUB_RUN_ID"),

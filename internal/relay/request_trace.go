@@ -792,6 +792,9 @@ func RelayRequestTraceMiddleware() gin.HandlerFunc {
 			captureContent = false
 		}
 		trace := newRelayRequestTrace(ginContext.Request, captureContent)
+		// Publish the gateway identity before the single Writer or keepalive can
+		// commit headers. Provider request IDs remain separate diagnostics.
+		ginContext.Header("X-Request-ID", trace.id)
 		relaylog.UpdateLiveRequest(trace.id, func(entry *relaylog.LiveRequest) {
 			entry.State = "received"
 			entry.StartedAt = trace.startedAt.UnixMilli()
