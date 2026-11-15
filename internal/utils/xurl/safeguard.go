@@ -44,7 +44,9 @@ func IsDisallowedIP(ip net.IP) bool {
 
 // resolveSafeHost 解析 host 并返回首个安全的 IP。
 // 返回的 IP 可用于 SafeDialContext 钉住连接目标，杜绝 DNS rebinding 窗口。
-func resolveSafeHost(target *url.URL) (net.IP, error) {
+var lookupSafeHost = net.DefaultResolver.LookupIPAddr
+
+func resolveSafeHost(ctx context.Context, target *url.URL) (net.IP, error) {
 	if target == nil {
 		return nil, fmt.Errorf("url is required")
 	}
@@ -65,19 +67,19 @@ func resolveSafeHost(target *url.URL) (net.IP, error) {
 		}
 		return ip, nil
 	}
-	ips, err := net.LookupIP(host)
+	ips, err := lookupSafeHost(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("resolve url host: %w", err)
 	}
 	if len(ips) == 0 {
 		return nil, fmt.Errorf("url host did not resolve")
 	}
-	for _, ip := range ips {
-		if IsDisallowedIP(ip) {
-			return nil, fmt.Errorf("url host resolves to disallowed address %s", ip)
+	for _, address := range ips {
+		if IsDisallowedIP(address.IP) {
+			return nil, fmt.Errorf("url host resolves to disallowed address %s", address.IP)
 		}
 	}
-	return ips[0], nil
+	return ips[0].IP, nil
 }
 
 // AssertSafeHost validates that target.Host is safe for a server-side request.
@@ -85,15 +87,15 @@ func resolveSafeHost(target *url.URL) (net.IP, error) {
 // is disallowed (see IsDisallowedIP), and any hostname whose DNS records
 // resolve to a disallowed address. Resolving up front mitigates — but does not
 // fully prevent — DNS rebinding; use SafeDialContext to fully close the window.
-func AssertSafeHost(target *url.URL) error {
-	_, err := resolveSafeHost(target)
+func AssertSafeHost(ctx context.Context, target *url.URL) error {
+	_, err := resolveSafeHost(ctx, target)
 	return err
 }
 
 // AssertSafeURL parses rawURL, requires an http(s) scheme with a host, and
 // validates the host via AssertSafeHost. Use it at request boundaries to guard
 // server-side fetches driven by user input.
-func AssertSafeURL(rawURL string) error {
+func AssertSafeURL(ctx context.Context, rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid url: %w", err)
@@ -101,7 +103,7 @@ func AssertSafeURL(rawURL string) error {
 	if parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("url must be a valid http or https url")
 	}
-	return AssertSafeHost(parsed)
+	return AssertSafeHost(ctx, parsed)
 }
 
 // AssertSafeRequest 校验最终出站 http.Request 的 URL 是否安全。
@@ -114,7 +116,7 @@ func AssertSafeRequest(req *http.Request) error {
 	if req.URL.Host == "" {
 		return fmt.Errorf("request url must have a host")
 	}
-	return AssertSafeHost(req.URL)
+	return AssertSafeHost(req.Context(), req.URL)
 }
 
 // safeIPKey 是 context key，用于把校验时解析的安全 IP 传递给 SafeDialContext。
@@ -124,10 +126,10 @@ type safeIPKey struct{}
 // 返回的新 context 供 SafeDialContext 读取，dial 时直接连该 IP，跳过二次 DNS
 // 解析，彻底消除 DNS rebinding 窗口。
 func AssertSafeRequestWithPin(req *http.Request) (context.Context, error) {
-	if err := AssertSafeRequest(req); err != nil {
-		return nil, err
+	if req == nil || req.URL == nil || req.URL.Host == "" {
+		return nil, fmt.Errorf("request url is required")
 	}
-	ip, err := resolveSafeHost(req.URL)
+	ip, err := resolveSafeHost(req.Context(), req.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +163,6 @@ func CheckRedirectSafe(maxRedirects int) func(*http.Request, []*http.Request) er
 		if req.URL == nil || req.URL.Host == "" {
 			return fmt.Errorf("redirect url is invalid")
 		}
-		return AssertSafeHost(req.URL)
+		return AssertSafeHost(req.Context(), req.URL)
 	}
 }

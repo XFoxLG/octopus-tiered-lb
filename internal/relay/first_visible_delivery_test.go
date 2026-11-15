@@ -42,7 +42,7 @@ func TestFirstVisibleMilestonesFollowClientDelivery(t *testing.T) {
 		t.Run(map[bool]string{false: "delivered", true: "write_failed"}[fail], func(t *testing.T) {
 			text := "visible answer"
 			response := &transmodel.InternalLLMResponse{Object: "chat.completion.chunk", Choices: []transmodel.Choice{{Delta: &transmodel.Message{Content: transmodel.MessageContent{Content: &text}}}}}
-			attempt := newTerminationFidelityRelayAttempt(httptest.NewRecorder(), response, []byte("data: visible answer\n\n"))
+			attempt := newTerminationFidelityRelayAttempt(t, httptest.NewRecorder(), response, []byte("data: visible answer\n\n"))
 			attempt.metrics.StartTime = time.Now()
 			writer := &milestoneTestWriter{ResponseWriter: attempt.c.Writer, metrics: attempt.metrics, test: t, fail: fail}
 			attempt.c.Writer = writer
@@ -72,7 +72,7 @@ func TestFirstVisibleMilestonesFollowClientDelivery(t *testing.T) {
 	}
 }
 func TestMetadataDoesNotRecordFirstVisibleMilestones(t *testing.T) {
-	attempt := newTerminationFidelityRelayAttempt(httptest.NewRecorder(), &transmodel.InternalLLMResponse{Object: "chat.completion.chunk"}, []byte("data: metadata\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(t, httptest.NewRecorder(), &transmodel.InternalLLMResponse{Object: "chat.completion.chunk"}, []byte("data: metadata\n\n"))
 	_ = attempt.handleStreamResponse(context.Background(), &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("data: upstream\n\n"))})
 	if !attempt.metrics.FirstTokenTime.IsZero() || !attempt.metrics.UpstreamFirstVisibleTime.IsZero() {
 		t.Fatal("metadata counted as visible content")

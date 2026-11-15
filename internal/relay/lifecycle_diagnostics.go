@@ -2,12 +2,10 @@ package relay
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
-	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
 // ensureDiagnosticsLocked creates the diagnostics envelope on the first
@@ -35,43 +33,6 @@ func (trace *relayRequestTrace) setOperationDeadline(ctx context.Context, source
 		diagnostics.DeadlineAt = deadline.UnixMilli()
 	}
 	trace.mutex.Unlock()
-}
-
-// recordOutboundMaxTokens copies transformer metadata that survived into the
-// actual outbound request. It does not infer values for adapters that did not
-// record provenance, so missing data remains absent rather than misleading.
-func (trace *relayRequestTrace) recordOutboundMaxTokens(attempt int, request *transmodel.InternalLLMRequest) {
-	if trace == nil || request == nil {
-		return
-	}
-	valueText := request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensValue]
-	source := request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensSource]
-	if valueText == "" || source == "" {
-		return
-	}
-	value, err := strconv.ParseInt(valueText, 10, 64)
-	if err != nil || value < 0 {
-		return
-	}
-
-	trace.mutex.Lock()
-	defer trace.mutex.Unlock()
-	diagnostics := trace.ensureDiagnosticsLocked()
-	diagnostics.OutboundMaxTokens = &value
-	diagnostics.OutboundMaxTokensSource = source
-	diagnostics.OutboundMaxTokensField = request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensField]
-	diagnostics.OutboundMaxTokensAdjusted =
-		request.TransformerMetadata[transmodel.TransformerMetadataOutboundMaxTokensAdjusted] == "true"
-	for i := range diagnostics.Attempts {
-		item := &diagnostics.Attempts[i]
-		if item.Attempt == attempt {
-			item.OutboundMaxTokens = &value
-			item.OutboundMaxTokensSource = diagnostics.OutboundMaxTokensSource
-			item.OutboundMaxTokensField = diagnostics.OutboundMaxTokensField
-			item.OutboundMaxTokensAdjusted = diagnostics.OutboundMaxTokensAdjusted
-			break
-		}
-	}
 }
 
 func (trace *relayRequestTrace) recordRobinEnvelope(attempt int, classification RobinEnvelopeClassification) {
@@ -243,39 +204,6 @@ func (trace *relayRequestTrace) markAttemptOutputTextPresent(attempt int, presen
 			Protocol:          protocol,
 			OutputTextPresent: present,
 		})
-	}
-	trace.mutex.Unlock()
-}
-
-// markSelectedAttemptOutputTextPresent publishes only the selected lane's body
-// observation to the request-level diagnostic. Failed retries and hedge losers
-// keep their own attempt-level value without contaminating the selected result.
-func (trace *relayRequestTrace) markSelectedAttemptOutputTextPresent(attempts []model.ChannelAttempt, success bool) {
-	if trace == nil {
-		return
-	}
-	selected := 0
-	for i := len(attempts) - 1; i >= 0; i-- {
-		if success && attempts[i].Status == model.AttemptSuccess {
-			selected = attempts[i].AttemptNum
-			break
-		}
-		if !success && attempts[i].Status == model.AttemptFailed {
-			selected = attempts[i].AttemptNum
-			break
-		}
-	}
-	if selected == 0 {
-		return
-	}
-	trace.mutex.Lock()
-	if trace.diagnostics != nil {
-		for _, item := range trace.diagnostics.Attempts {
-			if item.Attempt == selected {
-				trace.diagnostics.OutputTextPresent = item.OutputTextPresent
-				break
-			}
-		}
 	}
 	trace.mutex.Unlock()
 }

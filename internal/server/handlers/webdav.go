@@ -145,7 +145,7 @@ func testWebDAVConnection(c *gin.Context) {
 		return
 	}
 
-	if err := xurl.AssertSafeURL(baseURL); err != nil {
+	if err := xurl.AssertSafeURL(c.Request.Context(), baseURL); err != nil {
 		resp.Error(c, http.StatusBadRequest, "invalid base_url: "+err.Error())
 		return
 	}

@@ -30,7 +30,6 @@ import (
 	"github.com/lingyuins/octopus/internal/transformer/rewrite"
 	"github.com/lingyuins/octopus/internal/utils/log"
 	"github.com/lingyuins/octopus/internal/utils/xurl"
-	"github.com/tmaxmax/go-sse"
 )
 
 var errClientDisconnected = errors.New("client disconnected")
@@ -416,6 +415,10 @@ func (ra *relayAttempt) attempt() attemptResult {
 	// 转发请求
 	statusCode, fwdErr, selectedSpan := ra.forwardWithOptionalHedge(span)
 	span = selectedSpan
+	ra.metrics.SelectedAttempt = ra.logAttemptNumber
+	if trace := ra.metrics.RequestTrace; trace != nil {
+		trace.recordOutboundMaxTokens(ra.logAttemptNumber, ra.outboundBudget)
+	}
 	if fwdErr != nil && ra.streamSession == nil && isClientDisconnected(ra.clientCtx) {
 		fwdErr = errClientDisconnected
 	}
@@ -759,8 +762,9 @@ func (ra *relayAttempt) forward() (statusCode int, resultErr error) {
 		log.Warnf("failed to create request: %v", err)
 		return 0, fmt.Errorf("failed to create request: %w", err)
 	}
+	ra.outboundBudget = observeOutboundBudget(outboundRequest, requestForOutbound)
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
-		trace.recordOutboundMaxTokens(ra.logAttemptNumber, requestForOutbound)
+		trace.recordOutboundMaxTokens(ra.logAttemptNumber, ra.outboundBudget)
 	}
 
 	// 复制请求头
@@ -1004,24 +1008,25 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, *firstVi
 	// SSRF 防护（issue #219）：校验最终出站 URL 并把安全 IP 钉入 context，
 	// 杜绝 DNS rebinding。relay 主链路的渠道/号池 Base URL 在此前未经校验，
 	// editor 可借此打云元数据端点等内网地址。
+	dispatchGuard := ra.withFirstVisibleDeadline(req.Context(), ra.firstTokenTimeOutSec)
+	req = req.WithContext(dispatchGuard.Context())
 	safeCtx, err := xurl.AssertSafeRequestWithPin(req)
 	if err != nil {
 		log.Warnf("ssrf check failed for %s: %v", req.URL.Redacted(), err)
-		return nil, nil, fmt.Errorf("upstream url is not allowed: %w", err)
+		return nil, dispatchGuard, fmt.Errorf("upstream url is not allowed: %w", err)
 	}
 
 	httpClient, err2 := helper.ChannelHttpClient(ra.channel)
 	if err2 != nil {
 		log.Warnf("failed to get http client: %v", err2)
-		return nil, nil, err2
+		return nil, dispatchGuard, err2
 	}
 
 	// This is the actual dispatch boundary: routing, rewriting, serialization and
 	// SSRF validation have completed. The guard uses a stoppable timer rather than
 	// attaching a permanent deadline to the request context, so a visible answer
 	// arriving before the deadline does not cut the long stream off later.
-	dispatchGuard := ra.withFirstVisibleDeadline(safeCtx, ra.firstTokenTimeOutSec)
-	req = req.WithContext(dispatchGuard.Context())
+	req = req.WithContext(safeCtx)
 	ra.setKeepalivePhase(relayKeepalivePhaseHeaderWait)
 	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
 		trace.markUpstreamSendStarted(ra.logAttemptNumber)
@@ -1166,6 +1171,15 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 	var reasoningBuffer [][]byte // 暂存仅含 reasoning 的 chunk，待可见内容到达后 flush
 	var reasoningBufferBytes int // reasoningBuffer 累计字节数，用于软上限判定（见 maxReasoningBufferBytes）
+	var reasoningBufferChunks int
+	var reasoningBufferReasoningBytes int
+	recordReasoningBufferFlush := func() {
+		if ra.metrics != nil && ra.metrics.RequestTrace != nil && reasoningBufferChunks > 0 {
+			ra.metrics.RequestTrace.recordReasoningBufferFlush(reasoningBufferChunks)
+		}
+		reasoningBufferChunks = 0
+		reasoningBufferReasoningBytes = 0
+	}
 	clientDone := ra.clientCtx.Done()
 	clientDisconnected := false
 	clientDisconnectLogged := false
@@ -1256,44 +1270,22 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			}
 		}()
 		defer close(results)
-		if ra.canPassthroughStream() {
-			scanner := rawSSEScanner(response.Body)
-			for scanner.Scan() {
-				frame := append([]byte(nil), scanner.Bytes()...)
-				select {
-				case results <- sseReadResult{data: rawSSEData(frame), frame: frame}:
-				case <-ctx.Done():
-					return
-				}
-			}
-			if err := scanner.Err(); err != nil {
-				select {
-				case results <- sseReadResult{err: err}:
-				case <-ctx.Done():
-				}
-			}
-			return
-		}
-		readCfg := &sse.ReadConfig{MaxEventSize: maxSSEEventSize}
-		for ev, err := range sse.Read(response.Body, readCfg) {
+		scanner := rawSSEScanner(response.Body)
+		for scanner.Scan() {
+			frame := append([]byte(nil), scanner.Bytes()...)
 			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			if err != nil {
-				select {
-				case results <- sseReadResult{err: err}:
-				case <-ctx.Done():
-				}
-				return
-			}
-			select {
-			case results <- sseReadResult{data: ev.Data}:
+			case results <- sseReadResult{data: rawSSEData(frame), frame: frame}:
 			case <-ctx.Done():
 				return
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			select {
+			case results <- sseReadResult{err: err}:
+			case <-ctx.Done():
+			}
+		}
+
 	}()
 
 	var firstVisibleOutputTimer *time.Timer
@@ -1399,9 +1391,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		if len(noticeBuffer.payloads) == 0 {
 			return
 		}
-		if len(reasoningBuffer) > 0 && ra.metrics != nil && ra.metrics.RequestTrace != nil {
-			ra.metrics.RequestTrace.recordReasoningBufferFlush(len(reasoningBuffer))
-		}
+		recordReasoningBufferFlush()
 		writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 		reasoningBuffer, reasoningBufferBytes = nil, 0
 		ra.hedgeVisibleChunk = true
@@ -1449,9 +1439,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		// disabled, flush its buffered protocol frames. Otherwise strict
 		// clients would receive neither the terminal event nor an error.
 		if !hasVisibleContent && len(reasoningBuffer) > 0 {
-			if ra.metrics != nil && ra.metrics.RequestTrace != nil {
-				ra.metrics.RequestTrace.recordReasoningBufferFlush(len(reasoningBuffer))
-			}
+			recordReasoningBufferFlush()
 			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 		}
 		reasoningBuffer = nil
@@ -1640,9 +1628,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			if ra.streamTermination.Cause.IsProviderFailure() {
 				providerErr := providerTerminalFailureError(ra.streamTermination)
 				if len(reasoningBuffer) > 0 {
-					if ra.metrics != nil && ra.metrics.RequestTrace != nil {
-						ra.metrics.RequestTrace.recordReasoningBufferFlush(len(reasoningBuffer))
-					}
+					recordReasoningBufferFlush()
 					writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 					reasoningBuffer = nil
 					reasoningBufferBytes = 0
@@ -1684,8 +1670,10 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		var data []byte
 		var chunkHasVisible bool
 		var err error
-		if ra.canPassthroughStream() && !rawSSEHasData(r.frame) {
+		ra.streamChunkReasoningBytes, ra.streamChunkStructural, ra.streamChunkControl = 0, false, false
+		if !rawSSEHasData(r.frame) {
 			data = r.frame
+			ra.streamChunkControl = true
 		} else {
 			data, chunkHasVisible, err = ra.transformStreamData(ctx, r.data)
 			if ra.canPassthroughStream() {
@@ -1747,6 +1735,17 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			stopFirstVisibleOutputTimer()
 			startStreamIdleTimer()
 		}
+		if sseCommentOnly(data) || ra.streamChunkControl {
+			ra.hedgeVisibleChunk = false
+			if !clientDisconnected {
+				if _, writeErr := ra.c.Writer.Write(data); writeErr != nil {
+					markClientDisconnected()
+					return errClientDisconnected
+				}
+				ra.c.Writer.Flush()
+			}
+			continue
+		}
 		shouldHoldNotice := false
 		if !ra.canPassthroughStream() {
 			shouldHoldNotice = noticeBuffer.observe(ra.streamAnswerText, ra.streamAnswerBypass)
@@ -1771,21 +1770,27 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		// issue #155：根据策略决定是否缓冲 reasoning chunks。
 		// buffer 策略：暂存到 buffer，待可见内容到达后统一 flush（安全重试但 CF 可能超时）
 		// immediate 策略：立即发送所有 chunks（实时体验但空输出不可重试）
-		if shouldBuffer && !chunkHasVisible && !hasVisibleContent && !terminalProviderFailure {
+		if !ra.canPassthroughStream() && !chunkHasVisible && !hasVisibleContent && !terminalProviderFailure &&
+			!ra.streamOutputWasCommitted() &&
+			(ra.streamChunkStructural || (shouldBuffer && (ra.streamChunkReasoningBytes > 0 || ra.streamSawTerminalEvent))) {
 			// 软上限：累计字节超过 maxReasoningBufferBytes 时丢弃当前 buffer，避免
 			// 长 reasoning-only 流内存无界增长。丢弃而非 flush 以保持空输出重试安全性
 			// （hasVisibleContent 保持 false，仍可重试）。8 MiB reasoning-only 已属异常。
 			if reasoningBufferBytes >= maxReasoningBufferBytes {
 				if ra.metrics != nil && ra.metrics.RequestTrace != nil {
-					ra.metrics.RequestTrace.recordReasoningBufferOverflow(len(reasoningBuffer), reasoningBufferBytes)
+					ra.metrics.RequestTrace.recordReasoningBufferOverflow(reasoningBufferChunks, reasoningBufferReasoningBytes)
 				}
 				reasoningBuffer = nil
 				reasoningBufferBytes = 0
+				reasoningBufferChunks = 0
+				reasoningBufferReasoningBytes = 0
 			}
 			reasoningBuffer = append(reasoningBuffer, data)
 			reasoningBufferBytes += len(data)
-			if ra.metrics != nil && ra.metrics.RequestTrace != nil {
+			if ra.streamChunkReasoningBytes > 0 && ra.metrics != nil && ra.metrics.RequestTrace != nil {
 				ra.metrics.RequestTrace.recordReasoningBuffered(len(data))
+				reasoningBufferChunks++
+				reasoningBufferReasoningBytes += len(data)
 			}
 			continue
 		}
@@ -1795,9 +1800,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 
 		// 可见内容到达，先 flush 暂存的 reasoning buffer
 		if len(reasoningBuffer) > 0 {
-			if ra.metrics != nil && ra.metrics.RequestTrace != nil {
-				ra.metrics.RequestTrace.recordReasoningBufferFlush(len(reasoningBuffer))
-			}
+			recordReasoningBufferFlush()
 			writeReasoningBuffer(ra, reasoningBuffer, &clientDisconnected, markClientDisconnected, logClientDisconnected)
 			if clientDisconnected && ra.streamSession == nil {
 				return errClientDisconnected
@@ -1924,6 +1927,13 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		return nil, false, err
 	}
 	if internalStream == nil {
+		var event struct {
+			Type string `json:"type"`
+		}
+		if jsonAPI.Unmarshal([]byte(data), &event) == nil && event.Type == "ping" {
+			ra.streamChunkControl = true
+			return []byte(": upstream ping\n\n"), false, nil
+		}
 		return nil, false, nil
 	}
 	if err := ra.applyRobinEnvelopePolicyToStreamChunk(internalStream); err != nil {
@@ -1955,9 +1965,12 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 	if !ra.canPassthroughStream() {
 		ra.extractLeadingInlineReasoningStream(internalStream)
 	}
-	hasVisible := streamChunkHasVisibleContent(internalStream)
+	hasVisible := streamChunkHasEffectiveOutput(internalStream)
+	ra.streamChunkControl = streamChunkIsEmptyControl(internalStream)
+	ra.streamChunkStructural = streamChunkStructure(internalStream)
 	ra.streamAnswerText, ra.streamAnswerBypass = answerText(internalStream, true)
 	reasoningBytes := streamChunkReasoningBytes(internalStream)
+	ra.streamChunkReasoningBytes = reasoningBytes
 	if hasVisible {
 		ra.setKeepalivePhase(relayKeepalivePhaseBodyWait)
 	} else if reasoningBytes > 0 {
@@ -2013,6 +2026,9 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 			return append(finishPayload, inStream...), hasVisible, nil
 		}
 		return nil, false, providerTerminalFailureError(termination)
+	}
+	if ra.streamChunkControl {
+		return []byte(": upstream control\n\n"), false, nil
 	}
 	return append(finishPayload, inStream...), hasVisible, nil
 }

@@ -55,8 +55,9 @@ type RelayMetrics struct {
 	OperationContext context.Context
 
 	// 统计指标
-	ActualModel string
-	Stats       model.StatsMetrics
+	SelectedAttempt int
+	ActualModel     string
+	Stats           model.StatsMetrics
 }
 
 func NewRelayMetrics(apiKeyID int, requestModel string, requestedEndpointType string, matchedGroupEndpointType string, clientIP string, userAgent string, req *transformerModel.InternalLLMRequest) *RelayMetrics {
@@ -172,7 +173,7 @@ func (m *RelayMetrics) SetOutboundRequest(req *transformerModel.InternalLLMReque
 
 func (m *RelayMetrics) Save(success bool, err error, attempts []model.ChannelAttempt) {
 	if m.RequestTrace != nil {
-		m.RequestTrace.markSelectedAttemptOutputTextPresent(attempts, success)
+		m.RequestTrace.selectDiagnosticAttempt(m.SelectedAttempt)
 		source := relayMetricsTerminalSource(m, success, err)
 		m.RequestTrace.markRuntimeTerminal(m.OperationContext, source, err)
 	}
@@ -569,7 +570,7 @@ func (m *RelayMetrics) saveLog(ctx context.Context, err error, duration time.Dur
 			if normalizedResponse, marshalErr := jsonAPI.Marshal(m.InternalResponse); marshalErr == nil {
 				m.RequestTrace.addNormalizedJSON(
 					model.RelayLogBoundaryUpstreamResponse,
-					lastForwardedAttemptNumber(attempts),
+					m.SelectedAttempt,
 					"normalized_response",
 					m.EndpointType,
 					normalizedResponse,

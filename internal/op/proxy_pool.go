@@ -294,7 +294,7 @@ func ProxyConfigurationTest(req model.ProxyTestRequest, ctx context.Context) (mo
 	if err != nil || parsedTarget.Scheme == "" || parsedTarget.Host == "" || (parsedTarget.Scheme != "http" && parsedTarget.Scheme != "https") {
 		return model.ProxyTestResult{Success: false, Message: "test url must be a valid http or https url"}, nil
 	}
-	if err := xurl.AssertSafeHost(parsedTarget); err != nil {
+	if err := xurl.AssertSafeHost(ctx, parsedTarget); err != nil {
 		return model.ProxyTestResult{Success: false, Message: err.Error()}, nil
 	}
 

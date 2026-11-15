@@ -14,6 +14,39 @@ type reasoningThenVisibleOutbound struct {
 	stubOutboundAdapter
 }
 
+type reasoningProtocolInbound struct {
+	stubInboundAdapter
+}
+
+func (reasoningProtocolInbound) TransformStream(_ context.Context, stream *tmodel.InternalLLMResponse) ([]byte, error) {
+	if stream == nil {
+		return nil, nil
+	}
+	if stream.Object == "[DONE]" {
+		return []byte("data: [DONE]\n\n"), nil
+	}
+	var out strings.Builder
+	for _, choice := range stream.Choices {
+		if choice.Delta == nil {
+			continue
+		}
+		if choice.Delta.Role != "" {
+			out.WriteString("data: role\n\n")
+		}
+		if reasoning := choice.Delta.GetReasoningContent(); reasoning != "" {
+			out.WriteString("data: reasoning:")
+			out.WriteString(reasoning)
+			out.WriteString("\n\n")
+		}
+		if choice.Delta.Content.Content != nil && *choice.Delta.Content.Content != "" {
+			out.WriteString("data: answer:")
+			out.WriteString(*choice.Delta.Content.Content)
+			out.WriteString("\n\n")
+		}
+	}
+	return []byte(out.String()), nil
+}
+
 func (reasoningThenVisibleOutbound) TransformStream(_ context.Context, eventData []byte) (*tmodel.InternalLLMResponse, error) {
 	raw := strings.TrimSpace(string(eventData))
 	switch {
@@ -27,6 +60,13 @@ func (reasoningThenVisibleOutbound) TransformStream(_ context.Context, eventData
 				Delta: &tmodel.Message{ReasoningContent: &reasoning},
 			}},
 		}, nil
+	case raw == "role":
+		return &tmodel.InternalLLMResponse{
+			Choices: []tmodel.Choice{{
+				Index: 0,
+				Delta: &tmodel.Message{Role: "assistant"},
+			}},
+		}, nil
 	case strings.HasPrefix(raw, "visible:"):
 		content := strings.TrimPrefix(raw, "visible:")
 		return &tmodel.InternalLLMResponse{
@@ -37,6 +77,50 @@ func (reasoningThenVisibleOutbound) TransformStream(_ context.Context, eventData
 		}, nil
 	default:
 		return (&stubOutboundAdapter{}).TransformStream(context.Background(), eventData)
+	}
+}
+
+func TestReasoningBufferDiagnosticsCountOnlyReasoningFrames(t *testing.T) {
+	clientCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	ra, recorder := newStreamTestAttempt(t, clientCtx)
+	ra.outAdapter = reasoningThenVisibleOutbound{}
+	ra.inAdapter = reasoningProtocolInbound{}
+	trace := newRelayRequestTrace(ra.c.Request, false)
+	trace.setOperationDeadline(context.Background(), "test")
+	ra.metrics.SetRequestTrace(trace)
+
+	done := runStreamWithUpstream(t, ra, func(w *io.PipeWriter) {
+		_, _ = w.Write([]byte("data: role\n\n"))
+		_, _ = w.Write([]byte("data: reason:thinking\n\n"))
+		_, _ = w.Write([]byte("data: visible:answer\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	})
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("handleStreamResponse() = %v, want nil", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream did not terminate")
+	}
+
+	body := recorder.Body.String()
+	roleAt := strings.Index(body, "role")
+	reasoningAt := strings.Index(body, "thinking")
+	answerAt := strings.Index(body, "answer")
+	if roleAt < 0 || reasoningAt < 0 || answerAt < 0 || !(roleAt < reasoningAt && reasoningAt < answerAt) {
+		t.Fatalf("buffered protocol order changed: %q", body)
+	}
+	diagnostics := trace.diagnosticsSnapshot()
+	if diagnostics == nil {
+		t.Fatal("diagnostics missing")
+	}
+	if diagnostics.ReasoningChunksReceived != 1 || diagnostics.ReasoningChunksBuffered != 1 || diagnostics.ReasoningChunksFlushed != 1 {
+		t.Fatalf("structural frame polluted reasoning counts: received:%d buffered:%d flushed:%d",
+			diagnostics.ReasoningChunksReceived, diagnostics.ReasoningChunksBuffered, diagnostics.ReasoningChunksFlushed)
 	}
 }
 

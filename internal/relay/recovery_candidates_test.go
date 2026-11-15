@@ -93,7 +93,7 @@ func TestUpstreamRecoveryEvidencePersistsWithoutMessage(t *testing.T) {
 }
 
 func TestRecoveryAdmissionRejectionDoesNotConsumeForwardBudget(t *testing.T) {
-	ra := newTerminationFidelityRelayAttempt(httptest.NewRecorder(), nil, nil)
+	ra := newTerminationFidelityRelayAttempt(t, httptest.NewRecorder(), nil, nil)
 	ra.channel.ID = 91004
 	ra.usedKey = model.ChannelKey{ID: 91004, Enabled: true, ChannelKey: "synthetic"}
 	ra.internalRequest = &llmmodel.InternalLLMRequest{Model: "fixture"}

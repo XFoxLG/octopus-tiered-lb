@@ -44,10 +44,11 @@ func (w *relayHedgeWriter) WriteHeaderNow() {
 func (w *relayHedgeWriter) Write(payload []byte) (int, error) {
 	visible := w.attempt.hedgeVisibleChunk
 	terminal := w.attempt.hedgeTerminalChunk()
-	if len(payload) == 0 && !visible && !terminal {
+	control := !visible && !terminal && sseCommentOnly(payload)
+	if len(payload) == 0 && !visible && !terminal && !control {
 		return 0, nil
 	}
-	err := w.emit(relayHedgeFrame{Payload: payload, Visible: visible, Terminal: terminal, Headers: w.header.Clone()})
+	err := w.emit(relayHedgeFrame{Payload: payload, Visible: visible, Terminal: terminal, Control: control, Headers: w.header.Clone()})
 	if err != nil {
 		return 0, err
 	}
@@ -292,24 +293,26 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 	stop := context.AfterFunc(req.clientCtx, cancel)
 	defer func() { stop(); cancel() }()
 	winner := -1
-	outcome, coordinateErr := coordinateRelayHedge(coordinatorCtx, delay, newLane(0), startBackup, func(index int, payload []byte, headers http.Header) error {
+	outcome, coordinateErr := coordinateRelayHedge(coordinatorCtx, delay, newLane(0), startBackup, func(index int, frame relayHedgeFrame) error {
 		if isClientDisconnected(req.clientCtx) {
 			return errClientDisconnected
 		}
 		if !req.c.Writer.Written() {
-			for name, values := range headers {
+			for name, values := range frame.Headers {
 				req.c.Writer.Header()[name] = append([]string(nil), values...)
 			}
 		}
-		count, err := req.c.Writer.Write(payload)
-		if err != nil || count != len(payload) {
+		count, err := req.c.Writer.Write(frame.Payload)
+		if err != nil || count != len(frame.Payload) {
 			return errClientDisconnected
 		}
 		req.c.Writer.Flush()
-		if writer, ok := req.c.Writer.(*relayResponseWriter); ok {
-			writer.markVisible()
+		if frame.Visible || frame.Terminal {
+			if writer, ok := req.c.Writer.(*relayResponseWriter); ok {
+				writer.markVisible()
+			}
+			winner = index
 		}
-		winner = index
 		return nil
 	})
 	if releaseBackup != nil {

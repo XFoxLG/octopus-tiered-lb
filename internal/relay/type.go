@@ -432,6 +432,10 @@ type relayAttempt struct {
 	protocolFallbackRemaining bool
 	hedgeVisibleChunk         bool
 	hedgeWinnerIsBackup       bool
+	streamChunkReasoningBytes int
+	streamChunkStructural     bool
+	streamChunkControl        bool
+	outboundBudget            outboundBudgetSnapshot
 
 	// streamFinishReason is retained for legacy log messages. Canonical policy
 	// decisions use streamTermination instead.

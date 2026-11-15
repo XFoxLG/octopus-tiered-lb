@@ -47,6 +47,8 @@ type RelayDiagnostics struct {
 	ToolDeltaCount            int64                          `json:"tool_delta_count,omitempty"`
 	PersistenceState          string                         `json:"persistence_state,omitempty"`
 	RoutingConflicts          []string                       `json:"routing_conflicts,omitempty"`
+	OutboundBudgetState       string                         `json:"outbound_budget_state,omitempty"`
+	SelectedAttempt           int                            `json:"selected_attempt,omitempty"`
 	Attempts                  []RelayAttemptDiagnostics      `json:"attempts,omitempty"`
 }
 
@@ -66,6 +68,7 @@ type RelayAttemptDiagnostics struct {
 	OutboundMaxTokensSource   string `json:"outbound_max_tokens_source,omitempty"`
 	OutboundMaxTokensField    string `json:"outbound_max_tokens_field,omitempty"`
 	OutboundMaxTokensAdjusted bool   `json:"outbound_max_tokens_adjusted,omitempty"`
+	OutboundBudgetState       string `json:"outbound_budget_state,omitempty"`
 	OutputTextPresent         *bool  `json:"output_text_present,omitempty"`
 	// RobinEnvelopeReason is a bounded classification, never tool arguments or
 	// generated content.
