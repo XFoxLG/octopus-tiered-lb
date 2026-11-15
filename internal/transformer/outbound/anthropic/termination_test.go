@@ -63,7 +63,7 @@ func TestAnthropicTerminationForStopReason(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			termination := anthropicTerminationForStopReason(&testCase.stopReason, testCase.stopSequence)
+			termination := model.TerminationFromAnthropicStopReason(&testCase.stopReason, testCase.stopSequence)
 			if termination.Cause != testCase.expectedCause {
 				t.Fatalf("cause = %q, want %q", termination.Cause, testCase.expectedCause)
 			}

@@ -204,13 +204,31 @@ func (w *relayResponseWriter) FlushError() error {
 	h := w.header.Clone()
 	return w.call(func(base gin.ResponseWriter) relayWriteResult {
 		applyWriterHeaders(base, h)
-		controller := http.NewResponseController(base)
-		if err := controller.Flush(); err != nil {
+		if err := flushRelaySink(base); err != nil {
 			return relayWriteResult{err: err}
 		}
 		return relayWriteResult{}
 	}).err
 }
+
+// Gin exposes Flush but not FlushError. Unwrap it before choosing the flusher
+// so an underlying socket failure is not swallowed by Gin's void Flush method.
+func flushRelaySink(writer http.ResponseWriter) error {
+	if ginWriter, ok := writer.(gin.ResponseWriter); ok {
+		ginWriter.WriteHeaderNow()
+	}
+	for {
+		if flusher, ok := writer.(interface{ FlushError() error }); ok {
+			return flusher.FlushError()
+		}
+		if wrapper, ok := writer.(interface{ Unwrap() http.ResponseWriter }); ok {
+			writer = wrapper.Unwrap()
+			continue
+		}
+		return http.NewResponseController(writer).Flush()
+	}
+}
+
 func (w *relayResponseWriter) Flush() {
 	_ = w.FlushError()
 }
@@ -273,7 +291,7 @@ func (w *relayResponseWriter) ping() error {
 		}
 		n, err := base.Write([]byte(": ping\n\n"))
 		if err == nil {
-			err = http.NewResponseController(base).Flush()
+			err = flushRelaySink(base)
 		}
 		return relayWriteResult{n: n, err: err}
 	})

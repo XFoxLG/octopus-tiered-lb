@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 )
@@ -67,7 +68,14 @@ func resolveSafeHost(ctx context.Context, target *url.URL) (net.IP, error) {
 		}
 		return ip, nil
 	}
+	trace := httptrace.ContextClientTrace(ctx)
+	if trace != nil && trace.DNSStart != nil {
+		trace.DNSStart(httptrace.DNSStartInfo{Host: host})
+	}
 	ips, err := lookupSafeHost(ctx, host)
+	if trace != nil && trace.DNSDone != nil {
+		trace.DNSDone(httptrace.DNSDoneInfo{Addrs: ips, Err: err})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve url host: %w", err)
 	}
@@ -122,6 +130,8 @@ func AssertSafeRequest(req *http.Request) error {
 // safeIPKey 是 context key，用于把校验时解析的安全 IP 传递给 SafeDialContext。
 type safeIPKey struct{}
 
+type safeHostKey struct{}
+
 // AssertSafeRequestWithPin 校验请求 URL 并把解析到的安全 IP 钉入 context。
 // 返回的新 context 供 SafeDialContext 读取，dial 时直接连该 IP，跳过二次 DNS
 // 解析，彻底消除 DNS rebinding 窗口。
@@ -129,11 +139,17 @@ func AssertSafeRequestWithPin(req *http.Request) (context.Context, error) {
 	if req == nil || req.URL == nil || req.URL.Host == "" {
 		return nil, fmt.Errorf("request url is required")
 	}
+	host := strings.ToLower(req.URL.Hostname())
+	if pinnedHost, _ := req.Context().Value(safeHostKey{}).(string); pinnedHost == host {
+		if ip, _ := req.Context().Value(safeIPKey{}).(net.IP); ip != nil {
+			return req.Context(), nil
+		}
+	}
 	ip, err := resolveSafeHost(req.Context(), req.URL)
 	if err != nil {
 		return nil, err
 	}
-	return context.WithValue(req.Context(), safeIPKey{}, ip), nil
+	return context.WithValue(context.WithValue(req.Context(), safeHostKey{}, host), safeIPKey{}, ip), nil
 }
 
 // SafeDialContext 是可注入 http.Transport.DialContext 的安全拨号函数。
@@ -143,8 +159,14 @@ func AssertSafeRequestWithPin(req *http.Request) (context.Context, error) {
 func SafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	if ip, ok := ctx.Value(safeIPKey{}).(net.IP); ok && ip != nil {
 		// 钉住校验过的 IP：把 addr 中的 host 替换为安全 IP，端口保留。
-		_, port, _ := net.SplitHostPort(addr)
-		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		pinnedHost, _ := ctx.Value(safeHostKey{}).(string)
+		if pinnedHost == "" || strings.EqualFold(host, pinnedHost) {
+			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		}
 	}
 	// 回退：未携带钉入 IP 的路径走默认拨号（管理面 AssertSafeURL 已校验，
 	// rebinding 窗口已由注释说明 mitigated but not fully prevented）。
