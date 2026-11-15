@@ -611,7 +611,7 @@ func convertGeminiToLLMResponse(geminiResp *model.GeminiGenerateContentResponse,
 
 		// Convert finish reason
 		if candidate.FinishReason != nil {
-			termination, sawTerminalEvent := geminiTerminationForFinishReason(*candidate.FinishReason)
+			termination, sawTerminalEvent := model.TerminationFromGeminiFinishReason(*candidate.FinishReason)
 			choice.Termination = termination
 			resp.SawTerminalEvent = resp.SawTerminalEvent || sawTerminalEvent
 
@@ -786,43 +786,6 @@ func geminiErrorProviderReason(envelope *model.GeminiErrorEnvelope) string {
 		return code
 	}
 	return "GEMINI_ERROR"
-}
-
-// geminiTerminationForFinishReason translates Gemini's provider-specific enum
-// into internal policy metadata. The second return value is intentionally
-// separate from the cause: FINISH_REASON_UNSPECIFIED is not evidence that a
-// streaming response ended, even though the field itself is present.
-func geminiTerminationForFinishReason(providerReason string) (model.TerminationMetadata, bool) {
-	termination := model.TerminationMetadata{
-		ProviderReason: providerReason,
-	}
-
-	switch strings.ToUpper(strings.TrimSpace(providerReason)) {
-	case "", "FINISH_REASON_UNSPECIFIED":
-		return termination, false
-	case "STOP":
-		termination.Cause = model.TerminationCauseComplete
-	case "MAX_TOKENS":
-		termination.Cause = model.TerminationCauseTokenLimit
-	case "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "MODEL_ARMOR":
-		termination.Cause = model.TerminationCauseContentFilter
-	case "RECITATION", "IMAGE_RECITATION":
-		termination.Cause = model.TerminationCauseRecitation
-	case "LANGUAGE":
-		// Gemini reports an unsupported-language condition, not a model refusal.
-		// Keep it observable instead of conflating it with a policy decision.
-		termination.Cause = model.TerminationCauseUnknown
-	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL":
-		termination.Cause = model.TerminationCauseMalformedToolCall
-	case "NO_IMAGE":
-		termination.Cause = model.TerminationCauseError
-	default:
-		// OTHER and future Gemini enum members remain observable through
-		// ProviderReason rather than being silently mislabeled as a clean stop.
-		termination.Cause = model.TerminationCauseUnknown
-	}
-
-	return termination, true
 }
 
 func convertGeminiFinishReason(cause model.TerminationCause) string {

@@ -730,6 +730,18 @@ func (writer *relayCaptureResponseWriter) Unwrap() http.ResponseWriter {
 	return writer.ResponseWriter
 }
 
+func (writer *relayCaptureResponseWriter) FlushError() error {
+	wasCommitted := writer.ResponseWriter.Written()
+	err := flushRelaySink(writer.ResponseWriter)
+	if !wasCommitted {
+		writer.trace.commitClientResponse(writer.ResponseWriter.Status(), writer.ResponseWriter.Header())
+	}
+	if err != nil {
+		writer.trace.recordClientWrite(nil, 0, err)
+	}
+	return err
+}
+
 func (writer *relayCaptureResponseWriter) WriteHeader(statusCode int) {
 	wasCommitted := writer.ResponseWriter.Written()
 	writer.ResponseWriter.WriteHeader(statusCode)

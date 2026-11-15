@@ -883,14 +883,14 @@ func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelT
 				payload, renderErr := renderer.TransformStreamInterruption(c.Request.Context(), err)
 				if renderErr == nil && len(payload) > 0 {
 					_, _ = c.Writer.Write(payload)
-					c.Writer.Flush()
+					_ = http.NewResponseController(c.Writer).Flush()
 					return
 				}
 			}
 		}
 		payload, _ := jsonAPI.Marshal(map[string]any{"error": map[string]any{"message": err.Error(), "type": clientErrorType(statusCode), "code": statusCode}})
 		_, _ = c.Writer.Write([]byte("event: error\ndata: " + string(payload) + "\n\n"))
-		c.Writer.Flush()
+		_ = http.NewResponseController(c.Writer).Flush()
 		return
 	}
 	if termination, ok := terminalCauseFromError(err); ok && termination.Cause.IsProviderRefusal() {
@@ -1236,7 +1236,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 						logClientDisconnected()
 						break
 					}
-					ra.c.Writer.Flush()
+					if err := http.NewResponseController(ra.c.Writer).Flush(); err != nil {
+						markClientDisconnected()
+						logClientDisconnected()
+						break
+					}
 				}
 			}
 			ra.streamSession.Finish(nil)
@@ -1248,7 +1252,10 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				markClientDisconnected()
 				logClientDisconnected()
 			} else {
-				ra.c.Writer.Flush()
+				if err := http.NewResponseController(ra.c.Writer).Flush(); err != nil {
+					markClientDisconnected()
+					logClientDisconnected()
+				}
 			}
 		}
 		// A forced error without a writable client is still terminal for this
@@ -1742,7 +1749,10 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 					markClientDisconnected()
 					return errClientDisconnected
 				}
-				ra.c.Writer.Flush()
+				if flushErr := http.NewResponseController(ra.c.Writer).Flush(); flushErr != nil {
+					markClientDisconnected()
+					return errClientDisconnected
+				}
 			}
 			continue
 		}
@@ -1833,7 +1843,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 						logClientDisconnected()
 						break
 					}
-					ra.c.Writer.Flush()
+					if flushErr := http.NewResponseController(ra.c.Writer).Flush(); flushErr != nil {
+						markClientDisconnected()
+						logClientDisconnected()
+						break
+					}
 					if chunkHasVisible {
 						ra.metrics.SetClientFirstFlushTime(time.Now())
 					}
@@ -1861,7 +1875,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		if !sseCommentOnly(data) {
 			markStreamOutputCommitted()
 		}
-		ra.c.Writer.Flush()
+		if flushErr := http.NewResponseController(ra.c.Writer).Flush(); flushErr != nil {
+			markClientDisconnected()
+			logClientDisconnected()
+			return errClientDisconnected
+		}
 		if chunkHasVisible {
 			ra.metrics.SetClientFirstFlushTime(time.Now())
 		}
@@ -1899,7 +1917,11 @@ func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected 
 					// reasoning frame after this connection failure.
 					break
 				}
-				ra.c.Writer.Flush()
+				if flushErr := http.NewResponseController(ra.c.Writer).Flush(); flushErr != nil {
+					markClientDisconnected()
+					logClientDisconnected()
+					break
+				}
 			}
 			continue
 		}
@@ -1913,7 +1935,11 @@ func writeReasoningBuffer(ra *relayAttempt, buffer [][]byte, clientDisconnected 
 			return
 		}
 		ra.markStreamOutputCommitted()
-		ra.c.Writer.Flush()
+		if flushErr := http.NewResponseController(ra.c.Writer).Flush(); flushErr != nil {
+			markClientDisconnected()
+			logClientDisconnected()
+			return
+		}
 	}
 }
 

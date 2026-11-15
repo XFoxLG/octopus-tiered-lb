@@ -915,42 +915,14 @@ func terminationForResponsesStreamEvent(streamEvent *ResponsesStreamEvent) model
 }
 
 func responsesTerminationForStatus(status *string, incompleteDetails *ResponsesIncompleteDetails, responseError *ResponsesError) model.TerminationMetadata {
-	if status == nil {
-		return model.TerminationMetadata{}
+	reason, message := "", ""
+	if incompleteDetails != nil {
+		reason = incompleteDetails.Reason
 	}
-
-	termination := model.TerminationMetadata{
-		ProviderReason: *status,
+	if responseError != nil {
+		message = responseError.Message
 	}
-
-	switch strings.ToLower(strings.TrimSpace(*status)) {
-	case "completed":
-		termination.Cause = model.TerminationCauseComplete
-	case "incomplete":
-		termination.Cause = model.TerminationCauseTokenLimit
-		if incompleteDetails != nil {
-			termination.Detail = incompleteDetails.Reason
-			switch strings.ToLower(strings.TrimSpace(incompleteDetails.Reason)) {
-			case "content_filter", "safety":
-				termination.Cause = model.TerminationCauseContentFilter
-			case "context_length_exceeded", "model_context_window_exceeded":
-				termination.Cause = model.TerminationCauseContextExhausted
-			}
-		}
-	case "failed":
-		termination.Cause = model.TerminationCauseError
-		if responseError != nil {
-			termination.Detail = responseError.Message
-		}
-	case "cancelled", "canceled":
-		termination.Cause = model.TerminationCauseTransportInterrupted
-	case "queued", "in_progress":
-		return model.TerminationMetadata{}
-	default:
-		termination.Cause = model.TerminationCauseUnknown
-	}
-
-	return termination
+	return model.TerminationFromResponsesStatus(status, reason, message)
 }
 
 func convertResponsesFinishReason(cause model.TerminationCause) *string {

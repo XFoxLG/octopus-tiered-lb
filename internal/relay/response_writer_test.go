@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -92,6 +93,38 @@ func (w *synchronizedGinResponseWriter) bodyString() string {
 
 func (w *synchronizedGinResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
+}
+
+type flushErrorResponseSink struct{ *httptest.ResponseRecorder }
+
+func (w flushErrorResponseSink) FlushError() error { return io.ErrClosedPipe }
+
+func TestRelayWriterRetainsGinUnderlyingFlushError(t *testing.T) {
+	for _, capture := range []bool{false, true} {
+		t.Run(fmt.Sprintf("capture=%t", capture), func(t *testing.T) {
+			c, _ := gin.CreateTestContext(flushErrorResponseSink{httptest.NewRecorder()})
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			trace := newRelayRequestTrace(c.Request, false)
+			defer trace.close()
+			if capture {
+				c.Writer = &relayCaptureResponseWriter{ResponseWriter: c.Writer, trace: trace}
+			}
+			writer := installRelayResponseWriter(c)
+			defer writer.close()
+			if _, err := writer.Write([]byte("data: safe\n\n")); err != nil {
+				t.Fatal(err)
+			}
+			if err := http.NewResponseController(writer).Flush(); !errors.Is(err, io.ErrClosedPipe) {
+				t.Fatalf("Flush swallowed the underlying failure: %v", err)
+			}
+			if capture {
+				_, _, _, _, writeError := trace.summary()
+				if writeError == "" {
+					t.Fatal("Flush failure missing from delivery diagnostics")
+				}
+			}
+		})
+	}
 }
 
 func TestKeepaliveCommitsHTTPWithoutSemanticOutput(t *testing.T) {

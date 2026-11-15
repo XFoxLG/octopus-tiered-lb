@@ -282,7 +282,7 @@ func (o *MessageOutbound) TransformStream(ctx context.Context, eventData []byte)
 		}
 
 		if streamEvent.Delta != nil && streamEvent.Delta.StopReason != nil {
-			termination := anthropicTerminationForStopReason(
+			termination := model.TerminationFromAnthropicStopReason(
 				streamEvent.Delta.StopReason,
 				streamEvent.Delta.StopSequence,
 			)
@@ -1000,7 +1000,7 @@ func convertToLLMResponse(resp *anthropicModel.Message) *model.InternalLLMRespon
 		ReasoningSignature: thinkingSignature,
 	}
 
-	termination := anthropicTerminationForStopReason(resp.StopReason, resp.StopSequence)
+	termination := model.TerminationFromAnthropicStopReason(resp.StopReason, resp.StopSequence)
 	choice := model.Choice{
 		Index:        0,
 		Message:      message,
@@ -1016,39 +1016,6 @@ func convertToLLMResponse(resp *anthropicModel.Message) *model.InternalLLMRespon
 	result.Usage = convertAnthropicUsage(resp.Usage)
 
 	return result
-}
-
-func anthropicTerminationForStopReason(stopReason, stopSequence *string) model.TerminationMetadata {
-	termination := model.TerminationMetadata{}
-	if stopReason == nil {
-		return termination
-	}
-
-	termination.ProviderReason = *stopReason
-	if stopSequence != nil {
-		termination.StopSequence = *stopSequence
-	}
-
-	switch strings.ToLower(strings.TrimSpace(*stopReason)) {
-	case "end_turn":
-		termination.Cause = model.TerminationCauseComplete
-	case "max_tokens":
-		termination.Cause = model.TerminationCauseTokenLimit
-	case "stop_sequence":
-		termination.Cause = model.TerminationCauseStopSequence
-	case "tool_use":
-		termination.Cause = model.TerminationCauseToolCall
-	case "pause_turn":
-		termination.Cause = model.TerminationCausePauseTurn
-	case "model_context_window_exceeded":
-		termination.Cause = model.TerminationCauseContextExhausted
-	case "refusal":
-		termination.Cause = model.TerminationCauseRefusal
-	default:
-		termination.Cause = model.TerminationCauseUnknown
-	}
-
-	return termination
 }
 
 func convertAnthropicFinishReason(cause model.TerminationCause) *string {

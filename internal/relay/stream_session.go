@@ -777,7 +777,9 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 			if _, err := c.Writer.Write(req.streamSession.formatEvent(event)); err != nil {
 				return false
 			}
-			c.Writer.Flush()
+			if err := http.NewResponseController(c.Writer).Flush(); err != nil {
+				return false
+			}
 			lastSeq = event.Sequence
 		}
 		return true
@@ -794,7 +796,7 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 			} else {
 				writeHeaders()
 				writeSSEErrorEvent(c.Writer, sessionErr.Error())
-				c.Writer.Flush()
+				_ = http.NewResponseController(c.Writer).Flush()
 			}
 			return
 		}
@@ -836,7 +838,7 @@ func serveRelayStreamSession(c *gin.Context, req *relayRequest) {
 				} else {
 					writeHeaders()
 					writeSSEErrorEvent(c.Writer, sessionErr.Error())
-					c.Writer.Flush()
+					_ = http.NewResponseController(c.Writer).Flush()
 				}
 			}
 			return

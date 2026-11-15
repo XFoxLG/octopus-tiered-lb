@@ -135,7 +135,7 @@ func TestGeminiTerminationForFinishReason(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			actualTermination, actualTerminalEvent := geminiTerminationForFinishReason(testCase.providerReason)
+			actualTermination, actualTerminalEvent := model.TerminationFromGeminiFinishReason(testCase.providerReason)
 			if actualTermination.Cause != testCase.expectedCause {
 				t.Fatalf("cause = %q, want %q", actualTermination.Cause, testCase.expectedCause)
 			}

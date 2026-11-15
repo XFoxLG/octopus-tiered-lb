@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"testing"
 )
 
@@ -41,6 +42,43 @@ func TestIsDisallowedIP(t *testing.T) {
 				t.Errorf("IsDisallowedIP(%s) = %v, want %v", tt.ip, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSafePinReusesOnlySameHostAndRecordsRealDNS(t *testing.T) {
+	original := lookupSafeHost
+	t.Cleanup(func() { lookupSafeHost = original })
+	lookups, starts, ends := 0, 0, 0
+	lookupSafeHost = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		lookups++
+		if host == "blocked.example" {
+			return []net.IPAddr{{IP: net.ParseIP("10.0.0.1")}}, nil
+		}
+		return []net.IPAddr{{IP: net.ParseIP("192.0.2.1")}}, nil
+	}
+	ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{DNSStart: func(httptrace.DNSStartInfo) { starts++ }, DNSDone: func(httptrace.DNSDoneInfo) { ends++ }})
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://safe.example/v1", nil)
+	pinned, err := AssertSafeRequestWithPin(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = request.WithContext(pinned)
+	if _, err := AssertSafeRequestWithPin(request); err != nil {
+		t.Fatal(err)
+	}
+	if lookups != 1 || starts != 1 || ends != 1 {
+		t.Fatalf("same host re-resolved/traced: %d/%d/%d", lookups, starts, ends)
+	}
+	changed, _ := http.NewRequestWithContext(pinned, http.MethodGet, "https://blocked.example/v1", nil)
+	if _, err := AssertSafeRequestWithPin(changed); err == nil || lookups != 2 {
+		t.Fatal("old pin bypassed different host validation")
+	}
+	ipRequest, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://192.0.2.2/v1", nil)
+	if _, err := AssertSafeRequestWithPin(ipRequest); err != nil {
+		t.Fatal(err)
+	}
+	if starts != 2 || ends != 2 {
+		t.Fatal("literal IP fabricated DNS")
 	}
 }
 
