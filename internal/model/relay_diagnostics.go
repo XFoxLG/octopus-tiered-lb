@@ -48,20 +48,29 @@ type RelayDiagnostics struct {
 	PersistenceState          string                         `json:"persistence_state,omitempty"`
 	RoutingConflicts          []string                       `json:"routing_conflicts,omitempty"`
 	OutboundBudgetState       string                         `json:"outbound_budget_state,omitempty"`
+	Task                      *RelayTaskDiagnostics          `json:"task,omitempty"`
+	Probe                     *ChannelProbeEvidence          `json:"probe,omitempty"`
 	SelectedAttempt           int                            `json:"selected_attempt,omitempty"`
+	Network                   *RelayNetworkDiagnostics       `json:"network,omitempty"`
+	FirstWriteAt              int64                          `json:"first_write_at,omitempty"`
 	Attempts                  []RelayAttemptDiagnostics      `json:"attempts,omitempty"`
 }
 
 type RelayAttemptDiagnostics struct {
-	Attempt        int                 `json:"attempt"`
-	ChannelID      int                 `json:"channel_id,omitempty"`
-	Protocol       string              `json:"protocol,omitempty"`
-	StartedAt      int64               `json:"started_at,omitempty"`
-	EndedAt        int64               `json:"ended_at,omitempty"`
-	DeadlineAt     int64               `json:"deadline_at,omitempty"`
-	TerminalSource string              `json:"terminal_source,omitempty"`
-	CancelReason   string              `json:"cancel_reason,omitempty"`
-	UpstreamError  *RelayUpstreamError `json:"upstream_error,omitempty"`
+	Attempt        int                      `json:"attempt"`
+	ChannelID      int                      `json:"channel_id,omitempty"`
+	Protocol       string                   `json:"protocol,omitempty"`
+	EndpointID     string                   `json:"endpoint_id,omitempty"`
+	Model          string                   `json:"model,omitempty"`
+	KeyID          int                      `json:"key_id,omitempty"`
+	HedgeLane      string                   `json:"hedge_lane,omitempty"`
+	Network        *RelayNetworkDiagnostics `json:"network,omitempty"`
+	StartedAt      int64                    `json:"started_at,omitempty"`
+	EndedAt        int64                    `json:"ended_at,omitempty"`
+	DeadlineAt     int64                    `json:"deadline_at,omitempty"`
+	TerminalSource string                   `json:"terminal_source,omitempty"`
+	CancelReason   string                   `json:"cancel_reason,omitempty"`
+	UpstreamError  *RelayUpstreamError      `json:"upstream_error,omitempty"`
 	// OutboundMaxTokens is the final limit observed on the wire for this
 	// attempt. Source identifies client, override, or adapter default.
 	OutboundMaxTokens         *int64 `json:"outbound_max_tokens,omitempty"`
@@ -72,8 +81,57 @@ type RelayAttemptDiagnostics struct {
 	OutputTextPresent         *bool  `json:"output_text_present,omitempty"`
 	// RobinEnvelopeReason is a bounded classification, never tool arguments or
 	// generated content.
-	RobinEnvelopeKind   string `json:"robin_envelope_kind,omitempty"`
-	RobinEnvelopeReason string `json:"robin_envelope_reason,omitempty"`
+	RobinEnvelopeKind   string                `json:"robin_envelope_kind,omitempty"`
+	RobinEnvelopeReason string                `json:"robin_envelope_reason,omitempty"`
+	Task                *RelayTaskDiagnostics `json:"task,omitempty"`
+}
+
+type RelayTaskDiagnostics struct {
+	Transport            string `json:"transport"`
+	SubmissionState      string `json:"submission_state,omitempty"`
+	Status               string `json:"status,omitempty"`
+	Done                 bool   `json:"done"`
+	Cursor               int    `json:"cursor,omitempty"`
+	PollCount            int    `json:"poll_count,omitempty"`
+	QueryRetryCount      int    `json:"query_retry_count,omitempty"`
+	CancelState          string `json:"cancel_state,omitempty"`
+	RequestID            string `json:"request_id,omitempty"`
+	CFRay                string `json:"cf_ray,omitempty"`
+	RndrID               string `json:"rndr_id,omitempty"`
+	StartedAt            int64  `json:"started_at,omitempty"`
+	DeadlineAt           int64  `json:"deadline_at,omitempty"`
+	SubmissionDispatchAt int64  `json:"submission_dispatch_at,omitempty"`
+	SubmissionHeadersAt  int64  `json:"submission_headers_at,omitempty"`
+	FirstChunkAt         int64  `json:"first_chunk_at,omitempty"`
+	LastObservedAt       int64  `json:"last_observed_at,omitempty"`
+	CancelledAt          int64  `json:"cancelled_at,omitempty"`
+	TimedOut             bool   `json:"timed_out,omitempty"`
+	TerminalReported     bool   `json:"terminal_reported,omitempty"`
+}
+
+// Unix milliseconds recorded at the actual network/read/parser boundaries.
+// Absent phases remain unknown, including DNS/TLS on a reused connection.
+type RelayNetworkDiagnostics struct {
+	TimingSource           string `json:"timing_source,omitempty"`
+	PreparationAt          int64  `json:"preparation_at,omitempty"`
+	DispatchAt             int64  `json:"dispatch_at,omitempty"`
+	DNSStartAt             int64  `json:"dns_start_at,omitempty"`
+	DNSEndAt               int64  `json:"dns_end_at,omitempty"`
+	DialStartAt            int64  `json:"dial_start_at,omitempty"`
+	DialEndAt              int64  `json:"dial_end_at,omitempty"`
+	TLSStartAt             int64  `json:"tls_start_at,omitempty"`
+	TLSEndAt               int64  `json:"tls_end_at,omitempty"`
+	ConnectionReused       *bool  `json:"connection_reused,omitempty"`
+	HeaderFirstByteAt      int64  `json:"header_first_byte_at,omitempty"`
+	ResponseHeadersAt      int64  `json:"response_headers_at,omitempty"`
+	FirstBodyByteAt        int64  `json:"first_body_byte_at,omitempty"`
+	FirstReasoningAt       int64  `json:"first_reasoning_at,omitempty"`
+	FirstEffectiveOutputAt int64  `json:"first_effective_output_at,omitempty"`
+	TerminalAt             int64  `json:"terminal_at,omitempty"`
+	CancelledAt            int64  `json:"cancelled_at,omitempty"`
+	RequestID              string `json:"request_id,omitempty"`
+	CFRay                  string `json:"cf_ray,omitempty"`
+	RndrID                 string `json:"rndr_id,omitempty"`
 }
 
 // RelayUpstreamError contains protocol evidence only, never response messages,

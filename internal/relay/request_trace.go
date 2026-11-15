@@ -449,6 +449,9 @@ func (trace *relayRequestTrace) recordClientWrite(payload []byte, writeCount int
 	trace.mutex.Lock()
 	trace.clientWriteBytes += int64(writeCount)
 	diagnostics := trace.ensureDiagnosticsLocked()
+	if writeCount > 0 && diagnostics.FirstWriteAt == 0 {
+		diagnostics.FirstWriteAt = time.Now().UnixMilli()
+	}
 	if sseCommentOnly(payload) {
 		diagnostics.ControlBytes += int64(writeCount)
 	} else {
@@ -789,6 +792,9 @@ func RelayRequestTraceMiddleware() gin.HandlerFunc {
 			captureContent = false
 		}
 		trace := newRelayRequestTrace(ginContext.Request, captureContent)
+		// Publish the gateway identity before the single Writer or keepalive can
+		// commit headers. Provider request IDs remain separate diagnostics.
+		ginContext.Header("X-Request-ID", trace.id)
 		relaylog.UpdateLiveRequest(trace.id, func(entry *relaylog.LiveRequest) {
 			entry.State = "received"
 			entry.StartedAt = trace.startedAt.UnixMilli()

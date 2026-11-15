@@ -5,6 +5,7 @@ import (
 	tm "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -129,6 +130,90 @@ func TestConnectionRejectsInvalidAndCrossProtocolPassthrough(t *testing.T) {
 		t.Fatal("same-format passthrough missing")
 	}
 }
+
+func TestConnectionCatieTasksRequiresVersionTwoAndEquivalentOrigin(t *testing.T) {
+	taskEndpoint := connectionFixture("chat")
+	taskEndpoint.Transport = EndpointTransportCatieTasks
+	taskEndpoint.TaskAPIURL = "https://example.com/v1/openai/tasks"
+	taskEndpoint.ForwardMode = "convert"
+	taskEndpoint.Auth = "bearer"
+
+	valid := &ConnectionConfig{
+		Version:   ConnectionConfigVersionTasks,
+		Selection: "configured",
+		Endpoints: []ChannelEndpoint{taskEndpoint},
+		Catalog:   ModelCatalog{Format: "manual"},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid Catie Tasks endpoint rejected: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*ConnectionConfig){
+		"legacy version": func(config *ConnectionConfig) {
+			config.Version = ConnectionConfigVersionDirect
+		},
+		"cross origin": func(config *ConnectionConfig) {
+			config.Endpoints[0].TaskAPIURL = "https://other.example/v1/openai/tasks"
+		},
+		"cross port": func(config *ConnectionConfig) {
+			config.Endpoints[0].TaskAPIURL = "https://example.com:8443/v1/openai/tasks"
+		},
+		"query": func(config *ConnectionConfig) {
+			config.Endpoints[0].TaskAPIURL = "https://example.com/v1/openai/tasks?target=other"
+		},
+		"raw": func(config *ConnectionConfig) {
+			config.Endpoints[0].ForwardMode = "raw"
+		},
+		"non bearer": func(config *ConnectionConfig) {
+			config.Endpoints[0].Auth = "api_key"
+		},
+		"responses protocol": func(config *ConnectionConfig) {
+			config.Endpoints[0].Protocol = "responses"
+		},
+		"version two without tasks": func(config *ConnectionConfig) {
+			config.Endpoints[0].Transport = EndpointTransportDirect
+			config.Endpoints[0].TaskAPIURL = ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := *valid
+			config.Endpoints = append([]ChannelEndpoint(nil), valid.Endpoints...)
+			mutate(&config)
+			if config.Validate() == nil {
+				t.Fatalf("accepted invalid Catie Tasks config: %+v", config.Endpoints[0])
+			}
+		})
+	}
+}
+
+func TestConnectionCatieTasksBuildsSubmissionRequestWithoutChangingBody(t *testing.T) {
+	endpoint := connectionFixture("chat")
+	endpoint.Transport = EndpointTransportCatieTasks
+	endpoint.TaskAPIURL = "https://example.com/v1/openai/tasks"
+	endpoint.Auth = "bearer"
+	channel := Channel{}
+	plan := ConnectionPlan{Endpoint: &endpoint, AdapterType: outbound.OutboundTypeOpenAIChat}
+	request := connectionRequest(tm.APIFormatOpenAIChatCompletion)
+
+	req, err := channel.BuildConnectionRequest(context.Background(), plan, plan.Adapter(), request, "task-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Method != http.MethodPost || req.URL.String() != endpoint.TaskAPIURL {
+		t.Fatalf("task submission request = %s %s", req.Method, req.URL)
+	}
+	if req.Header.Get("Authorization") != "Bearer task-secret" {
+		t.Fatal("Bearer authentication was not applied")
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "task-secret") || !strings.Contains(string(body), `"messages"`) {
+		t.Fatalf("task body changed or leaked credentials: %s", body)
+	}
+}
+
 func TestConnectionMigrationPreservesLegacyBehavior(t *testing.T) {
 	for _, kind := range []outbound.OutboundType{outbound.OutboundTypeOpenAIChat, outbound.OutboundTypeAnthropic, outbound.OutboundTypeGemini, outbound.OutboundTypeMimo, outbound.OutboundTypeCloudflare} {
 		t.Run(kind.String(), func(t *testing.T) {

@@ -1,4 +1,5 @@
 import type { NonChatMetrics, NonChatUsageSummary, NonChatUsageEvidence } from '../nonchat';
+import type { ChannelProbeEvidence } from './channel';
 import type { InfiniteData } from '@tanstack/react-query';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../client';
@@ -44,6 +45,7 @@ export interface ChannelAttempt {
  * 日志数据（列表条目，不含 request_content / response_content）
  */
 export interface RelayLog extends NonChatMetrics {
+	transport?: 'catie_tasks' | 'direct';
     non_chat_usage?: NonChatUsageSummary;
     id: string | number;
     id_str?: string;
@@ -157,6 +159,52 @@ export interface LiveRequest {
     client_delivery_state?: string;
 }
 
+export interface RelayTaskDiagnostics {
+    transport: string;
+    submission_state?: string;
+    status?: string;
+    done: boolean;
+    cursor?: number;
+    poll_count?: number;
+    query_retry_count?: number;
+    cancel_state?: string;
+    request_id?: string;
+    cf_ray?: string;
+    rndr_id?: string;
+    started_at?: number;
+    deadline_at?: number;
+    submission_dispatch_at?: number;
+    submission_headers_at?: number;
+    first_chunk_at?: number;
+    last_observed_at?: number;
+    cancelled_at?: number;
+    timed_out?: boolean;
+    terminal_reported?: boolean;
+}
+
+export interface RelayNetworkDiagnostics {
+    timing_source?: 'direct' | 'task_submission';
+    preparation_at?: number;
+    dispatch_at?: number;
+    dns_start_at?: number;
+    dns_end_at?: number;
+    dial_start_at?: number;
+    dial_end_at?: number;
+    tls_start_at?: number;
+    tls_end_at?: number;
+    connection_reused?: boolean;
+    header_first_byte_at?: number;
+    response_headers_at?: number;
+    first_body_byte_at?: number;
+    first_reasoning_at?: number;
+    first_effective_output_at?: number;
+    terminal_at?: number;
+    cancelled_at?: number;
+    request_id?: string;
+    cf_ray?: string;
+    rndr_id?: string;
+}
+
 export interface RelayLogDetail extends RelayLog {
     diagnostics?: {
         non_chat_usage?: NonChatUsageEvidence;
@@ -174,6 +222,11 @@ export interface RelayLogDetail extends RelayLog {
         outbound_max_tokens_source?: string;
         outbound_max_tokens_field?: string;
         outbound_max_tokens_adjusted?: boolean;
+        outbound_budget_state?: 'set' | 'not_set' | 'unknown';
+        selected_attempt?: number;
+        first_write_at?: number;
+        network?: RelayNetworkDiagnostics;
+        probe?: ChannelProbeEvidence;
         robin_envelope_kind?: string;
         robin_envelope_reason?: string;
         writer_accepted_bytes?: number;
@@ -201,10 +254,16 @@ export interface RelayLogDetail extends RelayLog {
         tool_delta_count?: number;
         persistence_state?: string;
         routing_conflicts?: string[];
+        task?: RelayTaskDiagnostics;
         attempts?: Array<{
             attempt: number;
             channel_id?: number;
             protocol?: string;
+            endpoint_id?: string;
+            model?: string;
+            key_id?: number;
+            hedge_lane?: string;
+            network?: RelayNetworkDiagnostics;
             started_at?: number;
             ended_at?: number;
             deadline_at?: number;
@@ -222,8 +281,11 @@ export interface RelayLogDetail extends RelayLog {
             outbound_max_tokens_source?: string;
             outbound_max_tokens_field?: string;
             outbound_max_tokens_adjusted?: boolean;
+            outbound_budget_state?: 'set' | 'not_set' | 'unknown';
+            output_text_present?: boolean;
             robin_envelope_kind?: string;
             robin_envelope_reason?: string;
+            task?: RelayTaskDiagnostics;
         }>;
     };
     request_content?: string;

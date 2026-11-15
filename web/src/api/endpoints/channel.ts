@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { formatCount, formatMoney, formatTime } from '@/lib/utils';
 import { StatsChannel, type StatsMetricsFormatted } from './stats';
 import { type GroupTestProgress } from './group';
+import type { RelayNetworkDiagnostics, RelayTaskDiagnostics } from './log';
 import type { ProxyMode } from './proxy-pool';
 
 /**
@@ -113,6 +114,7 @@ export type CustomHeader = {
 export type EndpointProtocol = 'chat' | 'responses' | 'messages' | 'gemini' | 'embeddings' | 'cloudflare' | 'volcengine' | 'codex';
 /** Connection-only protocol: rerank uses an exact endpoint and is not part of LLM probe protocol naming. */
 export type ChannelEndpointProtocol = EndpointProtocol | 'rerank';
+export type ChannelEndpointTransport = 'direct' | 'catie_tasks';
 export type ChannelEndpoint = {
     id: string;
     protocol: ChannelEndpointProtocol;
@@ -121,10 +123,12 @@ export type ChannelEndpoint = {
     auth: 'default' | 'bearer' | 'api_key' | 'x_api_key' | 'google' | 'none' | 'legacy';
     compatibility?: '' | 'legacy' | 'mimo' | 'legacy_mimo';
     forward_mode?: '' | 'convert' | 'passthrough' | 'raw';
+    transport?: ChannelEndpointTransport;
+    task_api_url?: string;
     headers?: CustomHeader[];
 };
 export type ConnectionConfig = {
-    version: 1;
+    version: 1 | 2;
     selection: 'same_protocol' | 'configured';
     endpoints: ChannelEndpoint[];
     catalog: { endpoint_id?: string; format: 'manual' | 'openai' | 'anthropic' | 'gemini' | 'cloudflare'; url?: string };
@@ -714,9 +718,11 @@ export type ChannelProbeEvidence = {
     transport?: string;
     endpoint_id?: string;
     endpoint_url?: string;
-    protocol?: EndpointProtocol;
+    protocol?: ChannelEndpointProtocol;
     model?: string;
     key_scope?: string;
+    key_id?: number;
+    network?: RelayNetworkDiagnostics;
     request_stream?: boolean;
     request_budget_ms?: number;
     request_started_at?: string;
@@ -738,6 +744,7 @@ export type ChannelProbeEvidence = {
     read_state?: string;
     parse_state?: string;
     response_truncated?: boolean;
+    task?: RelayTaskDiagnostics;
 };
 
 export type ChannelProbeResult = {

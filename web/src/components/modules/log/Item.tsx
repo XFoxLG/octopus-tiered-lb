@@ -533,7 +533,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                     <Cpu className="size-3.5 shrink-0 text-blue-500" />
                                     <span>{t('totalTime')} {formatDuration(log.use_time)}</span>
                                 </div>
-                                {vis.tps && !nonChatTokens.nonChat && (
+                                {vis.tps && !nonChatTokens.nonChat && log.transport !== 'catie_tasks' && (
                                     <div className="flex items-center gap-1.5">
                                         <Gauge className="size-3.5 shrink-0 text-lime-500" />
                                         <span>{t('tps')} {formatTPS(tokenCounts.outputTokens, log.use_time)}</span>
@@ -933,7 +933,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                 <Cpu className="size-3.5 text-blue-500" />
                                 <span>{t('totalTime')}: {formatDuration(log.use_time)}</span>
                             </div>
-                            {vis.tps && !nonChatTokens.nonChat && (
+                            {vis.tps && !nonChatTokens.nonChat && log.transport !== 'catie_tasks' && detail?.diagnostics?.task?.transport !== 'catie_tasks' && (
                                 <div className="flex items-center gap-1.5">
                                     <Gauge className="size-3.5 text-lime-500" />
                                     <span>{t('tps')}: {formatTPS(tokenCounts.outputTokens, log.use_time)}</span>

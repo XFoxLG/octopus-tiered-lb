@@ -6,11 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
 func TestBuildGroupProbeRequest_ConversationEndpointsUseMessages(t *testing.T) {
@@ -74,6 +76,8 @@ func TestValidateGroupProbeChannelType_AllAcceptsChatChannel(t *testing.T) {
 }
 
 func TestSendGroupProbeRequest_EmbeddingsUseEmbeddingPayload(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
 	type outboundRequest struct {
 		Model string `json:"model"`
 		Input string `json:"input"`
@@ -137,6 +141,8 @@ func TestSendGroupProbeRequest_EmbeddingsUseEmbeddingPayload(t *testing.T) {
 }
 
 func TestSendGroupProbeRequest_EmbeddingVectorLargerThanPreviewLimit(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
 	vector := make([]float64, 4096)
 	for i := range vector {
 		vector[i] = 0.123456
@@ -171,10 +177,70 @@ func TestSendGroupProbeRequest_EmbeddingVectorLargerThanPreviewLimit(t *testing.
 	}
 }
 
+func TestSendGroupProbeRequestCatieTasksUsesOneSubmission(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
+
+	var submissions, queries atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/openai/tasks":
+			submissions.Add(1)
+			_, _ = io.WriteString(w, `{"id":"probe-task"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/openai/tasks/probe-task":
+			queries.Add(1)
+			_, _ = io.WriteString(w, `{"chunks":[],"next_after":0,"done":true,"status":"completed","result":{"id":"chatcmpl-task","object":"chat.completion","created":1,"model":"gpt-task","choices":[{"index":0,"message":{"role":"assistant","content":"task ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	channel := &appmodel.Channel{
+		Type: outbound.OutboundTypeOpenAIChat,
+		ConnectionConfig: &appmodel.ConnectionConfig{
+			Version:   appmodel.ConnectionConfigVersionTasks,
+			Selection: "same_protocol",
+			Endpoints: []appmodel.ChannelEndpoint{{
+				ID:          "chat",
+				Protocol:    "chat",
+				URL:         server.URL + "/v1",
+				URLMode:     "base",
+				Auth:        "bearer",
+				ForwardMode: "convert",
+				Transport:   appmodel.EndpointTransportCatieTasks,
+				TaskAPIURL:  server.URL + "/v1/openai/tasks",
+			}},
+			Catalog: appmodel.ModelCatalog{Format: "manual"},
+		},
+	}
+
+	status, _, response, err := sendGroupProbeRequest(
+		context.Background(),
+		outbound.Get(outbound.OutboundTypeOpenAIChat),
+		outbound.OutboundTypeOpenAIChat,
+		channel,
+		"fixture-key",
+		appmodel.EndpointTypeChat,
+		"gpt-task",
+	)
+	if err != nil {
+		t.Fatalf("Catie probe failed: %v", err)
+	}
+	if status != http.StatusOK || response == nil || response.ID != "chatcmpl-task" {
+		t.Fatalf("Catie probe response = status %d, response %#v", status, response)
+	}
+	if submissions.Load() != 1 || queries.Load() != 1 {
+		t.Fatalf("task submission/query count = %d/%d", submissions.Load(), queries.Load())
+	}
+}
+
 // TestSendGroupProbeRequest_ChatResponseUsageParsed 验证 issue #90 的修复：
 // chat 探测成功后，上游返回的 usage 必须被解析到 InternalLLMResponse.Usage，
 // 使 recordTestLog 能回填 InputTokens/OutputTokens/Cost（不再显示为「未知」）。
 func TestSendGroupProbeRequest_ChatResponseUsageParsed(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		// OpenAI chat completion 响应，含 usage。

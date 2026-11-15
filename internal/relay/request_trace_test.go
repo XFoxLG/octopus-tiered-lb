@@ -159,6 +159,7 @@ func TestRelayRequestTraceMiddlewareLogsRequestRejectedBeforeUpstream(t *testing
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"rejected-model","messages":[]}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("CF-Connecting-IP", "203.0.113.7")
+	request.Header.Set("X-Request-ID", "client-supplied-id")
 	responseRecorder := httptest.NewRecorder()
 	engine.ServeHTTP(responseRecorder, request)
 	if responseRecorder.Code != http.StatusUnauthorized {
@@ -170,6 +171,9 @@ func TestRelayRequestTraceMiddlewareLogsRequestRejectedBeforeUpstream(t *testing
 		t.Fatalf("cached logs = %d, want 1", len(logs))
 	}
 	relayLog := logs[0]
+	if got := responseRecorder.Result().Header.Get("X-Request-ID"); got == "" || got == "client-supplied-id" || got != relayLog.TraceID || got != relayLog.Diagnostics.RequestID {
+		t.Fatalf("gateway request ID = %q, log=%q diagnostics=%+v", got, relayLog.TraceID, relayLog.Diagnostics)
+	}
 	if relayLog.RequestModelName != "" {
 		t.Fatalf("RequestModelName = %q, want empty because auth did not consume the body", relayLog.RequestModelName)
 	}

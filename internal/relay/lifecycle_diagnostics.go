@@ -6,6 +6,7 @@ import (
 
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
+	"github.com/lingyuins/octopus/internal/pkg/catietasks"
 )
 
 // ensureDiagnosticsLocked creates the diagnostics envelope on the first
@@ -20,6 +21,62 @@ func (trace *relayRequestTrace) ensureDiagnosticsLocked() *model.RelayDiagnostic
 		}
 	}
 	return trace.diagnostics
+}
+
+func (trace *relayRequestTrace) recordTaskSnapshot(attempt int, snapshot catietasks.Snapshot) {
+	if trace == nil || snapshot.Transport == "" {
+		return
+	}
+	task := &model.RelayTaskDiagnostics{
+		Transport:            snapshot.Transport,
+		SubmissionState:      snapshot.SubmissionState,
+		Status:               snapshot.Status,
+		Done:                 snapshot.Done,
+		Cursor:               snapshot.Cursor,
+		PollCount:            snapshot.PollCount,
+		QueryRetryCount:      snapshot.QueryRetryCount,
+		CancelState:          snapshot.CancelState,
+		RequestID:            snapshot.RequestID,
+		CFRay:                snapshot.CFRay,
+		RndrID:               snapshot.RndrID,
+		StartedAt:            snapshot.StartedAt,
+		DeadlineAt:           snapshot.DeadlineAt,
+		SubmissionDispatchAt: snapshot.SubmissionDispatchAt,
+		SubmissionHeadersAt:  snapshot.SubmissionHeadersAt,
+		FirstChunkAt:         snapshot.FirstChunkAt,
+		LastObservedAt:       snapshot.LastObservedAt,
+		CancelledAt:          snapshot.CancelledAt,
+		TimedOut:             snapshot.TimedOut,
+		TerminalReported:     snapshot.TerminalReported,
+	}
+	trace.mutex.Lock()
+	defer trace.mutex.Unlock()
+	diagnostics := trace.ensureDiagnosticsLocked()
+	for i := range diagnostics.Attempts {
+		if diagnostics.Attempts[i].Attempt == attempt {
+			diagnostics.Attempts[i].Task = task
+			return
+		}
+	}
+	diagnostics.Attempts = append(diagnostics.Attempts, model.RelayAttemptDiagnostics{
+		Attempt: attempt,
+		Task:    task,
+	})
+}
+
+func (trace *relayRequestTrace) recordAttemptNetwork(attempt, channelID int, protocol string, network *model.RelayNetworkDiagnostics, endpointID, modelName string, keyID int, lane string) {
+	trace.mutex.Lock()
+	defer trace.mutex.Unlock()
+	d := trace.ensureDiagnosticsLocked()
+	for i := range d.Attempts {
+		if d.Attempts[i].Attempt == attempt {
+			item := &d.Attempts[i]
+			item.ChannelID, item.Protocol = channelID, protocol
+			item.Network, item.EndpointID, item.Model, item.KeyID, item.HedgeLane = network, endpointID, modelName, keyID, lane
+			return
+		}
+	}
+	d.Attempts = append(d.Attempts, model.RelayAttemptDiagnostics{Attempt: attempt, ChannelID: channelID, Protocol: protocol, Network: network, EndpointID: endpointID, Model: modelName, KeyID: keyID, HedgeLane: lane, StartedAt: network.PreparationAt})
 }
 
 func (trace *relayRequestTrace) setOperationDeadline(ctx context.Context, source string) {

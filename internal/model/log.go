@@ -101,23 +101,26 @@ type RelayLog struct {
 
 // RelayLogListItem 日志列表轻量条目，排除了 RequestContent 和 ResponseContent 大字段
 type RelayLogListItem struct {
-	ID                     int64  `json:"id" gorm:"column:id"`
-	TraceID                string `json:"trace_id,omitempty" gorm:"column:trace_id"`
-	Time                   int64  `json:"time" gorm:"column:time;index:idx_relay_logs_time"`
-	RequestModelName       string `json:"request_model_name" gorm:"column:request_model_name"`
-	RequestAPIKeyID        int    `json:"request_api_key_id" gorm:"column:request_api_key_id"`
-	RequestAPIKeyName      string `json:"request_api_key_name" gorm:"column:request_api_key_name"`
-	ClientIP               string `json:"client_ip" gorm:"column:client_ip"`
-	ReportedClientIP       string `json:"reported_client_ip,omitempty" gorm:"column:reported_client_ip"`
-	ReportedClientIPSource string `json:"reported_client_ip_source,omitempty" gorm:"column:reported_client_ip_source;size:24"`
-	EndpointType           string `json:"endpoint_type" gorm:"column:endpoint_type"`
-	ChannelId              int    `json:"channel" gorm:"column:channel_id"`
-	ChannelName            string `json:"channel_name" gorm:"column:channel_name"`
-	ActualModelName        string `json:"actual_model_name" gorm:"column:actual_model_name"`
-	UpstreamModel          string `json:"upstream_model,omitempty" gorm:"column:upstream_model"`
-	InputTokens            int64  `json:"input_tokens" gorm:"column:input_tokens"`
-	OutputTokens           int64  `json:"output_tokens" gorm:"column:output_tokens"`
-	InputTokensEst         int    `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est"`
+	// Read existing diagnostics for a lightweight transport projection. The
+	// envelope itself remains detail-only and adds no storage column.
+	Diagnostics            *RelayDiagnostics `json:"-" gorm:"column:diagnostics;serializer:json;type:text"`
+	ID                     int64             `json:"id" gorm:"column:id"`
+	TraceID                string            `json:"trace_id,omitempty" gorm:"column:trace_id"`
+	Time                   int64             `json:"time" gorm:"column:time;index:idx_relay_logs_time"`
+	RequestModelName       string            `json:"request_model_name" gorm:"column:request_model_name"`
+	RequestAPIKeyID        int               `json:"request_api_key_id" gorm:"column:request_api_key_id"`
+	RequestAPIKeyName      string            `json:"request_api_key_name" gorm:"column:request_api_key_name"`
+	ClientIP               string            `json:"client_ip" gorm:"column:client_ip"`
+	ReportedClientIP       string            `json:"reported_client_ip,omitempty" gorm:"column:reported_client_ip"`
+	ReportedClientIPSource string            `json:"reported_client_ip_source,omitempty" gorm:"column:reported_client_ip_source;size:24"`
+	EndpointType           string            `json:"endpoint_type" gorm:"column:endpoint_type"`
+	ChannelId              int               `json:"channel" gorm:"column:channel_id"`
+	ChannelName            string            `json:"channel_name" gorm:"column:channel_name"`
+	ActualModelName        string            `json:"actual_model_name" gorm:"column:actual_model_name"`
+	UpstreamModel          string            `json:"upstream_model,omitempty" gorm:"column:upstream_model"`
+	InputTokens            int64             `json:"input_tokens" gorm:"column:input_tokens"`
+	OutputTokens           int64             `json:"output_tokens" gorm:"column:output_tokens"`
+	InputTokensEst         int               `json:"input_tokens_est,omitempty" gorm:"column:input_tokens_est"`
 	NonChatMetrics
 	NonChatUsage *transmodel.NonChatUsageSummary `json:"non_chat_usage,omitempty" gorm:"serializer:json;type:text"`
 
@@ -188,6 +191,7 @@ func (RelayLogListItem) TableName() string { return "relay_logs" }
 // ToListItem 将完整的 RelayLog 转换为轻量的列表条目
 func (r *RelayLog) ToListItem() RelayLogListItem {
 	return RelayLogListItem{
+		Diagnostics:               r.Diagnostics,
 		ID:                        r.ID,
 		TraceID:                   r.TraceID,
 		Time:                      r.Time,

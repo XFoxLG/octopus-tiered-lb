@@ -189,6 +189,29 @@ jobs:
             > candidate/manifest.txt
           cat candidate/manifest.txt >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify candidate HTTP bytes and task lifecycle
+        env:
+          IMAGE: ${{ steps.source.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          COMMIT_SHA: ${{ steps.source.outputs.sha }}
+          VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          set -euo pipefail
+          IMMUTABLE_IMAGE="$IMAGE@$DIGEST"
+          docker pull "$IMMUTABLE_IMAGE"
+          [[ "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMMUTABLE_IMAGE")" = "$COMMIT_SHA" ]]
+          python3 scripts/test_catie_tasks_http.py --image "$IMMUTABLE_IMAGE" \
+            --expected-commit "$COMMIT_SHA" --expected-version "$VERSION" \
+            --report candidate/http-acceptance.json
+          echo 'http_acceptance=passed' >> candidate/manifest.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-http-acceptance
+          path: candidate/http-acceptance.json
+          if-no-files-found: error
+          retention-days: 30
+
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-manifest
