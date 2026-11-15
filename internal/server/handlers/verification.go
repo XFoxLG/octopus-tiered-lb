@@ -64,7 +64,7 @@ func runVerification(c *gin.Context) {
 		return
 	}
 	// BaseURL 直接来自请求体，服务器会据此发起请求，必须做 SSRF 防护。
-	if err := xurl.AssertSafeURL(req.BaseURL); err != nil {
+	if err := xurl.AssertSafeURL(c.Request.Context(), req.BaseURL); err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -93,7 +93,7 @@ func runVerificationForProfile(c *gin.Context) {
 
 	// 凭据档案的 BaseURL 可能由低权限角色配置，探测前必须做 SSRF 校验
 	// （临时 URL 探测入口已校验，此路径此前遗漏）。
-	if err := xurl.AssertSafeURL(p.BaseURL); err != nil {
+	if err := xurl.AssertSafeURL(c.Request.Context(), p.BaseURL); err != nil {
 		resp.Error(c, http.StatusBadRequest, "unsafe base_url: "+err.Error())
 		return
 	}

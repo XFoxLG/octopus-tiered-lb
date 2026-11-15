@@ -24,6 +24,7 @@ type relayHedgeFrame struct {
 	Payload  []byte
 	Visible  bool
 	Terminal bool
+	Control  bool
 	Headers  http.Header
 }
 type relayHedgeLane func(context.Context, func(relayHedgeFrame) error) error
@@ -47,7 +48,7 @@ type relayHedgeOutcome struct {
 // startBackup reserves capacity and budgets at the moment the delay expires;
 // returning nil leaves the primary serial and is not a relay failure.
 func coordinateRelayHedge(ctx context.Context, delay time.Duration, primary relayHedgeLane,
-	startBackup func() relayHedgeLane, writeFlush func(int, []byte, http.Header) error) (relayHedgeOutcome, error) {
+	startBackup func() relayHedgeLane, writeFlush func(int, relayHedgeFrame) error) (relayHedgeOutcome, error) {
 	outcome := relayHedgeOutcome{Winner: -1, StopLane: -1}
 	if primary == nil || writeFlush == nil {
 		return outcome, errors.New("missing hedge primary or writer")
@@ -140,7 +141,10 @@ func coordinateRelayHedge(ctx context.Context, delay time.Duration, primary rela
 						for _, part := range buffers[msg.lane] {
 							payload = append(payload, part...)
 						}
-						clientErr = writeFlush(msg.lane, payload, bufferHeaders[msg.lane])
+						frame := msg.frame
+						frame.Payload = payload
+						frame.Headers = bufferHeaders[msg.lane]
+						clientErr = writeFlush(msg.lane, frame)
 						if clientErr == nil {
 							outcome.Winner = msg.lane
 						}
@@ -165,6 +169,19 @@ func coordinateRelayHedge(ctx context.Context, delay time.Duration, primary rela
 				continue
 			}
 			if outcome.Winner < 0 {
+				if msg.frame.Control {
+					clientErr = writeFlush(msg.lane, msg.frame)
+					if clientErr != nil {
+						timerC = nil
+						for i, cancel := range cancels {
+							if active[i] && cancel != nil {
+								cancel(clientErr)
+							}
+						}
+					}
+					msg.ack <- clientErr
+					continue
+				}
 				if msg.frame.Terminal {
 					terminalSeen[msg.lane] = true
 				}
@@ -191,7 +208,9 @@ func coordinateRelayHedge(ctx context.Context, delay time.Duration, primary rela
 				for _, part := range buffers[msg.lane] {
 					payload = append(payload, part...)
 				}
-				clientErr = writeFlush(msg.lane, payload, msg.frame.Headers)
+				frame := msg.frame
+				frame.Payload = payload
+				clientErr = writeFlush(msg.lane, frame)
 				if clientErr == nil {
 					outcome.Winner = msg.lane
 					timer.Stop()
@@ -203,7 +222,7 @@ func coordinateRelayHedge(ctx context.Context, delay time.Duration, primary rela
 					buffers = [2][][]byte{}
 				}
 			} else {
-				clientErr = writeFlush(msg.lane, msg.frame.Payload, msg.frame.Headers)
+				clientErr = writeFlush(msg.lane, msg.frame)
 			}
 			if clientErr != nil {
 				timerC = nil

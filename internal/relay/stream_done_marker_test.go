@@ -99,6 +99,9 @@ func newStreamTestAttempt(t *testing.T, clientCtx context.Context) (*relayAttemp
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(clientCtx)
+	writer := newRelayResponseWriter(c.Writer)
+	c.Writer = writer
+	t.Cleanup(writer.close)
 
 	stream := true
 	internalReq := &tmodel.InternalLLMRequest{Stream: &stream, Model: "stub-model"}

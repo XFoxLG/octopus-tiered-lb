@@ -2,6 +2,7 @@ package xurl
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"testing"
@@ -70,7 +71,7 @@ func TestAssertSafeURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := AssertSafeURL(tt.url)
+			err := AssertSafeURL(context.Background(), tt.url)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("AssertSafeURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
 			}
@@ -79,7 +80,7 @@ func TestAssertSafeURL(t *testing.T) {
 }
 
 func TestAssertSafeHost_Nil(t *testing.T) {
-	if err := AssertSafeHost(nil); err == nil {
+	if err := AssertSafeHost(context.Background(), nil); err == nil {
 		t.Error("AssertSafeHost(nil) = nil, want error")
 	}
 }
@@ -143,6 +144,76 @@ func TestAssertSafeRequestWithPin_RejectsMetadata(t *testing.T) {
 
 	if _, err := AssertSafeRequestWithPin(req); err == nil {
 		t.Fatal("expected error for metadata endpoint, got nil")
+	}
+}
+
+func TestAssertSafeRequestWithPinResolvesOnceAndPinsPublicAddress(t *testing.T) {
+	originalLookup := lookupSafeHost
+	t.Cleanup(func() { lookupSafeHost = originalLookup })
+	lookups := 0
+	lookupSafeHost = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		lookups++
+		if host != "public.example" {
+			t.Fatalf("lookup host = %q", host)
+		}
+		if ctx == nil {
+			t.Fatal("lookup context is nil")
+		}
+		return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "https://public.example/v1/chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safeCtx, err := AssertSafeRequestWithPin(req)
+	if err != nil {
+		t.Fatalf("AssertSafeRequestWithPin: %v", err)
+	}
+	if lookups != 1 {
+		t.Fatalf("DNS lookups = %d, want exactly one", lookups)
+	}
+	pinned, ok := safeCtx.Value(safeIPKey{}).(net.IP)
+	if !ok || pinned.String() != "93.184.216.34" {
+		t.Fatalf("pinned address = %v", pinned)
+	}
+}
+
+func TestAssertSafeRequestWithPinRejectsMixedPrivateAnswers(t *testing.T) {
+	originalLookup := lookupSafeHost
+	t.Cleanup(func() { lookupSafeHost = originalLookup })
+	lookupSafeHost = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{
+			{IP: net.ParseIP("93.184.216.34")},
+			{IP: net.ParseIP("10.0.0.7")},
+		}, nil
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "https://mixed.example/v1/chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AssertSafeRequestWithPin(req); err == nil {
+		t.Fatal("mixed public/private DNS answer was accepted")
+	}
+}
+
+func TestAssertSafeRequestWithPinUsesCancelableLookupContext(t *testing.T) {
+	originalLookup := lookupSafeHost
+	t.Cleanup(func() { lookupSafeHost = originalLookup })
+	lookupSafeHost = func(ctx context.Context, _ string) ([]net.IPAddr, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://slow.example/v1/chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AssertSafeRequestWithPin(req); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled lookup error = %v, want context.Canceled", err)
 	}
 }
 

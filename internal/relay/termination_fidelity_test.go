@@ -75,11 +75,15 @@ func (reader *terminationFidelityErrorReadCloser) Close() error {
 	return nil
 }
 
-func newTerminationFidelityRelayAttempt(recorder *httptest.ResponseRecorder, internalStream *model.InternalLLMResponse, streamPayload []byte) *relayAttempt {
+func newTerminationFidelityRelayAttempt(t *testing.T, recorder *httptest.ResponseRecorder, internalStream *model.InternalLLMResponse, streamPayload []byte) *relayAttempt {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	ginContext, _ := gin.CreateTestContext(recorder)
 	clientContext := context.Background()
 	ginContext.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(clientContext)
+	writer := newRelayResponseWriter(ginContext.Writer)
+	ginContext.Writer = writer
+	t.Cleanup(writer.close)
 
 	stream := true
 	return &relayAttempt{
@@ -255,7 +259,7 @@ func TestHandleStreamResponseReportsMissingTerminalAfterPartialOutput(t *testing
 		}},
 	}
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, internalStream, []byte("data: partial output\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, internalStream, []byte("data: partial output\n\n"))
 
 	err := attempt.handleStreamResponse(context.Background(), &http.Response{
 		StatusCode: http.StatusOK,
@@ -280,7 +284,7 @@ func TestHandleStreamResponseKeepsNoOutputMissingTerminalRetryable(t *testing.T)
 		Object: "chat.completion.chunk",
 	}
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, internalStream, []byte("data: metadata\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, internalStream, []byte("data: metadata\n\n"))
 
 	err := attempt.handleStreamResponse(context.Background(), &http.Response{
 		StatusCode: http.StatusOK,
@@ -290,8 +294,8 @@ func TestHandleStreamResponseKeepsNoOutputMissingTerminalRetryable(t *testing.T)
 	if !errors.Is(err, errMissingStreamTerminal) {
 		t.Fatalf("handleStreamResponse() error = %v, want missing terminal", err)
 	}
-	if recorder.Body.Len() != 0 {
-		t.Fatalf("no-output missing terminal wrote downstream data: %s", recorder.Body.String())
+	if body := recorder.Body.String(); body != ": upstream control\n\n" {
+		t.Fatalf("no-output missing terminal control bytes = %q", body)
 	}
 }
 
@@ -308,7 +312,7 @@ func TestHandleStreamResponseKeepsSessionOpenForPreOutputReadError(t *testing.T)
 	}
 
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, nil, nil)
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, nil, nil)
 	attempt.streamSession = session
 	readError := errors.New("upstream read failed before output")
 
@@ -345,7 +349,7 @@ func TestHandleStreamResponseReportsPostOutputReadError(t *testing.T) {
 		}},
 	}
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, internalStream, []byte("data: visible output\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, internalStream, []byte("data: visible output\n\n"))
 	readError := errors.New("upstream read failed after output")
 
 	err := attempt.handleStreamResponse(context.Background(), &http.Response{
@@ -377,7 +381,7 @@ func TestHandleStreamResponseReportsPostOutputReadError(t *testing.T) {
 
 func TestHandleStreamResponseIgnoresReadErrorAfterAcceptedTerminal(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, nil, nil)
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, nil, nil)
 	attempt.adapterType = outbound.OutboundTypeOpenAIChat
 	attempt.outAdapter = outbound.Get(attempt.adapterType)
 	attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
@@ -427,7 +431,7 @@ func TestHandleStreamResponseBuffersOneInterruptionForReplaySession(t *testing.T
 		subscribers:       make(map[chan struct{}]struct{}),
 	}
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, internalStream, []byte("data: visible output\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, internalStream, []byte("data: visible output\n\n"))
 	attempt.streamSession = session
 	readError := errors.New("upstream read failed after replayable output")
 
@@ -481,7 +485,7 @@ func TestHandleStreamResponseFailsProviderTerminalError(t *testing.T) {
 		},
 	}
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, internalStream, []byte("data: provider terminal failure\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, internalStream, []byte("data: provider terminal failure\n\n"))
 
 	err := attempt.handleStreamResponse(context.Background(), &http.Response{
 		StatusCode: http.StatusOK,
@@ -502,7 +506,7 @@ func TestHandleStreamResponseFailsProviderTerminalError(t *testing.T) {
 func TestHandleStreamResponseWaitsForVisibleOutputBeforeFirstTimeout(t *testing.T) {
 	internalStream := &model.InternalLLMResponse{Object: "chat.completion.chunk"}
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, internalStream, []byte("data: metadata\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, internalStream, []byte("data: metadata\n\n"))
 	attempt.firstTokenTimeOutSec = 1
 	attempt.group = &dbmodel.Group{ReasoningBufferStrategy: "buffer"}
 
@@ -530,15 +534,15 @@ func TestHandleStreamResponseWaitsForVisibleOutputBeforeFirstTimeout(t *testing.
 	case <-time.After(3 * time.Second):
 		t.Fatal("metadata-only stream incorrectly disabled the first visible output timeout")
 	}
-	if recorder.Body.Len() != 0 {
-		t.Fatalf("metadata-only stream wrote downstream data: %s", recorder.Body.String())
+	if body := recorder.Body.String(); body != ": upstream control\n\n" {
+		t.Fatalf("metadata-only stream control bytes = %q", body)
 	}
 }
 
 func TestHandleStreamResponseNonSSEStalledBodyHonorsFirstVisibleDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		recorder := httptest.NewRecorder()
-		attempt := newTerminationFidelityRelayAttempt(recorder, &model.InternalLLMResponse{}, nil)
+		attempt := newTerminationFidelityRelayAttempt(t, recorder, &model.InternalLLMResponse{}, nil)
 		attempt.firstTokenTimeOutSec = 1
 		attempt.ensureFirstVisibleDeadlineState().deadline = time.Now().Add(time.Second)
 
@@ -583,7 +587,7 @@ func TestHandleStreamResponseAbortsIdleVisibleStream(t *testing.T) {
 		}},
 	}
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, internalStream, []byte("data: visible output\n\n"))
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, internalStream, []byte("data: visible output\n\n"))
 	attempt.group = &dbmodel.Group{StreamIdleTimeout: 1}
 
 	reader, writer := io.Pipe()

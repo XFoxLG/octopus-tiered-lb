@@ -27,7 +27,7 @@ func TestStreamTransformFailureCannotBecomeSuccess(testContext *testing.T) {
 			}
 			testContext.Run(name, func(testContext *testing.T) {
 				recorder := httptest.NewRecorder()
-				attempt := newTerminationFidelityRelayAttempt(recorder, nil, nil)
+				attempt := newTerminationFidelityRelayAttempt(testContext, recorder, nil, nil)
 				attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
 				attempt.outAdapter = outbound.Get(outbound.OutboundTypeOpenAIChat)
 				attempt.group = &appmodel.Group{ReasoningBufferStrategy: "buffer"}
@@ -77,7 +77,7 @@ func TestStreamOperationCancellationInterruptsBlockedReader(testContext *testing
 		}
 		testContext.Run(name, func(testContext *testing.T) {
 			recorder := httptest.NewRecorder()
-			attempt := newTerminationFidelityRelayAttempt(recorder, nil, nil)
+			attempt := newTerminationFidelityRelayAttempt(testContext, recorder, nil, nil)
 			attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
 			attempt.outAdapter = outbound.Get(outbound.OutboundTypeOpenAIChat)
 			attempt.group = &appmodel.Group{ReasoningBufferStrategy: "buffer"}
@@ -127,7 +127,7 @@ func TestStreamOperationCancellationInterruptsBlockedReader(testContext *testing
 
 func TestImmediateReasoningTimeoutEmitsTerminalError(testContext *testing.T) {
 	recorder := httptest.NewRecorder()
-	attempt := newTerminationFidelityRelayAttempt(recorder, nil, nil)
+	attempt := newTerminationFidelityRelayAttempt(testContext, recorder, nil, nil)
 	attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
 	attempt.outAdapter = outbound.Get(outbound.OutboundTypeOpenAIChat)
 	attempt.group = &appmodel.Group{ReasoningBufferStrategy: "immediate"}

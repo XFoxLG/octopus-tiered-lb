@@ -337,10 +337,7 @@ func TestDiagnosticsKeepPerAttemptOutputTextIsolated(t *testing.T) {
 	falseValue := false
 	trace.endDiagnosticAttempt(1, context.Background(), true, &trueValue)
 	trace.endDiagnosticAttempt(2, context.Background(), true, &falseValue)
-	trace.markSelectedAttemptOutputTextPresent([]appmodel.ChannelAttempt{
-		{AttemptNum: 1, Status: appmodel.AttemptFailed},
-		{AttemptNum: 2, Status: appmodel.AttemptSuccess},
-	}, true)
+	trace.selectDiagnosticAttempt(2)
 	diagnostics := trace.diagnosticsSnapshot()
 	if diagnostics == nil || diagnostics.OutputTextPresent == nil || *diagnostics.OutputTextPresent {
 		t.Fatalf("selected-attempt output state = %#v", diagnostics)
