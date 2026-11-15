@@ -8,6 +8,37 @@ export function newConnectionConfig(): ConnectionConfig {
     return { version: 1, selection: 'same_protocol', endpoints: [endpoint], catalog: { format: 'openai', endpoint_id: endpoint.id } };
 }
 
+export function normalizeConnectionConfig(config: ConnectionConfig): ConnectionConfig {
+    return {
+        ...config,
+        version: config.endpoints.some((endpoint) => endpoint.transport === 'catie_tasks') ? 2 : 1,
+    };
+}
+
+export function canUseTaskTransport(endpoint: ChannelEndpoint): boolean {
+    return endpoint.protocol === 'chat' && (!endpoint.forward_mode || endpoint.forward_mode === 'convert')
+        && !endpoint.compatibility && ['default', 'bearer'].includes(endpoint.auth);
+}
+
+export function taskURLProblem(endpoint: ChannelEndpoint): 'required' | 'invalid' | 'origin' | 'query' | undefined {
+    if (!endpoint.task_api_url?.trim()) return 'required';
+    try {
+        const task = new URL(endpoint.task_api_url);
+        if (!['http:', 'https:'].includes(task.protocol) || task.username || task.password || task.hash) return 'invalid';
+        if (task.search || endpoint.task_api_url.endsWith('?')) return 'query';
+        if (task.origin !== new URL(endpoint.url).origin) return 'origin';
+    } catch { return 'invalid'; }
+    return undefined;
+}
+
+function safePreview(url: URL): string {
+    url.username = ''; url.password = '';
+    for (const key of Array.from(url.searchParams.keys())) {
+        if (/key|token|secret|signature|credential/i.test(key)) url.searchParams.set(key, '***');
+    }
+    return url.toString();
+}
+
 const CATALOG_FORMAT_BY_PROTOCOL: Partial<Record<ChannelEndpoint['protocol'], ConnectionConfig['catalog']['format']>> = {
     chat: 'openai',
     responses: 'openai',
@@ -38,6 +69,9 @@ export function autoCatalogFormatOnEndpointChange(
 }
 export function connectionURLPreview(endpoint: ChannelEndpoint, model = 'MODEL', stream = false): string {
     try {
+        if (endpoint.transport === 'catie_tasks') {
+            return endpoint.task_api_url?.trim() ? safePreview(new URL(endpoint.task_api_url)) : '';
+        }
         const url = new URL(endpoint.url);
         if (!['https:', 'http:'].includes(url.protocol)) return '';
         if (endpoint.protocol === 'cloudflare' && !model.startsWith('@')) model = '@cf/' + model;
@@ -53,12 +87,22 @@ export function connectionURLPreview(endpoint: ChannelEndpoint, model = 'MODEL',
             url.searchParams.set('alt', 'sse');
         }
         // Do not display query credentials in the preview.
-        for (const key of Array.from(url.searchParams.keys())) {
-            if (/key|token|secret|signature|credential/i.test(key)) url.searchParams.set(key, '***');
-        }
-        return url.toString();
+        return safePreview(url);
     } catch { return ''; }
 }
+
+export function taskTransportPreviews(endpoint: ChannelEndpoint): { submit: string; query: string; cancel: string } | null {
+    if (endpoint.transport !== 'catie_tasks' || !endpoint.task_api_url?.trim()) return null;
+    try {
+        const url = new URL(endpoint.task_api_url);
+        if (!['http:', 'https:'].includes(url.protocol)) return null;
+        const submit = safePreview(url).replace(/\/+$/, '');
+        url.search = ''; url.hash = '';
+        const root = safePreview(url).replace(/\/+$/, '');
+        return { submit, query: `${root}/{task_id}?after={cursor}`, cancel: `${root}/{task_id}/cancel` };
+    } catch { return null; }
+}
+
 export function hasConnectionAddress(config?: ConnectionConfig, urls?: Channel['base_urls']): boolean {
     return config ? config.endpoints.some((e) => !!e.url.trim()) : !!urls?.[0]?.url;
 }

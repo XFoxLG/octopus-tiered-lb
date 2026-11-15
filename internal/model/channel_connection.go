@@ -22,6 +22,15 @@ type ConnectionConfig struct {
 	Endpoints []ChannelEndpoint `json:"endpoints"`
 	Catalog   ModelCatalog      `json:"catalog"`
 }
+
+const (
+	ConnectionConfigVersionDirect = 1
+	ConnectionConfigVersionTasks  = 2
+
+	EndpointTransportDirect     = "direct"
+	EndpointTransportCatieTasks = "catie_tasks"
+)
+
 type ChannelEndpoint struct {
 	ID            string         `json:"id"`
 	Protocol      string         `json:"protocol"`
@@ -30,6 +39,8 @@ type ChannelEndpoint struct {
 	Auth          string         `json:"auth"`
 	Compatibility string         `json:"compatibility,omitempty"`
 	ForwardMode   string         `json:"forward_mode,omitempty"`
+	Transport     string         `json:"transport,omitempty"`
+	TaskAPIURL    string         `json:"task_api_url,omitempty"`
 	Headers       []CustomHeader `json:"headers,omitempty"`
 }
 type ModelCatalog struct {
@@ -77,11 +88,18 @@ func (e ChannelEndpoint) AdapterType() outbound.OutboundType {
 	}
 }
 
+func (e ChannelEndpoint) EffectiveTransport() string {
+	if strings.TrimSpace(e.Transport) == "" {
+		return EndpointTransportDirect
+	}
+	return strings.ToLower(strings.TrimSpace(e.Transport))
+}
+
 func (config *ConnectionConfig) Validate() error {
 	if config == nil {
 		return nil
 	}
-	if config.Version != 1 {
+	if config.Version != ConnectionConfigVersionDirect && config.Version != ConnectionConfigVersionTasks {
 		return fmt.Errorf("unsupported connection config version")
 	}
 	if config.Selection != "same_protocol" && config.Selection != "configured" {
@@ -91,6 +109,7 @@ func (config *ConnectionConfig) Validate() error {
 		return fmt.Errorf("connection config requires 1 to 32 endpoints")
 	}
 	ids := map[string]bool{}
+	taskEndpoints := 0
 	for _, e := range config.Endpoints {
 		if e.ID == "" || len(e.ID) > 64 || ids[e.ID] {
 			return fmt.Errorf("invalid or duplicate endpoint id")
@@ -107,6 +126,19 @@ func (config *ConnectionConfig) Validate() error {
 		parsedURL, err := validateConnectionURL(e.URL)
 		if err != nil {
 			return err
+		}
+		switch e.EffectiveTransport() {
+		case EndpointTransportDirect:
+			if strings.TrimSpace(e.TaskAPIURL) != "" {
+				return fmt.Errorf("direct endpoint cannot configure task API URL")
+			}
+		case EndpointTransportCatieTasks:
+			taskEndpoints++
+			if err := validateCatieTaskEndpoint(e, parsedURL); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("invalid endpoint transport: %s", e.Transport)
 		}
 		if strings.Contains(e.URL, "{model}") && (!strings.Contains(parsedURL.Path, "{model}") || strings.Contains(parsedURL.RawQuery, "{model}") || strings.Contains(parsedURL.Host, "{model}")) {
 			return fmt.Errorf("model placeholder must occur only in the URL path")
@@ -142,6 +174,12 @@ func (config *ConnectionConfig) Validate() error {
 			}
 		}
 	}
+	if config.Version == ConnectionConfigVersionDirect && taskEndpoints != 0 {
+		return fmt.Errorf("task transport requires connection config version %d", ConnectionConfigVersionTasks)
+	}
+	if config.Version == ConnectionConfigVersionTasks && taskEndpoints == 0 {
+		return fmt.Errorf("connection config version %d requires at least one task endpoint", ConnectionConfigVersionTasks)
+	}
 	switch config.Catalog.Format {
 	case "manual", "openai", "anthropic", "gemini", "cloudflare":
 	default:
@@ -157,6 +195,54 @@ func (config *ConnectionConfig) Validate() error {
 	}
 	return nil
 }
+
+func validateCatieTaskEndpoint(e ChannelEndpoint, endpointURL *url.URL) error {
+	if e.Protocol != "chat" {
+		return fmt.Errorf("Catie Tasks transport requires chat protocol")
+	}
+	if e.ForwardMode != "" && e.ForwardMode != "convert" {
+		return fmt.Errorf("Catie Tasks transport requires convert forward mode")
+	}
+	if e.Compatibility != "" {
+		return fmt.Errorf("Catie Tasks transport requires standard Chat compatibility")
+	}
+	if e.Auth != "default" && e.Auth != "bearer" {
+		return fmt.Errorf("Catie Tasks transport requires Bearer authentication")
+	}
+	taskURL, err := validateConnectionURL(e.TaskAPIURL)
+	if err != nil {
+		return fmt.Errorf("invalid task API URL: %w", err)
+	}
+	if taskURL.RawQuery != "" || taskURL.ForceQuery {
+		return fmt.Errorf("task API URL must not contain a query")
+	}
+	if !sameConnectionOrigin(endpointURL, taskURL) {
+		return fmt.Errorf("task API URL must use the endpoint origin")
+	}
+	return nil
+}
+
+func sameConnectionOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil || !strings.EqualFold(a.Scheme, b.Scheme) || !strings.EqualFold(a.Hostname(), b.Hostname()) {
+		return false
+	}
+	return connectionURLPort(a) == connectionURLPort(b)
+}
+
+func connectionURLPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
 func validConnectionHeader(h CustomHeader) bool {
 	if h.HeaderKey == "" || len(h.HeaderKey) > 128 || len(h.HeaderValue) > 8192 || strings.ContainsAny(h.HeaderValue, "\r\n") {
 		return false
@@ -356,6 +442,15 @@ func (p ConnectionPlan) Adapter() tm.Outbound {
 	return outbound.Get(p.AdapterType)
 }
 func (c *Channel) BuildConnectionRequest(ctx context.Context, p ConnectionPlan, adapter tm.Outbound, r *tm.InternalLLMRequest, key string) (*http.Request, error) {
+	if p.Endpoint != nil && p.Endpoint.EffectiveTransport() == EndpointTransportCatieTasks {
+		endpointURL, err := validateConnectionURL(p.Endpoint.URL)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateCatieTaskEndpoint(*p.Endpoint, endpointURL); err != nil {
+			return nil, err
+		}
+	}
 	if p.Endpoint != nil && p.Endpoint.Protocol == "gemini" {
 		if _, special := geminicli.ParseCodeAssistCredential(key); special {
 			return nil, fmt.Errorf("Gemini CLI credentials require the legacy channel connection")
@@ -372,19 +467,26 @@ func (c *Channel) BuildConnectionRequest(ctx context.Context, p ConnectionPlan, 
 		return nil, err
 	}
 	if p.Endpoint != nil && p.Endpoint.ForwardMode != "raw" {
-		target, err := p.Endpoint.BuildURL(r.Model, r.Stream != nil && *r.Stream)
-		if err != nil {
-			return nil, err
-		}
-		legacyQueryKey := req.URL.Query().Get("key")
-		req.URL, err = url.Parse(target)
-		if err != nil {
-			return nil, err
-		}
-		if p.Endpoint.Protocol == "gemini" && p.Endpoint.Auth == "legacy" && legacyQueryKey != "" {
-			q := req.URL.Query()
-			q.Set("key", legacyQueryKey)
-			req.URL.RawQuery = q.Encode()
+		if p.Endpoint.EffectiveTransport() == EndpointTransportCatieTasks {
+			req.URL, err = url.Parse(p.Endpoint.TaskAPIURL)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			target, err := p.Endpoint.BuildURL(r.Model, r.Stream != nil && *r.Stream)
+			if err != nil {
+				return nil, err
+			}
+			legacyQueryKey := req.URL.Query().Get("key")
+			req.URL, err = url.Parse(target)
+			if err != nil {
+				return nil, err
+			}
+			if p.Endpoint.Protocol == "gemini" && p.Endpoint.Auth == "legacy" && legacyQueryKey != "" {
+				q := req.URL.Query()
+				q.Set("key", legacyQueryKey)
+				req.URL.RawQuery = q.Encode()
+			}
 		}
 	}
 	c.ApplyConnectionHeaders(req, p, key)

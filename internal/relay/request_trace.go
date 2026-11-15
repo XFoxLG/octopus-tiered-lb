@@ -449,6 +449,9 @@ func (trace *relayRequestTrace) recordClientWrite(payload []byte, writeCount int
 	trace.mutex.Lock()
 	trace.clientWriteBytes += int64(writeCount)
 	diagnostics := trace.ensureDiagnosticsLocked()
+	if writeCount > 0 && diagnostics.FirstWriteAt == 0 {
+		diagnostics.FirstWriteAt = time.Now().UnixMilli()
+	}
 	if sseCommentOnly(payload) {
 		diagnostics.ControlBytes += int64(writeCount)
 	} else {

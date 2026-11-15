@@ -14,6 +14,7 @@ import (
 	"github.com/lingyuins/octopus/internal/conf"
 	dbmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/setting"
+	"github.com/lingyuins/octopus/internal/pkg/catietasks"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	"github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
@@ -436,6 +437,9 @@ type relayAttempt struct {
 	streamChunkStructural     bool
 	streamChunkControl        bool
 	outboundBudget            outboundBudgetSnapshot
+	taskState                 *catietasks.State
+	networkObserver           *dbmodel.RelayNetworkObserver
+	diagnosticHedgeLane       string
 
 	// streamFinishReason is retained for legacy log messages. Canonical policy
 	// decisions use streamTermination instead.
@@ -662,6 +666,9 @@ func ClassifyRelayError(statusCode int, err error, written bool) (decision Retry
 			Code:    statusCode,
 			IsError: false,
 		}
+	}
+	if errors.Is(err, catietasks.ErrNoRetry) {
+		return RetryDecision{Scope: ScopeNone, Reason: "Catie task cannot be resubmitted", Code: statusCode, IsError: true, SkipFailureAccounting: true}
 	}
 
 	// 流式响应已部分写出且本次尝试发生错误：停止所有重试，避免再次写回客户端。

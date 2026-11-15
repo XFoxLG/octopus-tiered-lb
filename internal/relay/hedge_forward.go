@@ -119,6 +119,10 @@ func (ra *relayAttempt) canHedge() bool {
 		req.iter == nil || req.iter.IsSticky() || ra.channel == nil || ra.channel.Disposable || !supportsHedgeAdapter(ra.adapterType) {
 		return false
 	}
+	plan, err := ra.channel.ConnectionPlanFor(ra.adapterType)
+	if err != nil || (plan.Endpoint != nil && plan.Endpoint.EffectiveTransport() != dbmodel.EndpointTransportDirect) {
+		return false
+	}
 	switch req.inAdapter.(type) {
 	case *inopenai.ChatInbound, *inopenai.ResponseInbound, *inanthropic.MessagesInbound:
 	default:
@@ -195,6 +199,7 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 	req := ra.relayRequest
 	req.hedgeAttempted = true
 	lanes := [2]*relayAttempt{primary, nil}
+	primary.diagnosticHedgeLane = "primary"
 	spans := [2]*balancer.AttemptSpan{primarySpan, nil}
 	statuses := [2]int{}
 	laneErrors := [2]error{}
@@ -236,7 +241,8 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 		if trace := relayRequestTraceFromContext(req.c); trace != nil {
 			trace.recordRoutingConflicts(conflicts)
 		}
-		if len(plans) == 0 || !supportsHedgeAdapter(plans[0].AdapterType) || plans[0].Adapter() == nil {
+		if len(plans) == 0 || !supportsHedgeAdapter(plans[0].AdapterType) || plans[0].Adapter() == nil ||
+			(plans[0].Endpoint != nil && plans[0].Endpoint.EffectiveTransport() != dbmodel.EndpointTransportDirect) {
 			return nil
 		}
 		key := channel.GetChannelKeyWithCooldown(modelName, getRatelimitCooldown())
@@ -278,6 +284,7 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 		backup.attemptTimeOutSec = channel.EffectiveAttemptTimeOut(req.group.AttemptTimeOut)
 		backup.protocolFallbackRemaining = false
 		backup.hedgeWinnerIsBackup = true
+		backup.diagnosticHedgeLane = "backup"
 		span := req.iter.StartAttempt(channel.ID, key.ID, channel.Name, modelName)
 		span.SetAdapterType(backup.adapterType.String())
 		backup.logAttemptNumber = span.AttemptNumber()
@@ -306,7 +313,9 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 		if err != nil || count != len(frame.Payload) {
 			return errClientDisconnected
 		}
-		req.c.Writer.Flush()
+		if err := http.NewResponseController(req.c.Writer).Flush(); err != nil {
+			return errClientDisconnected
+		}
 		if frame.Visible || frame.Terminal {
 			if writer, ok := req.c.Writer.(*relayResponseWriter); ok {
 				writer.markVisible()
@@ -326,6 +335,14 @@ func (ra *relayAttempt) forwardWithOptionalHedge(primarySpan *balancer.AttemptSp
 		selected = 0
 	}
 	for index, lane := range lanes {
+		if lane != nil && lane.networkObserver != nil && req.metrics.RequestTrace != nil {
+			plan, _ := lane.channel.ConnectionPlanFor(lane.adapterType)
+			endpointID := ""
+			if plan.Endpoint != nil {
+				endpointID = plan.Endpoint.ID
+			}
+			req.metrics.RequestTrace.recordAttemptNetwork(lane.logAttemptNumber, lane.channel.ID, lane.adapterType.String(), lane.networkObserver.Snapshot(), endpointID, lane.internalRequest.Model, lane.usedKey.ID, lane.diagnosticHedgeLane)
+		}
 		if lane == nil || index == selected {
 			continue
 		}

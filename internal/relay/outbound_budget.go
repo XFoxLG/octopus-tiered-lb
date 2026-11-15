@@ -109,6 +109,8 @@ func (trace *relayRequestTrace) selectDiagnosticAttempt(attempt int) {
 	d.SelectedAttempt = attempt
 	d.OutboundBudgetState = "unknown"
 	d.OutboundMaxTokens, d.OutputTextPresent = nil, nil
+	d.Task = nil
+	d.Network = nil
 	d.OutboundMaxTokensSource, d.OutboundMaxTokensField = "", ""
 	d.OutboundMaxTokensAdjusted = false
 	for _, item := range d.Attempts {
@@ -121,7 +123,12 @@ func (trace *relayRequestTrace) selectDiagnosticAttempt(attempt int) {
 		}
 		d.OutboundMaxTokens, d.OutboundMaxTokensSource, d.OutboundMaxTokensField, d.OutboundMaxTokensAdjusted = item.OutboundMaxTokens, item.OutboundMaxTokensSource, item.OutboundMaxTokensField, item.OutboundMaxTokensAdjusted
 		d.OutputTextPresent = item.OutputTextPresent
+		d.Network = item.Network
 		d.RobinEnvelopeKind, d.RobinEnvelopeReason = item.RobinEnvelopeKind, item.RobinEnvelopeReason
+		if item.Task != nil {
+			task := *item.Task
+			d.Task = &task
+		}
 		return
 	}
 }

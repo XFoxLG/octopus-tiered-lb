@@ -8,6 +8,7 @@ import (
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
 // TestFallbackModelName_PrefersModelOverCustomModel 验证回退模型名选择：
@@ -38,6 +39,8 @@ func TestFallbackModelName_PrefersModelOverCustomModel(t *testing.T) {
 // （GET /models 返回 400 等非 200）失败时，回退到真实模型调用后判定为通过，
 // 避免上游 /models 端点异常导致健康渠道误报失败。
 func TestTestChannel_FallsBackToModelCallOnConnectivityFailure(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/models":
@@ -138,6 +141,8 @@ func TestTestChannel_ConnectivitySuccessNoFallback(t *testing.T) {
 // channel type=OpenAIResponse(1) 但上游只支持 /v1/chat/completions 时，
 // performChannelModelFallback 通过 ResolveAttemptTypes 回退到 OpenAIChat adapter 成功。
 func TestPerformChannelModelFallback_OpenAIResponseFallsBackToChat(t *testing.T) {
+	xurl.SetSSRFAllowPrivateForTest(true)
+	t.Cleanup(func() { xurl.SetSSRFAllowPrivateForTest(false) })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/chat/completions":

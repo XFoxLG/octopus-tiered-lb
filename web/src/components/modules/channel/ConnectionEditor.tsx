@@ -6,7 +6,7 @@ import { ArrowDown, ArrowUp, ChevronDown, Plus, RefreshCw, Trash2 } from 'lucide
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useChannelConnectionPreview, type ChannelEndpoint, type ConnectionConfig } from '@/api/endpoints/channel';
-import { autoCatalogFormatOnEndpointChange, connectionURLPreview, newConnectionConfig, newEndpoint } from './connection-config';
+import { autoCatalogFormatOnEndpointChange, canUseTaskTransport, connectionURLPreview, newConnectionConfig, newEndpoint, normalizeConnectionConfig, taskTransportPreviews, taskURLProblem } from './connection-config';
 
 const selectClass = 'h-11 w-full min-w-0 rounded-lg border border-border bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 const detailsSummaryClass = 'flex min-h-8 cursor-pointer list-none content-center items-center justify-between gap-2 rounded-md text-sm font-medium transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden';
@@ -24,6 +24,7 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
     const [notice, setNotice] = useState('');
     const [legacyReviewRequired, setLegacyReviewRequired] = useState(false);
     const prefillApplied = useRef(false);
+    const draftTaskURLs = useRef<Record<string, string>>({});
     useEffect(() => {
         if (!needsPrefill || !preview.data?.config) return;
         if (preview.data.automatic === false) setLegacyReviewRequired(true);
@@ -49,22 +50,23 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
             <span className="text-sm text-muted-foreground">{t('previewLoading')}</span>
         </div>;
     }
-    const update = (id: string, patch: Partial<ChannelEndpoint>) => onChange({ ...config, endpoints: config.endpoints.map((e) => e.id === id ? { ...e, ...patch } : e) });
+    const emit = (next: ConnectionConfig) => onChange(normalizeConnectionConfig(next));
+    const update = (id: string, patch: Partial<ChannelEndpoint>) => emit({ ...config, endpoints: config.endpoints.map((e) => e.id === id ? { ...e, ...patch } : e) });
     const move = (index: number, delta: number) => {
         const next = [...config.endpoints];
         [next[index], next[index + delta]] = [next[index + delta], next[index]];
-        onChange({ ...config, endpoints: next });
+        emit({ ...config, endpoints: next });
         setNotice(t('moved', { position: index + delta + 1 }));
     };
     return <div className="min-w-0 space-y-4">
         {legacyReviewRequired && <p role="status" className="text-sm text-muted-foreground">{t('autoPrefillReview')}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-semibold">{t('title')}</h3>
-            <Button type="button" variant="outline" disabled={config.endpoints.length >= 32} onClick={() => onChange({ ...config, endpoints: [...config.endpoints, newEndpoint()] })}><Plus className="size-4" />{t('add')}</Button>
+            <Button type="button" variant="outline" disabled={config.endpoints.length >= 32} onClick={() => emit({ ...config, endpoints: [...config.endpoints, newEndpoint()] })}><Plus className="size-4" />{t('add')}</Button>
         </div>
         <p className="text-sm text-muted-foreground">{t('hint')}</p>
         <label className="block space-y-1 text-sm"><span>{t('selection')}</span>
-            <select className={selectClass} value={config.selection} onChange={(e) => onChange({ ...config, selection: e.target.value as ConnectionConfig['selection'] })}>
+            <select className={selectClass} value={config.selection} onChange={(e) => emit({ ...config, selection: e.target.value as ConnectionConfig['selection'] })}>
                 <option value="same_protocol">{t('sameProtocol')}</option><option value="configured">{t('configured')}</option>
             </select>
         </label>
@@ -73,6 +75,10 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
             {config.endpoints.map((endpoint, index) => {
                 const prefix = `${idPrefix}-endpoint-${endpoint.id}`;
                 const previewURL = connectionURLPreview(endpoint);
+                const taskPreviews = taskTransportPreviews(endpoint);
+                const usesTasks = endpoint.transport === 'catie_tasks';
+                const taskProblem = usesTasks ? taskURLProblem(endpoint) : undefined;
+                const tasksAllowed = canUseTaskTransport(endpoint);
                 const supportsForward = ['chat', 'responses', 'messages'].includes(endpoint.protocol);
                 const keepLegacyOption = ['cloudflare', 'volcengine', 'codex'].includes(endpoint.protocol) || endpoint.compatibility === 'legacy' || endpoint.compatibility === 'legacy_mimo';
                 const canSwitchToStandard = endpoint.compatibility === 'legacy' || endpoint.compatibility === 'legacy_mimo';
@@ -84,16 +90,26 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                             <Button type="button" variant="ghost" size="icon" aria-label={t('down', { index: index + 1 })} disabled={index === config.endpoints.length - 1} onClick={() => move(index, 1)}><ArrowDown className="size-4" /></Button>
                             <Button type="button" variant="ghost" size="icon" aria-label={t('remove', { index: index + 1 })} disabled={config.endpoints.length === 1} onClick={() => {
                                 const endpoints = config.endpoints.filter((e) => e.id !== endpoint.id);
-                                onChange({ ...config, endpoints, catalog: config.catalog.endpoint_id === endpoint.id ? { format: 'manual' } : config.catalog });
+                                emit({ ...config, endpoints, catalog: config.catalog.endpoint_id === endpoint.id ? { format: 'manual' } : config.catalog });
                             }}><Trash2 className="size-4" /></Button>
                         </div>
                     </div>
                     <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
                         <label className="min-w-0 space-y-1 text-sm" htmlFor={`${prefix}-protocol`}><span>{t('protocol')}</span>
-                            <select id={`${prefix}-protocol`} className={selectClass} value={endpoint.protocol} onChange={(e) => {
+                            <select id={`${prefix}-protocol`} className={selectClass} value={endpoint.protocol} disabled={usesTasks} onChange={(e) => {
                                 const protocol = e.target.value as ChannelEndpoint['protocol'];
                                 const catalog = { ...config.catalog, format: autoCatalogFormatOnEndpointChange(endpoint.protocol, protocol, config.catalog.format) };
-                                onChange({ ...config, endpoints: config.endpoints.map((entry) => entry.id === endpoint.id ? { ...entry, protocol, compatibility: '', forward_mode: 'convert', auth: 'default' } : entry), catalog });
+                                emit({
+                                    ...config,
+                                    endpoints: config.endpoints.map((entry) => entry.id === endpoint.id ? {
+                                        ...entry,
+                                        protocol,
+                                        compatibility: '',
+                                        forward_mode: 'convert',
+                                        auth: 'default',
+                                    } : entry),
+                                    catalog,
+                                });
                             }}>
                                 <option value="chat">Chat Completions</option><option value="responses">Responses</option><option value="messages">Anthropic Messages</option><option value="gemini">Gemini generateContent</option><option value="embeddings">Embeddings</option><option value="rerank">Rerank</option>
                                 {['cloudflare', 'volcengine', 'codex'].includes(endpoint.protocol) && <optgroup label={t('legacy')}><option value={endpoint.protocol}>{endpoint.protocol}</option></optgroup>}
@@ -103,6 +119,57 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                             <Input id={`${prefix}-url`} className="min-w-0 w-full" value={endpoint.url} type="url" required placeholder="https://example.com/v1" onChange={(e) => update(endpoint.id, { url: e.target.value })} />
                         </label>
                     </div>
+                    {endpoint.protocol === 'chat' && <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                        <label className="min-w-0 space-y-1 text-sm" htmlFor={`${prefix}-transport`}>
+                            <span>{t('transport')}</span>
+                            <select
+                                id={`${prefix}-transport`}
+                                className={selectClass}
+                                value={usesTasks ? 'catie_tasks' : 'direct'}
+                                aria-describedby={!tasksAllowed ? `${prefix}-task-compatibility` : undefined}
+                                onChange={(e) => {
+                                    if (e.target.value === 'catie_tasks') {
+                                        update(endpoint.id, {
+                                            transport: 'catie_tasks',
+                                            task_api_url: draftTaskURLs.current[endpoint.id] ?? endpoint.task_api_url,
+                                        });
+                                        return;
+                                    }
+                                    draftTaskURLs.current[endpoint.id] = endpoint.task_api_url || '';
+                                    update(endpoint.id, { transport: undefined, task_api_url: undefined });
+                                }}
+                            >
+                                <option value="direct">{t('transportDirect')}</option>
+                                <option value="catie_tasks" disabled={!tasksAllowed}>{t('transportCatieTasks')}</option>
+                            </select>
+                            {!tasksAllowed && <span id={`${prefix}-task-compatibility`} className="block text-xs text-amber-700 dark:text-amber-300">{t('taskCompatibility')}</span>}
+                        </label>
+                        {usesTasks && <label className="min-w-0 space-y-1 text-sm" htmlFor={`${prefix}-task-url`}>
+                            <span>{t('taskAPIURL')}</span>
+                            <Input
+                                id={`${prefix}-task-url`}
+                                className="min-w-0 w-full"
+                                type="url"
+                                required
+                                aria-invalid={!!taskProblem}
+                                aria-describedby={taskProblem ? `${prefix}-task-url-error` : undefined}
+                                ref={(input) => { input?.setCustomValidity(taskProblem ? t(`taskURLProblems.${taskProblem}`) : ''); }}
+                                value={endpoint.task_api_url || ''}
+                                placeholder="https://example.com/v1/openai/tasks"
+                                onChange={(e) => update(endpoint.id, { task_api_url: e.target.value })}
+                            />
+                            {taskProblem && <span id={`${prefix}-task-url-error`} role="status" className="block text-xs text-destructive">{t(`taskURLProblems.${taskProblem}`)}</span>}
+                        </label>}
+                    </div>}
+                    {usesTasks && <div className="min-w-0 rounded-md border border-border/60 p-3 text-sm">
+                        <p className="font-medium">{t('taskEndpoints')}</p>
+                        {taskPreviews ? <dl className="mt-2 grid min-w-0 gap-2 text-xs text-muted-foreground">
+                            <div className="min-w-0"><dt>{t('taskSubmit')}</dt><dd className="break-all font-mono">{taskPreviews.submit}</dd></div>
+                            <div className="min-w-0"><dt>{t('taskQuery')}</dt><dd className="break-all font-mono">{taskPreviews.query}</dd></div>
+                            <div className="min-w-0"><dt>{t('taskCancel')}</dt><dd className="break-all font-mono">{taskPreviews.cancel}</dd></div>
+                        </dl> : <p className="mt-1 text-xs text-muted-foreground">{t('taskURLRequired')}</p>}
+                        <p className="mt-2 text-xs text-muted-foreground">{t('taskHint')}</p>
+                    </div>}
                     {previewURL && endpoint.forward_mode !== 'raw' && <p className="break-all text-xs text-muted-foreground">{t('preview')}: {previewURL}</p>}
                     {endpoint.url_mode === 'base' && /\/(chat\/completions|responses|messages|embeddings|rerank)(\?|$)/.test(endpoint.url) && <div className="space-y-1 text-sm"><p>{t('fullSuggestion')}</p><Button type="button" variant="outline" size="sm" onClick={() => update(endpoint.id, { url_mode: 'full', forward_mode: 'convert' })}>{t('useFull')}</Button></div>}
                     <details className="group min-w-0 rounded-md bg-muted/30 p-2">
@@ -110,13 +177,13 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                         <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
                             <label className="space-y-1 text-sm"><span>{t('urlMode')}</span><select className={selectClass} value={endpoint.url_mode} onChange={(e) => update(endpoint.id, { url_mode: e.target.value as ChannelEndpoint['url_mode'], forward_mode: 'convert' })}><option value="base">{t('base')}</option><option value="full">{t('full')}</option></select></label>
                             <label className="space-y-1 text-sm"><span>{t('auth')}</span><select className={selectClass} value={endpoint.auth} onChange={(e) => update(endpoint.id, { auth: e.target.value as ChannelEndpoint['auth'] })}>
-                                <option value="default">{t('default')}</option><option value="bearer">Authorization: Bearer</option><option value="api_key">api-key</option><option value="x_api_key">x-api-key</option><option value="google">x-goog-api-key</option><option value="none">{t('noAuth')}</option>{endpoint.auth === 'legacy' && <option value="legacy">{t('legacy')}</option>}
+                                <option value="default">{t('default')}</option><option value="bearer">Authorization: Bearer</option>{!usesTasks && <><option value="api_key">api-key</option><option value="x_api_key">x-api-key</option><option value="google">x-goog-api-key</option><option value="none">{t('noAuth')}</option>{endpoint.auth === 'legacy' && <option value="legacy">{t('legacy')}</option>}</>}
                             </select></label>
-                            {endpoint.protocol !== 'rerank' && <div className="space-y-1 text-sm">
+                            {endpoint.protocol !== 'rerank' && !usesTasks && <div className="space-y-1 text-sm">
                                 <label className="block space-y-1"><span>{t('compatibility')}</span><select className={selectClass} value={endpoint.compatibility || ''} onChange={(e) => update(endpoint.id, { compatibility: e.target.value as ChannelEndpoint['compatibility'] })}><option value="">{t('standard')}</option>{endpoint.protocol === 'chat' && <option value="mimo">MiMo</option>}{keepLegacyOption && <option value="legacy">{t('legacy')}</option>}{endpoint.compatibility === 'legacy_mimo' && <option value="legacy_mimo">{t('legacy')} MiMo</option>}</select></label>
                                 {canSwitchToStandard && <Button type="button" variant="outline" size="sm" onClick={() => update(endpoint.id, { compatibility: '' })}>{t('switchToStandard')}</Button>}
                             </div>}
-                            {supportsForward && endpoint.url_mode === 'base' && <label className="space-y-1 text-sm"><span>{t('forwardMode')}</span><select className={selectClass} value={endpoint.forward_mode || 'convert'} onChange={(e) => update(endpoint.id, { forward_mode: e.target.value as ChannelEndpoint['forward_mode'] })}><option value="convert">{t('convert')}</option><option value="passthrough">{t('passthrough')}</option><option value="raw">{t('raw')}</option></select></label>}
+                            {supportsForward && !usesTasks && endpoint.url_mode === 'base' && <label className="space-y-1 text-sm"><span>{t('forwardMode')}</span><select className={selectClass} value={endpoint.forward_mode || 'convert'} onChange={(e) => update(endpoint.id, { forward_mode: e.target.value as ChannelEndpoint['forward_mode'] })}><option value="convert">{t('convert')}</option><option value="passthrough">{t('passthrough')}</option><option value="raw">{t('raw')}</option></select></label>}
                         </div>
                         <p className="mt-2 text-xs text-muted-foreground">{t('advancedHint')}</p>
                         {endpoint.protocol === 'gemini' && endpoint.url_mode === 'full' && <code className="text-xs">/models/{'{model}'}:generateContent</code>}
@@ -137,7 +204,7 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
             <summary className={detailsSummaryClass}>{t('catalog')}<ChevronDown className={chevronClass} aria-hidden="true" /></summary>
             <div className="mt-3 space-y-3">
                 <p className="text-xs text-muted-foreground">{t('catalogHint')}</p>
-                <label className="block space-y-1 text-sm"><span>{t('catalogFormat')}</span><select className={selectClass} value={config.catalog.format} onChange={(e) => onChange({ ...config, catalog: { ...config.catalog, format: e.target.value as ConnectionConfig['catalog']['format'], endpoint_id: config.catalog.endpoint_id || config.endpoints[0]?.id } })}>
+                <label className="block space-y-1 text-sm"><span>{t('catalogFormat')}</span><select className={selectClass} value={config.catalog.format} onChange={(e) => emit({ ...config, catalog: { ...config.catalog, format: e.target.value as ConnectionConfig['catalog']['format'], endpoint_id: config.catalog.endpoint_id || config.endpoints[0]?.id } })}>
                     <option value="manual">{t('manual')}</option><option value="openai">OpenAI data[]</option><option value="anthropic">Anthropic data[]</option><option value="gemini">Gemini models[]</option>{config.catalog.format === 'cloudflare' && <option value="cloudflare">Cloudflare result[] ({t('legacy')})</option>}
                 </select></label>
                 {config.catalog.format !== 'manual' && <>
@@ -145,11 +212,11 @@ export function ConnectionEditor({ value, onChange, channelId, idPrefix }: {
                         const previousEndpoint = config.endpoints.find((entry) => entry.id === config.catalog.endpoint_id);
                         const nextEndpoint = config.endpoints.find((entry) => entry.id === e.target.value);
                         const format = previousEndpoint && nextEndpoint ? autoCatalogFormatOnEndpointChange(previousEndpoint.protocol, nextEndpoint.protocol, config.catalog.format) : config.catalog.format;
-                        onChange({ ...config, catalog: { ...config.catalog, endpoint_id: e.target.value, format } });
+                        emit({ ...config, catalog: { ...config.catalog, endpoint_id: e.target.value, format } });
                     }}>
                         <option value="" disabled>{t('selectEndpoint')}</option>{config.endpoints.map((endpoint, i) => <option key={endpoint.id} value={endpoint.id}>{i + 1}. {endpoint.protocol}</option>)}
                     </select></label>
-                    <label className="block space-y-1 text-sm"><span>{t('catalogURL')}</span><Input type="url" value={config.catalog.url || ''} placeholder="https://example.com/v1/models" required={config.endpoints.find((e) => e.id === config.catalog.endpoint_id)?.url_mode === 'full'} onChange={(e) => onChange({ ...config, catalog: { ...config.catalog, url: e.target.value } })} /></label>
+                    <label className="block space-y-1 text-sm"><span>{t('catalogURL')}</span><Input type="url" value={config.catalog.url || ''} placeholder="https://example.com/v1/models" required={config.endpoints.find((e) => e.id === config.catalog.endpoint_id)?.url_mode === 'full'} onChange={(e) => emit({ ...config, catalog: { ...config.catalog, url: e.target.value } })} /></label>
                 </>}
             </div>
         </details>

@@ -19,6 +19,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/cacheusage"
 	grp "github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/relaylog"
+	"github.com/lingyuins/octopus/internal/pkg/catietasks"
 	"github.com/lingyuins/octopus/internal/price"
 	"github.com/lingyuins/octopus/internal/store"
 	"github.com/lingyuins/octopus/internal/transformer"
@@ -76,21 +77,22 @@ type GroupModelDraftTestRequest struct {
 }
 
 type GroupModelTestResult struct {
-	EndpointID   string `json:"endpoint_id,omitempty"`
-	Protocol     string `json:"protocol,omitempty"`
-	Source       string `json:"source,omitempty"`
-	SnapshotHash string `json:"snapshot_hash,omitempty"`
-	ClientID     string `json:"client_id,omitempty"`
-	ItemID       int    `json:"item_id"`
-	ChannelID    int    `json:"channel_id"`
-	ChannelKeyID int    `json:"channel_key_id,omitempty"`
-	ChannelName  string `json:"channel_name"`
-	ModelName    string `json:"model_name"`
-	Passed       bool   `json:"passed"`
-	Attempts     int    `json:"attempts"`
-	StatusCode   int    `json:"status_code"`
-	ResponseText string `json:"response_text,omitempty"`
-	Message      string `json:"message,omitempty"`
+	Evidence     *appmodel.ChannelProbeEvidence `json:"evidence,omitempty"`
+	EndpointID   string                         `json:"endpoint_id,omitempty"`
+	Protocol     string                         `json:"protocol,omitempty"`
+	Source       string                         `json:"source,omitempty"`
+	SnapshotHash string                         `json:"snapshot_hash,omitempty"`
+	ClientID     string                         `json:"client_id,omitempty"`
+	ItemID       int                            `json:"item_id"`
+	ChannelID    int                            `json:"channel_id"`
+	ChannelKeyID int                            `json:"channel_key_id,omitempty"`
+	ChannelName  string                         `json:"channel_name"`
+	ModelName    string                         `json:"model_name"`
+	Passed       bool                           `json:"passed"`
+	Attempts     int                            `json:"attempts"`
+	StatusCode   int                            `json:"status_code"`
+	ResponseText string                         `json:"response_text,omitempty"`
+	Message      string                         `json:"message,omitempty"`
 }
 
 type GroupModelTestSummary struct {
@@ -469,13 +471,18 @@ func runGroupModelTest(ctx context.Context, group *appmodel.Group, channels map[
 	jobs := make(chan int)
 	results := make(chan indexedResult, len(group.Items))
 	var wg sync.WaitGroup
+	// Freeze source before workers start and before any test log is persisted.
+	source, snapshotHash := "saved", ""
+	if progress != nil && progress.Source != "" {
+		source, snapshotHash = progress.Source, progress.SnapshotHash
+	}
 
 	for workerIndex := 0; workerIndex < workerCount; workerIndex++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				results <- indexedResult{index: index, result: testGroupModelItemWithGroup(ctx, group, group.Items[index], channels)}
+				results <- indexedResult{index: index, result: testGroupModelItemObserved(ctx, group, group.Items[index], channels, source, snapshotHash)}
 			}
 		}()
 	}
@@ -526,12 +533,17 @@ func testGroupModelItem(ctx context.Context, endpointType string, item appmodel.
 }
 
 func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, item appmodel.GroupItem, channels map[int]appmodel.Channel) GroupModelTestResult {
+	return testGroupModelItemObserved(ctx, group, item, channels, "saved", "")
+}
+
+func testGroupModelItemObserved(ctx context.Context, group *appmodel.Group, item appmodel.GroupItem, channels map[int]appmodel.Channel, source, snapshotHash string) GroupModelTestResult {
 	result := GroupModelTestResult{
-		ItemID:    item.ID,
-		ChannelID: item.ChannelID,
-		ModelName: item.ModelName,
-		Attempts:  1,
-		Source:    "saved",
+		ItemID:       item.ID,
+		ChannelID:    item.ChannelID,
+		ModelName:    item.ModelName,
+		Attempts:     1,
+		Source:       source,
+		SnapshotHash: snapshotHash,
 	}
 	endpointType := appmodel.EndpointTypeChat
 	if group != nil {
@@ -598,11 +610,17 @@ func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, ite
 	// (/v1/responses)。这与 relay 主流程的 outboundAttemptTypes 一致，
 	// 避免 type=1 渠道在只支持 chat completions 的上游上探测失败（issue #187）。
 	// 渠道级协议覆盖与主流程同规则：覆盖非空时禁用回退，探测与转发一致。
-	groupFormat := ""
+	groupFormat, groupMode := "", ""
 	if group != nil {
 		groupFormat = group.OutboundFormat
+		groupMode = group.ForwardMode
 	}
-	plans := channel.ResolveConnectionPlans(probeRequest, groupFormat)
+	plans, conflicts := channel.ResolveRelayConnectionPlans(probeRequest, groupFormat, groupMode)
+	if len(plans) == 0 {
+		result.Message = "no permitted probe route: " + strings.Join(conflicts, "; ")
+		recordTestLog(ctx, endpointType, item, result, channel, nil, 0, requestJSON, nil)
+		return result
+	}
 	if len(plans) > 1 {
 		plans = plans[:1]
 	}
@@ -626,7 +644,8 @@ func testGroupModelItemWithGroup(ctx context.Context, group *appmodel.Group, ite
 				break
 			}
 			attemptStart := time.Now()
-			statusCode, responseText, internalResp, err := sendGroupProbeRequestWithGroup(probeCtx, outAdapter, adapterType, channel.WithConnectionPlan(plan), usedKey.ChannelKey, endpointType, item.ModelName, group)
+			result.Evidence = &appmodel.ChannelProbeEvidence{Source: result.Source, ConfigurationFingerprint: result.SnapshotHash, KeyID: usedKey.ID, KeyScope: fmt.Sprintf("key_id:%d", usedKey.ID)}
+			statusCode, responseText, internalResp, err := sendGroupProbeRequestObserved(probeCtx, outAdapter, adapterType, channel.WithConnectionPlan(plan), usedKey.ChannelKey, endpointType, item.ModelName, group, result.Evidence)
 			attemptDuration := int(time.Since(attemptStart).Milliseconds())
 
 			result.Protocol = probeProtocolForAdapter(adapterType)
@@ -718,6 +737,10 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 		TotalAttempts:     len(attempts),
 		IsTest:            true,
 	}
+	if result.Evidence != nil {
+		relayLog.Diagnostics = &appmodel.RelayDiagnostics{Version: 3, SelectedAttempt: 1, Probe: result.Evidence, Network: result.Evidence.Network, Task: result.Evidence.Task,
+			Attempts: []appmodel.RelayAttemptDiagnostics{{Attempt: 1, ChannelID: channelID, Protocol: result.Protocol, EndpointID: result.EndpointID, Model: item.ModelName, KeyID: result.ChannelKeyID, Network: result.Evidence.Network, Task: result.Evidence.Task}}}
+	}
 
 	if requestJSON != nil {
 		relayLog.RequestContent = string(requestJSON)
@@ -789,10 +812,6 @@ func opRelayLogCacheReadTokens(responseContent string) int {
 }
 
 func appendGroupTestResult(summary *GroupModelTestSummary, progress *GroupModelTestProgress, result GroupModelTestResult) {
-	if progress != nil {
-		result.Source = progress.Source
-		result.SnapshotHash = progress.SnapshotHash
-	}
 	log.Infof("group test result: item_id=%d channel_id=%d model=%s passed=%t status=%d message=%s", result.ItemID, result.ChannelID, result.ModelName, result.Passed, result.StatusCode, result.Message)
 	summary.Results = append(summary.Results, result)
 	summary.Completed = len(summary.Results)
@@ -874,6 +893,10 @@ func sendGroupProbeRequest(ctx context.Context, outAdapter transmodel.Outbound, 
 }
 
 func sendGroupProbeRequestWithGroup(ctx context.Context, outAdapter transmodel.Outbound, adapterType outbound.OutboundType, channel *appmodel.Channel, key, endpointType, modelName string, group *appmodel.Group) (int, string, *transmodel.InternalLLMResponse, error) {
+	return sendGroupProbeRequestObserved(ctx, outAdapter, adapterType, channel, key, endpointType, modelName, group, &appmodel.ChannelProbeEvidence{})
+}
+
+func sendGroupProbeRequestObserved(ctx context.Context, outAdapter transmodel.Outbound, adapterType outbound.OutboundType, channel *appmodel.Channel, key, endpointType, modelName string, group *appmodel.Group, evidence *appmodel.ChannelProbeEvidence) (int, string, *transmodel.InternalLLMResponse, error) {
 	if channel == nil {
 		return 0, "", nil, fmt.Errorf("channel is nil")
 	}
@@ -921,18 +944,45 @@ func sendGroupProbeRequestWithGroup(ctx context.Context, outAdapter transmodel.O
 	}
 	channel.ApplyConnectionHeaders(req, plan, key)
 
-	resp, err := httpClient.Do(req)
+	stream := probeRequest.Stream != nil && *probeRequest.Stream
+	evidence.RequestStartedAt = time.Now()
+	if deadline, ok := ctx.Deadline(); ok {
+		budget := max(0, time.Until(deadline).Milliseconds())
+		evidence.RequestBudgetMS = &budget
+	}
+	evidence.Protocol, evidence.Model, evidence.RequestStream = probeProtocolForAdapter(adapterType), modelName, &stream
+	evidence.Transport, evidence.ReadState, evidence.ParseState = "direct", "not_started", "not_read"
+	evidence.EndpointURL = auditProbeEndpointURL(req.URL, key)
+	if plan.Endpoint != nil {
+		evidence.Protocol, evidence.EndpointID, evidence.Transport = plan.Endpoint.Protocol, plan.Endpoint.ID, plan.Endpoint.EffectiveTransport()
+	}
+	resp, state, network, err := doProbeTransport(ctx, httpClient, req, plan, stream, evidence)
+	defer func() {
+		applyTaskProbeEvidence(evidence, state)
+		if ctx.Err() != nil {
+			network.Cancelled()
+		}
+		evidence.Network = network.Snapshot()
+	}()
 	if err != nil {
+		var taskError *catietasks.ResponseError
+		if errors.As(err, &taskError) {
+			return taskError.StatusCode, string(taskError.Body), nil, err
+		}
 		return 0, "", nil, err
 	}
 	defer resp.Body.Close()
+	resp.Body = &probeTimedReader{body: resp.Body, startedAt: evidence.RequestStartedAt, evidence: evidence}
 
 	// Parse the complete bounded response. A display-preview limit truncates
 	// ordinary embedding vectors and turns a healthy endpoint into a false failure.
 	body, err := transformer.ReadResponseBody(resp)
+	evidence.ParseState = probeParseState(body)
 	if err != nil {
-		return resp.StatusCode, "", nil, err
+		evidence.ReadState = "error"
+		return resp.StatusCode, string(body), nil, err
 	}
+	evidence.ReadState = "complete"
 	bodyText := strings.TrimSpace(string(body))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if bodyText == "" {
@@ -952,6 +1002,28 @@ func sendGroupProbeRequestWithGroup(ctx context.Context, outAdapter transmodel.O
 		return resp.StatusCode, bodyText, nil, err
 	}
 
+	signals := collectCapabilitySignals(bodyText)
+	terminal, complete := probeDecodedTermination(internalResp, evidence.Protocol, 1)
+	network.EffectiveOutput(signals.HasReasoning, signals.HasEffectiveOutput(), complete)
+	evidence.ParseState, evidence.ReadState = probeParseState(body), "complete"
+	evidence.TerminalObserved = complete
+	evidence.TerminalKind = terminal.ProviderReason
+	elapsed := time.Since(evidence.RequestStartedAt).Milliseconds()
+	if complete {
+		evidence.TerminalMS = &elapsed
+	}
+	if signals.HasEffectiveOutput() {
+		evidence.FirstEffectiveOutputMS = &elapsed
+	}
+	if terminal.Cause.IsIncomplete() || terminal.Cause.IsProviderRefusal() || terminal.Cause.IsProviderFailure() {
+		evidence.GenerationState = string(terminal.Cause)
+		return resp.StatusCode, bodyText, internalResp, fmt.Errorf("upstream generation terminated: %s (%s)", terminal.Cause, terminal.ProviderReason)
+	}
+	if appmodel.IsConversationEndpointType(endpointType) && (!signals.HasEffectiveOutput() || !complete) {
+		evidence.GenerationState = "unknown"
+		return resp.StatusCode, bodyText, internalResp, fmt.Errorf("probe did not confirm output and protocol terminal")
+	}
+	evidence.GenerationState = "completed"
 	return resp.StatusCode, bodyText, internalResp, nil
 }
 

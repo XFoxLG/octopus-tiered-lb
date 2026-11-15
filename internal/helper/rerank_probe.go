@@ -14,7 +14,6 @@ import (
 	"time"
 
 	m "github.com/lingyuins/octopus/internal/model"
-	"github.com/lingyuins/octopus/internal/utils/xurl"
 )
 
 const rerankProbeTimeout = 25 * time.Second
@@ -25,10 +24,15 @@ func sendRerankProbe(ctx context.Context, channel *m.Channel, key string, scope 
 
 func sendRerankProbeWithHeaders(ctx context.Context, channel *m.Channel, key string, scope probeKeyScope, modelName string, headers []m.CustomHeader) *probeRequestOutcome {
 	stream, budget := false, rerankProbeTimeout.Milliseconds()
-	out := &probeRequestOutcome{Verdict: m.ProbeVerdictUnknown, Protocol: "rerank", KeyScope: scope.String(), RequestStream: &stream, RequestBudgetMS: &budget}
+	out := &probeRequestOutcome{Verdict: m.ProbeVerdictUnknown, Protocol: "rerank", KeyScope: scope.String(), RequestStream: &stream, RequestBudgetMS: &budget,
+		Evidence: &m.ChannelProbeEvidence{Transport: "direct", Protocol: "rerank", Model: modelName, KeyID: scope.KeyID, KeyScope: scope.String(), RequestStream: &stream, RequestBudgetMS: &budget, ReadState: "not_started", ParseState: "not_read"}}
 	if channel == nil {
 		out.Summary = "channel is nil"
 		return out
+	}
+	out.Evidence.Source = "saved"
+	if channel.ID == 0 {
+		out.Evidence.Source = "draft"
 	}
 	var endpoint *m.ChannelEndpoint
 	if channel.ConnectionConfig != nil {
@@ -81,33 +85,40 @@ func sendRerankProbeWithHeaders(ctx context.Context, channel *m.Channel, key str
 	channel.ApplyConnectionHeaders(req, m.ConnectionPlan{Endpoint: endpoint, AdapterType: -1}, strings.TrimSpace(key))
 	out.EndpointURL = auditProbeEndpointURL(req.URL, key)
 	out.RequestFingerprint = probeFingerprint(req, body)
-	safeCtx, err := xurl.AssertSafeRequestWithPin(req)
-	if err != nil {
-		out.Summary = err.Error()
-		return out
-	}
-	req = req.WithContext(safeCtx)
+	out.Evidence.EndpointID, out.Evidence.EndpointURL = out.EndpointID, out.EndpointURL
+	out.Evidence.ConfigurationFingerprint = probeConfigurationFingerprint(channel, m.ConnectionPlan{Endpoint: endpoint}, out.RequestFingerprint, modelName, &stream, &budget)
 	client, err := ChannelHttpClient(channel)
 	if err != nil {
 		out.Summary = err.Error()
 		return out
 	}
 	start := time.Now()
+	out.Evidence.RequestStartedAt = start
 	defer func() { out.LatencyMS = time.Since(start).Milliseconds() }()
-	response, err := client.Do(req)
+	response, _, network, err := doProbeTransport(probeCtx, client, req, m.ConnectionPlan{Endpoint: endpoint}, false, out.Evidence)
+	defer func() {
+		if probeCtx.Err() != nil {
+			network.Cancelled()
+		}
+		out.Evidence.Network = network.Snapshot()
+	}()
 	if err != nil {
 		out.Summary = truncateProbeSummary(err.Error())
 		return out
 	}
 	defer response.Body.Close()
 	out.StatusCode = response.StatusCode
-	raw, err := io.ReadAll(io.LimitReader(response.Body, capabilityProbeMaxBody+1))
+	raw, err := io.ReadAll(io.LimitReader(&probeTimedReader{body: response.Body, startedAt: start, evidence: out.Evidence}, capabilityProbeMaxBody+1))
 	if len(raw) > capabilityProbeMaxBody {
 		raw = raw[:capabilityProbeMaxBody]
 		out.ResponseTruncated = true
 	}
 	out.Body = string(raw)
+	out.Evidence.ParseState = probeParseState(raw)
+	out.Evidence.ReadState = "complete"
 	if err != nil || out.ResponseTruncated {
+		out.Evidence.ReadState = "error"
+		out.Evidence.ResponseTruncated = out.ResponseTruncated
 		out.ResponseTruncated = true
 		out.Summary = "Incomplete or oversized rerank response"
 		return out
@@ -122,6 +133,10 @@ func sendRerankProbeWithHeaders(ctx context.Context, channel *m.Channel, key str
 		return out
 	}
 	out.Verdict = m.ProbeVerdictPass
+	out.Evidence.GenerationState = "completed"
+	elapsed := time.Since(start).Milliseconds()
+	out.Evidence.FirstEffectiveOutputMS = &elapsed
+	network.EffectiveOutput(false, true, false)
 	out.Summary = "Received complete rerank scores and document indices"
 	return out
 }
@@ -160,6 +175,11 @@ func testRerankGroupItem(ctx context.Context, group *m.Group, item m.GroupItem, 
 	}
 	out := sendRerankProbeWithHeaders(ctx, channel, key.ChannelKey, probeKeyScope{Index: -1, KeyID: key.ID}, item.ModelName, group.CustomHeader)
 	result.ChannelKeyID = key.ID
+	result.Evidence = out.Evidence
+	result.Evidence.Source = result.Source
+	if result.SnapshotHash != "" {
+		result.Evidence.ConfigurationFingerprint = result.SnapshotHash
+	}
 	result.Protocol, result.EndpointID = out.Protocol, out.EndpointID
 	result.StatusCode, result.Passed = out.StatusCode, out.Verdict == m.ProbeVerdictPass
 	secrets := []string{key.ChannelKey}

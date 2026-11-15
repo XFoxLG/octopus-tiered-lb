@@ -118,6 +118,26 @@ func TestCanHedgeKeepsProtectedScenariosSerial(t *testing.T) {
 				attempt.adapterType = outbound.OutboundTypeGemini
 			},
 		},
+			{
+				name: "Catie Tasks transport",
+				mutate: func(_ *dbmodel.Group, _ *relayRequest, attempt *relayAttempt) {
+					attempt.channel.ConnectionConfig = &dbmodel.ConnectionConfig{
+						Version:   dbmodel.ConnectionConfigVersionTasks,
+						Selection: "same_protocol",
+						Endpoints: []dbmodel.ChannelEndpoint{{
+							ID:          "chat",
+							Protocol:    "chat",
+							URL:         "https://example.com/v1",
+							URLMode:     "base",
+							Auth:        "bearer",
+							ForwardMode: "convert",
+							Transport:   dbmodel.EndpointTransportCatieTasks,
+							TaskAPIURL:  "https://example.com/v1/openai/tasks",
+						}},
+						Catalog: dbmodel.ModelCatalog{Format: "manual"},
+					}
+				},
+			},
 	}
 
 	for _, test := range tests {

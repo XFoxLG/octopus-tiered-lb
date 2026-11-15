@@ -136,14 +136,16 @@ func (ChannelProbeResult) TableName() string { return "channel_probe_results" }
 // content_filter or length terminal proves that the protocol ended, but does
 // not prove that a normal answer was generated.
 type ChannelProbeEvidence struct {
-	Source                   string `json:"source,omitempty"`
-	ConfigurationFingerprint string `json:"configuration_fingerprint,omitempty"`
-	Transport                string `json:"transport,omitempty"`
-	EndpointID               string `json:"endpoint_id,omitempty"`
-	EndpointURL              string `json:"endpoint_url,omitempty"`
-	Protocol                 string `json:"protocol,omitempty"`
-	Model                    string `json:"model,omitempty"`
-	KeyScope                 string `json:"key_scope,omitempty"`
+	Source                   string                   `json:"source,omitempty"`
+	ConfigurationFingerprint string                   `json:"configuration_fingerprint,omitempty"`
+	Transport                string                   `json:"transport,omitempty"`
+	EndpointID               string                   `json:"endpoint_id,omitempty"`
+	EndpointURL              string                   `json:"endpoint_url,omitempty"`
+	Protocol                 string                   `json:"protocol,omitempty"`
+	Model                    string                   `json:"model,omitempty"`
+	KeyScope                 string                   `json:"key_scope,omitempty"`
+	KeyID                    int                      `json:"key_id,omitempty"`
+	Network                  *RelayNetworkDiagnostics `json:"network,omitempty"`
 
 	RequestStream   *bool  `json:"request_stream,omitempty"`
 	RequestBudgetMS *int64 `json:"request_budget_ms,omitempty"`
@@ -156,18 +158,19 @@ type ChannelProbeEvidence struct {
 	ResponseCompleteMS       *int64    `json:"response_complete_ms,omitempty"`
 	TerminalMS               *int64    `json:"terminal_ms,omitempty"`
 
-	EffectiveEventCount  int64             `json:"effective_event_count,omitempty"`
-	ResponseBytes        int64             `json:"response_bytes,omitempty"`
-	TerminalObserved     bool              `json:"terminal_observed"`
-	TerminalKind         string            `json:"terminal_kind,omitempty"`
-	GenerationState      string            `json:"generation_state,omitempty"`
-	DoneObserved         bool              `json:"done_observed"`
-	FinishReasons        map[string]string `json:"finish_reasons,omitempty"`
-	ChatExpectedChoices  int               `json:"chat_expected_choices,omitempty"`
-	ChatCompletedChoices int               `json:"chat_completed_choices,omitempty"`
-	ReadState            string            `json:"read_state,omitempty"`
-	ParseState           string            `json:"parse_state,omitempty"`
-	ResponseTruncated    bool              `json:"response_truncated"`
+	EffectiveEventCount  int64                 `json:"effective_event_count,omitempty"`
+	ResponseBytes        int64                 `json:"response_bytes,omitempty"`
+	TerminalObserved     bool                  `json:"terminal_observed"`
+	TerminalKind         string                `json:"terminal_kind,omitempty"`
+	GenerationState      string                `json:"generation_state,omitempty"`
+	DoneObserved         bool                  `json:"done_observed"`
+	FinishReasons        map[string]string     `json:"finish_reasons,omitempty"`
+	ChatExpectedChoices  int                   `json:"chat_expected_choices,omitempty"`
+	ChatCompletedChoices int                   `json:"chat_completed_choices,omitempty"`
+	ReadState            string                `json:"read_state,omitempty"`
+	ParseState           string                `json:"parse_state,omitempty"`
+	ResponseTruncated    bool                  `json:"response_truncated"`
+	Task                 *RelayTaskDiagnostics `json:"task,omitempty"`
 }
 
 // ChannelModelCapability 是渠道×模型的能力结论（探测或人工确认的结果）。

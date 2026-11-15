@@ -20,6 +20,7 @@ import (
 	"github.com/lingyuins/octopus/internal/op/modelmapping"
 	rl "github.com/lingyuins/octopus/internal/op/ratelimitstore"
 	st "github.com/lingyuins/octopus/internal/op/stats"
+	"github.com/lingyuins/octopus/internal/pkg/catietasks"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	"github.com/lingyuins/octopus/internal/relay/condition"
 	"github.com/lingyuins/octopus/internal/server/resp"
@@ -42,6 +43,7 @@ type streamInterruptionRenderer interface {
 }
 
 func (ra *relayAttempt) renderStreamInterruption(ctx context.Context, streamErr error) []byte {
+	streamErr = catietasks.ClientError(streamErr)
 	if renderer, ok := ra.inAdapter.(streamInterruptionRenderer); ok {
 		payload, err := renderer.TransformStreamInterruption(ctx, streamErr)
 		if err == nil && len(payload) > 0 {
@@ -63,6 +65,9 @@ func (ra *relayAttempt) renderStreamInterruption(ctx context.Context, streamErr 
 			"code":    "stream_interrupted",
 		},
 	})
+	if code := catietasks.ErrorCode(streamErr); code != "" {
+		payload, _ = jsonAPI.Marshal(map[string]any{"error": map[string]string{"message": streamErr.Error(), "type": "api_error", "code": code}})
+	}
 	return []byte("event: error\ndata: " + string(payload) + "\n\n")
 }
 
@@ -439,6 +444,21 @@ func (ra *relayAttempt) attempt() attemptResult {
 		}
 	}
 
+	// Catie Tasks bind one business request to one submitted task. The task
+	// client performs bounded GET recovery itself, but no outer layer may retry
+	// submission, rotate credentials, hedge, or replay into a second generation.
+	if ra.taskState != nil && fwdErr != nil {
+		written := ra.streamOutputWasCommitted()
+		ra.collectResponse()
+		span.End(dbmodel.AttemptFailed, statusCode, "Catie task request is not retried")
+		return attemptResult{
+			Success:  false,
+			Written:  written,
+			Err:      fwdErr,
+			Decision: taskRetryDecision(statusCode, fwdErr, written),
+		}
+	}
+
 	// 空输出重试（issue #106）：上游返回 200 但输出为空，换 Key 重试。
 	// 不记录渠道失败统计/熔断（这不是渠道故障，只是模型偶尔返回空），
 	// 但占用一次 Key 级重试名额，用完后换下一渠道。
@@ -714,6 +734,9 @@ func (ra *relayAttempt) forward() (statusCode int, resultErr error) {
 	defer func() {
 		stopRecoveryCancel()
 		decision := ClassifyRelayError(statusCode, resultErr, false)
+		if ra.taskState != nil && resultErr != nil {
+			decision = taskRetryDecision(statusCode, resultErr, false)
+		}
 		if !(ra.protocolFallbackRemaining && decision.Scope == ScopeNextChannel) {
 			recordUpstreamRecovery(ra.channel.ID, ra.usedKey.ID, ra.internalRequest.Model, decision)
 		}
@@ -729,6 +752,9 @@ func (ra *relayAttempt) forward() (statusCode int, resultErr error) {
 	}
 	defer func() {
 		if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+			if ra.taskState != nil {
+				trace.recordTaskSnapshot(ra.logAttemptNumber, ra.taskState.Snapshot())
+			}
 			trace.endDiagnosticAttempt(ra.logAttemptNumber, ctx, ra.streamSawExplicitTerminalEvent, ra.streamOutputTextPresent)
 		}
 	}()
@@ -757,6 +783,26 @@ func (ra *relayAttempt) forward() (statusCode int, resultErr error) {
 	if err != nil {
 		return 0, err
 	}
+	ra.taskState = nil
+	if plan.Endpoint != nil && plan.Endpoint.EffectiveTransport() == dbmodel.EndpointTransportCatieTasks {
+		ra.taskState = catietasks.NewState()
+	}
+	ra.networkObserver = nil
+	defer func() {
+		if ra.networkObserver == nil {
+			return
+		}
+		if ctx.Err() != nil || (ra.taskState != nil && ra.taskState.Snapshot().CancelledAt != 0) {
+			ra.networkObserver.Cancelled()
+		}
+		if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+			endpointID := ""
+			if plan.Endpoint != nil {
+				endpointID = plan.Endpoint.ID
+			}
+			trace.recordAttemptNetwork(ra.logAttemptNumber, ra.channel.ID, ra.adapterType.String(), ra.networkObserver.Snapshot(), endpointID, ra.internalRequest.Model, ra.usedKey.ID, ra.diagnosticHedgeLane)
+		}
+	}()
 	outboundRequest, err := ra.channel.BuildConnectionRequest(ctx, plan, ra.outAdapter, requestForOutbound, ra.usedKey.ChannelKey)
 	if err != nil {
 		log.Warnf("failed to create request: %v", err)
@@ -786,6 +832,10 @@ func (ra *relayAttempt) forward() (statusCode int, resultErr error) {
 			log.Warnf("first visible output timeout (%ds) while waiting for upstream response headers", ra.firstTokenTimeOutSec)
 			return 0, fmt.Errorf("%w (%ds)", errFirstVisibleOutputTimeout, ra.firstTokenTimeOutSec)
 		}
+		var upstream *upstreamHTTPError
+		if errors.As(err, &upstream) {
+			return upstream.statusCode, fmt.Errorf("failed to send request: %w", err)
+		}
 		return 0, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer response.Body.Close()
@@ -809,9 +859,13 @@ func (ra *relayAttempt) forward() (statusCode int, resultErr error) {
 	// 处理响应
 	if ra.internalRequest.Stream != nil && *ra.internalRequest.Stream {
 		if err := ra.handleStreamResponse(ctx, response); err != nil {
+			var upstream *upstreamHTTPError
+			if errors.As(err, &upstream) {
+				return upstream.statusCode, err
+			}
 			return response.StatusCode, err
 		}
-		return response.StatusCode, nil
+		return response.StatusCode, taskStreamCompletionError(ra.taskState)
 	}
 	if err := ra.handleResponse(ctx, response); err != nil {
 		return response.StatusCode, err
@@ -878,6 +932,7 @@ func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelT
 		return
 	}
 	if c.Writer.Written() {
+		err = catietasks.ClientError(err)
 		if adapter, exists := c.Get("relay_stream_error_renderer"); exists {
 			if renderer, ok := adapter.(streamInterruptionRenderer); ok {
 				payload, renderErr := renderer.TransformStreamInterruption(c.Request.Context(), err)
@@ -898,6 +953,10 @@ func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelT
 		return
 	}
 	if statusCode < 400 {
+		if code := catietasks.ErrorCode(err); code != "" {
+			c.AbortWithStatusJSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": err.Error(), "type": "api_error", "code": code}})
+			return
+		}
 		resp.BadGateway(c)
 		return
 	}
@@ -1010,10 +1069,19 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, *firstVi
 	// editor 可借此打云元数据端点等内网地址。
 	dispatchGuard := ra.withFirstVisibleDeadline(req.Context(), ra.firstTokenTimeOutSec)
 	req = req.WithContext(dispatchGuard.Context())
-	safeCtx, err := xurl.AssertSafeRequestWithPin(req)
-	if err != nil {
-		log.Warnf("ssrf check failed for %s: %v", req.URL.Redacted(), err)
-		return nil, dispatchGuard, fmt.Errorf("upstream url is not allowed: %w", err)
+	source := "direct"
+	if ra.taskState != nil {
+		source = "task_submission"
+	}
+	ra.networkObserver = dbmodel.NewRelayNetworkObserver(source)
+	req = req.WithContext(ra.networkObserver.Context(req.Context()))
+	if ra.taskState == nil {
+		safeCtx, err := xurl.AssertSafeRequestWithPin(req)
+		if err != nil {
+			log.Warnf("ssrf check failed for %s: %v", req.URL.Redacted(), err)
+			return nil, dispatchGuard, fmt.Errorf("upstream url is not allowed: %w", err)
+		}
+		req = req.WithContext(safeCtx)
 	}
 
 	httpClient, err2 := helper.ChannelHttpClient(ra.channel)
@@ -1026,20 +1094,35 @@ func (ra *relayAttempt) sendRequest(req *http.Request) (*http.Response, *firstVi
 	// SSRF validation have completed. The guard uses a stoppable timer rather than
 	// attaching a permanent deadline to the request context, so a visible answer
 	// arriving before the deadline does not cut the long stream off later.
-	req = req.WithContext(safeCtx)
 	ra.setKeepalivePhase(relayKeepalivePhaseHeaderWait)
-	if trace := relayRequestTraceFromContext(ra.c); trace != nil {
-		trace.markUpstreamSendStarted(ra.logAttemptNumber)
+	markDispatch := func() {
+		ra.networkObserver.Dispatch()
+		if trace := relayRequestTraceFromContext(ra.c); trace != nil {
+			trace.markUpstreamSendStarted(ra.logAttemptNumber)
+		}
 	}
 
 	if ra.internalRequest.IsEmbeddingRequest() {
 		req = model.StartNonChatTiming(req)
 	}
-	response, err := httpClient.Do(req)
+	var response *http.Response
+	var err error
+	if ra.taskState != nil {
+		stream := ra.internalRequest.Stream != nil && *ra.internalRequest.Stream
+		response, err = catietasks.Do(req.Context(), httpClient, req, catietasks.Config{Stream: stream, OnSubmissionStart: markDispatch, OnSubmissionHeaders: ra.networkObserver.Headers}, ra.taskState)
+	} else {
+		markDispatch()
+		response, err = httpClient.Do(req)
+		if err == nil {
+			ra.networkObserver.Headers()
+		}
+	}
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to send request: %v", err)
-		return nil, dispatchGuard, err
+		return nil, dispatchGuard, taskResponseError(err)
 	}
+	ra.networkObserver.ObserveHeaders(response.Header)
+	response.Body = ra.networkObserver.Body(response.Body)
 	model.AttachNonChatTiming(response, req)
 	dispatchGuard.ResponseHeadersReceived()
 
@@ -1437,6 +1520,9 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			(!ra.streamTermination.Cause.IsProviderFailure() &&
 				ra.streamTermination.Cause.AllowsIdenticalReplay() &&
 				!ra.streamTermination.Cause.IsProviderRefusal()))
+		if ra.taskState != nil {
+			canReplayEmptyOutput = false
+		}
 		if isRetryEmptyOutputEnabled() && shouldBuffer && !hasVisibleContent && canReplayEmptyOutput && !ra.inlineReasoningExtracted {
 			log.Infof("channel %s returned empty stream (no visible content), will retry", ra.channel.Name)
 			return errEmptyOutput
@@ -1668,7 +1754,7 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			}
 			logClientDisconnected()
 			logRelayErrorfByContext(r.err, "failed to read event: %v", r.err)
-			readErr := fmt.Errorf("failed to read stream event: %w", r.err)
+			readErr := taskResponseError(fmt.Errorf("failed to read stream event: %w", r.err))
 			emitStreamInterruption(readErr, false)
 			return readErr
 		}
@@ -1992,6 +2078,9 @@ func (ra *relayAttempt) transformStreamData(ctx context.Context, data string) ([
 		ra.extractLeadingInlineReasoningStream(internalStream)
 	}
 	hasVisible := streamChunkHasEffectiveOutput(internalStream)
+	if ra.networkObserver != nil {
+		ra.networkObserver.EffectiveOutput(streamChunkReasoningBytes(internalStream) > 0, hasVisible, false)
+	}
 	ra.streamChunkControl = streamChunkIsEmptyControl(internalStream)
 	ra.streamChunkStructural = streamChunkStructure(internalStream)
 	ra.streamAnswerText, ra.streamAnswerBypass = answerText(internalStream, true)
@@ -2123,6 +2212,9 @@ func (ra *relayAttempt) recordStreamTermination(internalStream *model.InternalLL
 	if ra.adapterEndpointProtocol() == "chat" && internalStream.Usage != nil && len(internalStream.Choices) == 0 && ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices() {
 		ra.streamSawExplicitTerminalEvent = true
 	}
+	if ra.networkObserver != nil {
+		ra.networkObserver.EffectiveOutput(false, false, ra.streamSawTerminalEvent && !ra.hasUnfinishedObservedStreamChoices())
+	}
 	if ra.streamSawExplicitTerminalEvent {
 		ra.observeOutputText(false)
 	}
@@ -2184,6 +2276,21 @@ func (ra *relayAttempt) handleResponse(ctx context.Context, response *http.Respo
 	if err != nil {
 		logRelayErrorfByContext(err, "failed to transform response: %v", err)
 		return fmt.Errorf("failed to transform outbound response: %w", err)
+	}
+	if ra.networkObserver != nil {
+		// A buffered JSON response exposes content only after parsing. Usage and
+		// successful HTTP headers alone are not output or protocol completion.
+		visible, reasoning := false, false
+		terminal := internalResponse.Termination.HasCause()
+		for _, choice := range internalResponse.Choices {
+			terminal = terminal || choice.FinishReason != nil || choice.Termination.HasCause()
+			if msg := choice.Message; msg != nil {
+				reasoning = reasoning || msg.GetReasoningContent() != ""
+				copy := &model.InternalLLMResponse{Choices: []model.Choice{{Delta: msg}}}
+				visible = visible || streamChunkHasEffectiveOutput(copy)
+			}
+		}
+		ra.networkObserver.EffectiveOutput(reasoning, visible, terminal)
 	}
 
 	applyReasoningExhaustedHeader(ra.c, internalResponse)

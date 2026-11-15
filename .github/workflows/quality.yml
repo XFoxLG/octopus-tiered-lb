@@ -37,8 +37,8 @@ jobs:
       - name: Go test
         run: go test ./...
 
-      - name: Go race test (relay stream session + tokenizer codec reuse)
-        run: go test -race -count=1 ./internal/relay/... ./internal/utils/tokenizer/...
+      - name: Go race test (relay, task transport, probes and observations)
+        run: go test -race -count=1 ./internal/relay/... ./internal/pkg/catietasks/... ./internal/helper/... ./internal/model/... ./internal/utils/xurl/... ./internal/utils/tokenizer/...
 
   frontend:
     name: frontend

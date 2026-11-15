@@ -20,6 +20,7 @@ import {
     resolveContentFilterTextEvidence,
 } from './body-preview';
 import { resolveOutboundMaxTokens, resolveTokenLimitEvidence } from './display.ts';
+import { TransportDetails } from './TransportDetails';
 
 interface BoundaryDetailsProps {
     detail: RelayLogDetail | null;
@@ -371,6 +372,7 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
             ) : null}
 
             <div className="space-y-3">
+                <TransportDetails diagnostics={detail.diagnostics} />
                 {hasBoundaryRecords ? (
                     <>
                         <BoundarySection

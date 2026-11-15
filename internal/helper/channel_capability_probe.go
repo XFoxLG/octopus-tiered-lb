@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/pkg/catietasks"
 	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
@@ -312,6 +313,7 @@ func sendProbeRequest(
 		Evidence: &appmodel.ChannelProbeEvidence{
 			Transport:  "direct",
 			KeyScope:   scope.String(),
+			KeyID:      scope.KeyID,
 			ReadState:  "not_started",
 			ParseState: "not_read",
 		},
@@ -343,6 +345,9 @@ func sendProbeRequest(
 	if plan.Endpoint != nil {
 		outcome.Protocol = plan.Endpoint.Protocol
 		outcome.EndpointID = plan.Endpoint.ID
+		if plan.Endpoint.EffectiveTransport() != appmodel.EndpointTransportDirect {
+			outcome.Evidence.Transport = plan.Endpoint.EffectiveTransport()
+		}
 	} else {
 		outcome.Protocol = probeProtocolForAdapter(plan.AdapterType)
 	}
@@ -363,6 +368,9 @@ func sendProbeRequest(
 	probeCtx, requestCancel := context.WithCancel(timeoutCtx)
 	defer timeoutCancel()
 	defer requestCancel()
+	if deadline, ok := timeoutCtx.Deadline(); ok {
+		budgetMS = min(budgetMS, max(0, deadline.Sub(startedAt).Milliseconds()))
+	}
 
 	request, err := prepareConnectionProbeRequest(probeCtx, channel, plan, request, key)
 	if err != nil {
@@ -405,8 +413,17 @@ func sendProbeRequest(
 	// 记录「这次实际打向哪里、发的什么正文」——地址与指纹都不含凭据。
 	outcome.EndpointURL = auditProbeEndpointURL(httpRequest.URL, key)
 	outcome.Evidence.EndpointURL = outcome.EndpointURL
+	expectedChoices := 1
 	if body, ok := captureProbeRequestBody(httpRequest); ok {
 		outcome.RequestFingerprint = probeFingerprint(httpRequest, body)
+		expectedChoices, err = probeExpectedChoices(body, outcome.Protocol)
+		if err != nil {
+			outcome.Summary = err.Error()
+			return outcome
+		}
+	} else {
+		outcome.Summary = "Could not observe the complete serialized probe request"
+		return outcome
 	}
 	outcome.Evidence.ConfigurationFingerprint = probeConfigurationFingerprint(
 		channel,
@@ -423,14 +440,26 @@ func sendProbeRequest(
 		return outcome
 	}
 
-	outcome.Evidence.RequestStartToDispatchMS = probeElapsedMS(startedAt, time.Now())
-	response, err := httpClient.Do(httpRequest)
+	stream := request != nil && request.Stream != nil && *request.Stream
+	response, taskState, network, err := doProbeTransport(probeCtx, httpClient, httpRequest, plan, stream, outcome.Evidence)
+	defer func() {
+		if probeCtx.Err() != nil && outcome.Evidence.ReadState != "tail_window_expired" {
+			network.Cancelled()
+		}
+		outcome.Evidence.Network = network.Snapshot()
+	}()
+	applyTaskProbeEvidence(outcome.Evidence, taskState)
+	defer applyTaskProbeEvidence(outcome.Evidence, taskState)
 	outcome.LatencyMS = time.Since(startedAt).Milliseconds()
-	outcome.Evidence.ResponseHeadersMS = probeElapsedMS(startedAt, time.Now())
 	if err != nil {
 		// 网络错误/超时：证据不足，绝不据此改写配置。
 		outcome.Verdict = appmodel.ProbeVerdictUnknown
 		outcome.Summary = truncateProbeSummary(err.Error())
+		var taskError *catietasks.ResponseError
+		if errors.As(err, &taskError) {
+			outcome.StatusCode = taskError.StatusCode
+			outcome.Body = string(taskError.Body)
+		}
 		outcome.Evidence.ReadState = "not_started"
 		outcome.Evidence.ParseState = "not_read"
 		return outcome
@@ -476,23 +505,13 @@ func sendProbeRequest(
 			outcome.Protocol,
 			requestCancel,
 			outcome.Evidence,
+			expectedChoices,
+			network,
 		)
 		outcome.Body = string(rawBody)
 		outcome.Signals = signals
 		outcome.SignalsCollected = true
 		outcome.ResponseTruncated = truncated
-		outcome.Evidence.EffectiveEventCount = signalsEventCount(outcome.Body)
-		outcome.Evidence.DoneObserved = signals.HasStreamDone
-		outcome.Evidence.TerminalObserved = signals.TerminalComplete(outcome.Protocol)
-		outcome.Evidence.TerminalKind = signals.StreamTerminalKind
-		if outcome.Protocol == "chat" && signals.ChatTerminalComplete() && outcome.Evidence.TerminalKind == "" {
-			outcome.Evidence.TerminalKind = "finish_reason"
-		}
-		outcome.Evidence.GenerationState = signals.GenerationState(outcome.Protocol)
-		outcome.Evidence.FinishReasons = signals.FinishReasons
-		outcome.Evidence.ChatCompletedChoices = len(signals.FinishReasons)
-		outcome.Evidence.ChatExpectedChoices = signals.ChatChoiceCount
-		outcome.Evidence.ParseState = probeStreamParseState(signals, outcome.Body)
 		if truncated {
 			outcome.Summary = "Stream probe reached the response size limit before evidence was conclusive"
 			outcome.Verdict = appmodel.ProbeVerdictUnknown
@@ -502,6 +521,13 @@ func sendProbeRequest(
 			outcome.Verdict = appmodel.ProbeVerdictUnknown
 			outcome.Summary = "Stream response ended before evidence was conclusive"
 			return outcome
+		}
+		if taskState != nil {
+			if err := taskState.StreamCompletionError(); err != nil {
+				outcome.Verdict = appmodel.ProbeVerdictUnknown
+				outcome.Summary = err.Error()
+				return outcome
+			}
 		}
 		if signals.TerminalComplete(outcome.Protocol) {
 			outcome.Summary = "Received a complete streamed protocol terminal"
@@ -533,6 +559,7 @@ func sendProbeRequest(
 	outcome.Evidence.ParseState = probeParseState(rawBody)
 	outcome.Signals = collectCapabilitySignals(outcome.Body)
 	outcome.SignalsCollected = true
+	network.EffectiveOutput(outcome.Signals.HasReasoning, outcome.Signals.HasEffectiveOutput(), false)
 	if outcome.Signals.HasEffectiveOutput() {
 		completed := time.Since(startedAt).Milliseconds()
 		outcome.Evidence.FirstEffectiveOutputMS = &completed
@@ -543,8 +570,56 @@ func sendProbeRequest(
 	if decodeErr != nil || decoded == nil || decoded.Error != nil || (len(decoded.Choices) == 0 && len(decoded.EmbeddingData) == 0) {
 		outcome.Verdict = appmodel.ProbeVerdictUnknown
 		outcome.Summary = "Upstream did not return a valid generation response"
+		return outcome
+	}
+	if len(decoded.Choices) > 0 {
+		termination, complete := probeDecodedTermination(decoded, outcome.Protocol, expectedChoices)
+		outcome.Evidence.TerminalObserved = complete
+		outcome.Evidence.TerminalKind = termination.ProviderReason
+		outcome.Signals.Termination = termination
+		if complete {
+			network.EffectiveOutput(outcome.Signals.HasReasoning, outcome.Signals.HasEffectiveOutput(), true)
+			elapsed := time.Since(startedAt).Milliseconds()
+			outcome.Evidence.TerminalMS = &elapsed
+		}
+		if !complete || termination.Cause.IsIncomplete() || termination.Cause.IsProviderRefusal() || termination.Cause.IsProviderFailure() {
+			outcome.Verdict = appmodel.ProbeVerdictUnknown
+			outcome.Evidence.GenerationState = "unknown"
+			if complete {
+				outcome.Evidence.GenerationState = string(termination.Cause)
+			}
+			outcome.Summary = "Upstream did not confirm a complete normal generation terminal"
+			return outcome
+		}
+		outcome.Evidence.GenerationState = "completed"
 	}
 	return outcome
+}
+
+func probeDecodedTermination(response *transmodel.InternalLLMResponse, protocol string, expected int) (transmodel.TerminationMetadata, bool) {
+	termination := response.Termination
+	complete := true
+	if protocol == "chat" || protocol == "gemini" {
+		complete = len(response.Choices) == expected
+	}
+	seen := make(map[int]bool, len(response.Choices))
+	for _, choice := range response.Choices {
+		if protocol == "chat" || protocol == "gemini" {
+			if choice.Index < 0 || choice.Index >= expected || seen[choice.Index] {
+				complete = false
+			}
+			seen[choice.Index] = true
+		}
+		decoded := choice.Termination
+		if !decoded.HasCause() && choice.FinishReason != nil {
+			decoded = transmodel.TerminationFromOpenAICompatFinishReason(choice.FinishReason)
+		}
+		if !decoded.HasCause() && (protocol == "chat" || protocol == "gemini") {
+			complete = false
+		}
+		termination = transmodel.MergeTermination(termination, decoded)
+	}
+	return termination, complete && termination.HasCause()
 }
 
 func truncateProbeSummary(text string) string {
@@ -749,6 +824,8 @@ func buildCapabilityProbeRequest(item, modelName string) (*transmodel.InternalLL
 // capabilityResponseSignals 是从响应体里提取的判定信号。
 type capabilityResponseSignals struct {
 	HasToolCall       bool
+	HasToolOutput     bool
+	HasReasoning      bool
 	HasStructuredOK   bool
 	HasSearchTrace    bool
 	HasVisibleText    bool
@@ -761,8 +838,10 @@ type capabilityResponseSignals struct {
 
 	StreamTerminalKind  string
 	FinishReasons       map[string]string
-	GeminiFinishReasons []string
+	GeminiFinishReasons map[int]string
 	ChatChoiceCount     int
+	InvalidChoiceIndex  bool
+	Termination         transmodel.TerminationMetadata
 }
 
 // collectCapabilitySignals reads answer envelopes, never metadata or echoed requests.
@@ -770,7 +849,7 @@ type capabilityResponseSignals struct {
 // Structured output must be the answer itself, with no Markdown fence, extra
 // property, or surrounding prose.
 func collectCapabilitySignals(rawBody string) capabilityResponseSignals {
-	signals := capabilityResponseSignals{}
+	signals := capabilityResponseSignals{ChatChoiceCount: 1}
 	var root map[string]any
 	if json.Unmarshal([]byte(rawBody), &root) == nil {
 		if len(root) == 1 && root["ok"] == true {
@@ -802,10 +881,30 @@ func collectProbeStreamTerminal(root map[string]any, signals *capabilityResponse
 		case "response.completed":
 			signals.HasStreamTerminal = true
 			signals.StreamTerminalKind = eventType
+			status := "completed"
+			signals.Termination = transmodel.MergeTermination(signals.Termination, transmodel.TerminationFromResponsesStatus(&status, "", ""))
 		case "response.failed", "response.incomplete", "response.error", "error":
 			signals.HasStreamTerminal = true
 			signals.HasStreamFailure = true
 			signals.StreamTerminalKind = eventType
+			status := "failed"
+			if eventType == "response.incomplete" {
+				status = "incomplete"
+			}
+			reason := ""
+			if response, ok := root["response"].(map[string]any); ok {
+				if details, ok := response["incomplete_details"].(map[string]any); ok {
+					reason, _ = details["reason"].(string)
+				}
+			}
+			signals.Termination = transmodel.MergeTermination(signals.Termination, transmodel.TerminationFromResponsesStatus(&status, reason, ""))
+		case "message_delta":
+			if delta, ok := root["delta"].(map[string]any); ok {
+				if reason, ok := delta["stop_reason"].(string); ok && reason != "" {
+					sequence, _ := delta["stop_sequence"].(string)
+					signals.Termination = transmodel.MergeTermination(signals.Termination, transmodel.TerminationFromAnthropicStopReason(&reason, &sequence))
+				}
+			}
 		case "message_stop":
 			signals.HasStreamTerminal = true
 			signals.StreamTerminalKind = eventType
@@ -814,15 +913,10 @@ func collectProbeStreamTerminal(root map[string]any, signals *capabilityResponse
 	if choices, ok := root["choices"].([]any); ok {
 		for _, rawChoice := range choices {
 			choice, _ := rawChoice.(map[string]any)
-			choiceIndex := 0
-			switch typed := choice["index"].(type) {
-			case float64:
-				choiceIndex = int(typed)
-			case int:
-				choiceIndex = typed
-			}
-			if choiceIndex+1 > signals.ChatChoiceCount {
-				signals.ChatChoiceCount = choiceIndex + 1
+			choiceIndex, valid := probeResponseChoiceIndex(choice["index"], signals.ChatChoiceCount)
+			if !valid {
+				signals.InvalidChoiceIndex = true
+				continue
 			}
 			if reason, _ := choice["finish_reason"].(string); strings.TrimSpace(reason) != "" {
 				signals.HasFinishReason = true
@@ -830,20 +924,45 @@ func collectProbeStreamTerminal(root map[string]any, signals *capabilityResponse
 				if signals.FinishReasons == nil {
 					signals.FinishReasons = make(map[string]string)
 				}
-				signals.FinishReasons[index] = strings.TrimSpace(reason)
+				previous := signals.FinishReasons[index]
+				termination := transmodel.TerminationFromOpenAICompatFinishReason(&reason)
+				merged := transmodel.MergeTermination(transmodel.TerminationFromOpenAICompatFinishReason(probeReasonPointer(previous)), termination)
+				signals.FinishReasons[index] = merged.ProviderReason
+				signals.Termination = transmodel.MergeTermination(signals.Termination, termination)
 			}
 		}
 	}
 	if candidates, ok := root["candidates"].([]any); ok {
 		for _, rawCandidate := range candidates {
 			candidate, _ := rawCandidate.(map[string]any)
+			index, valid := probeResponseChoiceIndex(candidate["index"], signals.ChatChoiceCount)
+			if !valid {
+				signals.InvalidChoiceIndex = true
+				continue
+			}
 			if reason, _ := candidate["finishReason"].(string); strings.TrimSpace(reason) != "" {
+				termination, terminal := transmodel.TerminationFromGeminiFinishReason(reason)
+				if !terminal {
+					continue
+				}
 				signals.HasStreamTerminal = true
 				signals.StreamTerminalKind = "finish_reason"
-				signals.GeminiFinishReasons = append(signals.GeminiFinishReasons, strings.TrimSpace(reason))
+				if signals.GeminiFinishReasons == nil {
+					signals.GeminiFinishReasons = make(map[int]string)
+				}
+				previous, _ := transmodel.TerminationFromGeminiFinishReason(signals.GeminiFinishReasons[index])
+				signals.GeminiFinishReasons[index] = transmodel.MergeTermination(previous, termination).ProviderReason
+				signals.Termination = transmodel.MergeTermination(signals.Termination, termination)
 			}
 		}
 	}
+}
+
+func probeReasonPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func probeSSEDataPayloads(rawBody string) []string {
@@ -870,6 +989,7 @@ func probeSSEDataPayloads(rawBody string) []string {
 }
 
 func collectProbeEnvelope(root map[string]any, signals *capabilityResponseSignals) {
+	collectProbeOutputKinds(root, signals)
 	if choices, ok := root["choices"].([]any); ok && len(choices) > 0 {
 		for _, rawChoice := range choices {
 			choice, ok := rawChoice.(map[string]any)
@@ -946,6 +1066,107 @@ func collectProbeEnvelope(root map[string]any, signals *capabilityResponseSignal
 			collectProbeEnvelope(result, signals)
 		}
 	}
+}
+
+// Timing observes real tool deltas regardless of the name used by the separate
+// verify_tool capability judge. A start event with no arguments is structural.
+func collectProbeOutputKinds(root map[string]any, signals *capabilityResponseSignals) {
+	if choices, ok := root["choices"].([]any); ok {
+		for _, item := range choices {
+			choice, _ := item.(map[string]any)
+			for _, field := range []string{"delta", "message"} {
+				message, _ := choice[field].(map[string]any)
+				for _, name := range []string{"reasoning", "reasoning_content"} {
+					if text, _ := message[name].(string); text != "" {
+						signals.HasReasoning = true
+					}
+				}
+				if tools, ok := message["tool_calls"].([]any); ok {
+					for _, raw := range tools {
+						tool, _ := raw.(map[string]any)
+						fn, _ := tool["function"].(map[string]any)
+						if args, _ := fn["arguments"].(string); args != "" {
+							signals.HasToolOutput = true
+						}
+					}
+				}
+			}
+		}
+	}
+	if delta, ok := root["delta"].(map[string]any); ok {
+		if delta["type"] == "input_json_delta" {
+			if text, _ := delta["partial_json"].(string); text != "" {
+				signals.HasToolOutput = true
+			}
+		}
+		if delta["type"] == "thinking_delta" {
+			if text, _ := delta["thinking"].(string); text != "" {
+				signals.HasReasoning = true
+			}
+		}
+	}
+	if root["type"] == "response.function_call_arguments.delta" {
+		if args, _ := root["delta"].(string); args != "" {
+			signals.HasToolOutput = true
+		}
+	}
+	if root["type"] == "response.reasoning_summary_text.delta" {
+		if text, _ := root["delta"].(string); text != "" {
+			signals.HasReasoning = true
+		}
+	}
+	if candidates, ok := root["candidates"].([]any); ok {
+		for _, raw := range candidates {
+			candidate, _ := raw.(map[string]any)
+			content, _ := candidate["content"].(map[string]any)
+			parts, _ := content["parts"].([]any)
+			for _, raw := range parts {
+				part, _ := raw.(map[string]any)
+				if part["thought"] == true {
+					if text, _ := part["text"].(string); text != "" {
+						signals.HasReasoning = true
+					}
+				}
+				if call, ok := part["functionCall"].(map[string]any); ok && !isEmptyJSONValue(call["args"]) {
+					signals.HasToolOutput = true
+				}
+			}
+		}
+	}
+}
+
+func probeResponseChoiceIndex(value any, expected int) (int, bool) {
+	if value == nil {
+		return 0, expected <= 1
+	}
+	number, ok := value.(float64)
+	if !ok || number < 0 || number >= float64(expected) || number != float64(int(number)) {
+		return 0, false
+	}
+	return int(number), true
+}
+
+func probeExpectedChoices(serialized []byte, protocol string) (int, error) {
+	var body struct {
+		N                *int `json:"n"`
+		GenerationConfig struct {
+			CandidateCount *int `json:"candidateCount"`
+		} `json:"generationConfig"`
+	}
+	if err := json.Unmarshal(serialized, &body); err != nil {
+		return 0, fmt.Errorf("invalid serialized probe choice count: %w", err)
+	}
+	count := body.N
+	if protocol == "gemini" {
+		count = body.GenerationConfig.CandidateCount
+	}
+	if count == nil {
+		return 1, nil
+	}
+	if *count < 1 {
+		return 0, fmt.Errorf("invalid serialized probe choice count: %d", *count)
+	}
+	return *count, nil
 }
 
 func collectProbeAnswer(message map[string]any, signals *capabilityResponseSignals) {

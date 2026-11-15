@@ -25,6 +25,10 @@ func (c *Channel) ResolveRelayConnectionPlans(r *tm.InternalLLMRequest, groupFor
 	var result []ConnectionPlan
 	var conflicts []string
 	for _, plan := range plans {
+		if plan.Endpoint != nil && plan.Endpoint.EffectiveTransport() == EndpointTransportCatieTasks && (mode == "raw" || mode == "passthrough") {
+			conflicts = append(conflicts, fmt.Sprintf("Catie Tasks endpoint %s requires convert; group mode %s is incompatible", plan.Endpoint.ID, mode))
+			continue
+		}
 		protocol := outbound.EndpointProtocolForAdapter(plan.AdapterType)
 		if plan.AdapterType == outbound.OutboundTypeGemini {
 			protocol = "gemini"

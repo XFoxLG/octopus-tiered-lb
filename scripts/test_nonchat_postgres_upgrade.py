@@ -1,4 +1,4 @@
-"""CI-only upgrade of a synthetic v2.10.1 database backup, then old-image readback."""
+"""CI-only released database backup upgrade, 084 evidence and v2 task rollback."""
 import json
 import os
 from pathlib import Path
@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
@@ -107,14 +108,50 @@ try:
         data = request("/api/v1/stats/total", token=token)
         assert data["input_token"] == 451 and data["unattributed_token"] == 0, data
         assert sql(restored, "SELECT status FROM migration_records WHERE version=83") == "1"
+        assert sql(restored, "SELECT status FROM migration_records WHERE version=84") == "1"
+        # Only local synthetic objects: this does not submit a model generation.
+        task_config = {"version":2,"selection":"configured","catalog":{"format":"manual"},"endpoints":[{
+            "id":"task-chat","protocol":"chat","url":"https://192.0.2.1/v1","url_mode":"base",
+            "auth":"bearer","forward_mode":"convert","transport":"catie_tasks","task_api_url":"https://192.0.2.1/v1/openai/tasks"}]}
+        created = request("/api/v1/channel/create", {"name":"ci-tasks","type":0,"enabled":True,
+            "model":"ci-task-model","connection_config":task_config,"keys":[{"enabled":True,"channel_key":"synthetic-local-only"}]}, token)
+        channel_id = created["id"]
+        stored_config = json.loads(sql(restored, "SELECT connection_config FROM channels WHERE id=" + str(channel_id)))
+        assert stored_config == task_config, stored_config
+        evidence = {"transport":"catie_tasks","source":"draft","terminal_observed":True,
+            "generation_state":"completed","key_id":1,"task":{"transport":"catie_tasks","done":True,"cursor":2},
+            "network":{"timing_source":"task_submission","preparation_at":1000,"response_headers_at":1001,"first_body_byte_at":1200}}
+        encoded_evidence = json.dumps(evidence).replace("'", "''")
+        sql(restored, "INSERT INTO channel_probe_runs(id,channel_id,model_name,key_id,started_at,created_at) VALUES(900001," + str(channel_id) + ",'ci-task-model',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)")
+        sql(restored, "INSERT INTO channel_probe_results(id,run_id,channel_id,model_name,kind,item,verdict,evidence,created_at) VALUES(900001,900001," + str(channel_id) + ",'ci-task-model','capability','streaming','pass','" + encoded_evidence + "',CURRENT_TIMESTAMP)")
+        # Reopen current process: config/evidence survive cache reload and restart.
+        stop()
+        token = start(restored, False, directory)
+        channels = request("/api/v1/channel/list", token=token)
+        assert any(ch["id"] == channel_id and ch["connection_config"] == task_config for ch in channels), channels
+        history = request("/api/v1/channel/" + str(channel_id) + "/probe/history", token=token)
+        # History intentionally lists run summaries, not result bodies.
+        assert any(probe["id"] == 900001 for probe in history), history
+        assert json.loads(sql(restored, "SELECT evidence FROM channel_probe_results WHERE id=900001")) == evidence
         stop()
         sql(restored, "UPDATE stats_totals SET unattributed_token=1000,rerank_documents=30,rerank_documents_observed=1 WHERE id=1")
         token = start(restored, True, directory)
         data = request("/api/v1/stats/total", token=token)
         assert data["input_token"] == 451 and data["request_success"] == 1, data
+        # Old binary must reject v2 at its own configuration boundary, never
+        # silently erase transport fields and turn this into direct forwarding.
+        try:
+            request("/api/v1/channel/update", {"id":channel_id,"connection_config":task_config}, token)
+            raise AssertionError("old image accepted task configuration v2")
+        except urllib.error.HTTPError as error:
+            assert error.code == 400, error.code
+            assert "unsupported connection config version" in error.read().decode()
         stop()
         assert sql(restored, "SELECT unattributed_token||':'||rerank_documents||':'||rerank_documents_observed FROM stats_totals WHERE id=1") == "1000:30:1"
-        print("PASS: released v2.10.1 image -> database backup -> current upgrade 083 -> old image read/write; additive counters retained")
+        assert json.loads(sql(restored, "SELECT evidence FROM channel_probe_results WHERE id=900001")) == evidence
+        assert json.loads(sql(restored, "SELECT connection_config FROM channels WHERE id=" + str(channel_id))) == task_config
+        assert sql(restored, "SELECT COUNT(*) FROM migration_records WHERE version IN (83,84) AND status=1") == "2"
+        print("PASS: released v2.10.1 -> backup copy -> upgrade 083/084 -> restart -> old-image read/write and v2 rejection; evidence and task configuration retained")
 finally:
     stop()
     for database in (restored, original):

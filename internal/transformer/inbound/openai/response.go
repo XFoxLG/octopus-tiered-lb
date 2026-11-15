@@ -258,6 +258,9 @@ func (i *ResponseInbound) TransformStreamInterruption(ctx context.Context, strea
 		Message:        message,
 		SequenceNumber: i.sequenceNumber,
 	}
+	if coded, ok := streamErr.(interface{ ClientErrorCode() string }); ok {
+		payload.Code = coded.ClientErrorCode()
+	}
 	i.sequenceNumber++
 
 	data, err := transformer.Marshal(payload)

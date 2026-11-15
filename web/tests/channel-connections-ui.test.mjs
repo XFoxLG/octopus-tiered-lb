@@ -24,6 +24,8 @@ function all(node, predicate) {
 }
 function fixture({ locale = 'en', value = helpers.newConnectionConfig(), preview, previewError = false, previewLoading = false, legacyMode = false } = {}) {
     let config = legacyMode ? undefined : value;
+    let refIndex = 0;
+    const refs = [];
     const messages = JSON.parse(read(`../public/locale/${locale}.json`));
     const translate = createTranslator({ locale: locale.replace('_', '-'), messages, namespace: 'channel.connection', onError: (error) => { throw error; } });
     const { ConnectionEditor } = load('../src/components/modules/channel/ConnectionEditor.tsx', {
@@ -31,7 +33,7 @@ function fixture({ locale = 'en', value = helpers.newConnectionConfig(), preview
             useState: (initial) => [initial, () => {}],
             // 直接调用组件函数时没有真正的 commit 阶段：同步执行 effect，模拟首帧后的预填回写。
             useEffect: (effect) => { effect(); },
-            useRef: (initial) => ({ current: initial }),
+            useRef: (initial) => refs[refIndex++] ?? (refs[refIndex - 1] = { current: initial }),
         },
         'next-intl': { useTranslations: () => translate },
         '@/api/endpoints/channel': { useChannelConnectionPreview: () => ({ data: preview, isError: previewError, isLoading: previewLoading, refetch: () => {} }) },
@@ -39,7 +41,7 @@ function fixture({ locale = 'en', value = helpers.newConnectionConfig(), preview
         '@/components/ui/input': { Input: 'input' },
         './connection-config': helpers,
     });
-    const render = () => ConnectionEditor({ value: config, onChange: (next) => { config = next; }, channelId: legacyMode ? 9 : undefined, idPrefix: 'fixture' });
+    const render = () => { refIndex = 0; return ConnectionEditor({ value: config, onChange: (next) => { config = next; }, channelId: legacyMode ? 9 : undefined, idPrefix: 'fixture' }); };
     return { render, get value() { return config; } };
 }
 test('new interfaces share URLs without sharing identity; reordering and deletion preserve catalog ownership', () => {
@@ -122,6 +124,57 @@ test('URL previews preserve custom prefixes and do not show query credentials', 
   endpoint.url_mode = 'full'; endpoint.url = 'https://example.com/custom%2Fpath?z=2&a=1';
   assert.equal(helpers.connectionURLPreview(endpoint), endpoint.url);
   assert.equal(helpers.canFetchConnectionModels({ ...helpers.newConnectionConfig(), catalog: { format: 'manual' } }), false);
+});
+
+test('Tasks selection preserves the draft and restores its address after direct mode', () => {
+    const value = helpers.newConnectionConfig();
+    value.endpoints[0] = { ...value.endpoints[0], url: 'https://example.com/v1', headers: [{header_key: 'X-Fixture', header_value: 'preserved'}] };
+    const ui = fixture({ value });
+    const transport = () => all(ui.render(), (node) => node.type === 'select' && node.props.id?.endsWith('-transport'))[0];
+    transport().props.onChange({ target: { value: 'catie_tasks' } });
+    assert.equal(ui.value.version, 2);
+    assert.equal(ui.value.endpoints[0].auth, 'default');
+    assert.equal(ui.value.endpoints[0].forward_mode, undefined);
+    const taskInput = all(ui.render(), (node) => node.type === 'input' && node.props.id?.endsWith('-task-url'))[0];
+    taskInput.props.onChange({ target: { value: 'https://example.com/v1/openai/tasks' } });
+    transport().props.onChange({ target: { value: 'direct' } });
+    assert.equal(ui.value.version, 1);
+    assert.equal(ui.value.endpoints[0].task_api_url, undefined);
+    transport().props.onChange({ target: { value: 'catie_tasks' } });
+    assert.equal(ui.value.endpoints[0].task_api_url, 'https://example.com/v1/openai/tasks');
+    assert.equal(ui.value.endpoints[0].url, value.endpoints[0].url);
+    assert.deepEqual(ui.value.endpoints[0].headers, value.endpoints[0].headers);
+});
+
+test('incompatible Tasks choices are disabled rather than rewriting authentication or forwarding', () => {
+    for (const overrides of [{auth:'api_key'}, {forward_mode:'raw'}, {compatibility:'mimo'}]) {
+        const value = helpers.newConnectionConfig();
+        value.endpoints[0] = { ...value.endpoints[0], ...overrides };
+        const ui = fixture({value});
+        const option = all(ui.render(), (node) => node.type === 'option' && node.props.value === 'catie_tasks')[0];
+        assert.equal(option.props.disabled, true);
+        assert.match(renderToStaticMarkup(ui.render()), /Select standard Chat conversion/);
+        assert.deepEqual(ui.value.endpoints[0], value.endpoints[0]);
+        const normalized = helpers.normalizeConnectionConfig({...value, version:2});
+        assert.deepEqual(normalized.endpoints, value.endpoints);
+        assert.equal(normalized.version,1);
+    }
+});
+
+test('Tasks URL errors bind to the input and previews never expose credentials', () => {
+    const value = helpers.newConnectionConfig();
+    value.endpoints[0] = {...value.endpoints[0], url:'https://example.com/v1', transport:'catie_tasks', task_api_url:'https://other.example/v1/tasks'};
+    const ui = fixture({value});
+    const input = all(ui.render(), (node) => node.type === 'input' && node.props.id?.endsWith('-task-url'))[0];
+    assert.equal(input.props['aria-invalid'],true);
+    assert.equal(input.props['aria-describedby'],input.props.id+'-error');
+    assert.match(renderToStaticMarkup(ui.render()), /same origin/);
+    assert.equal(helpers.taskURLProblem({...value.endpoints[0],task_api_url:'https://example.com/tasks?'}), 'query');
+    assert.equal(helpers.taskURLProblem({...value.endpoints[0],task_api_url:'https://example.com:443/tasks'}), undefined);
+    const unsafe = {...value.endpoints[0],task_api_url:'https://user:private@example.com/tasks?token=secret'};
+    for (const preview of Object.values(helpers.taskTransportPreviews(unsafe))) {
+        assert.doesNotMatch(preview,/private|secret|user/);
+    }
 });
 
 test('rerank interfaces keep their root, preview /v1/rerank, and map to the OpenAI catalog', () => {

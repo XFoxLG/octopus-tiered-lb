@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	appmodel "github.com/lingyuins/octopus/internal/model"
+	transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
 // probeStreamAccumulator consumes complete SSE frames as they arrive. It avoids
@@ -31,7 +33,7 @@ type probeStreamAccumulator struct {
 }
 
 func newProbeStreamAccumulator(protocol string) *probeStreamAccumulator {
-	return &probeStreamAccumulator{protocol: protocol}
+	return &probeStreamAccumulator{protocol: protocol, signals: capabilityResponseSignals{ChatChoiceCount: 1}}
 }
 
 // Feed returns true when a complete protocol terminal has been observed. A Chat
@@ -42,16 +44,24 @@ func (a *probeStreamAccumulator) Feed(chunk []byte, now time.Time) bool {
 		return false
 	}
 	a.responseBytes += int64(len(chunk))
-	a.pending += strings.ReplaceAll(string(chunk), "\r\n", "\n")
+	a.pending += string(chunk)
 	terminalBefore := a.TerminalObserved()
 	for {
 		index := strings.Index(a.pending, "\n\n")
+		separatorSize := 2
+		if crlf := strings.Index(a.pending, "\r\n\r\n"); crlf >= 0 && (index < 0 || crlf < index) {
+			index, separatorSize = crlf, 4
+		}
 		if index < 0 {
 			break
 		}
 		frame := a.pending[:index]
-		a.pending = a.pending[index+2:]
+		a.pending = a.pending[index+separatorSize:]
 		a.processFrame(frame, now)
+		if a.TerminalObserved() && (a.protocol != "chat" || a.signals.HasStreamDone) {
+			a.pending = ""
+			break
+		}
 	}
 	if !terminalBefore && a.TerminalObserved() {
 		value := now
@@ -99,6 +109,9 @@ func (a *probeStreamAccumulator) processFrame(frame string, now time.Time) {
 		a.parsedEvents++
 		collectProbeEnvelope(event, &a.signals)
 		collectProbeStreamTerminal(event, &a.signals)
+		if a.signals.InvalidChoiceIndex {
+			a.invalidEvents++
+		}
 		if a.firstOutput == nil && a.signals.HasEffectiveOutput() {
 			value := now
 			a.firstOutput = &value
@@ -130,11 +143,11 @@ func probeSSEFramePayloads(frame string) ([]string, bool) {
 }
 
 func (s capabilityResponseSignals) HasEffectiveOutput() bool {
-	return s.HasVisibleText || s.HasToolCall || s.HasStructuredOK || s.HasSearchTrace
+	return s.HasVisibleText || s.HasToolOutput || s.HasToolCall || s.HasStructuredOK
 }
 
 func (s capabilityResponseSignals) ChatTerminalComplete() bool {
-	if len(s.FinishReasons) == 0 {
+	if len(s.FinishReasons) == 0 || s.InvalidChoiceIndex {
 		return false
 	}
 	for rawIndex := range s.FinishReasons {
@@ -168,72 +181,41 @@ func (s capabilityResponseSignals) TerminalComplete(protocol string) bool {
 			return false
 		}
 	case "gemini":
-		return len(s.GeminiFinishReasons) > 0
+		if s.InvalidChoiceIndex || len(s.GeminiFinishReasons) != s.ChatChoiceCount {
+			return false
+		}
+		for index := 0; index < s.ChatChoiceCount; index++ {
+			if s.GeminiFinishReasons[index] == "" {
+				return false
+			}
+		}
+		return true
 	default:
 		return s.HasStreamTerminal
 	}
 }
 
 func (s capabilityResponseSignals) GenerationState(protocol string) string {
-	if s.HasStreamFailure {
-		switch s.StreamTerminalKind {
-		case "response.incomplete":
-			return "incomplete"
-		default:
-			return "failed"
-		}
-	}
-	if protocol == "chat" {
-		for _, reason := range s.FinishReasons {
-			switch strings.ToLower(strings.TrimSpace(reason)) {
-			case "content_filter", "safety":
-				return "content_filter"
-			case "length", "max_tokens":
-				return "length"
-			case "stop", "end_turn":
-				continue
-			default:
-				return "incomplete"
-			}
-		}
-		if s.ChatTerminalComplete() {
-			return "completed"
-		}
+	if !s.TerminalComplete(protocol) {
 		return "unknown"
 	}
-	if protocol == "gemini" {
-		for _, reason := range s.GeminiFinishReasons {
-			switch strings.ToUpper(strings.TrimSpace(reason)) {
-			case "STOP":
-				continue
-			case "MAX_TOKENS":
-				return "length"
-			case "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII":
-				return "content_filter"
-			default:
-				return "incomplete"
-			}
-		}
-		if len(s.GeminiFinishReasons) > 0 {
-			return "completed"
-		}
+	if protocol == "responses" && s.StreamTerminalKind == "response.incomplete" {
+		return "incomplete"
+	}
+	switch s.Termination.Cause {
+	case transmodel.TerminationCauseComplete, transmodel.TerminationCauseStopSequence, transmodel.TerminationCauseToolCall:
+		return "completed"
+	case transmodel.TerminationCauseTokenLimit:
+		return "length"
+	case transmodel.TerminationCauseContentFilter, transmodel.TerminationCauseRefusal:
+		return "content_filter"
+	case transmodel.TerminationCauseError, transmodel.TerminationCauseMalformedToolCall:
+		return "failed"
+	case transmodel.TerminationCausePauseTurn, transmodel.TerminationCauseContextExhausted, transmodel.TerminationCauseRecitation:
+		return "incomplete"
+	default:
 		return "unknown"
 	}
-	if protocol == "responses" {
-		switch s.StreamTerminalKind {
-		case "response.completed":
-			return "completed"
-		case "response.incomplete":
-			return "incomplete"
-		}
-	}
-	if protocol == "messages" && s.StreamTerminalKind == "message_stop" {
-		return "completed"
-	}
-	if s.HasStreamTerminal {
-		return "completed"
-	}
-	return "unknown"
 }
 
 func (a *probeStreamAccumulator) TerminalObserved() bool {
@@ -288,51 +270,10 @@ func probeParseState(body []byte) string {
 	}
 }
 
-func probeStreamParseState(signals capabilityResponseSignals, body string) string {
-	if !signals.HasStreamEnvelope {
-		return probeParseState([]byte(body))
-	}
-	payloads := probeSSEDataPayloads(body)
-	if len(payloads) == 0 {
-		if signals.HasStreamDone {
-			return "valid"
-		}
-		return "no_data_events"
-	}
-	valid := 0
-	invalid := 0
-	for _, payload := range payloads {
-		var value map[string]any
-		if json.Unmarshal([]byte(payload), &value) == nil {
-			valid++
-		} else {
-			invalid++
-		}
-	}
-	switch {
-	case valid == 0:
-		return "invalid"
-	case invalid > 0:
-		return "mixed"
-	default:
-		return "valid"
-	}
-}
-
-func signalsEventCount(body string) int64 {
-	return int64(len(probeSSEDataPayloads(body)))
-}
-
 func parseProbeChoiceIndex(raw string) (int, error) {
-	if raw == "" {
-		return 0, nil
-	}
-	index := 0
-	for _, char := range raw {
-		if char < '0' || char > '9' {
-			return 0, &probeChoiceIndexError{raw: raw}
-		}
-		index = index*10 + int(char-'0')
+	index, err := strconv.Atoi(raw)
+	if err != nil || index < 0 {
+		return 0, &probeChoiceIndexError{raw: raw}
 	}
 	return index, nil
 }
@@ -362,6 +303,8 @@ type probeTimedReader struct {
 	evidence  *appmodel.ChannelProbeEvidence
 }
 
+func (r *probeTimedReader) Close() error { return r.body.Close() }
+
 func (r *probeTimedReader) Read(p []byte) (int, error) {
 	n, err := r.body.Read(p)
 	now := time.Now()
@@ -385,9 +328,26 @@ func readProbeStreamBody(
 	protocol string,
 	requestCancel func(),
 	evidence *appmodel.ChannelProbeEvidence,
+	expectedChoices int,
+	network *appmodel.RelayNetworkObserver,
 ) ([]byte, capabilityResponseSignals, error, bool) {
 	reader := &probeTimedReader{body: body, startedAt: startedAt, evidence: evidence}
 	accumulator := newProbeStreamAccumulator(protocol)
+	accumulator.signals.ChatChoiceCount = expectedChoices
+	defer func() {
+		signals := accumulator.signals
+		evidence.EffectiveEventCount = accumulator.parsedEvents
+		evidence.ParseState = accumulator.ParseState()
+		evidence.DoneObserved = signals.HasStreamDone
+		evidence.TerminalObserved = accumulator.TerminalObserved()
+		evidence.TerminalKind = accumulator.TerminalKind()
+		evidence.GenerationState = signals.GenerationState(protocol)
+		if protocol == "chat" {
+			evidence.FinishReasons = signals.FinishReasons
+			evidence.ChatCompletedChoices = len(signals.FinishReasons)
+			evidence.ChatExpectedChoices = expectedChoices
+		}
+	}()
 	raw := make([]byte, 0, 8192)
 	chunk := make([]byte, 4096)
 	var tailTimer *time.Timer
@@ -417,6 +377,7 @@ func readProbeStreamBody(
 			}
 			raw = append(raw, chunk[:count]...)
 			terminal := accumulator.Feed(chunk[:count], time.Now())
+			network.EffectiveOutput(accumulator.signals.HasReasoning, accumulator.signals.HasEffectiveOutput(), terminal)
 			if accumulator.firstOutput != nil && evidence.FirstEffectiveOutputMS == nil {
 				value := accumulator.firstOutput.Sub(startedAt).Milliseconds()
 				evidence.FirstEffectiveOutputMS = &value
@@ -440,6 +401,7 @@ func readProbeStreamBody(
 		}
 		if readErr != nil {
 			accumulator.Flush(time.Now())
+			network.EffectiveOutput(accumulator.signals.HasReasoning, accumulator.signals.HasEffectiveOutput(), accumulator.TerminalObserved())
 			if accumulator.firstOutput != nil && evidence.FirstEffectiveOutputMS == nil {
 				value := accumulator.firstOutput.Sub(startedAt).Milliseconds()
 				evidence.FirstEffectiveOutputMS = &value
@@ -489,6 +451,8 @@ func probeConfigurationFingerprint(
 		EndpointAuth           string                  `json:"endpoint_auth,omitempty"`
 		EndpointCompatibility  string                  `json:"endpoint_compatibility,omitempty"`
 		EndpointForwardMode    string                  `json:"endpoint_forward_mode,omitempty"`
+		EndpointTransport      string                  `json:"endpoint_transport,omitempty"`
+		TaskAPIURL             string                  `json:"task_api_url,omitempty"`
 		EndpointHeaders        []appmodel.CustomHeader `json:"endpoint_headers,omitempty"`
 		RequestFingerprint     string                  `json:"request_fingerprint,omitempty"`
 		Model                  string                  `json:"model,omitempty"`
@@ -513,6 +477,8 @@ func probeConfigurationFingerprint(
 		input.EndpointAuth = plan.Endpoint.Auth
 		input.EndpointCompatibility = plan.Endpoint.Compatibility
 		input.EndpointForwardMode = plan.Endpoint.ForwardMode
+		input.EndpointTransport = plan.Endpoint.EffectiveTransport()
+		input.TaskAPIURL = plan.Endpoint.TaskAPIURL
 		input.EndpointHeaders = plan.Endpoint.Headers
 	}
 	encoded, err := json.Marshal(input)

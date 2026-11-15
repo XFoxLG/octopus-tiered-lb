@@ -17,10 +17,15 @@ func (v RelayLog) MarshalJSON() ([]byte, error) {
 
 func (v RelayLogListItem) MarshalJSON() ([]byte, error) {
 	type plain RelayLogListItem
+	transport := ""
+	if v.Diagnostics != nil && v.Diagnostics.Task != nil {
+		transport = v.Diagnostics.Task.Transport
+	}
 	return json.Marshal(struct {
 		plain
-		IDString string `json:"id_str"`
-	}{plain(v), strconv.FormatInt(v.ID, 10)})
+		IDString  string `json:"id_str"`
+		Transport string `json:"transport,omitempty"`
+	}{plain(v), strconv.FormatInt(v.ID, 10), transport})
 }
 
 func (v ErrorLog) MarshalJSON() ([]byte, error) {
