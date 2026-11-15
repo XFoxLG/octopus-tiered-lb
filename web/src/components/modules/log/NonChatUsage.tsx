@@ -57,11 +57,11 @@ export function NonChatUsage({ summary, requestMS, evidence, details = false }: 
     const counters = (values: NonChatCounters) => <span>
         {t('input')}: {countText(values.input_tokens, missing)} · {t('output')}: {countText(values.output_tokens, missing)} · {t('total')}: {countText(values.total_tokens, missing)}
     </span>;
-    return <div className={details ? 'space-y-4 rounded-xl border border-border/50 p-4 text-xs' : 'flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/40 pt-2 text-xs'} data-testid="nonchat-usage">
-        <dl className={details ? 'grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3' : 'flex flex-wrap gap-x-4 gap-y-2'}>
-            {metrics.map(({ label, value, hint, icon: Icon, color }) => <div key={label} className={details ? 'min-w-0 space-y-1.5' : 'inline-flex items-center gap-1.5'} title={hint}>
+    return <div className={details ? 'space-y-2 text-xs' : 'flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/40 pt-2 text-xs'} data-testid="nonchat-usage">
+        <dl className="flex flex-wrap gap-x-4 gap-y-2">
+            {metrics.map(({ label, value, hint, icon: Icon, color }) => <div key={label} className="inline-flex items-center gap-1.5" title={hint}>
                 <dt className="inline-flex items-center gap-1.5 text-muted-foreground"><Icon className={`size-3.5 shrink-0 ${color}`} aria-hidden="true" />{label}</dt>
-                <dd className={`font-medium tabular-nums ${value === '—' ? 'text-muted-foreground' : color} ${details ? 'pl-5' : ''}`} aria-label={value === '—' ? hint : undefined}>{value}</dd>
+                <dd className={`font-medium tabular-nums ${value === '—' ? 'text-muted-foreground' : color}`} aria-label={value === '—' ? hint : undefined}>{value}</dd>
             </div>)}
         </dl>
         {(status || totalOnly || gap > 0 || summary.basis === 'billed') && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
@@ -70,33 +70,31 @@ export function NonChatUsage({ summary, requestMS, evidence, details = false }: 
             {totalOnly && <span>{t('totalOnly')}</span>}
             {gap > 0 && <span>{t('unattributed')}: <span className="tabular-nums">{gap.toLocaleString()}</span></span>}
         </div>}
-        {details && <>
-            <div className="space-y-1.5 border-t border-border/50 pt-3">
-                <div className="flex flex-wrap items-baseline justify-between gap-2 text-muted-foreground">
-                    <span>{t('selectedUsage')}</span>
-                    {summary.basis !== 'missing' && <span>{t(`basis.${summary.basis}`)}</span>}
+        {details && <details>
+            <summary className="cursor-pointer rounded-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">{t('sourceDetails')}</summary>
+            <div className="mt-3 space-y-3 leading-relaxed text-muted-foreground">
+                <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2 text-muted-foreground">
+                        <span>{t('selectedUsage')}</span>
+                        {summary.basis !== 'missing' && <span>{t(`basis.${summary.basis}`)}</span>}
+                    </div>
+                    <p className="leading-relaxed tabular-nums">{counters(summary)}</p>
                 </div>
-                <p className="leading-relaxed tabular-nums">{counters(summary)}</p>
+                <p>{t('timingHint')}</p>
+                <p>{t('rateHint')}</p>
+                {evidence && <>
+                    <p>{t('processingUsage')}: {counters(evidence.processing)}</p>
+                    <p>{t('billedUsage')}: {counters(evidence.billed)}</p>
+                    {evidence.units.search_units != null && <p>{t('searchUnits')}: {evidence.units.search_units.toLocaleString()} · {t('unitsHint')}</p>}
+                    {(evidence.issues?.length ?? 0) > 0 && <ul className="space-y-1 break-words text-amber-700 dark:text-amber-400">
+                        {evidence.issues?.map((issue, i) => <li key={i}><code>{issue.path}</code>: {issue.reason}</li>)}
+                    </ul>}
+                    <div className="max-h-52 space-y-1 overflow-y-auto break-words font-mono text-[11px]">
+                        <p>{t('responseState')}: {evidence.response_state}</p>
+                        {evidence.sources?.map((source, i) => <p key={i}>{source.path}: {source.state}{source.value != null ? ` (${source.value})` : ''}</p>)}
+                    </div>
+                </>}
             </div>
-            <details className="border-t border-border/50 pt-3">
-                <summary className="cursor-pointer rounded-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">{t('sourceDetails')}</summary>
-                <div className="mt-3 space-y-3 leading-relaxed text-muted-foreground">
-                    <p>{t('timingHint')}</p>
-                    <p>{t('rateHint')}</p>
-                    {evidence && <>
-                        <p>{t('processingUsage')}: {counters(evidence.processing)}</p>
-                        <p>{t('billedUsage')}: {counters(evidence.billed)}</p>
-                        {evidence.units.search_units != null && <p>{t('searchUnits')}: {evidence.units.search_units.toLocaleString()} · {t('unitsHint')}</p>}
-                        {(evidence.issues?.length ?? 0) > 0 && <ul className="space-y-1 break-words text-amber-700 dark:text-amber-400">
-                            {evidence.issues?.map((issue, i) => <li key={i}><code>{issue.path}</code>: {issue.reason}</li>)}
-                        </ul>}
-                        <div className="max-h-52 space-y-1 overflow-y-auto break-words font-mono text-[11px]">
-                            <p>{t('responseState')}: {evidence.response_state}</p>
-                            {evidence.sources?.map((source, i) => <p key={i}>{source.path}: {source.state}{source.value != null ? ` (${source.value})` : ''}</p>)}
-                        </div>
-                    </>}
-                </div>
-            </details>
-        </>}
+        </details>}
     </div>;
 }
