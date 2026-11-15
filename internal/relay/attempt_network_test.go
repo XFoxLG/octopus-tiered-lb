@@ -6,6 +6,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,14 +33,35 @@ func TestSelectedAttemptNetworkRetainsHedgeIdentityAndClearsOldValues(t *testing
 }
 
 func TestDispatchFirstOutputDeadlineIncludesSafeDNS(t *testing.T) {
+	// Go's DNS lookup can outlive cancellation. Keep the resolver fixture in a
+	// separate process so restoring shared resolver fields cannot race with its
+	// A/AAAA lookup goroutines or affect other relay tests.
+	const fixtureEnv = "OCTOPUS_TEST_SLOW_SAFE_DNS"
+	if os.Getenv(fixtureEnv) != "1" {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, executable, "-test.run=^TestDispatchFirstOutputDeadlineIncludesSafeDNS$", "-test.v")
+		command.Env = append(os.Environ(), fixtureEnv+"=1")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("isolated safe DNS fixture: %v\n%s", err, output)
+		}
+		return
+	}
+
+	// xurl's lookup is bound to this resolver at initialization. Configure the
+	// same object once before the child performs any lookup; do not restore it.
 	resolver := net.DefaultResolver
-	previousDial, previousPreferGo := resolver.Dial, resolver.PreferGo
+	var dials atomic.Int32
 	resolver.PreferGo = true
 	resolver.Dial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		dials.Add(1)
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	t.Cleanup(func() { resolver.Dial, resolver.PreferGo = previousDial, previousPreferGo })
 	for _, earlierBudget := range []bool{false, true} {
 		t.Run(map[bool]string{false: "first_output", true: "earlier_request_budget"}[earlierBudget], func(t *testing.T) {
 			ctx := context.Background()
@@ -49,6 +73,7 @@ func TestDispatchFirstOutputDeadlineIncludesSafeDNS(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			attempt := &relayAttempt{relayRequest: &relayRequest{c: c}, firstTokenTimeOutSec: 1}
 			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://slow-safe-dns.example/v1/chat/completions", http.NoBody)
+			beforeDials := dials.Load()
 			started := time.Now()
 			response, guard, err := attempt.sendRequest(request)
 			defer guard.Close()
@@ -60,6 +85,9 @@ func TestDispatchFirstOutputDeadlineIncludesSafeDNS(t *testing.T) {
 			}
 			if time.Since(started) > 3*time.Second {
 				t.Fatal("safe DNS escaped first-output deadline")
+			}
+			if dials.Load() == beforeDials {
+				t.Fatal("safe DNS bypassed the isolated resolver")
 			}
 			observed := attempt.networkObserver.Snapshot()
 			if observed.DNSStartAt == 0 || observed.DNSEndAt == 0 || observed.DispatchAt != 0 || observed.ResponseHeadersAt != 0 {
