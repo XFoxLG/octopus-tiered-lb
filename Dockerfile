@@ -64,7 +64,7 @@ RUN set -eux; \
     if [ "${target_arch}" = "arm" ] && [ -n "${TARGETVARIANT}" ]; then \
         export GOARM="${TARGETVARIANT#v}"; \
     fi; \
-    go build \
+    go build -mod=readonly \
       -ldflags="-X 'github.com/lingyuins/octopus/internal/conf.Version=${APP_VERSION}' \
                 -X 'github.com/lingyuins/octopus/internal/conf.Commit=${GIT_COMMIT}' \
                 -X 'github.com/lingyuins/octopus/internal/conf.BuildTime=${BUILD_TIME}' \

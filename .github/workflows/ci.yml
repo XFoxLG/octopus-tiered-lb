@@ -75,6 +75,9 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Release source identity regression
+        run: python3 -m unittest discover -s scripts -p 'test_release_source.py' -v
+
       - name: Ensure static embed placeholder
         # CI 不构建前端（prod 由 Dockerfile 用 Node/pnpm 构建 out/ 后注入 static/out）。
         # static/static.go 的 //go:embed all:out 需要 static/out 至少有一个文件才能编译，
