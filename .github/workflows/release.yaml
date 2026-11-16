@@ -149,6 +149,13 @@ jobs:
       - name: Build
         run: bash scripts/build.sh release
 
+      - name: Verify release source stayed unchanged
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" = "$RELEASE_SHA" ]]
+          git diff --exit-code HEAD --
+          test -z "$(git status --porcelain)"
+
 
       - name: Set build time
         id: build_time
@@ -285,8 +292,14 @@ jobs:
                       "name": path.name,
                       "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                   })
-          if not archives:
-              raise RuntimeError("no release archives found")
+          expected_archives = {
+              f"octopus-{platform}.zip" for platform in (
+                  "linux-x86_64", "linux-arm64", "linux-armv7", "linux-x86",
+                  "windows-x86_64", "windows-x86", "darwin-arm64", "darwin-x86_64",
+              )
+          }
+          if {archive["name"] for archive in archives} != expected_archives:
+              raise RuntimeError("release archives do not match all eight supported platforms")
 
           docker_digest = required_env("DOCKER_DIGEST")
           if not re.fullmatch(r"sha256:[0-9a-f]{64}", docker_digest):
@@ -309,6 +322,7 @@ jobs:
                   "ci": required_env("CI_GATE"),
                   "quality": required_env("QUALITY_GATE"),
                   "http_acceptance": "passed",
+                  "source_identity": "verified_unchanged",
               },
               "toolchain": {"go": "1.27.3", "node": "22", "pnpm": "10.22.0"},
               "http_acceptance": {

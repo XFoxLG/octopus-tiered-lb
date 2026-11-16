@@ -19,7 +19,7 @@ readonly OUTPUT_DIR="build"
 readonly BUILD_TIME="$(TZ='Asia/Shanghai' date +'%F %T %z')"
 readonly GIT_AUTHOR="bestrui"
 readonly GIT_VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev')"
-readonly COMMIT_ID="$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+readonly COMMIT_ID="$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
 
 # Build flags
 readonly LDFLAGS="-X 'github.com/lingyuins/octopus/internal/conf.Version=${GIT_VERSION}' \
@@ -188,9 +188,9 @@ prepare_environment() {
     done
     log_success "Created output subdirectories: bin, docker, archives"
 
-    log_info "Tidying Go modules..."
-    if ! go mod tidy >/dev/null 2>&1; then
-        log_error "Failed to tidy Go modules"
+    log_info "Downloading locked Go modules..."
+    if ! go mod download; then
+        log_error "Failed to download Go modules"
         return 1
     fi
 
@@ -218,7 +218,7 @@ build_frontend() {
 
     # Install dependencies
     log_info "Installing frontend dependencies..."
-    if ! pnpm install; then
+    if ! pnpm install --frozen-lockfile; then
         log_error "Failed to install frontend dependencies"
         cd ..
         return 1
@@ -263,20 +263,20 @@ build_frontend() {
     return 0
 }
 
-update_price() {
-    log_step "Updating price"
-
-    local python_cmd
-    if ! python_cmd="$(get_python_cmd)"; then
-        log_error "Python is not installed. Please install Python from https://www.python.org/downloads/"
+verify_release_source() {
+    local actual_commit
+    actual_commit="$(git rev-parse HEAD)" || return 1
+    if [ "$actual_commit" != "$COMMIT_ID" ]; then
+        log_error "Release checkout changed: $actual_commit != $COMMIT_ID"
         return 1
     fi
-
-    if ! eval "$python_cmd scripts/updatePrice.py"; then
-        log_error "Failed to update price"
+    local changes
+    changes="$(git status --porcelain)" || return 1
+    if [ -n "$changes" ]; then
+        log_error "Release source differs from checked-out commit $COMMIT_ID:"
+        printf '%s\n' "$changes" >&2
         return 1
     fi
-    log_success "Price updated"
 }
 
 
@@ -308,7 +308,7 @@ build_standard() {
     log_info "Building ${os}/${arch}..."
 
     if ! GOOS="${os}" GOARCH="${go_arch}" CGO_ENABLED=0 \
-        go build -o "${output_file}" -ldflags="${LDFLAGS}" -tags=jsoniter "${MAIN_DIR}" 2>&1; then
+        go build -mod=readonly -o "${output_file}" -ldflags="${LDFLAGS}" -tags=jsoniter "${MAIN_DIR}" 2>&1; then
         log_error "Failed to build ${os}/${arch}"
         log_error "Build command: GOOS=${os} GOARCH=${go_arch} CGO_ENABLED=0 go build -o ${output_file} -ldflags=\"${LDFLAGS}\" -tags=jsoniter ${MAIN_DIR}"
         return 1
@@ -363,7 +363,10 @@ create_archives() {
     local archives_dir="${OUTPUT_DIR}/archives"
 
     # Copy documentation files to archives directory
-    cp README.md LICENSE "${archives_dir}/" 2>/dev/null || log_info "Documentation files not found, skipping"
+    if ! cp README.md LICENSE "${archives_dir}/"; then
+        log_error "Failed to copy release documentation"
+        return 1
+    fi
 
     # Archive all binaries (zip format for all platforms)
     while IFS= read -r -d '' file; do
@@ -378,7 +381,7 @@ create_archives() {
 
         if ! cp "$file" "${archives_dir}/${APP_NAME}${extension}" 2>/dev/null; then
             log_error "Failed to copy $file to ${archives_dir}/${APP_NAME}${extension}"
-            continue
+            return 1
         fi
 
         if archive_zip "${archives_dir}" "${basename_file}.zip" "${APP_NAME}${extension}" README.md LICENSE; then
@@ -387,16 +390,12 @@ create_archives() {
         else
             log_error "Failed to create archive: ${basename_file}.zip"
             rm -f "${archives_dir}/${APP_NAME}${extension}"
+            return 1
         fi
     done < <(find "${OUTPUT_DIR}/bin/" -name "${APP_NAME}-*" -type f -print0 2>/dev/null)
 
     # Cleanup documentation files from archives directory
     rm -f "${archives_dir}/README.md" "${archives_dir}/LICENSE"
-
-    if ! cd .. 2>/dev/null; then
-        log_error "Failed to return to parent directory"
-        return 1
-    fi
 
     log_success "Created archives in ${archives_dir}/"
 }
@@ -583,12 +582,6 @@ main() {
             exit 1
         fi
 
-        # Update price
-        if ! update_price; then
-            log_error "Failed to update price"
-            exit 1
-        fi
-
         # Build for specified platform
         log_step "Building binary"
 
@@ -605,11 +598,15 @@ main() {
         echo "📦 Building ${APP_NAME} ${GIT_VERSION} (${COMMIT_ID})"
         echo ""
 
+        verify_release_source || exit 1
+
         # Setup
         if ! prepare_environment release; then
             log_error "Failed to prepare build environment"
             exit 1
         fi
+
+        verify_release_source || exit 1
 
         # Build frontend
         if ! build_frontend; then
@@ -617,11 +614,9 @@ main() {
             exit 1
         fi
 
-        # Update price
-        if ! update_price; then
-            log_error "Failed to update price"
-            exit 1
-        fi
+        # Prices are reviewed source data. Update them separately with
+        # scripts/updatePrice.py and commit the result before running CI.
+        verify_release_source || exit 1
 
         # Build for different platforms
         log_step "Building binaries"
@@ -629,41 +624,56 @@ main() {
         # Standard builds (pure Go, static binaries)
         if ! build_standard linux x86_64; then
             log_error "Failed to build Linux x86_64"
+            exit 1
         fi
         if ! build_standard linux arm64; then
             log_error "Failed to build Linux arm64"
+            exit 1
         fi
         if ! build_standard linux armv7; then
             log_error "Failed to build Linux armv7"
+            exit 1
         fi
         if ! build_standard linux x86; then
             log_error "Failed to build Linux x86"
+            exit 1
         fi
         if ! build_standard windows x86_64; then
             log_error "Failed to build Windows x86_64"
+            exit 1
         fi
         if ! build_standard windows x86; then
             log_error "Failed to build Windows x86"
+            exit 1
         fi
         if ! build_standard darwin arm64; then
             log_error "Failed to build Darwin arm64"
+            exit 1
         fi
         if ! build_standard darwin x86_64; then
-            log_error "Failed to build Darwin arm64"
+            log_error "Failed to build Darwin x86_64"
+            exit 1
         fi
+
+        verify_release_source || exit 1
 
         # Post-processing
         if ! prepare_docker_binaries; then
-            log_warning "Failed to prepare Docker binaries, but continuing..."
+            log_error "Failed to prepare Docker binaries"
+            exit 1
         fi
 
         if ! generate_checksums; then
-            log_warning "Failed to generate checksums, but continuing..."
+            log_error "Failed to generate checksums"
+            exit 1
         fi
 
         if ! create_archives; then
-            log_warning "Failed to create archives, but continuing..."
+            log_error "Failed to create archives"
+            exit 1
         fi
+
+        verify_release_source || exit 1
 
         log_step "Build completed"
         log_success "All artifacts ready in ${OUTPUT_DIR}/"
