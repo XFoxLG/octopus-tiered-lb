@@ -43,13 +43,14 @@ const (
 //     and rebuild them authoritatively.
 //   - v6 (2026-11-18): configuration import format. Administrator identity
 //     rows are never exported and are ignored with a warning on import; admin
-//     accounts and Passkeys stay owned by the target deployment. A top-level
-//     "sections" manifest makes collection authority explicit: a listed section
-//     is replaced (full restore) or updated (incremental import), while a
-//     missing section keeps the target collection untouched. A listed section
-//     carrying JSON null also means "untouched"; an explicit [] clears it.
-//     Channels are matched by channel_uid before numeric ID, and GroupItem /
-//     ChannelKey foreign keys follow the resolved source-to-target mapping.
+//     accounts, Passkeys, and WebAuthn relying-party settings stay owned by the
+//     target deployment. A top-level "sections" manifest makes collection
+//     authority explicit: a listed section is replaced (full restore) or
+//     updated (incremental import), while a missing section keeps the target
+//     collection untouched. A listed section carrying JSON null also means
+//     "untouched"; an explicit [] clears it. Channels are matched by
+//     channel_uid before numeric ID, and GroupItem / ChannelKey foreign keys
+//     follow the resolved source-to-target mapping.
 type DBDump struct {
 	Version      int       `json:"version"`
 	ExportedAt   time.Time `json:"exported_at"`
@@ -114,6 +115,10 @@ type DBDump struct {
 	// v6 incremental imports use it to patch only explicit non-null fields while
 	// preserving target values for missing/null fields and explicit zero values.
 	rowFieldPresence map[string][]DBDumpRowFieldPresence
+	// Relay-log attempts need only a compact channel_id presence bit for full
+	// restore validation; retaining a map for every field in potentially large
+	// attempt arrays needlessly multiplies backup memory use.
+	relayLogAttemptChannelIDNonNull []bool
 	// nestedData keeps a management API response envelope's data object until
 	// the handler can decode it. The value is never exported.
 	nestedData json.RawMessage
@@ -140,6 +145,15 @@ func (d *DBDump) RowFieldPresence(section string, index int) (DBDumpRowFieldPres
 		return DBDumpRowFieldPresence{}, false
 	}
 	return rows[index], true
+}
+
+// RelayLogAttemptChannelIDNonNull reports whether a decoded v6 attempt row
+// supplied a non-null channel_id. Programmatic dumps have no tracked metadata.
+func (d *DBDump) RelayLogAttemptChannelIDNonNull(index int) (bool, bool) {
+	if d == nil || index < 0 || index >= len(d.relayLogAttemptChannelIDNonNull) {
+		return false, false
+	}
+	return d.relayLogAttemptChannelIDNonNull[index], true
 }
 
 // NestedData returns the wrapper response's data payload when one was present
@@ -175,11 +189,36 @@ func (d *DBDump) UnmarshalJSON(data []byte) error {
 	}
 	if decoded.Version < 6 {
 		decoded.rowFieldPresence = nil
+		decoded.relayLogAttemptChannelIDNonNull = nil
 		*d = DBDump(decoded)
 		return nil
 	}
 	presence := make(map[string][]DBDumpRowFieldPresence)
 	for section, raw := range object {
+		if section == "relay_log_attempts" {
+			trimmed := bytes.TrimSpace(raw)
+			if len(trimmed) > 0 && trimmed[0] == '[' {
+				var entries []json.RawMessage
+				if err := json.Unmarshal(trimmed, &entries); err != nil {
+					return err
+				}
+				channelIDs := make([]bool, len(entries))
+				for index, entry := range entries {
+					rowBytes := bytes.TrimSpace(entry)
+					if len(rowBytes) == 0 || rowBytes[0] != '{' {
+						continue
+					}
+					var fields map[string]json.RawMessage
+					if err := json.Unmarshal(rowBytes, &fields); err != nil {
+						return err
+					}
+					value, exists := fields["channel_id"]
+					channelIDs[index] = exists && !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
+				}
+				decoded.relayLogAttemptChannelIDNonNull = channelIDs
+			}
+			continue
+		}
 		if !requiresRowFieldPresence(section) {
 			continue
 		}
@@ -269,6 +308,17 @@ func (d DBDump) MarshalJSON() ([]byte, error) {
 	return utilsjson.Marshal(object)
 }
 
+// MarshalBackupRow serializes one streamed backup row using the same complete
+// field rules as DBDump.MarshalJSON. This preserves explicit zero values from
+// database rows while excluding association-only and json:"-" fields.
+func MarshalBackupRow(value any) ([]byte, error) {
+	row, err := completeBackupRow(reflect.ValueOf(value))
+	if err != nil {
+		return nil, err
+	}
+	return utilsjson.Marshal(row)
+}
+
 func completeBackupRow(value reflect.Value) (map[string]any, error) {
 	if value.Kind() == reflect.Pointer {
 		if value.IsNil() {
@@ -342,8 +392,8 @@ func associationField(field reflect.StructField) bool {
 
 func requiresRowFieldPresence(section string) bool {
 	switch section {
-	case "error_logs", "audit_logs", "relay_logs", "relay_log_attempts",
-		"relay_log_content_refs", "relay_log_content_blobs", "users":
+	case "error_logs", "audit_logs", "relay_logs",
+		"relay_log_attempts", "relay_log_content_refs", "relay_log_content_blobs", "users":
 		return false
 	}
 	return true

@@ -2,9 +2,12 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"hash/fnv"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/lingyuins/octopus/internal/model"
@@ -211,11 +214,25 @@ func channelIDMapping(ctx context.Context, target *gorm.DB, dump *model.DBDump, 
 		}
 		return mapping, nil, nil
 	}
-	if isFull && authority["channels"] {
-		// A full restore rebuilds the channel table from source rows, so source
-		// IDs are authoritative and no remapping is needed.
-		for _, channel := range dump.Channels {
+
+	hasChannels := sectionHasRows(dump, authority, "channels")
+	sourceChannels := []model.Channel(nil)
+	if hasChannels {
+		sourceChannels = dump.Channels
+	}
+	if isFull && hasChannels {
+		for _, channel := range sourceChannels {
 			mapping[channel.ID] = channel.ID
+		}
+		requiredReferences := requiredReferencedChannelIDs(dump, authority)
+		for _, id := range referencedChannelIDs(dump, authority) {
+			if _, resolved := mapping[id]; resolved {
+				continue
+			}
+			if requiredReferences[id] {
+				return nil, nil, fmt.Errorf("full restore references channel id %d absent from its authoritative channels section", id)
+			}
+			mapping[id] = id
 		}
 		return mapping, nil, nil
 	}
@@ -234,8 +251,8 @@ func channelIDMapping(ctx context.Context, target *gorm.DB, dump *model.DBDump, 
 	}
 
 	var mappings []model.DBChannelMapping
-	claimed := make(map[int]bool, len(dump.Channels))
-	for _, source := range dump.Channels {
+	claimed := make(map[int]bool, len(sourceChannels))
+	for _, source := range sourceChannels {
 		if targetID, ok := explicit[source.ID]; ok {
 			hit, exists := byID[targetID]
 			if !exists {
@@ -243,6 +260,9 @@ func channelIDMapping(ctx context.Context, target *gorm.DB, dump *model.DBDump, 
 			}
 			if source.ChannelUID != "" && hit.ChannelUID != "" && hit.ChannelUID != source.ChannelUID {
 				return nil, nil, fmt.Errorf("explicit channel mapping %d -> %d conflicts with target channel_uid", source.ID, targetID)
+			}
+			if claimed[targetID] {
+				return nil, nil, fmt.Errorf("channel id collision inside backup: multiple channels resolve to target id %d", targetID)
 			}
 			mapping[source.ID] = targetID
 			claimed[targetID] = true
@@ -256,6 +276,9 @@ func channelIDMapping(ctx context.Context, target *gorm.DB, dump *model.DBDump, 
 		}
 		if source.ChannelUID != "" {
 			if hit, ok := byUID[source.ChannelUID]; ok {
+				if claimed[hit.ID] {
+					return nil, nil, fmt.Errorf("channel id collision inside backup: multiple channels resolve to target id %d", hit.ID)
+				}
 				mapping[source.ID] = hit.ID
 				if hit.ID != source.ID {
 					mappings = append(mappings, model.DBChannelMapping{
@@ -273,9 +296,6 @@ func channelIDMapping(ctx context.Context, target *gorm.DB, dump *model.DBDump, 
 		// UID-less legacy row), keep it. Otherwise report the collision so the
 		// administrator can supply an explicit mapping.
 		if hit, occupied := byID[source.ID]; occupied && missingUID[source.ID] && hit.ChannelUID != "" {
-			// A legacy dump has no stable identity for this row. Reusing a target
-			// row that already has a UID would claim an identity from an older
-			// backup. Fail and ask for an explicit mapping instead.
 			return nil, nil, fmt.Errorf(
 				"channel id collision: legacy backup row %d (%q) has no channel_uid but target id %d is owned by %q; supply an explicit source-to-target channel mapping",
 				source.ID, source.Name, hit.ID, hit.Name,
@@ -293,19 +313,115 @@ func channelIDMapping(ctx context.Context, target *gorm.DB, dump *model.DBDump, 
 		mapping[source.ID] = source.ID
 		claimed[source.ID] = true
 	}
-	for _, id := range referencedChannelIDs(dump) {
+	requiredReferences := requiredReferencedChannelIDs(dump, authority)
+	for _, id := range referencedChannelIDs(dump, authority) {
 		if _, resolved := mapping[id]; resolved {
 			continue
 		}
-		if _, exists := byID[id]; !exists {
-			return nil, nil, fmt.Errorf("backup references channel id %d that exists in neither the backup nor the target", id)
+		targetID := id
+		reason := "numeric_id"
+		if explicitID, ok := explicit[id]; ok {
+			targetID = explicitID
+			reason = "explicit"
 		}
-		mapping[id] = id
+		if _, exists := byID[targetID]; !exists {
+			if requiredReferences[id] {
+				return nil, nil, fmt.Errorf("backup references channel id %d that exists in neither the backup nor the target", id)
+			}
+			mapping[id] = id
+			continue
+		}
+		if claimed[targetID] {
+			return nil, nil, fmt.Errorf("channel id collision inside backup: multiple source references resolve to target id %d", targetID)
+		}
+		mapping[id] = targetID
+		claimed[targetID] = true
+		if targetID != id {
+			mappings = append(mappings, model.DBChannelMapping{
+				SourceChannelID: id,
+				TargetChannelID: targetID,
+				Reason:          reason,
+			})
+		}
 	}
 	return mapping, mappings, nil
 }
 
-func referencedChannelIDs(dump *model.DBDump) []int {
+func requiredReferencedChannelIDs(dump *model.DBDump, authority map[string]bool) map[int]bool {
+	required := make(map[int]bool)
+	add := func(id int) {
+		if id > 0 {
+			required[id] = true
+		}
+	}
+	if sectionHasRows(dump, authority, "channel_keys") {
+		for _, row := range dump.ChannelKeys {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "group_items") {
+		for _, row := range dump.GroupItems {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "channel_model_limits") {
+		for _, row := range dump.ChannelModelLimits {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "channel_probe_runs") {
+		for _, row := range dump.ChannelProbeRuns {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "channel_probe_results") {
+		for _, row := range dump.ChannelProbeResults {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "channel_model_capabilities") {
+		for _, row := range dump.ChannelModelCapabilities {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "runtime_states") {
+		for index, row := range dump.RuntimeStates {
+			if rowHasNonNullField(dump, "runtime_states", index, "channel_id") {
+				add(row.ChannelID)
+			}
+			if sourceID, ok := derivedChannelKeySourceID(row.Key); ok {
+				add(sourceID)
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "circuit_breaker_states") {
+		for index, row := range dump.CircuitBreakerStates {
+			if rowHasNonNullField(dump, "circuit_breaker_states", index, "channel_id") {
+				add(row.ChannelID)
+			}
+			if sourceID, ok := derivedChannelKeySourceID(row.Key); ok {
+				add(sourceID)
+			}
+		}
+	}
+	return required
+}
+
+func sectionHasRows(dump *model.DBDump, authority map[string]bool, name string) bool {
+	if dump == nil {
+		return false
+	}
+	if dump.Version < 6 {
+		return true
+	}
+	if !authority[name] {
+		return false
+	}
+	rows, ok := sectionRowsByName(dump, name)
+	return ok && !isNullSection(rows)
+}
+
+func referencedChannelIDs(dump *model.DBDump, authority map[string]bool) []int {
 	seen := make(map[int]bool)
 	ids := make([]int, 0)
 	add := func(id int) {
@@ -315,31 +431,124 @@ func referencedChannelIDs(dump *model.DBDump) []int {
 		seen[id] = true
 		ids = append(ids, id)
 	}
-	for _, row := range dump.ChannelKeys {
-		add(row.ChannelID)
+	if sectionHasRows(dump, authority, "channel_keys") {
+		for _, row := range dump.ChannelKeys {
+			add(row.ChannelID)
+		}
 	}
-	for _, row := range dump.GroupItems {
-		add(row.ChannelID)
+	if sectionHasRows(dump, authority, "group_items") {
+		for _, row := range dump.GroupItems {
+			add(row.ChannelID)
+		}
 	}
-	for _, row := range dump.ChannelModelLimits {
-		add(row.ChannelID)
+	if sectionHasRows(dump, authority, "channel_model_limits") {
+		for _, row := range dump.ChannelModelLimits {
+			add(row.ChannelID)
+		}
 	}
-	for _, row := range dump.ChannelProbeRuns {
-		add(row.ChannelID)
+	if sectionHasRows(dump, authority, "channel_probe_runs") {
+		for _, row := range dump.ChannelProbeRuns {
+			add(row.ChannelID)
+		}
 	}
-	for _, row := range dump.ChannelProbeResults {
-		add(row.ChannelID)
+	if sectionHasRows(dump, authority, "channel_probe_results") {
+		for _, row := range dump.ChannelProbeResults {
+			add(row.ChannelID)
+		}
 	}
-	for _, row := range dump.ChannelModelCapabilities {
-		add(row.ChannelID)
+	if sectionHasRows(dump, authority, "channel_model_capabilities") {
+		for _, row := range dump.ChannelModelCapabilities {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "stats_channel") {
+		for _, row := range dump.StatsChannel {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "stats_model") {
+		for _, row := range dump.StatsModel {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "stats_daily_channel") {
+		for _, row := range dump.StatsDailyChannel {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "stats_daily_channel_model") {
+		for _, row := range dump.StatsDailyChannelModel {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "runtime_states") {
+		for index, row := range dump.RuntimeStates {
+			if rowHasNonNullField(dump, "runtime_states", index, "channel_id") {
+				add(row.ChannelID)
+			}
+			if sourceID, ok := derivedChannelKeySourceID(row.Key); ok {
+				add(sourceID)
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "circuit_breaker_states") {
+		for index, row := range dump.CircuitBreakerStates {
+			if rowHasNonNullField(dump, "circuit_breaker_states", index, "channel_id") {
+				add(row.ChannelID)
+			}
+			if sourceID, ok := derivedChannelKeySourceID(row.Key); ok {
+				add(sourceID)
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "group_health_attempts") {
+		for _, row := range dump.GroupHealthAttempts {
+			add(row.ChannelID)
+		}
+	}
+	if sectionHasRows(dump, authority, "group_health_snapshots") {
+		for _, row := range dump.GroupHealthSnapshots {
+			if row.SuccessfulChannelID != nil {
+				add(*row.SuccessfulChannelID)
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "ai_route_tasks") {
+		for _, task := range dump.AIRouteTasks {
+			for _, channel := range task.Channels {
+				add(channel.ChannelID)
+			}
+			if task.CurrentBatch != nil {
+				for _, id := range task.CurrentBatch.ChannelIDs {
+					add(id)
+				}
+			}
+			for _, batch := range task.RunningBatches {
+				for _, id := range batch.ChannelIDs {
+					add(id)
+				}
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "relay_logs") {
+		for _, row := range dump.RelayLogs {
+			add(row.ChannelId)
+			for _, attempt := range row.Attempts {
+				add(attempt.ChannelID)
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "relay_log_attempts") {
+		for _, row := range dump.RelayLogAttempts {
+			add(row.ChannelID)
+		}
 	}
 	return ids
 }
 
-// rewriteChannelForeignKeys applies the resolved mapping to every collection
-// that stores a channel ID, so a remapped channel can never receive another
-// channel's group items, keys or probe evidence.
-func rewriteChannelForeignKeys(dump *model.DBDump, mapping map[int]int) error {
+// rewriteChannelForeignKeys applies identity remapping only to rows explicitly
+// owned by this v6 manifest. Unlisted and null sections remain untouched.
+func rewriteChannelForeignKeys(dump *model.DBDump, mapping map[int]int, authority map[string]bool) error {
 	remap := func(id int) (int, error) {
 		target, ok := mapping[id]
 		if !ok {
@@ -347,49 +556,352 @@ func rewriteChannelForeignKeys(dump *model.DBDump, mapping map[int]int) error {
 		}
 		return target, nil
 	}
-	for i := range dump.ChannelKeys {
-		id, err := remap(dump.ChannelKeys[i].ChannelID)
-		if err != nil {
-			return err
+	if sectionHasRows(dump, authority, "channels") {
+		for i := range dump.Channels {
+			id, err := remap(dump.Channels[i].ID)
+			if err != nil {
+				return err
+			}
+			dump.Channels[i].ID = id
 		}
-		dump.ChannelKeys[i].ChannelID = id
 	}
-	for i := range dump.GroupItems {
-		id, err := remap(dump.GroupItems[i].ChannelID)
-		if err != nil {
-			return err
+	if sectionHasRows(dump, authority, "channel_keys") {
+		for i := range dump.ChannelKeys {
+			if !rowHasNonNullField(dump, "channel_keys", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.ChannelKeys[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.ChannelKeys[i].ChannelID = id
 		}
-		dump.GroupItems[i].ChannelID = id
 	}
-	for i := range dump.ChannelModelLimits {
-		id, err := remap(dump.ChannelModelLimits[i].ChannelID)
-		if err != nil {
-			return err
+	if sectionHasRows(dump, authority, "group_items") {
+		for i := range dump.GroupItems {
+			if !rowHasNonNullField(dump, "group_items", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.GroupItems[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.GroupItems[i].ChannelID = id
 		}
-		dump.ChannelModelLimits[i].ChannelID = id
 	}
-	for i := range dump.ChannelProbeRuns {
-		id, err := remap(dump.ChannelProbeRuns[i].ChannelID)
-		if err != nil {
-			return err
+	if sectionHasRows(dump, authority, "channel_model_limits") {
+		for i := range dump.ChannelModelLimits {
+			if !rowHasNonNullField(dump, "channel_model_limits", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.ChannelModelLimits[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.ChannelModelLimits[i].ChannelID = id
 		}
-		dump.ChannelProbeRuns[i].ChannelID = id
 	}
-	for i := range dump.ChannelProbeResults {
-		id, err := remap(dump.ChannelProbeResults[i].ChannelID)
-		if err != nil {
-			return err
+	if sectionHasRows(dump, authority, "channel_probe_runs") {
+		for i := range dump.ChannelProbeRuns {
+			if !rowHasNonNullField(dump, "channel_probe_runs", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.ChannelProbeRuns[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.ChannelProbeRuns[i].ChannelID = id
 		}
-		dump.ChannelProbeResults[i].ChannelID = id
 	}
-	for i := range dump.ChannelModelCapabilities {
-		id, err := remap(dump.ChannelModelCapabilities[i].ChannelID)
-		if err != nil {
-			return err
+	if sectionHasRows(dump, authority, "channel_probe_results") {
+		for i := range dump.ChannelProbeResults {
+			if !rowHasNonNullField(dump, "channel_probe_results", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.ChannelProbeResults[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.ChannelProbeResults[i].ChannelID = id
 		}
-		dump.ChannelModelCapabilities[i].ChannelID = id
+	}
+	if sectionHasRows(dump, authority, "channel_model_capabilities") {
+		for i := range dump.ChannelModelCapabilities {
+			if !rowHasNonNullField(dump, "channel_model_capabilities", i, "channel_id") {
+				continue
+			}
+			oldID := dump.ChannelModelCapabilities[i].ChannelID
+			id, err := remap(dump.ChannelModelCapabilities[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.ChannelModelCapabilities[i].ChannelID = id
+			if id != oldID && model.IsLegacyCapabilityScopeUID(dump.ChannelModelCapabilities[i].ChannelUID) {
+				dump.ChannelModelCapabilities[i].ChannelUID = model.CapabilityScopeUID("", id)
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "stats_channel") {
+		for i := range dump.StatsChannel {
+			if !rowHasNonNullField(dump, "stats_channel", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.StatsChannel[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.StatsChannel[i].ChannelID = id
+		}
+	}
+	if sectionHasRows(dump, authority, "stats_model") {
+		for i := range dump.StatsModel {
+			if !rowHasNonNullField(dump, "stats_model", i, "channel_id") {
+				if mappedStatsModelIDs(mapping) {
+					return fmt.Errorf("stats_model row %d: channel_id is required to map a model statistic across channel identities", i)
+				}
+				continue
+			}
+			oldID := dump.StatsModel[i].ChannelID
+			if oldID == 0 {
+				continue
+			}
+			id, err := remap(oldID)
+			if err != nil {
+				return err
+			}
+			dump.StatsModel[i].ChannelID = id
+			if id != oldID {
+				if !rowHasNonNullField(dump, "stats_model", i, "name") ||
+					strings.TrimSpace(dump.StatsModel[i].Name) == "" {
+					return fmt.Errorf("stats_model row %d: non-empty name is required to remap its derived ID from channel %d to %d", i, oldID, id)
+				}
+				dump.StatsModel[i].ID = statsModelID(id, dump.StatsModel[i].Name)
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "stats_daily_channel") {
+		for i := range dump.StatsDailyChannel {
+			if !rowHasNonNullField(dump, "stats_daily_channel", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.StatsDailyChannel[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.StatsDailyChannel[i].ChannelID = id
+		}
+	}
+	if sectionHasRows(dump, authority, "stats_daily_channel_model") {
+		for i := range dump.StatsDailyChannelModel {
+			if !rowHasNonNullField(dump, "stats_daily_channel_model", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.StatsDailyChannelModel[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.StatsDailyChannelModel[i].ChannelID = id
+		}
+	}
+	if sectionHasRows(dump, authority, "runtime_states") {
+		for i := range dump.RuntimeStates {
+			oldID := dump.RuntimeStates[i].ChannelID
+			if !rowHasNonNullField(dump, "runtime_states", i, "channel_id") {
+				sourceID, ok := derivedChannelKeySourceID(dump.RuntimeStates[i].Key)
+				if !ok {
+					return fmt.Errorf("runtime_states row %d: channel_id is omitted or null and key %q does not identify a channel", i, dump.RuntimeStates[i].Key)
+				}
+				oldID = sourceID
+			}
+			id, err := remap(oldID)
+			if err != nil {
+				return fmt.Errorf("runtime_states row %d: %w", i, err)
+			}
+			if rowHasNonNullField(dump, "runtime_states", i, "channel_id") {
+				dump.RuntimeStates[i].ChannelID = id
+			}
+			if id != oldID {
+				key, ok := remapDerivedChannelKey(dump.RuntimeStates[i].Key, oldID, id)
+				if !ok {
+					return fmt.Errorf("runtime_states row %d: key %q does not start with source channel id %d", i, dump.RuntimeStates[i].Key, oldID)
+				}
+				dump.RuntimeStates[i].Key = key
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "circuit_breaker_states") {
+		for i := range dump.CircuitBreakerStates {
+			oldID := dump.CircuitBreakerStates[i].ChannelID
+			if !rowHasNonNullField(dump, "circuit_breaker_states", i, "channel_id") {
+				sourceID, ok := derivedChannelKeySourceID(dump.CircuitBreakerStates[i].Key)
+				if !ok {
+					return fmt.Errorf("circuit_breaker_states row %d: channel_id is omitted or null and key %q does not identify a channel", i, dump.CircuitBreakerStates[i].Key)
+				}
+				oldID = sourceID
+			}
+			id, err := remap(oldID)
+			if err != nil {
+				return fmt.Errorf("circuit_breaker_states row %d: %w", i, err)
+			}
+			if rowHasNonNullField(dump, "circuit_breaker_states", i, "channel_id") {
+				dump.CircuitBreakerStates[i].ChannelID = id
+			}
+			if id != oldID {
+				key, ok := remapDerivedChannelKey(dump.CircuitBreakerStates[i].Key, oldID, id)
+				if !ok {
+					return fmt.Errorf("circuit_breaker_states row %d: key %q does not start with source channel id %d", i, dump.CircuitBreakerStates[i].Key, oldID)
+				}
+				dump.CircuitBreakerStates[i].Key = key
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "group_health_attempts") {
+		for i := range dump.GroupHealthAttempts {
+			if !rowHasNonNullField(dump, "group_health_attempts", i, "channel_id") {
+				continue
+			}
+			id, err := remap(dump.GroupHealthAttempts[i].ChannelID)
+			if err != nil {
+				return err
+			}
+			dump.GroupHealthAttempts[i].ChannelID = id
+		}
+	}
+	if sectionHasRows(dump, authority, "group_health_snapshots") {
+		for i := range dump.GroupHealthSnapshots {
+			if !rowHasNonNullField(dump, "group_health_snapshots", i, "successful_channel_id") {
+				continue
+			}
+			channelID := dump.GroupHealthSnapshots[i].SuccessfulChannelID
+			if channelID == nil {
+				continue
+			}
+			id, err := remap(*channelID)
+			if err != nil {
+				return err
+			}
+			dump.GroupHealthSnapshots[i].SuccessfulChannelID = &id
+		}
+	}
+	if sectionHasRows(dump, authority, "ai_route_tasks") {
+		for i := range dump.AIRouteTasks {
+			task := &dump.AIRouteTasks[i]
+			for j := range task.Channels {
+				id, err := remap(task.Channels[j].ChannelID)
+				if err != nil {
+					return err
+				}
+				task.Channels[j].ChannelID = id
+			}
+			if task.CurrentBatch != nil {
+				if err := remapChannelIDSlice(task.CurrentBatch.ChannelIDs, remap); err != nil {
+					return err
+				}
+			}
+			for j := range task.RunningBatches {
+				if err := remapChannelIDSlice(task.RunningBatches[j].ChannelIDs, remap); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "relay_logs") {
+		for i := range dump.RelayLogs {
+			if dump.RelayLogs[i].ChannelId != 0 {
+				id, err := remap(dump.RelayLogs[i].ChannelId)
+				if err != nil {
+					return fmt.Errorf("relay_logs row %d: %w", i, err)
+				}
+				dump.RelayLogs[i].ChannelId = id
+			}
+			for j := range dump.RelayLogs[i].Attempts {
+				if dump.RelayLogs[i].Attempts[j].ChannelID == 0 {
+					continue
+				}
+				attemptID, err := remap(dump.RelayLogs[i].Attempts[j].ChannelID)
+				if err != nil {
+					return fmt.Errorf("relay_logs row %d attempt %d: %w", i, j, err)
+				}
+				dump.RelayLogs[i].Attempts[j].ChannelID = attemptID
+			}
+		}
+	}
+	if sectionHasRows(dump, authority, "relay_log_attempts") {
+		for i := range dump.RelayLogAttempts {
+			if dump.RelayLogAttempts[i].ChannelID == 0 {
+				continue
+			}
+			id, err := remap(dump.RelayLogAttempts[i].ChannelID)
+			if err != nil {
+				return fmt.Errorf("relay_log_attempts row %d: %w", i, err)
+			}
+			dump.RelayLogAttempts[i].ChannelID = id
+		}
 	}
 	return nil
+}
+
+func rowHasNonNullField(dump *model.DBDump, section string, index int, field string) bool {
+	if dump == nil || dump.Version < 6 {
+		return true
+	}
+	if section == "relay_log_attempts" && field == "channel_id" {
+		if nonNull, tracked := dump.RelayLogAttemptChannelIDNonNull(index); tracked {
+			return nonNull
+		}
+		return true
+	}
+	presence, ok := dump.RowFieldPresence(section, index)
+	if !ok {
+		return true
+	}
+	return presence.NonNull[field]
+}
+
+func mappedStatsModelIDs(mapping map[int]int) bool {
+	for sourceID, targetID := range mapping {
+		if sourceID != targetID {
+			return true
+		}
+	}
+	return false
+}
+
+func remapDerivedChannelKey(key string, sourceID, targetID int) (string, bool) {
+	prefix := fmt.Sprintf("%d:", sourceID)
+	if !strings.HasPrefix(key, prefix) {
+		return "", false
+	}
+	return fmt.Sprintf("%d:%s", targetID, strings.TrimPrefix(key, prefix)), true
+}
+
+func derivedChannelKeySourceID(key string) (int, bool) {
+	prefix, _, ok := strings.Cut(key, ":")
+	if !ok {
+		return 0, false
+	}
+	sourceID, err := strconv.Atoi(prefix)
+	if err != nil || sourceID <= 0 {
+		return 0, false
+	}
+	return sourceID, true
+}
+
+func remapChannelIDSlice(ids []int, remap func(int) (int, error)) error {
+	for i := range ids {
+		id, err := remap(ids[i])
+		if err != nil {
+			return err
+		}
+		ids[i] = id
+	}
+	return nil
+}
+
+func statsModelID(channelID int, modelName string) int64 {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(fmt.Sprintf("%d:%s", channelID, strings.ToLower(strings.TrimSpace(modelName)))))
+	return int64(hash.Sum64() & 0x7fffffffffffffff)
 }
 
 // insertSectionExact upserts one v6 section by its natural key using exact
@@ -500,6 +1012,16 @@ func (c *importConfig) patchSectionExact(dump *model.DBDump, s section, rows any
 		for _, column := range conflictColumns {
 			where[column.Name] = values[column.Name]
 		}
+		if s.name == "channels" && presence.NonNull["channel_uid"] {
+			var targetChannel model.Channel
+			err := c.conn.Select("channel_uid").Where("id = ?", values["id"]).First(&targetChannel).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%s row %d: read target channel identity: %w", s.name, sourceIndex, err)
+			}
+			if err == nil && targetChannel.ChannelUID != values["channel_uid"] {
+				return fmt.Errorf("%s row %d: channel_uid is immutable for an existing channel", s.name, sourceIndex)
+			}
+		}
 		var existing int64
 		if err := c.conn.Model(modelValue).Table(s.table).Where(where).Count(&existing).Error; err != nil {
 			appendStep(c.res, s.table, "patch", totalAffected, err)
@@ -509,7 +1031,7 @@ func (c *importConfig) patchSectionExact(dump *model.DBDump, s section, rows any
 		if existing > 0 {
 			updateValues := make(map[string]any, len(updateColumns))
 			for _, column := range updateColumns {
-				if _, isKey := where[column]; isKey {
+				if _, isKey := where[column]; isKey || (s.name == "channels" && column == "channel_uid") {
 					continue
 				}
 				updateValues[column] = values[column]
@@ -520,9 +1042,8 @@ func (c *importConfig) patchSectionExact(dump *model.DBDump, s section, rows any
 			}
 			result = c.conn.Model(modelValue).Table(s.table).Where(where).Updates(updateValues)
 		} else {
-			// A sparse v6 patch may omit channel_uid when updating an existing
-			// channel. If the same operation targets a new channel, generate the
-			// immutable identifier before the map-based insert bypasses create hooks.
+			// Sparse channel inserts bypass GORM create hooks, so populate the
+			// immutable UID before writing the map of supplied patch fields.
 			if s.name == "channels" {
 				channel := slice.Index(rowIndex).Addr().Interface().(*model.Channel)
 				channel.EnsureChannelUID()

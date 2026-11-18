@@ -55,6 +55,17 @@ func initBackupTestDB(t *testing.T, fileName string) *gorm.DB {
 	if err := internaldb.InitDB("sqlite", dbPath, false); err != nil {
 		t.Fatalf("init db: %v", err)
 	}
+	var defaultGroupCount int64
+	if err := internaldb.GetDB().Model(&model.ChannelGroup{}).Where("is_default = ?", true).Count(&defaultGroupCount).Error; err != nil {
+		t.Fatalf("count default channel groups: %v", err)
+	}
+	if defaultGroupCount == 0 {
+		if err := internaldb.GetDB().Create(&model.ChannelGroup{
+			Name: model.DefaultChannelGroupName, IsDefault: true,
+		}).Error; err != nil {
+			t.Fatalf("seed default channel group: %v", err)
+		}
+	}
 	t.Cleanup(func() { _ = internaldb.Close() })
 	return internaldb.GetDB()
 }
@@ -325,6 +336,17 @@ func TestCrossKeyRoundTrip(t *testing.T) {
 		t.Fatalf("init source db: %v", err)
 	}
 	srcConn := internaldb.GetDB()
+	var defaultGroupCount int64
+	if err := srcConn.Model(&model.ChannelGroup{}).Where("is_default = ?", true).Count(&defaultGroupCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if defaultGroupCount == 0 {
+		if err := srcConn.Create(&model.ChannelGroup{
+			Name: model.DefaultChannelGroupName, IsDefault: true,
+		}).Error; err != nil {
+			t.Fatalf("seed default channel group: %v", err)
+		}
+	}
 	seedEncryptedCoreRows(t, srcConn, plainAPIKey, plainChanKey, plainCredKey)
 	dump, err := ExportAll(context.Background(), false, false)
 	if err != nil {

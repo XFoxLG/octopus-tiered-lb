@@ -195,7 +195,7 @@ func writeGORMJSONArray[T any](writer *bufio.Writer, fieldName string, query *go
 		if err := scanConnection.ScanRows(rows, &row); err != nil {
 			return err
 		}
-		rowJSON, err := utilsjson.Marshal(transform(row))
+		rowJSON, err := model.MarshalBackupRow(transform(row))
 		if err != nil {
 			return err
 		}

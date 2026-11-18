@@ -100,6 +100,16 @@ func TestStreamedRelayLogFamilyBackupRoundTrip(t *testing.T) {
 	connection := initializeBackupLogContentDatabase(t)
 	payload := []byte(`{"message":"完整 Unicode 内容 🐙","unknown_extension":{"kept":true}}`)
 	expectedBlob := seedBackupTestLogFamily(t, connection, 101, payload)
+	if err := connection.Model(&model.RelayLogAttempt{}).
+		Where("relay_log_id = ?", 101).
+		Updates(map[string]any{
+			"http_status":      0,
+			"request_prepared": false,
+			"request_bytes":    0,
+			"msg":              "",
+		}).Error; err != nil {
+		t.Fatalf("seed explicit zero-valued attempt fields: %v", err)
+	}
 
 	exportFile, exportSize, err := CreateJSONExportFile(context.Background(), true, false, true)
 	if err != nil {
@@ -115,6 +125,28 @@ func TestStreamedRelayLogFamilyBackupRoundTrip(t *testing.T) {
 	}
 	if int64(len(exportedJSON)) != exportSize || !json.Valid(exportedJSON) {
 		t.Fatalf("streamed export size=%d actual=%d valid=%t", exportSize, len(exportedJSON), json.Valid(exportedJSON))
+	}
+	var rawDump map[string]json.RawMessage
+	if err := json.Unmarshal(exportedJSON, &rawDump); err != nil {
+		t.Fatalf("decode streamed export object: %v", err)
+	}
+	var rawAttempts []map[string]json.RawMessage
+	if err := json.Unmarshal(rawDump["relay_log_attempts"], &rawAttempts); err != nil {
+		t.Fatalf("decode streamed attempts: %v", err)
+	}
+	if len(rawAttempts) != 1 {
+		t.Fatalf("streamed attempt count=%d, want 1", len(rawAttempts))
+	}
+	for field, expected := range map[string]string{
+		"http_status":      "0",
+		"request_prepared": "false",
+		"request_bytes":    "0",
+		"msg":              `""`,
+	} {
+		got, exists := rawAttempts[0][field]
+		if !exists || string(got) != expected {
+			t.Fatalf("streamed attempt %s = %s (exists=%t), want %s", field, got, exists, expected)
+		}
 	}
 
 	var dump model.DBDump
