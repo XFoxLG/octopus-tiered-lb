@@ -228,7 +228,30 @@ func importDB(c *gin.Context) {
 		return
 	}
 
-	result, err := backup.ImportWithMode(c.Request.Context(), &dump, mode)
+	if preview := c.Query("preview"); preview == "1" || strings.EqualFold(preview, "true") {
+		mappings, err := backup.PreviewChannelMapping(c.Request.Context(), &dump, mode)
+		if err != nil {
+			resp.Error(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		resp.Success(c, gin.H{
+			"version":          dump.Version,
+			"mode":             mode,
+			"channel_mappings": mappings,
+			"sections":         dump.Sections,
+		})
+		return
+	}
+
+	var channelMapping map[int]int
+	if raw := c.Query("channel_mapping"); raw != "" {
+		if err := utilsjson.Unmarshal([]byte(raw), &channelMapping); err != nil {
+			resp.Error(c, http.StatusBadRequest, fmt.Sprintf("invalid channel_mapping: %v", err))
+			return
+		}
+	}
+
+	result, err := backup.ImportWithModeAndMapping(c.Request.Context(), &dump, mode, channelMapping)
 	if err != nil {
 		resp.Error(c, http.StatusBadRequest, err.Error())
 		return

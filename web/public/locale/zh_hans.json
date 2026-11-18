@@ -1610,6 +1610,12 @@
         "success": "导入成功",
         "failed": "导入失败",
         "result": "导入结果",
+        "preview": "预检（不写入）",
+        "previewing": "正在检查...",
+        "previewResult": "导入预检",
+        "previewSummary": "备份格式 v{version}；声明 {sections} 个集合",
+        "channelMapping": "通道重映射",
+        "warnings": "警告",
         "sizeHint": "支持最大 256 MB 的备份文件；大文件导入可能需要较长时间，请耐心等待。",
         "mode": {
           "label": "导入模式",

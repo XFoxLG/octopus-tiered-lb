@@ -246,7 +246,7 @@ func TestVersionOneInlineRelayLogBackupRemainsReadable(t *testing.T) {
 func TestFullRestoreWithoutLogsClearsExistingLogFamily(t *testing.T) {
 	connection := initializeBackupLogContentDatabase(t)
 	seedBackupTestLogFamily(t, connection, 11, []byte(`{"old":true}`))
-	if _, err := ImportWithMode(context.Background(), &model.DBDump{Version: dbDumpVersion, IncludeLogs: false}, model.ImportModeFull); err != nil {
+	if _, err := ImportWithMode(context.Background(), &model.DBDump{Version: 5, IncludeLogs: false}, model.ImportModeFull); err != nil {
 		t.Fatalf("full restore without logs: %v", err)
 	}
 	assertBackupLogFamilyCounts(t, connection, 0, 0, 0, 0)

@@ -1610,6 +1610,12 @@
         "success": "匯入成功",
         "failed": "匯入失敗",
         "result": "匯入結果",
+        "preview": "預檢（不寫入）",
+        "previewing": "正在檢查...",
+        "previewResult": "匯入預檢",
+        "previewSummary": "備份格式 v{version}；宣告 {sections} 個集合",
+        "channelMapping": "通道重新映射",
+        "warnings": "警告",
         "sizeHint": "支援最大 256 MB 的備份檔案；大檔案匯入可能需要較長時間，請耐心等候。",
         "mode": {
           "label": "匯入模式",

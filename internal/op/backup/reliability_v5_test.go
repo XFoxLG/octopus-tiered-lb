@@ -110,8 +110,8 @@ func TestBackupV5GroupHealthAndRouteTasksRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dump.Version != 5 {
-		t.Fatalf("dump version = %d, want 5", dump.Version)
+	if dump.Version != dbDumpVersion {
+		t.Fatalf("dump version = %d, want %d", dump.Version, dbDumpVersion)
 	}
 	if len(dump.GroupHealthSnapshots) != 1 ||
 		len(dump.GroupHealthAttempts) != 1 ||

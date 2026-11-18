@@ -8,7 +8,7 @@ import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/common/Toast';
-import { useExportDB, useImportDB } from '@/api/endpoints/setting';
+import { useExportDB, useImportDB, usePreviewImportDB } from '@/api/endpoints/setting';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 
@@ -19,6 +19,7 @@ export function SettingBackup() {
 
     const exportDB = useExportDB();
     const importDB = useImportDB();
+    const previewDB = usePreviewImportDB();
 
     const [includeLogs, setIncludeLogs] = useState(false);
     const [includeStats, setIncludeStats] = useState(false);
@@ -65,6 +66,18 @@ export function SettingBackup() {
             toast.success(t('backup.export.success'));
         } catch (e) {
             toast.error(e instanceof Error ? e.message : t('backup.export.failed'));
+        }
+    };
+
+    const onPreview = async () => {
+        if (!file) {
+            toast.error(t('backup.import.noFile'));
+            return;
+        }
+        try {
+            await previewDB.mutateAsync({ file, mode: importMode });
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : t('backup.import.failed'));
         }
     };
 
@@ -161,11 +174,55 @@ export function SettingBackup() {
                     variant="destructive"
                     className="w-full rounded-xl"
                     onClick={onImport}
-                    disabled={importDB.isPending}
+                    disabled={importDB.isPending || previewDB.isPending}
                 >
                     {importDB.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
                     {importDB.isPending ? t('backup.import.importing') : t('backup.import.button')}
                 </Button>
+
+                <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full rounded-xl"
+                    onClick={onPreview}
+                    disabled={previewDB.isPending || importDB.isPending}
+                >
+                    {previewDB.isPending ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
+                    {previewDB.isPending ? t('backup.import.previewing') : t('backup.import.preview')}
+                </Button>
+
+                {previewDB.data && (
+                    <div className="space-y-1 rounded-lg border border-sky-500/20 bg-sky-500/8 p-3 text-xs text-sky-700 dark:text-sky-300">
+                        <div className="font-semibold">{t('backup.import.previewResult')}</div>
+                        <div className="break-words">
+                            {t('backup.import.previewSummary', {
+                                version: previewDB.data.version,
+                                sections: previewDB.data.sections?.length ?? 0,
+                            })}
+                        </div>
+                        {(previewDB.data.channel_mappings?.length ?? 0) > 0 && (
+                            <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                                {previewDB.data.channel_mappings?.map((item) => (
+                                    <div key={`${item.source_channel_id}-${item.target_channel_id}`} className="flex justify-between gap-2">
+                                        <span>{t('backup.import.channelMapping')}</span>
+                                        <span className="tabular-nums shrink-0">
+                                            {item.source_channel_id} → {item.target_channel_id}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {(importDB.data?.warnings?.length ?? 0) > 0 && (
+                    <div className="space-y-1 rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-700 dark:text-amber-300">
+                        <div className="font-semibold">{t('backup.import.warnings')}</div>
+                        {importDB.data?.warnings?.map((warning) => (
+                            <div key={warning} className="break-words">{warning}</div>
+                        ))}
+                    </div>
+                )}
 
                 {(importDB.isPending || importProgress.length > 0) && (
                     <div className="space-y-2 pt-2">

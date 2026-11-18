@@ -187,6 +187,22 @@ export interface DBImportStep {
 export interface DBImportResult {
     rows_affected: Record<string, number>;
     progress: DBImportStep[];
+    warnings?: string[];
+    channel_mappings?: DBChannelMapping[];
+}
+
+export interface DBChannelMapping {
+    source_channel_id: number;
+    target_channel_id: number;
+    channel_uid?: string;
+    reason: string;
+}
+
+export interface DBImportPreview {
+    version: number;
+    mode: 'incremental' | 'full';
+    channel_mappings?: DBChannelMapping[];
+    sections?: string[];
 }
 
 export interface DBExportOptions {
@@ -321,6 +337,45 @@ export function useImportDB() {
         },
         onError: (error) => {
             logger.error('导入数据库失败:', error);
+        },
+    });
+}
+
+/**
+ * 导入预检（v6）：只解析 sections 清单和通道 UID 映射，不写数据库。
+ */
+export function usePreviewImportDB() {
+    return useMutation({
+        mutationFn: async ({ file, mode }: { file: File; mode: 'incremental' | 'full' }) => {
+            const form = new FormData();
+            form.append('file', file);
+
+            const params = new URLSearchParams();
+            params.set('mode', mode);
+            params.set('preview', 'true');
+
+            const res = await fetch(`${API_BASE_URL}/api/v1/setting/import?${params.toString()}`, {
+                method: 'POST',
+                headers: {
+                    Authorization: getAuthHeader(),
+                },
+                body: form,
+            });
+
+            const contentType = res.headers.get('content-type') || '';
+            const isJson = contentType.includes('application/json');
+            const data = isJson ? await res.json() : await res.text();
+
+            if (!res.ok) {
+                const message = getMessageField(data) ?? (typeof data === 'string' ? data : res.statusText);
+                throw new Error(message);
+            }
+
+            const nested = getDataField<DBImportPreview>(data);
+            return nested ?? (data as DBImportPreview);
+        },
+        onError: (error) => {
+            logger.error('导入预检失败:', error);
         },
     });
 }

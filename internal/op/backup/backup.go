@@ -28,15 +28,20 @@ import (
 //   - v1：原始格式。
 //   - v2：relay 日志家族拆分（relay_log_attempts / content_refs / blobs）。
 //   - v4：补齐代理/模型/价格配置、协议证据、逐日统计与错误日志。
-//   - v5（当前）：新增分组健康快照/明细与 AI 路由任务；full 恢复时对这三类
+//   - v5：新增分组健康快照/明细与 AI 路由任务；full 恢复时对这三类
 //     表权威清空重建，v1-v4 历史备份不触碰目标中的这些新表数据。
+//   - v6（当前）：配置导入格式。导出不再包含管理员 Users；导入对 v1-v6
+//     的 Users 一律忽略并告警，管理员与 Passkey 由目标实例自己持有。
+//     Sections 清单显式声明本次备份权威覆盖的集合：full 恢复只清空清单
+//     内的集合，未列出的集合保持目标数据；incremental 对清单内集合按主键
+//     写入明确值，未列出集合保持不变。
 //   - v3（上游 0fa706fb / issue #247）：敏感字段（api_keys.api_key、
 //     channel_keys.channel_key、api_credential_profiles.api_key）导出为
 //     **明文**，导入侧按目标实例的 crypto key 幂等重加密。
 //
 // v1/v2 的 dump 中这些字段是源实例的 enc: 密文，跨实例导入不可用；
 // 导入侧对 enc: 值原样保留，同实例旧备份仍可恢复。
-const dbDumpVersion = 5
+const dbDumpVersion = 6
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
 const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（外层上限，内层按 SQL 变量预算再收）
@@ -84,9 +89,6 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	}
 	if err := conn.Find(&d.APIKeys).Error; err != nil {
 		return nil, fmt.Errorf("export api_keys: %w", err)
-	}
-	if err := conn.Find(&d.Users).Error; err != nil {
-		return nil, fmt.Errorf("export users: %w", err)
 	}
 	if err := conn.Find(&d.Settings).Error; err != nil {
 		return nil, fmt.Errorf("export settings: %w", err)
@@ -166,6 +168,8 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	if err := conn.Find(&d.APICredentialProfiles).Error; err != nil {
 		return nil, fmt.Errorf("export api_credential_profiles: %w", err)
 	}
+	d.Sections = dumpSectionNames(d)
+	normalizeDumpSlices(d)
 
 	// 敏感字段在库中以 enc: 密文存储；导出前解密为明文，使备份文件
 	// 跨实例可移植（导入侧会用目标实例的 key 重加密，见 encryptDumpSecrets）。
@@ -342,6 +346,15 @@ func importRelayLogFamily(cfg *importConfig, dump *model.DBDump) error {
 	if cfg == nil || cfg.conn == nil || dump == nil || (!dump.IncludeLogs && !cfg.isFull) {
 		return nil
 	}
+	if cfg.authority != nil {
+		anyAuthoritative := cfg.authority["relay_logs"] ||
+			cfg.authority["relay_log_attempts"] ||
+			cfg.authority["relay_log_content_refs"] ||
+			cfg.authority["relay_log_content_blobs"]
+		if !anyAuthoritative {
+			return nil
+		}
+	}
 
 	blobs, blobDigests, err := relayLogBackupBlobs(dump)
 	if err != nil {
@@ -419,31 +432,43 @@ func importRelayLogFamily(cfg *importConfig, dump *model.DBDump) error {
 
 	if cfg.isFull {
 		for _, table := range []string{"relay_log_content_refs", "relay_log_attempts", "relay_log_content_blobs", "relay_logs"} {
+			if cfg.authority != nil && (!cfg.authority[table] || sectionNull(dump, table)) {
+				continue
+			}
 			if err := cfg.deleteAll(table); err != nil {
 				return fmt.Errorf("full import: delete %s: %w", table, err)
 			}
 		}
 	}
-	if err := cfg.doNothing("relay_logs", &acceptedRelayLogs, len(acceptedRelayLogs)); err != nil {
-		return err
+	if cfg.authority == nil || (cfg.authority["relay_logs"] && !sectionNull(dump, "relay_logs")) {
+		if err := cfg.doNothing("relay_logs", &acceptedRelayLogs, len(acceptedRelayLogs)); err != nil {
+			return err
+		}
 	}
-	if err := cfg.doNothing("relay_log_content_blobs", &blobs, len(blobs)); err != nil {
-		return err
+	if cfg.authority == nil || (cfg.authority["relay_log_content_blobs"] && !sectionNull(dump, "relay_log_content_blobs")) {
+		if err := cfg.doNothing("relay_log_content_blobs", &blobs, len(blobs)); err != nil {
+			return err
+		}
 	}
-	if err := cfg.doNothing("relay_log_attempts", &filteredAttempts, len(filteredAttempts)); err != nil {
-		return err
+	if cfg.authority == nil || (cfg.authority["relay_log_attempts"] && !sectionNull(dump, "relay_log_attempts")) {
+		if err := cfg.doNothing("relay_log_attempts", &filteredAttempts, len(filteredAttempts)); err != nil {
+			return err
+		}
 	}
-	if err := cfg.doNothing("relay_log_content_refs", &contentRefs, len(contentRefs)); err != nil {
-		return err
+	if cfg.authority == nil || (cfg.authority["relay_log_content_refs"] && !sectionNull(dump, "relay_log_content_refs")) {
+		if err := cfg.doNothing("relay_log_content_refs", &contentRefs, len(contentRefs)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 type importConfig struct {
-	conn    *gorm.DB
-	res     *model.DBImportResult
-	version int // dump version, 0 for old backward-compat
-	isFull  bool
+	conn      *gorm.DB
+	res       *model.DBImportResult
+	version   int // dump version, 0 for old backward-compat
+	isFull    bool
+	authority map[string]bool // v6 explicit section authority; nil for v1-v5
 }
 
 func appendStep(res *model.DBImportResult, table, mode string, rows int64, err error) {
@@ -738,10 +763,22 @@ func disableForeignKeyChecks(conn *gorm.DB) (func() error, error) {
 }
 
 func ImportWithMode(ctx context.Context, dump *model.DBDump, mode string) (*model.DBImportResult, error) {
-	return ImportWithModeToDB(ctx, db.GetDB(), dump, mode)
+	return ImportWithModeAndMapping(ctx, dump, mode, nil)
+}
+
+// ImportWithModeAndMapping imports into the live database with an optional
+// explicit source-to-target channel mapping.
+func ImportWithModeAndMapping(ctx context.Context, dump *model.DBDump, mode string, channelMapping map[int]int) (*model.DBImportResult, error) {
+	return ImportWithModeToDBAndMapping(ctx, db.GetDB(), dump, mode, channelMapping)
 }
 
 func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump, mode string) (*model.DBImportResult, error) {
+	return ImportWithModeToDBAndMapping(ctx, target, dump, mode, nil)
+}
+
+// ImportWithModeToDBAndMapping is ImportWithModeToDB with an optional explicit
+// source-to-target channel mapping for v6 dumps whose numeric IDs collide.
+func ImportWithModeToDBAndMapping(ctx context.Context, target *gorm.DB, dump *model.DBDump, mode string, channelMapping map[int]int) (*model.DBImportResult, error) {
 	if dump == nil {
 		return nil, fmt.Errorf("empty dump")
 	}
@@ -754,7 +791,17 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	if dump.Version < 0 || dump.Version > dbDumpVersion {
 		return nil, fmt.Errorf("unsupported backup version %d", dump.Version)
 	}
+	missingUID := make(map[int]bool, len(dump.Channels))
+	for _, channel := range dump.Channels {
+		if channel.ChannelUID == "" {
+			missingUID[channel.ID] = true
+		}
+	}
 	if err := ensureDumpChannelUIDs(dump); err != nil {
+		return nil, err
+	}
+	authority, err := authoritativeSections(dump)
+	if err != nil {
 		return nil, err
 	}
 	// 敏感字段幂等加密：明文（v3 dump）→ 用本实例 key 加密；已带 enc: 前缀的
@@ -763,7 +810,27 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	encryptDumpSecrets(dump)
 	isFull := mode == model.ImportModeFull
 	res := &model.DBImportResult{RowsAffected: map[string]int64{}}
-	cfg := &importConfig{conn: target.WithContext(ctx), res: res, isFull: isFull, version: dump.Version}
+	cfg := &importConfig{conn: target.WithContext(ctx), res: res, isFull: isFull, version: dump.Version, authority: authority}
+	if len(dump.Users) > 0 {
+		res.Warnings = append(res.Warnings,
+			"administrator identity rows in the backup were ignored; the target admin account and Passkeys are unchanged")
+		dump.Users = nil
+	}
+	mapping, channelMappings, err := channelIDMapping(ctx, target, dump, isFull, authority, channelMapping, missingUID)
+	if err != nil {
+		return nil, err
+	}
+	if dump.Version >= 6 {
+		if err := rewriteChannelForeignKeys(dump, mapping); err != nil {
+			return nil, err
+		}
+		for i := range dump.Channels {
+			if targetID, ok := mapping[dump.Channels[i].ID]; ok {
+				dump.Channels[i].ID = targetID
+			}
+		}
+		res.ChannelMappings = channelMappings
+	}
 	if !isFull {
 		if err := checkChannelUIDConflicts(target.WithContext(ctx), dump.Channels); err != nil {
 			return nil, err
@@ -800,8 +867,12 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 		fkRestore = nil
 	}
 
-	err := cfg.conn.Transaction(func(tx *gorm.DB) error {
+	err = cfg.conn.Transaction(func(tx *gorm.DB) error {
 		cfg.conn = tx
+
+		if dump.Version >= 6 {
+			return importV6Sections(cfg, dump, authority, logToSeparateDB)
+		}
 
 		if isFull {
 			// Delete in reverse dependency order to avoid FK violations.
@@ -987,19 +1058,21 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	// 此前被 CloseLogDB 断开（用户关闭了后台日志），先 ReopenLogDB 重连——导入
 	// 完成后日志库即处于开启（已连接）状态。
 	if logToSeparateDB && (dump.IncludeLogs || isFull) {
+		res.Warnings = append(res.Warnings,
+			"main database import committed; relay-log data was restored in a separate transaction and may succeed or fail independently")
 		if err := db.ReopenLogDB(); err != nil {
-			return nil, fmt.Errorf("reopen log db before import: %w", err)
+			return res, fmt.Errorf("main database import committed; reopen log db before log import failed: %w", err)
 		}
 		if logConn := db.GetLogDB(); logConn != nil {
 			logRes := &model.DBImportResult{RowsAffected: map[string]int64{}}
 			if err := logConn.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
-				logCfg := &importConfig{conn: transaction, res: logRes, isFull: isFull, version: dump.Version}
+				logCfg := &importConfig{conn: transaction, res: logRes, isFull: isFull, version: dump.Version, authority: authority}
 				if err := importRelayLogFamily(logCfg, dump); err != nil {
 					return err
 				}
 				return synchronizeImportedSequences(logCfg)
 			}); err != nil {
-				return nil, err
+				return res, fmt.Errorf("main database import committed; separate relay-log import failed and was rolled back: %w", err)
 			}
 			res.Progress = append(res.Progress, logRes.Progress...)
 		}
