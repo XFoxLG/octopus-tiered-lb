@@ -41,8 +41,8 @@ func TestTaskConnectionAndProbeEvidenceBackupV5RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dump.Version != 5 {
-		t.Fatalf("backup version changed to %d", dump.Version)
+	if dump.Version != dbDumpVersion {
+		t.Fatalf("backup version = %d, want %d", dump.Version, dbDumpVersion)
 	}
 	if len(dump.RelayLogs) != 1 || dump.RelayLogs[0].ID != entry.ID {
 		t.Fatalf("exported log diagnostics missing: %+v", dump.RelayLogs)

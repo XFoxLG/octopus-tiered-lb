@@ -187,7 +187,25 @@ export interface DBImportStep {
 export interface DBImportResult {
     rows_affected: Record<string, number>;
     progress: DBImportStep[];
+    warnings?: string[];
+    channel_mappings?: DBChannelMapping[];
 }
+
+export interface DBChannelMapping {
+    source_channel_id: number;
+    target_channel_id: number;
+    channel_uid?: string;
+    reason: string;
+}
+
+export interface DBImportPreview {
+    version: number;
+    mode: 'incremental' | 'full';
+    channel_mappings?: DBChannelMapping[];
+    sections?: string[];
+}
+
+export type DBChannelMappingInput = Record<string, number>;
 
 export interface DBExportOptions {
     include_logs?: boolean;
@@ -202,6 +220,29 @@ type ApiResponse<T> = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+export function serializeChannelMapping(mapping?: DBChannelMappingInput): string | undefined {
+    if (mapping === undefined) return undefined;
+    if (!isRecord(mapping) || Array.isArray(mapping)) {
+        throw new Error('channel_mapping must be a JSON object');
+    }
+
+    const normalized: DBChannelMappingInput = {};
+    for (const [source, target] of Object.entries(mapping)) {
+        if (!/^[1-9]\d*$/.test(source) || !Number.isSafeInteger(Number(source))) {
+            throw new Error(`channel_mapping source ID must be a positive integer: ${source}`);
+        }
+        if (!isPositiveInteger(target)) {
+            throw new Error(`channel_mapping target ID must be a positive integer for source ${source}`);
+        }
+        normalized[source] = target;
+    }
+    return JSON.stringify(normalized);
 }
 
 function getMessageField(value: unknown): string | undefined {
@@ -292,12 +333,18 @@ export function useExportDB() {
  */
 export function useImportDB() {
     return useMutation({
-        mutationFn: async ({ file, mode }: { file: File; mode: 'incremental' | 'full' }) => {
+        mutationFn: async ({ file, mode, channelMapping }: {
+            file: File;
+            mode: 'incremental' | 'full';
+            channelMapping?: DBChannelMappingInput;
+        }) => {
             const form = new FormData();
             form.append('file', file);
 
             const params = new URLSearchParams();
             params.set('mode', mode);
+            const serializedMapping = serializeChannelMapping(channelMapping);
+            if (serializedMapping !== undefined) params.set('channel_mapping', serializedMapping);
 
             const res = await fetch(`${API_BASE_URL}/api/v1/setting/import?${params.toString()}`, {
                 method: 'POST',
@@ -321,6 +368,51 @@ export function useImportDB() {
         },
         onError: (error) => {
             logger.error('导入数据库失败:', error);
+        },
+    });
+}
+
+/**
+ * 导入预检（v6）：只解析 sections 清单和通道 UID 映射，不写数据库。
+ */
+export function usePreviewImportDB() {
+    return useMutation({
+        mutationFn: async ({ file, mode, channelMapping }: {
+            file: File;
+            mode: 'incremental' | 'full';
+            channelMapping?: DBChannelMappingInput;
+        }) => {
+            const form = new FormData();
+            form.append('file', file);
+
+            const params = new URLSearchParams();
+            params.set('mode', mode);
+            params.set('preview', 'true');
+            const serializedMapping = serializeChannelMapping(channelMapping);
+            if (serializedMapping !== undefined) params.set('channel_mapping', serializedMapping);
+
+            const res = await fetch(`${API_BASE_URL}/api/v1/setting/import?${params.toString()}`, {
+                method: 'POST',
+                headers: {
+                    Authorization: getAuthHeader(),
+                },
+                body: form,
+            });
+
+            const contentType = res.headers.get('content-type') || '';
+            const isJson = contentType.includes('application/json');
+            const data = isJson ? await res.json() : await res.text();
+
+            if (!res.ok) {
+                const message = getMessageField(data) ?? (typeof data === 'string' ? data : res.statusText);
+                throw new Error(message);
+            }
+
+            const nested = getDataField<DBImportPreview>(data);
+            return nested ?? (data as DBImportPreview);
+        },
+        onError: (error) => {
+            logger.error('导入预检失败:', error);
         },
     });
 }

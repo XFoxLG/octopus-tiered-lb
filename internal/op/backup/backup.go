@@ -28,15 +28,20 @@ import (
 //   - v1：原始格式。
 //   - v2：relay 日志家族拆分（relay_log_attempts / content_refs / blobs）。
 //   - v4：补齐代理/模型/价格配置、协议证据、逐日统计与错误日志。
-//   - v5（当前）：新增分组健康快照/明细与 AI 路由任务；full 恢复时对这三类
+//   - v5：新增分组健康快照/明细与 AI 路由任务；full 恢复时对这三类
 //     表权威清空重建，v1-v4 历史备份不触碰目标中的这些新表数据。
+//   - v6（当前）：配置导入格式。导出不再包含管理员 Users；导入对 v1-v6
+//     的 Users 一律忽略并告警，管理员与 Passkey 由目标实例自己持有。
+//     Sections 清单显式声明本次备份权威覆盖的集合：full 恢复只清空清单
+//     内的集合，未列出的集合保持目标数据；incremental 对清单内集合按主键
+//     写入明确值，未列出集合保持不变。
 //   - v3（上游 0fa706fb / issue #247）：敏感字段（api_keys.api_key、
 //     channel_keys.channel_key、api_credential_profiles.api_key）导出为
 //     **明文**，导入侧按目标实例的 crypto key 幂等重加密。
 //
 // v1/v2 的 dump 中这些字段是源实例的 enc: 密文，跨实例导入不可用；
 // 导入侧对 enc: 值原样保留，同实例旧备份仍可恢复。
-const dbDumpVersion = 5
+const dbDumpVersion = 6
 const maxRelayLogsExport = 500_000
 const maxAuditLogsExport = 500_000
 const batchInsertSize = 1000 // 分批插入：每批最多 1000 行（外层上限，内层按 SQL 变量预算再收）
@@ -84,9 +89,6 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	}
 	if err := conn.Find(&d.APIKeys).Error; err != nil {
 		return nil, fmt.Errorf("export api_keys: %w", err)
-	}
-	if err := conn.Find(&d.Users).Error; err != nil {
-		return nil, fmt.Errorf("export users: %w", err)
 	}
 	if err := conn.Find(&d.Settings).Error; err != nil {
 		return nil, fmt.Errorf("export settings: %w", err)
@@ -166,6 +168,8 @@ func ExportAll(ctx context.Context, includeLogs, includeStats bool) (*model.DBDu
 	if err := conn.Find(&d.APICredentialProfiles).Error; err != nil {
 		return nil, fmt.Errorf("export api_credential_profiles: %w", err)
 	}
+	d.Sections = dumpSectionNames(d)
+	normalizeDumpSlices(d)
 
 	// 敏感字段在库中以 enc: 密文存储；导出前解密为明文，使备份文件
 	// 跨实例可移植（导入侧会用目标实例的 key 重加密，见 encryptDumpSecrets）。
@@ -304,6 +308,38 @@ func relayLogBackupBlobs(dump *model.DBDump) ([]model.RelayLogContentBlob, map[s
 	return blobs, digests, nil
 }
 
+func existingRelayLogBlobDigests(conn *gorm.DB, digests map[string]struct{}) (map[string]struct{}, error) {
+	found := make(map[string]struct{}, len(digests))
+	if len(digests) == 0 {
+		return found, nil
+	}
+	if conn == nil {
+		return nil, fmt.Errorf("target log database is unavailable")
+	}
+
+	requested := make([]string, 0, len(digests))
+	for digest := range digests {
+		requested = append(requested, digest)
+	}
+	const batchSize = 500
+	for offset := 0; offset < len(requested); offset += batchSize {
+		end := offset + batchSize
+		if end > len(requested) {
+			end = len(requested)
+		}
+		var batch []string
+		if err := conn.Model(&model.RelayLogContentBlob{}).
+			Where("digest IN ?", requested[offset:end]).
+			Pluck("digest", &batch).Error; err != nil {
+			return nil, fmt.Errorf("query existing relay log content blobs: %w", err)
+		}
+		for _, digest := range batch {
+			found[digest] = struct{}{}
+		}
+	}
+	return found, nil
+}
+
 func deriveRelayLogAttemptRows(relayLogs []model.RelayLog) []model.RelayLogAttempt {
 	rows := make([]model.RelayLogAttempt, 0)
 	for _, relayLog := range relayLogs {
@@ -339,17 +375,52 @@ func deriveRelayLogAttemptRows(relayLogs []model.RelayLog) []model.RelayLogAttem
 }
 
 func importRelayLogFamily(cfg *importConfig, dump *model.DBDump) error {
-	if cfg == nil || cfg.conn == nil || dump == nil || (!dump.IncludeLogs && !cfg.isFull) {
+	if cfg == nil || cfg.conn == nil || dump == nil ||
+		(dump.Version < 6 && !dump.IncludeLogs && !cfg.isFull) {
 		return nil
 	}
-
-	blobs, blobDigests, err := relayLogBackupBlobs(dump)
-	if err != nil {
-		return fmt.Errorf("validate relay log content blobs: %w", err)
+	if cfg.authority != nil {
+		anyAuthoritative := cfg.authority["relay_logs"] ||
+			cfg.authority["relay_log_attempts"] ||
+			cfg.authority["relay_log_content_refs"] ||
+			cfg.authority["relay_log_content_blobs"]
+		if !anyAuthoritative {
+			return nil
+		}
 	}
 
+	blobSectionOwned := cfg.authority == nil ||
+		(cfg.authority["relay_log_content_blobs"] && !sectionNull(dump, "relay_log_content_blobs"))
+	var blobs []model.RelayLogContentBlob
+	blobDigests := make(map[string]struct{})
+	if blobSectionOwned {
+		var err error
+		blobs, blobDigests, err = relayLogBackupBlobs(dump)
+		if err != nil {
+			return fmt.Errorf("validate relay log content blobs: %w", err)
+		}
+	}
+
+	parentSectionOwned := cfg.authority == nil ||
+		(cfg.authority["relay_logs"] && !sectionNull(dump, "relay_logs"))
+	attemptSectionOwned := cfg.authority == nil ||
+		(cfg.authority["relay_log_attempts"] && !sectionNull(dump, "relay_log_attempts"))
+	contentRefSectionOwned := cfg.authority == nil ||
+		(cfg.authority["relay_log_content_refs"] && !sectionNull(dump, "relay_log_content_refs"))
+
 	acceptedRelayLogs := append([]model.RelayLog(nil), dump.RelayLogs...)
+	sourceLogIDs := make(map[int64]struct{}, len(acceptedRelayLogs))
+	if !parentSectionOwned {
+		acceptedRelayLogs = nil
+	}
+	for _, relayLog := range acceptedRelayLogs {
+		if relayLog.ID == 0 {
+			return fmt.Errorf("relay log backup contains zero parent ID")
+		}
+		sourceLogIDs[relayLog.ID] = struct{}{}
+	}
 	acceptedLogIDs := make(map[int64]struct{}, len(acceptedRelayLogs))
+	existingSourceLogIDs := make(map[int64]struct{})
 	if !cfg.isFull && len(acceptedRelayLogs) > 0 {
 		candidateIDs := make([]int64, 0, len(acceptedRelayLogs))
 		for _, relayLog := range acceptedRelayLogs {
@@ -362,6 +433,7 @@ func importRelayLogFamily(cfg *importConfig, dump *model.DBDump) error {
 		existingSet := make(map[int64]struct{}, len(existingIDs))
 		for _, relayLogID := range existingIDs {
 			existingSet[relayLogID] = struct{}{}
+			existingSourceLogIDs[relayLogID] = struct{}{}
 		}
 		filtered := acceptedRelayLogs[:0]
 		for _, relayLog := range acceptedRelayLogs {
@@ -372,15 +444,89 @@ func importRelayLogFamily(cfg *importConfig, dump *model.DBDump) error {
 		acceptedRelayLogs = filtered
 	}
 	for _, relayLog := range acceptedRelayLogs {
-		if relayLog.ID == 0 {
-			return fmt.Errorf("relay log backup contains zero parent ID")
-		}
 		acceptedLogIDs[relayLog.ID] = struct{}{}
+	}
+	for relayLogID := range existingSourceLogIDs {
+		acceptedLogIDs[relayLogID] = struct{}{}
+	}
+
+	attemptRows := []model.RelayLogAttempt(nil)
+	if attemptSectionOwned {
+		attemptRows = dump.RelayLogAttempts
+		if cfg.authority == nil && len(attemptRows) == 0 {
+			attemptRows = deriveRelayLogAttemptRows(acceptedRelayLogs)
+		}
+	}
+	contentRefRows := []model.RelayLogContentRef(nil)
+	if contentRefSectionOwned {
+		contentRefRows = dump.RelayLogContentRefs
+	}
+
+	if !parentSectionOwned {
+		referencedLogIDs := make(map[int64]struct{}, len(attemptRows)+len(contentRefRows))
+		for _, attempt := range attemptRows {
+			if attempt.RelayLogID == 0 {
+				return fmt.Errorf("relay_log_attempts row references zero parent ID")
+			}
+			referencedLogIDs[attempt.RelayLogID] = struct{}{}
+		}
+		for _, contentRef := range contentRefRows {
+			if contentRef.RelayLogID == 0 {
+				return fmt.Errorf("relay_log_content_refs row references zero parent ID")
+			}
+			referencedLogIDs[contentRef.RelayLogID] = struct{}{}
+		}
+		if len(referencedLogIDs) > 0 {
+			candidateIDs := make([]int64, 0, len(referencedLogIDs))
+			for relayLogID := range referencedLogIDs {
+				candidateIDs = append(candidateIDs, relayLogID)
+			}
+			var existingIDs []int64
+			if err := cfg.conn.Model(&model.RelayLog{}).
+				Where("id IN ?", candidateIDs).
+				Pluck("id", &existingIDs).Error; err != nil {
+				return fmt.Errorf("query target relay logs for child sections: %w", err)
+			}
+			for _, relayLogID := range existingIDs {
+				acceptedLogIDs[relayLogID] = struct{}{}
+			}
+			for index, attempt := range attemptRows {
+				if _, exists := acceptedLogIDs[attempt.RelayLogID]; !exists {
+					return fmt.Errorf("relay_log_attempts row %d references missing target relay_log id %d; include relay_logs or restore the parent first", index, attempt.RelayLogID)
+				}
+			}
+			for index, contentRef := range contentRefRows {
+				if _, exists := acceptedLogIDs[contentRef.RelayLogID]; !exists {
+					return fmt.Errorf("relay_log_content_refs row %d references missing target relay_log id %d; include relay_logs or restore the parent first", index, contentRef.RelayLogID)
+				}
+			}
+		}
+	}
+	if cfg.authority != nil && parentSectionOwned {
+		for index, attempt := range attemptRows {
+			if _, accepted := acceptedLogIDs[attempt.RelayLogID]; accepted {
+				continue
+			}
+			if _, sourceExists := sourceLogIDs[attempt.RelayLogID]; sourceExists {
+				continue
+			}
+			return fmt.Errorf("relay_log_attempts row %d references relay_log id %d absent from its authoritative relay_logs section", index, attempt.RelayLogID)
+		}
+		for index, contentRef := range contentRefRows {
+			if _, accepted := acceptedLogIDs[contentRef.RelayLogID]; accepted {
+				continue
+			}
+			if _, sourceExists := sourceLogIDs[contentRef.RelayLogID]; sourceExists {
+				continue
+			}
+			return fmt.Errorf("relay_log_content_refs row %d references relay_log id %d absent from its authoritative relay_logs section", index, contentRef.RelayLogID)
+		}
 	}
 
 	contentRefs := make([]model.RelayLogContentRef, 0, len(dump.RelayLogContentRefs))
 	requiredBlobDigests := make(map[string]struct{})
-	for _, contentRef := range dump.RelayLogContentRefs {
+	blobReferenceLogIDs := make(map[string]int64)
+	for _, contentRef := range contentRefRows {
 		if _, accepted := acceptedLogIDs[contentRef.RelayLogID]; !accepted {
 			continue
 		}
@@ -388,30 +534,40 @@ func importRelayLogFamily(cfg *importConfig, dump *model.DBDump) error {
 			if contentRef.BlobDigest == "" {
 				return fmt.Errorf("ready relay log content ref for log %d has no blob digest", contentRef.RelayLogID)
 			}
-			if _, exists := blobDigests[contentRef.BlobDigest]; !exists {
-				return fmt.Errorf("relay log content ref for log %d points to missing blob %s", contentRef.RelayLogID, contentRef.BlobDigest)
-			}
 			requiredBlobDigests[contentRef.BlobDigest] = struct{}{}
+			blobReferenceLogIDs[contentRef.BlobDigest] = contentRef.RelayLogID
 		}
 		contentRef.ID = 0
 		contentRefs = append(contentRefs, contentRef)
 	}
-	filteredBlobs := make([]model.RelayLogContentBlob, 0, len(requiredBlobDigests))
-	for _, blob := range blobs {
-		if _, required := requiredBlobDigests[blob.Digest]; required {
-			filteredBlobs = append(filteredBlobs, blob)
+
+	if blobSectionOwned {
+		for digest, relayLogID := range blobReferenceLogIDs {
+			if _, exists := blobDigests[digest]; !exists {
+				return fmt.Errorf("relay log content ref for log %d points to missing backup blob %s", relayLogID, digest)
+			}
+		}
+	} else if len(requiredBlobDigests) > 0 {
+		existingDigests, err := existingRelayLogBlobDigests(cfg.conn, requiredBlobDigests)
+		if err != nil {
+			return err
+		}
+		for digest, relayLogID := range blobReferenceLogIDs {
+			if _, exists := existingDigests[digest]; !exists {
+				return fmt.Errorf("relay log content ref for log %d points to missing target blob %s; include relay_log_content_blobs or restore the blob first", relayLogID, digest)
+			}
 		}
 	}
-	blobs = filteredBlobs
 
-	attemptRows := dump.RelayLogAttempts
-	if len(attemptRows) == 0 {
-		attemptRows = deriveRelayLogAttemptRows(acceptedRelayLogs)
-	}
 	filteredAttempts := make([]model.RelayLogAttempt, 0, len(attemptRows))
-	for _, attempt := range attemptRows {
+	for index, attempt := range attemptRows {
 		if _, accepted := acceptedLogIDs[attempt.RelayLogID]; !accepted {
-			continue
+			if _, sourceExists := sourceLogIDs[attempt.RelayLogID]; sourceExists {
+				continue
+			}
+			if cfg.authority != nil {
+				return fmt.Errorf("relay_log_attempts row %d has no accepted parent relay_log id %d", index, attempt.RelayLogID)
+			}
 		}
 		attempt.ID = 0
 		filteredAttempts = append(filteredAttempts, attempt)
@@ -419,31 +575,43 @@ func importRelayLogFamily(cfg *importConfig, dump *model.DBDump) error {
 
 	if cfg.isFull {
 		for _, table := range []string{"relay_log_content_refs", "relay_log_attempts", "relay_log_content_blobs", "relay_logs"} {
+			if cfg.authority != nil && (!cfg.authority[table] || sectionNull(dump, table)) {
+				continue
+			}
 			if err := cfg.deleteAll(table); err != nil {
 				return fmt.Errorf("full import: delete %s: %w", table, err)
 			}
 		}
 	}
-	if err := cfg.doNothing("relay_logs", &acceptedRelayLogs, len(acceptedRelayLogs)); err != nil {
-		return err
+	if cfg.authority == nil || (cfg.authority["relay_logs"] && !sectionNull(dump, "relay_logs")) {
+		if err := cfg.doNothing("relay_logs", &acceptedRelayLogs, len(acceptedRelayLogs)); err != nil {
+			return err
+		}
 	}
-	if err := cfg.doNothing("relay_log_content_blobs", &blobs, len(blobs)); err != nil {
-		return err
+	if cfg.authority == nil || (cfg.authority["relay_log_content_blobs"] && !sectionNull(dump, "relay_log_content_blobs")) {
+		if err := cfg.doNothing("relay_log_content_blobs", &blobs, len(blobs)); err != nil {
+			return err
+		}
 	}
-	if err := cfg.doNothing("relay_log_attempts", &filteredAttempts, len(filteredAttempts)); err != nil {
-		return err
+	if cfg.authority == nil || (cfg.authority["relay_log_attempts"] && !sectionNull(dump, "relay_log_attempts")) {
+		if err := cfg.doNothing("relay_log_attempts", &filteredAttempts, len(filteredAttempts)); err != nil {
+			return err
+		}
 	}
-	if err := cfg.doNothing("relay_log_content_refs", &contentRefs, len(contentRefs)); err != nil {
-		return err
+	if cfg.authority == nil || (cfg.authority["relay_log_content_refs"] && !sectionNull(dump, "relay_log_content_refs")) {
+		if err := cfg.doNothing("relay_log_content_refs", &contentRefs, len(contentRefs)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 type importConfig struct {
-	conn    *gorm.DB
-	res     *model.DBImportResult
-	version int // dump version, 0 for old backward-compat
-	isFull  bool
+	conn      *gorm.DB
+	res       *model.DBImportResult
+	version   int // dump version, 0 for old backward-compat
+	isFull    bool
+	authority map[string]bool // v6 explicit section authority; nil for v1-v5
 }
 
 func appendStep(res *model.DBImportResult, table, mode string, rows int64, err error) {
@@ -644,12 +812,20 @@ func (c *importConfig) upsertSettings(rows []model.Setting) error {
 	}
 	activeSettings := make([]model.Setting, 0, len(rows))
 	legacySettings := make([]model.Setting, 0)
+	identitySettingsSkipped := false
 	for _, setting := range rows {
-		if model.IsRetiredSemanticCacheSetting(setting.Key) {
+		switch {
+		case identityOwnedSetting(setting.Key):
+			identitySettingsSkipped = true
+		case model.IsRetiredSemanticCacheSetting(setting.Key):
 			legacySettings = append(legacySettings, setting)
-		} else {
+		default:
 			activeSettings = append(activeSettings, setting)
 		}
+	}
+	if identitySettingsSkipped {
+		c.res.Warnings = append(c.res.Warnings,
+			"Passkey/WebAuthn identity settings in the backup were ignored; the target administrator and Passkeys are unchanged")
 	}
 	// Keep old backups readable without overwriting another deployment's
 	// retired-feature configuration in a shared database.
@@ -676,7 +852,13 @@ func (c *importConfig) upsertSettings(rows []model.Setting) error {
 
 func (c *importConfig) deleteAll(table string) error {
 	if table == "settings" {
-		result := c.conn.Where("key NOT IN ?", model.RetiredSemanticCacheSettingKeys()).Delete(&model.Setting{})
+		preserved := model.RetiredSemanticCacheSettingKeys()
+		preserved = append(preserved,
+			model.SettingKeyWebAuthnRPID,
+			model.SettingKeyWebAuthnRPName,
+			model.SettingKeyWebAuthnOrigins,
+		)
+		result := c.conn.Where("key NOT IN ?", preserved).Delete(&model.Setting{})
 		appendStep(c.res, table, "delete", result.RowsAffected, result.Error)
 		return result.Error
 	}
@@ -738,10 +920,22 @@ func disableForeignKeyChecks(conn *gorm.DB) (func() error, error) {
 }
 
 func ImportWithMode(ctx context.Context, dump *model.DBDump, mode string) (*model.DBImportResult, error) {
-	return ImportWithModeToDB(ctx, db.GetDB(), dump, mode)
+	return ImportWithModeAndMapping(ctx, dump, mode, nil)
+}
+
+// ImportWithModeAndMapping imports into the live database with an optional
+// explicit source-to-target channel mapping.
+func ImportWithModeAndMapping(ctx context.Context, dump *model.DBDump, mode string, channelMapping map[int]int) (*model.DBImportResult, error) {
+	return ImportWithModeToDBAndMapping(ctx, db.GetDB(), dump, mode, channelMapping)
 }
 
 func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump, mode string) (*model.DBImportResult, error) {
+	return ImportWithModeToDBAndMapping(ctx, target, dump, mode, nil)
+}
+
+// ImportWithModeToDBAndMapping is ImportWithModeToDB with an optional explicit
+// source-to-target channel mapping for v6 dumps whose numeric IDs collide.
+func ImportWithModeToDBAndMapping(ctx context.Context, target *gorm.DB, dump *model.DBDump, mode string, channelMapping map[int]int) (*model.DBImportResult, error) {
 	if dump == nil {
 		return nil, fmt.Errorf("empty dump")
 	}
@@ -754,17 +948,64 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	if dump.Version < 0 || dump.Version > dbDumpVersion {
 		return nil, fmt.Errorf("unsupported backup version %d", dump.Version)
 	}
-	if err := ensureDumpChannelUIDs(dump); err != nil {
+	authority, err := authoritativeSections(dump)
+	if err != nil {
 		return nil, err
+	}
+	isFull := mode == model.ImportModeFull
+	if dump.Version >= 6 && isFull {
+		if err := validateFullChannelReferenceFields(dump, authority); err != nil {
+			return nil, err
+		}
+	}
+	importLogs := dump.IncludeLogs || isFull
+	if dump.Version >= 6 {
+		importLogs = false
+		for _, section := range []string{
+			"relay_logs", "relay_log_attempts", "relay_log_content_refs", "relay_log_content_blobs",
+		} {
+			if authority[section] && !sectionNull(dump, section) {
+				importLogs = true
+				break
+			}
+		}
+	}
+	importChannels := dump.Version < 6 || sectionHasRows(dump, authority, "channels")
+	preserveMissingUIDs := map[int]bool(nil)
+	missingUID := make(map[int]bool, len(dump.Channels))
+	if importChannels {
+		preserveMissingUIDs = missingChannelUIDPatchRows(dump, isFull)
+		for index, channel := range dump.Channels {
+			if channel.ChannelUID == "" && !preserveMissingUIDs[index] {
+				missingUID[channel.ID] = true
+			}
+		}
+		if err := ensureDumpChannelUIDs(dump, preserveMissingUIDs); err != nil {
+			return nil, err
+		}
 	}
 	// 敏感字段幂等加密：明文（v3 dump）→ 用本实例 key 加密；已带 enc: 前缀的
 	// （v1/v2 dump 同实例恢复）或空值原样保留，避免双重加密。
 	// api_keys 明文的 api_key_hash 一并补算（sha256 hex，见 encryptDumpSecrets）。
 	encryptDumpSecrets(dump)
-	isFull := mode == model.ImportModeFull
 	res := &model.DBImportResult{RowsAffected: map[string]int64{}}
-	cfg := &importConfig{conn: target.WithContext(ctx), res: res, isFull: isFull, version: dump.Version}
-	if !isFull {
+	cfg := &importConfig{conn: target.WithContext(ctx), res: res, isFull: isFull, version: dump.Version, authority: authority}
+	if len(dump.Users) > 0 {
+		res.Warnings = append(res.Warnings,
+			"administrator identity rows in the backup were ignored; the target admin account and Passkeys are unchanged")
+		dump.Users = nil
+	}
+	mapping, channelMappings, err := channelIDMapping(ctx, target, dump, isFull, authority, channelMapping, missingUID)
+	if err != nil {
+		return nil, err
+	}
+	if dump.Version >= 6 {
+		if err := rewriteChannelForeignKeys(dump, mapping, authority); err != nil {
+			return nil, err
+		}
+		res.ChannelMappings = channelMappings
+	}
+	if !isFull && importChannels {
 		if err := checkChannelUIDConflicts(target.WithContext(ctx), dump.Channels); err != nil {
 			return nil, err
 		}
@@ -777,8 +1018,9 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	// 行为与旧版一致。
 	logToSeparateDB := target == db.GetDB() && db.IsLogDBSeparate()
 	maintenanceSucceeded := false
-	if target == db.GetDB() && (dump.IncludeLogs || isFull) {
-		finishMaintenance := relaylog.BeginMaintenance(isFull)
+	if target == db.GetDB() && (isFull || importLogs) {
+		discardPendingLogs := isFull && importLogs
+		finishMaintenance := relaylog.BeginMaintenance(discardPendingLogs)
 		defer func() { finishMaintenance(maintenanceSucceeded) }()
 	}
 
@@ -800,8 +1042,12 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 		fkRestore = nil
 	}
 
-	err := cfg.conn.Transaction(func(tx *gorm.DB) error {
+	err = cfg.conn.Transaction(func(tx *gorm.DB) error {
 		cfg.conn = tx
+
+		if dump.Version >= 6 {
+			return importV6Sections(cfg, dump, authority, logToSeparateDB)
+		}
 
 		if isFull {
 			// Delete in reverse dependency order to avoid FK violations.
@@ -960,7 +1206,7 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 
 		// Relay logs, attempts, references, and blobs are restored as one family.
 		// In separate-log-DB live mode this runs in the dedicated transaction below.
-		if (dump.IncludeLogs || isFull) && !logToSeparateDB {
+		if importLogs && !logToSeparateDB {
 			if err := importRelayLogFamily(cfg, dump); err != nil {
 				return err
 			}
@@ -986,20 +1232,22 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	// 强制导入：无论「保留历史日志」开关是否开启，都把日志写入日志库。若日志库
 	// 此前被 CloseLogDB 断开（用户关闭了后台日志），先 ReopenLogDB 重连——导入
 	// 完成后日志库即处于开启（已连接）状态。
-	if logToSeparateDB && (dump.IncludeLogs || isFull) {
+	if logToSeparateDB && importLogs {
+		res.Warnings = append(res.Warnings,
+			"main database import committed; relay-log data was restored in a separate transaction and may succeed or fail independently")
 		if err := db.ReopenLogDB(); err != nil {
-			return nil, fmt.Errorf("reopen log db before import: %w", err)
+			return res, fmt.Errorf("main database import committed; reopen log db before log import failed: %w", err)
 		}
 		if logConn := db.GetLogDB(); logConn != nil {
 			logRes := &model.DBImportResult{RowsAffected: map[string]int64{}}
 			if err := logConn.WithContext(ctx).Transaction(func(transaction *gorm.DB) error {
-				logCfg := &importConfig{conn: transaction, res: logRes, isFull: isFull, version: dump.Version}
+				logCfg := &importConfig{conn: transaction, res: logRes, isFull: isFull, version: dump.Version, authority: authority}
 				if err := importRelayLogFamily(logCfg, dump); err != nil {
 					return err
 				}
 				return synchronizeImportedSequences(logCfg)
 			}); err != nil {
-				return nil, err
+				return res, fmt.Errorf("main database import committed; separate relay-log import failed and was rolled back: %w", err)
 			}
 			res.Progress = append(res.Progress, logRes.Progress...)
 		}
@@ -1057,14 +1305,37 @@ func decryptDumpSecrets(d *model.DBDump) {
 // older binaries and rejects a backup that carries the same identifier on two
 // different channels. A generated value is written back into the dump so both
 // full and incremental imports use the same source identity.
-func ensureDumpChannelUIDs(d *model.DBDump) error {
+func missingChannelUIDPatchRows(d *model.DBDump, isFull bool) map[int]bool {
+	if d == nil || d.Version < 6 || isFull {
+		return nil
+	}
+	preserve := make(map[int]bool)
+	for index, channel := range d.Channels {
+		if channel.ChannelUID != "" {
+			continue
+		}
+		presence, ok := d.RowFieldPresence("channels", index)
+		if ok && !presence.NonNull["channel_uid"] {
+			preserve[index] = true
+		}
+	}
+	return preserve
+}
+
+func ensureDumpChannelUIDs(d *model.DBDump, preserveMissing map[int]bool) error {
 	if d == nil {
 		return nil
 	}
 	seen := make(map[string]int, len(d.Channels))
 	for i := range d.Channels {
 		ch := &d.Channels[i]
+		if preserveMissing[i] {
+			continue
+		}
 		ch.EnsureChannelUID()
+		if ch.ChannelUID == "" {
+			continue
+		}
 		if previous, ok := seen[ch.ChannelUID]; ok {
 			return fmt.Errorf("backup channel_uid collision %q between channel IDs %d and %d", ch.ChannelUID, previous, ch.ID)
 		}
@@ -1084,8 +1355,14 @@ func checkChannelUIDConflicts(target *gorm.DB, channels []model.Channel) error {
 	sourceByUID := make(map[string]int, len(channels))
 	uids := make([]string, 0, len(channels))
 	for _, ch := range channels {
+		if ch.ChannelUID == "" {
+			continue
+		}
 		sourceByUID[ch.ChannelUID] = ch.ID
 		uids = append(uids, ch.ChannelUID)
+	}
+	if len(uids) == 0 {
+		return nil
 	}
 	var existing []model.Channel
 	if err := target.Select("id", "channel_uid").

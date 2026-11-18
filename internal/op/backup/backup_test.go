@@ -11,6 +11,7 @@ import (
 
 	internaldb "github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
+	"github.com/lingyuins/octopus/internal/op/relaylog"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
@@ -214,6 +215,183 @@ func TestImportForceReopensClosedLogDB(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("forced relay log count = %d, want 1", count)
+	}
+}
+
+func TestV6FullImportReopensClosedLogDBWithAuthoritativeSections(t *testing.T) {
+	mainPath := filepath.Join(t.TempDir(), "main-v6.db")
+	if err := internaldb.InitDB("sqlite", mainPath, false); err != nil {
+		t.Fatalf("init main db: %v", err)
+	}
+	logPath := filepath.Join(t.TempDir(), "logs-v6.db")
+	if err := internaldb.InitLogDB("sqlite", logPath, false); err != nil {
+		t.Fatalf("init log db: %v", err)
+	}
+	t.Cleanup(func() { _ = internaldb.Close() })
+
+	if err := internaldb.CloseLogDB(); err != nil {
+		t.Fatalf("close log db: %v", err)
+	}
+	dump := &model.DBDump{
+		Version: 6,
+		Sections: []string{
+			"relay_logs", "relay_log_attempts",
+			"relay_log_content_refs", "relay_log_content_blobs",
+		},
+		RelayLogs: []model.RelayLog{{
+			ID: 19, Time: 19, RequestModelName: "restored-v6",
+		}},
+		RelayLogAttempts:     []model.RelayLogAttempt{},
+		RelayLogContentRefs:  []model.RelayLogContentRef{},
+		RelayLogContentBlobs: []model.RelayLogContentBlobDump{},
+	}
+	if _, err := ImportWithMode(context.Background(), dump, model.ImportModeFull); err != nil {
+		t.Fatalf("full v6 import with closed log db: %v", err)
+	}
+	logConn := internaldb.GetLogDB()
+	if logConn == nil {
+		t.Fatal("log db should be reopened after full v6 import")
+	}
+	var count int64
+	if err := logConn.Model(&model.RelayLog{}).Where("id = ?", 19).Count(&count).Error; err != nil {
+		t.Fatalf("count restored relay log: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("restored relay log count = %d, want 1", count)
+	}
+}
+
+func TestV6PartialLogRestoreReopensClosedLogDBForPreflight(t *testing.T) {
+	mainPath := filepath.Join(t.TempDir(), "main-partial-log-v6.db")
+	if err := internaldb.InitDB("sqlite", mainPath, false); err != nil {
+		t.Fatalf("init main db: %v", err)
+	}
+	logPath := filepath.Join(t.TempDir(), "logs-partial-v6.db")
+	if err := internaldb.InitLogDB("sqlite", logPath, false); err != nil {
+		t.Fatalf("init log db: %v", err)
+	}
+	t.Cleanup(func() { _ = internaldb.Close() })
+
+	logConn := internaldb.GetLogDB()
+	if err := logConn.Create(&model.RelayLog{
+		ID: 18, Time: 18, RequestModelName: "old",
+	}).Error; err != nil {
+		t.Fatalf("seed target relay log: %v", err)
+	}
+	if err := internaldb.CloseLogDB(); err != nil {
+		t.Fatalf("close log db: %v", err)
+	}
+	dump := &model.DBDump{
+		Version:  6,
+		Sections: []string{"relay_logs"},
+		RelayLogs: []model.RelayLog{{
+			ID: 19, Time: 19, RequestModelName: "replacement",
+		}},
+	}
+	if _, err := ImportWithMode(context.Background(), dump, model.ImportModeFull); err != nil {
+		t.Fatalf("full v6 import with unowned child sections: %v", err)
+	}
+	logConn = internaldb.GetLogDB()
+	if logConn == nil {
+		t.Fatal("log db should be reopened for preflight and log import")
+	}
+	var oldCount, newCount int64
+	if err := logConn.Model(&model.RelayLog{}).Where("id = ?", 18).Count(&oldCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := logConn.Model(&model.RelayLog{}).Where("id = ?", 19).Count(&newCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if oldCount != 0 || newCount != 1 {
+		t.Fatalf("relay log counts old/new = %d/%d, want 0/1", oldCount, newCount)
+	}
+}
+
+func TestV6PartialLogRestoreClosesLogDBAfterFailedPreflight(t *testing.T) {
+	mainPath := filepath.Join(t.TempDir(), "main-failed-partial-log-v6.db")
+	if err := internaldb.InitDB("sqlite", mainPath, false); err != nil {
+		t.Fatalf("init main db: %v", err)
+	}
+	logPath := filepath.Join(t.TempDir(), "logs-failed-partial-v6.db")
+	if err := internaldb.InitLogDB("sqlite", logPath, false); err != nil {
+		t.Fatalf("init log db: %v", err)
+	}
+	t.Cleanup(func() { _ = internaldb.Close() })
+
+	logConn := internaldb.GetLogDB()
+	if err := logConn.Create(&model.RelayLog{
+		ID: 28, Time: 28, RequestModelName: "retained-parent",
+	}).Error; err != nil {
+		t.Fatalf("seed target relay log: %v", err)
+	}
+	if err := logConn.Create(&model.RelayLogAttempt{
+		RelayLogID: 28, AttemptNum: 1, ChannelName: "retained-child",
+	}).Error; err != nil {
+		t.Fatalf("seed target relay attempt: %v", err)
+	}
+	if err := internaldb.CloseLogDB(); err != nil {
+		t.Fatalf("close log db: %v", err)
+	}
+	dump := &model.DBDump{
+		Version:  6,
+		Sections: []string{"relay_logs"},
+		RelayLogs: []model.RelayLog{{
+			ID: 29, Time: 29, RequestModelName: "replacement",
+		}},
+	}
+	if _, err := ImportWithMode(context.Background(), dump, model.ImportModeFull); err == nil ||
+		!strings.Contains(err.Error(), `unowned section "relay_log_attempts" still references removed relay_log id 28`) {
+		t.Fatalf("full v6 import error=%v, want retained-attempt dependency failure", err)
+	}
+	if internaldb.GetLogDB() != nil {
+		t.Fatal("log db should return to its previously closed state after failed preflight")
+	}
+	if err := internaldb.ReopenLogDB(); err != nil {
+		t.Fatalf("reopen log db for assertions: %v", err)
+	}
+	logConn = internaldb.GetLogDB()
+	var oldCount, newCount int64
+	if err := logConn.Model(&model.RelayLog{}).Where("id = ?", 28).Count(&oldCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := logConn.Model(&model.RelayLog{}).Where("id = ?", 29).Count(&newCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if oldCount != 1 || newCount != 0 {
+		t.Fatalf("relay log counts retained/replacement = %d/%d, want 1/0", oldCount, newCount)
+	}
+	if err := internaldb.CloseLogDB(); err != nil {
+		t.Fatalf("close log db after assertions: %v", err)
+	}
+}
+
+func TestV6ConfigurationOnlyFullImportPreservesPendingRelayLogs(t *testing.T) {
+	mainPath := filepath.Join(t.TempDir(), "main-config-only-v6.db")
+	if err := internaldb.InitDB("sqlite", mainPath, false); err != nil {
+		t.Fatalf("init main db: %v", err)
+	}
+	if err := internaldb.InitLogDB("", "", false); err != nil {
+		t.Fatalf("init shared log db: %v", err)
+	}
+	t.Cleanup(func() { _ = internaldb.Close() })
+	restoreCache := relaylog.SetCacheForTest([]model.RelayLog{{
+		ID: 29, Time: 29, RequestModelName: "pending",
+	}})
+	defer restoreCache()
+
+	dump := &model.DBDump{
+		Version:  6,
+		Sections: []string{"groups"},
+		Groups:   []model.Group{},
+	}
+	if _, err := ImportWithMode(context.Background(), dump, model.ImportModeFull); err != nil {
+		t.Fatalf("configuration-only full v6 import: %v", err)
+	}
+	logs, lock := relaylog.GetCacheAndLock()
+	lock.Lock()
+	defer lock.Unlock()
+	if len(logs) != 1 || logs[0].ID != 29 {
+		t.Fatalf("pending relay logs after config-only restore = %#v, want pending log 29", logs)
 	}
 }
 

@@ -8,21 +8,65 @@ import { Hint } from '@/components/ui/hint';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { toast } from '@/components/common/Toast';
-import { useExportDB, useImportDB } from '@/api/endpoints/setting';
+import {
+    type DBChannelMappingInput,
+    useExportDB,
+    useImportDB,
+    usePreviewImportDB,
+} from '@/api/endpoints/setting';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 
 type ImportMode = 'incremental' | 'full';
+type ChannelMappingErrorReason = 'invalidJson' | 'objectRequired' | 'invalidSource' | 'invalidTarget';
+type ChannelMappingParseResult =
+    | { ok: true; mapping?: DBChannelMappingInput }
+    | { ok: false; reason: ChannelMappingErrorReason };
+
+const MAPPING_INPUT_ID = 'backup-channel-mapping';
+const CHANNEL_MAPPING_EXAMPLE = '{"12": 34}';
+
+export function parseChannelMappingInput(value: string): ChannelMappingParseResult {
+    const raw = value.trim();
+    if (!raw) return { ok: true };
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        return { ok: false, reason: 'invalidJson' };
+    }
+
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return { ok: false, reason: 'objectRequired' };
+    }
+
+    const mapping: DBChannelMappingInput = {};
+    for (const [source, target] of Object.entries(parsed)) {
+        if (!/^[1-9]\d*$/.test(source) || !Number.isSafeInteger(Number(source))) {
+            return { ok: false, reason: 'invalidSource' };
+        }
+        if (typeof target !== 'number' || !Number.isSafeInteger(target) || target <= 0) {
+            return { ok: false, reason: 'invalidTarget' };
+        }
+        mapping[source] = target;
+    }
+
+    return { ok: true, mapping };
+}
 
 export function SettingBackup() {
     const t = useTranslations('setting');
 
     const exportDB = useExportDB();
     const importDB = useImportDB();
+    const previewDB = usePreviewImportDB();
 
     const [includeLogs, setIncludeLogs] = useState(false);
     const [includeStats, setIncludeStats] = useState(false);
     const [importMode, setImportMode] = useState<ImportMode>('incremental');
+    const [channelMappingText, setChannelMappingText] = useState('');
+    const [channelMappingError, setChannelMappingError] = useState<string | null>(null);
 
     const [file, setFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -42,6 +86,39 @@ export function SettingBackup() {
 
     const onPickFile = (f: File | null) => {
         setFile(f);
+        setChannelMappingText('');
+        setChannelMappingError(null);
+        previewDB.reset();
+    };
+
+    const onSelectImportMode = (mode: ImportMode) => {
+        setImportMode(mode);
+        previewDB.reset();
+    };
+
+    const channelMappingErrorMessage = (reason: ChannelMappingErrorReason) => {
+        switch (reason) {
+            case 'invalidJson':
+                return t('backup.import.mapping.errors.invalidJson');
+            case 'objectRequired':
+                return t('backup.import.mapping.errors.objectRequired');
+            case 'invalidSource':
+                return t('backup.import.mapping.errors.invalidSource');
+            case 'invalidTarget':
+                return t('backup.import.mapping.errors.invalidTarget');
+        }
+    };
+
+    const resolveChannelMapping = (): DBChannelMappingInput | undefined | null => {
+        const result = parseChannelMappingInput(channelMappingText);
+        if (!result.ok) {
+            const message = channelMappingErrorMessage(result.reason);
+            setChannelMappingError(message);
+            toast.error(message);
+            return null;
+        }
+        setChannelMappingError(null);
+        return result.mapping;
     };
 
     const onImport = async () => {
@@ -49,11 +126,16 @@ export function SettingBackup() {
             toast.error(t('backup.import.noFile'));
             return;
         }
+        const channelMapping = resolveChannelMapping();
+        if (channelMapping === null) return;
         try {
-            await importDB.mutateAsync({ file, mode: importMode });
+            await importDB.mutateAsync({ file, mode: importMode, channelMapping });
             toast.success(t('backup.import.success'));
             if (fileInputRef.current) fileInputRef.current.value = '';
             setFile(null);
+            setChannelMappingText('');
+            setChannelMappingError(null);
+            previewDB.reset();
         } catch (e) {
             toast.error(e instanceof Error ? e.message : t('backup.import.failed'));
         }
@@ -65,6 +147,20 @@ export function SettingBackup() {
             toast.success(t('backup.export.success'));
         } catch (e) {
             toast.error(e instanceof Error ? e.message : t('backup.export.failed'));
+        }
+    };
+
+    const onPreview = async () => {
+        if (!file) {
+            toast.error(t('backup.import.noFile'));
+            return;
+        }
+        const channelMapping = resolveChannelMapping();
+        if (channelMapping === null) return;
+        try {
+            await previewDB.mutateAsync({ file, mode: importMode, channelMapping });
+        } catch (e) {
+            toast.error(e instanceof Error ? e.message : t('backup.import.failed'));
         }
     };
 
@@ -119,8 +215,9 @@ export function SettingBackup() {
                     <div className="text-sm text-muted-foreground">{t('backup.import.mode.label')}</div>
                     <div className="flex gap-1 rounded-lg border border-border/30 bg-muted/30 p-0.5">
                         <button
+                            id="backup-mode-incremental"
                             type="button"
-                            onClick={() => setImportMode('incremental')}
+                            onClick={() => onSelectImportMode('incremental')}
                             className={cn(
                                 'flex-1 sm:flex-initial rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                                 importMode === 'incremental' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -129,8 +226,9 @@ export function SettingBackup() {
                             {t('backup.import.mode.incremental')}
                         </button>
                         <button
+                            id="backup-mode-full"
                             type="button"
-                            onClick={() => setImportMode('full')}
+                            onClick={() => onSelectImportMode('full')}
                             className={cn(
                                 'flex-1 sm:flex-initial rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                                 importMode === 'full' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
@@ -156,16 +254,110 @@ export function SettingBackup() {
                     className="rounded-xl w-full"
                 />
 
+                <div className="space-y-2 rounded-lg border border-border/35 bg-muted/20 p-3">
+                    <label htmlFor={MAPPING_INPUT_ID} className="block text-sm font-medium text-card-foreground">
+                        {t('backup.import.mapping.label')}
+                    </label>
+                    <p id={`${MAPPING_INPUT_ID}-hint`} className="text-xs leading-5 text-muted-foreground">
+                        {t('backup.import.mapping.hint')}
+                    </p>
+                    <textarea
+                        id={MAPPING_INPUT_ID}
+                        value={channelMappingText}
+                        onChange={(event) => {
+                            setChannelMappingText(event.target.value);
+                            setChannelMappingError(null);
+                            previewDB.reset();
+                        }}
+                        placeholder={CHANNEL_MAPPING_EXAMPLE}
+                        spellCheck={false}
+                        autoCapitalize="off"
+                        autoCorrect="off"
+                        aria-invalid={channelMappingError ? true : undefined}
+                        aria-describedby={channelMappingError
+                            ? `${MAPPING_INPUT_ID}-hint ${MAPPING_INPUT_ID}-error`
+                            : `${MAPPING_INPUT_ID}-hint`}
+                        className={cn(
+                            'min-h-24 w-full resize-y rounded-lg border border-border/60 bg-background px-3 py-2 font-mono text-sm text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground/70 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35',
+                            channelMappingError && 'border-destructive focus-visible:border-destructive focus-visible:ring-destructive/25',
+                        )}
+                        disabled={importDB.isPending || previewDB.isPending}
+                    />
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span>{t('backup.import.mapping.format')}</span>
+                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{CHANNEL_MAPPING_EXAMPLE}</code>
+                    </div>
+                    {channelMappingError && (
+                        <p id={`${MAPPING_INPUT_ID}-error`} role="alert" className="text-xs leading-5 text-destructive">
+                            {channelMappingError}
+                        </p>
+                    )}
+                </div>
+
                 <Button
+                    id="backup-import"
                     type="button"
                     variant="destructive"
                     className="w-full rounded-xl"
                     onClick={onImport}
-                    disabled={importDB.isPending}
+                    disabled={importDB.isPending || previewDB.isPending}
                 >
                     {importDB.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
                     {importDB.isPending ? t('backup.import.importing') : t('backup.import.button')}
                 </Button>
+
+                <Button
+                    id="backup-preview"
+                    type="button"
+                    variant="outline"
+                    className="w-full rounded-xl"
+                    onClick={onPreview}
+                    disabled={previewDB.isPending || importDB.isPending}
+                >
+                    {previewDB.isPending ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
+                    {previewDB.isPending ? t('backup.import.previewing') : t('backup.import.preview')}
+                </Button>
+
+                {previewDB.data && (
+                    <div className="space-y-1 rounded-lg border border-sky-500/20 bg-sky-500/8 p-3 text-xs text-sky-700 dark:text-sky-300">
+                        <div className="font-semibold">{t('backup.import.previewResult')}</div>
+                        <div className="break-words">
+                            {t('backup.import.previewSummary', {
+                                version: previewDB.data.version,
+                                sections: previewDB.data.sections?.length ?? 0,
+                            })}
+                        </div>
+                        {importMode === 'full' && (previewDB.data.sections?.length ?? 0) > 0 && (
+                            <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-destructive">
+                                <div className="font-semibold">{t('backup.import.mode.fullPreviewWarning')}</div>
+                                <div className="mt-1 break-all font-mono leading-5">
+                                    {previewDB.data.sections?.join(', ')}
+                                </div>
+                            </div>
+                        )}
+                        {(previewDB.data.channel_mappings?.length ?? 0) > 0 && (
+                            <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                                {previewDB.data.channel_mappings?.map((item) => (
+                                    <div key={`${item.source_channel_id}-${item.target_channel_id}`} className="flex justify-between gap-2">
+                                        <span>{t('backup.import.channelMapping')}</span>
+                                        <span className="tabular-nums shrink-0">
+                                            {item.source_channel_id} → {item.target_channel_id}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {(importDB.data?.warnings?.length ?? 0) > 0 && (
+                    <div className="space-y-1 rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 text-xs text-amber-700 dark:text-amber-300">
+                        <div className="font-semibold">{t('backup.import.warnings')}</div>
+                        {importDB.data?.warnings?.map((warning) => (
+                            <div key={warning} className="break-words">{warning}</div>
+                        ))}
+                    </div>
+                )}
 
                 {(importDB.isPending || importProgress.length > 0) && (
                     <div className="space-y-2 pt-2">

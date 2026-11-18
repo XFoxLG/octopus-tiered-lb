@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
+	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
 func TestDecodeDBDumpReaderSupportsWrappedDump(t *testing.T) {
@@ -38,6 +40,185 @@ func TestDecodeDBDumpReaderSupportsWrappedDump(t *testing.T) {
 	}
 	if dump.Settings[0].Value != "10" {
 		t.Fatalf("dump.Settings[0].Value = %q, want %q", dump.Settings[0].Value, "10")
+	}
+}
+
+func TestDecodeDBDumpReaderPreservesWrappedV6FieldPresence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := `{"code":200,"message":"success","data":{"version":6,"sections":["settings"],"settings":[{"key":"proxy_url","value":null}]}}`
+
+	var dump model.DBDump
+	if err := decodeDBDumpReader(strings.NewReader(body), &dump); err != nil {
+		t.Fatalf("decodeDBDumpReader() error = %v", err)
+	}
+	if dump.Version != 6 {
+		t.Fatalf("dump.Version = %d, want 6", dump.Version)
+	}
+	presence, ok := dump.RowFieldPresence("settings", 0)
+	if !ok {
+		t.Fatal("wrapped v6 dump lost row field presence")
+	}
+	if !presence.Present["value"] || presence.NonNull["value"] {
+		t.Fatalf("unexpected value presence: %+v", presence)
+	}
+}
+
+func TestDecodeDBDumpReaderRejectsNullV6Rows(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "direct",
+			body: `{"version":6,"sections":["channels"],"channels":[null]}`,
+		},
+		{
+			name: "wrapped",
+			body: `{"code":200,"message":"success","data":{"version":6,"sections":["channels"],"channels":[null]}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var dump model.DBDump
+			err := decodeDBDumpReader(strings.NewReader(tc.body), &dump)
+			if err == nil || !strings.Contains(err.Error(), `section "channels" row 0`) {
+				t.Fatalf("decode error = %v, want located null-row error", err)
+			}
+		})
+	}
+}
+
+func TestDecodeDBDumpReaderRequiresExactlyOneJSONValue(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantErrSub string
+	}{
+		{
+			name:       "direct second object",
+			body:       `{"version":1} {}`,
+			wantErrSub: "exactly one JSON value",
+		},
+		{
+			name:       "wrapped second value",
+			body:       `{"code":200,"data":{"version":1}} null`,
+			wantErrSub: "exactly one JSON value",
+		},
+		{
+			name:       "malformed trailing JSON",
+			body:       `{"version":1} {"version":`,
+			wantErrSub: "invalid trailing backup JSON",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var dump model.DBDump
+			err := decodeDBDumpReader(strings.NewReader(tc.body), &dump)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Fatalf("decode error = %v, want %q", err, tc.wantErrSub)
+			}
+		})
+	}
+
+	var dump model.DBDump
+	if err := decodeDBDumpReader(strings.NewReader("{\"version\":1}\n\t "), &dump); err != nil {
+		t.Fatalf("trailing whitespace was rejected: %v", err)
+	}
+}
+
+func TestImportDBRejectsNullRowBeforeWrite(t *testing.T) {
+	setupSettingTestDB(t)
+	if err := db.GetDB().Model(&model.Setting{}).
+		Where("key = ?", model.SettingKeyProxyURL).
+		Update("value", "preserve").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	body := `{"version":6,"sections":["channels","settings"],"channels":[null],"settings":[]}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/setting/import?mode=full", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	importDB(c)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var setting model.Setting
+	if err := db.GetDB().First(&setting, "key = ?", model.SettingKeyProxyURL).Error; err != nil {
+		t.Fatalf("malformed restore deleted existing setting: %v", err)
+	}
+	if setting.Value != "preserve" {
+		t.Fatalf("malformed restore changed existing setting to %q", setting.Value)
+	}
+}
+
+func TestImportDBPreviewUsesExplicitChannelMapping(t *testing.T) {
+	setupSettingTestDB(t)
+	if err := db.GetDB().Create(&model.Channel{
+		ID: 9, Name: "target", Type: outbound.OutboundTypeOpenAIChat,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var upload bytes.Buffer
+	writer := multipart.NewWriter(&upload)
+	fileWriter, err := writer.CreateFormFile("file", "backup.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileBody := `{"version":6,"sections":["channels"],"channels":[{"id":5,"name":"legacy"}]}`
+	if _, err := fileWriter.Write([]byte(fileBody)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	query := url.Values{}
+	query.Set("mode", model.ImportModeIncremental)
+	query.Set("preview", "true")
+	query.Set("channel_mapping", `{"5":9}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/setting/import?"+query.Encode(),
+		bytes.NewReader(upload.Bytes()),
+	)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	importDB(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Data struct {
+			ChannelMapping  map[string]int           `json:"channel_mapping"`
+			ChannelMappings []model.DBChannelMapping `json:"channel_mappings"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got := response.Data.ChannelMapping["5"]; got != 9 {
+		t.Fatalf("resolved channel_mapping[5] = %d, want 9", got)
+	}
+	if len(response.Data.ChannelMappings) != 1 ||
+		response.Data.ChannelMappings[0].TargetChannelID != 9 ||
+		response.Data.ChannelMappings[0].Reason != "explicit" {
+		t.Fatalf("channel_mappings = %+v, want explicit 5 -> 9", response.Data.ChannelMappings)
+	}
+
+	var count int64
+	if err := db.GetDB().Model(&model.Channel{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("preview wrote channels: count=%d", count)
 	}
 }
 

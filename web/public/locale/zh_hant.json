@@ -1610,12 +1610,30 @@
         "success": "匯入成功",
         "failed": "匯入失敗",
         "result": "匯入結果",
+        "preview": "預檢（不寫入）",
+        "previewing": "正在檢查...",
+        "previewResult": "匯入預檢",
+        "previewSummary": "備份格式 v{version}；宣告 {sections} 個集合",
+        "channelMapping": "已解析的通道映射",
+        "warnings": "警告",
         "sizeHint": "支援最大 256 MB 的備份檔案；大檔案匯入可能需要較長時間，請耐心等候。",
+        "mapping": {
+          "label": "通道 ID 映射（選填）",
+          "hint": "鍵填寫備份中的來源通道 ID，值填寫目前實例的目標通道 ID。當預檢提示 ID 歧義或舊資料衝突時再新增映射；系統不會依名稱或 URL 自動映射。",
+          "format": "JSON 物件格式：",
+          "errors": {
+            "invalidJson": "請輸入有效的通道映射 JSON。",
+            "objectRequired": "通道映射必須是 JSON 物件，鍵和值都應為通道 ID。",
+            "invalidSource": "每個映射鍵都必須是正整數來源通道 ID。",
+            "invalidTarget": "每個映射值都必須是正整數目標通道 ID。"
+          }
+        },
         "mode": {
           "label": "匯入模式",
           "incremental": "增量匯入",
           "full": "完整復原",
-          "fullWarning": "完整復原會先清空所有現有資料再匯入。此操作無法逆轉，請確保已備份當前資料。"
+          "fullWarning": "完整復原只會替換備份清單（manifest）中明確列出且非 null 的集合。清單中缺少或為 null 的集合會保留目前資料；明確寫為 [] 的集合會被清空。所有列出的集合都會被破壞性覆寫，無法復原，請先確認已有目前備份。",
+          "fullPreviewWarning": "破壞性完整復原：以下清單集合將被覆寫或清空："
         }
       },
       "migration": {

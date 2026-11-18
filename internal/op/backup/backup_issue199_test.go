@@ -26,7 +26,17 @@ func TestImportDisabledChannelsRoundTrip(t *testing.T) {
 
 	dbConn := internaldb.GetDB()
 
-	// InitDB 自动迁移时会种入默认渠道分组，无需手动创建。
+	var defaultGroupCount int64
+	if err := dbConn.Model(&model.ChannelGroup{}).Where("is_default = ?", true).Count(&defaultGroupCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if defaultGroupCount == 0 {
+		if err := dbConn.Create(&model.ChannelGroup{
+			Name: model.DefaultChannelGroupName, IsDefault: true,
+		}).Error; err != nil {
+			t.Fatalf("seed default channel group: %v", err)
+		}
+	}
 
 	// 渠道 1：禁用，其 key 也禁用。
 	// 注意：直接 Create 一个 Enabled=false 的渠道同样会因 GORM 零值省略而

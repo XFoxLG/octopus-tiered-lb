@@ -28,6 +28,17 @@ func openChannelUIDBackupTarget(t *testing.T, name string) *gorm.DB {
 	if err := internaldb.Migrate(target); err != nil {
 		t.Fatal(err)
 	}
+	var defaultGroupCount int64
+	if err := target.Model(&model.ChannelGroup{}).Where("is_default = ?", true).Count(&defaultGroupCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if defaultGroupCount == 0 {
+		if err := target.Create(&model.ChannelGroup{
+			Name: model.DefaultChannelGroupName, IsDefault: true,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	return target
 }
 

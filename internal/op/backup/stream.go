@@ -54,6 +54,9 @@ func WriteJSON(ctx context.Context, destination io.Writer, includeLogs bool, inc
 		return err
 	}
 	baseDump.IncludeLogs = includeLogs
+	// Rebuild the v6 authority manifest after the log toggle is applied; the
+	// initial ExportAll call intentionally exports metadata without logs.
+	baseDump.Sections = dumpSectionNames(baseDump)
 	if excludeUsers {
 		baseDump.Users = nil
 	}
@@ -67,6 +70,13 @@ func WriteJSON(ctx context.Context, destination io.Writer, includeLogs bool, inc
 	}
 	if len(baseJSON) == 0 || baseJSON[len(baseJSON)-1] != '}' {
 		return fmt.Errorf("backup metadata is not a JSON object")
+	}
+	baseJSON, err = removeJSONKeys(baseJSON,
+		"error_logs", "audit_logs", "relay_logs",
+		"relay_log_attempts", "relay_log_content_refs", "relay_log_content_blobs",
+	)
+	if err != nil {
+		return fmt.Errorf("strip streamed log placeholders: %w", err)
 	}
 
 	if db.IsLogDBSeparate() {
@@ -143,6 +153,19 @@ func WriteJSON(ctx context.Context, destination io.Writer, includeLogs bool, inc
 	return bufferedWriter.Flush()
 }
 
+// removeJSONKeys strips placeholder collections before the streaming writer
+// appends their real arrays. Keeping both would emit duplicate JSON keys.
+func removeJSONKeys(payload []byte, keys ...string) ([]byte, error) {
+	var object map[string]utilsjson.RawMessage
+	if err := utilsjson.Unmarshal(payload, &object); err != nil {
+		return nil, err
+	}
+	for _, key := range keys {
+		delete(object, key)
+	}
+	return utilsjson.Marshal(object)
+}
+
 func writeGORMJSONArray[T any](writer *bufio.Writer, fieldName string, query *gorm.DB, scanConnection *gorm.DB, transform func(T) any) error {
 	if writer == nil || query == nil || scanConnection == nil {
 		return fmt.Errorf("invalid streaming query arguments")
@@ -172,7 +195,7 @@ func writeGORMJSONArray[T any](writer *bufio.Writer, fieldName string, query *go
 		if err := scanConnection.ScanRows(rows, &row); err != nil {
 			return err
 		}
-		rowJSON, err := utilsjson.Marshal(transform(row))
+		rowJSON, err := model.MarshalBackupRow(transform(row))
 		if err != nil {
 			return err
 		}
