@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -320,7 +321,10 @@ func ApplyChannelProbeRun(
 		return nil, fmt.Errorf("probe run is nil")
 	}
 	if channel.ConnectionConfig != nil {
-		return nil, fmt.Errorf("connection_config_conflict: interface results are diagnostic; edit interfaces explicitly")
+		// Configured endpoints are authoritative and must never be rewritten by
+		// a probe. Capability evidence is still applied by the caller; only the
+		// legacy protocol declaration step is skipped.
+		return &appmodel.ChannelProbeApplyResult{AddedProtocols: []string{}}, nil
 	}
 
 	applyResult := &appmodel.ChannelProbeApplyResult{}
@@ -415,24 +419,75 @@ func capabilityForProbeItem(item string) (appmodel.CapabilityName, bool) {
 	}
 }
 
-// CapabilityVerdicts 把一次探测的能力层结论整理成"能力 → 是否支持"，
+// CapabilityVerdict is one scoped capability observation. EndpointID may be
+// empty for a legacy channel probe, and Protocol may be empty only when the
+// probe did not observe one. Neither is replaced with a guessed default.
+type CapabilityVerdict struct {
+	Capability               appmodel.CapabilityName
+	Supported                bool
+	EndpointID               string
+	Protocol                 string
+	KeyID                    int
+	ConfigurationFingerprint string
+}
+
+// CapabilityVerdicts 把一次探测的能力层结论整理成带作用范围的能力证据，
 // 供 op 层写入 channel_model_capabilities（helper 不直接依赖 op）。
-func CapabilityVerdicts(run *appmodel.ChannelProbeRun) map[appmodel.CapabilityName]bool {
-	verdicts := make(map[appmodel.CapabilityName]bool)
+func CapabilityVerdicts(run *appmodel.ChannelProbeRun) []CapabilityVerdict {
+	type verdictKey struct {
+		capability appmodel.CapabilityName
+		endpointID string
+		protocol   string
+		keyID      int
+	}
+	verdicts := make(map[verdictKey]CapabilityVerdict)
 	if run == nil {
-		return verdicts
+		return nil
 	}
 	for _, result := range run.Results {
-		if result.EndpointID != "" || result.Kind != appmodel.ProbeKindCapability || !result.Verdict.IsConclusive() {
+		if result.Kind != appmodel.ProbeKindCapability || !result.Verdict.IsConclusive() {
 			continue
 		}
 		capability, ok := capabilityForProbeItem(result.Item)
 		if !ok {
 			continue
 		}
-		verdicts[capability] = result.Verdict == appmodel.ProbeVerdictPass
+		fingerprint := ""
+		if result.Evidence != nil {
+			fingerprint = result.Evidence.ConfigurationFingerprint
+		}
+		key := verdictKey{
+			capability: capability,
+			endpointID: result.EndpointID,
+			protocol:   result.Protocol,
+			keyID:      run.KeyID,
+		}
+		verdicts[key] = CapabilityVerdict{
+			Capability:               capability,
+			Supported:                result.Verdict == appmodel.ProbeVerdictPass,
+			EndpointID:               result.EndpointID,
+			Protocol:                 result.Protocol,
+			KeyID:                    run.KeyID,
+			ConfigurationFingerprint: fingerprint,
+		}
 	}
-	return verdicts
+	ordered := make([]CapabilityVerdict, 0, len(verdicts))
+	for _, verdict := range verdicts {
+		ordered = append(ordered, verdict)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].EndpointID != ordered[j].EndpointID {
+			return ordered[i].EndpointID < ordered[j].EndpointID
+		}
+		if ordered[i].Protocol != ordered[j].Protocol {
+			return ordered[i].Protocol < ordered[j].Protocol
+		}
+		if ordered[i].Capability != ordered[j].Capability {
+			return ordered[i].Capability < ordered[j].Capability
+		}
+		return ordered[i].KeyID < ordered[j].KeyID
+	})
+	return ordered
 }
 
 // OutboundProtocolDeclarableForChannelType 报告某渠道类型是否支持"多协议声明"。

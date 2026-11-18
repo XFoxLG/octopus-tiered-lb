@@ -179,17 +179,38 @@ type ChannelProbeEvidence struct {
 // "分组条目"上：同一个模型进多个分组时能力结论只有一份，不必重复探测，
 // 也不会出现两个分组给出互相矛盾的结论。
 type ChannelModelCapability struct {
-	ID         int64          `json:"id" gorm:"primaryKey;autoIncrement"`
-	ChannelID  int            `json:"channel_id" gorm:"not null;uniqueIndex:idx_channel_model_capability,priority:1"`
-	ModelName  string         `json:"model_name" gorm:"not null;uniqueIndex:idx_channel_model_capability,priority:2;size:191"`
-	Capability CapabilityName `json:"capability" gorm:"not null;uniqueIndex:idx_channel_model_capability,priority:3;size:32"`
-	Supported  bool           `json:"supported" gorm:"not null"`
+	ID        int64 `json:"id" gorm:"primaryKey;autoIncrement"`
+	ChannelID int   `json:"channel_id" gorm:"not null;index:idx_channel_model_capability_channel"`
+	// ChannelUID is the stable identity of the channel that produced this
+	// evidence. Rows written for a channel without one use a clearly marked
+	// legacy scope derived from channel_id; they never claim a UUID.
+	ChannelUID string `json:"channel_uid,omitempty" gorm:"not null;default:'';size:64;index:idx_channel_model_capability_channel;uniqueIndex:uidx_channel_model_capability_scope,priority:1"`
+	// EndpointID is the configured endpoint. Empty means the legacy channel
+	// scope, where the old BaseUrls did not have trustworthy endpoint identity.
+	EndpointID string `json:"endpoint_id,omitempty" gorm:"not null;default:'';size:64;uniqueIndex:uidx_channel_model_capability_scope,priority:2"`
+	// Protocol is the protocol actually used by the probe. Empty means the
+	// historical binary did not record one; it is not backfilled by guessing.
+	Protocol   string         `json:"protocol,omitempty" gorm:"not null;default:'';size:32;uniqueIndex:uidx_channel_model_capability_scope,priority:3"`
+	ModelName  string         `json:"model_name" gorm:"not null;size:191;uniqueIndex:uidx_channel_model_capability_scope,priority:4"`
+	Capability CapabilityName `json:"capability" gorm:"not null;size:32;uniqueIndex:uidx_channel_model_capability_scope,priority:5"`
+	// ProbeKeyID identifies the key used for the evidence. 0 means no key or
+	// historical unknown; it must not be treated as a credential.
+	ProbeKeyID int  `json:"probe_key_id" gorm:"not null;default:0;uniqueIndex:uidx_channel_model_capability_scope,priority:6"`
+	Supported  bool `json:"supported" gorm:"not null"`
 	// Source 记录结论来源：probe（自动探测）/ manual（人工确认）/ migrated（旧列平移）。
 	Source string `json:"source" gorm:"not null;size:32;default:''"`
-	// ProbeKeyID 是得出结论时使用的渠道 Key（多 Key 渠道审计用），0 = 未知。
-	ProbeKeyID int       `json:"probe_key_id" gorm:"not null;default:0"`
-	ProbedAt   time.Time `json:"probed_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	// ConfigurationFingerprint is a hash of the transport-affecting config used
+	// for this evidence. A read-time mismatch is treated as stale even if an
+	// older writer forgot to mark the row.
+	ConfigurationFingerprint string `json:"configuration_fingerprint,omitempty" gorm:"size:64"`
+	// Stale marks evidence that no longer describes the current configuration
+	// or key. Historical rows are kept for audit; stale rows are not returned
+	// by the default current-capability query.
+	Stale       bool       `json:"stale" gorm:"not null;default:false;index:idx_channel_model_capability_stale"`
+	StaleAt     *time.Time `json:"stale_at,omitempty"`
+	StaleReason string     `json:"stale_reason,omitempty" gorm:"size:64"`
+	ProbedAt    time.Time  `json:"probed_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 func (ChannelModelCapability) TableName() string { return "channel_model_capabilities" }

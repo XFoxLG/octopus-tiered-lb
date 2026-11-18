@@ -108,8 +108,14 @@ func TestConfiguredProbeSendsNativeConstraintsAndKeepsInterfacesSeparate(t *test
 			t.Errorf("an unimplemented native probe must be inconclusive: %+v", result)
 		}
 	}
-	if len(CapabilityVerdicts(run)) != 0 {
-		t.Error("per-interface evidence must not overwrite channel-wide capability flags")
+	verdicts := CapabilityVerdicts(run)
+	if len(verdicts) == 0 {
+		t.Fatal("configured endpoint capability evidence was discarded")
+	}
+	for _, verdict := range verdicts {
+		if verdict.EndpointID == "" || verdict.Protocol == "" {
+			t.Fatalf("configured endpoint evidence lost its exact scope: %+v", verdict)
+		}
 	}
 	find := func(suffix, key string) map[string]any {
 		for p, bodies := range seen {

@@ -18,6 +18,23 @@ func TestBackupExtendedConfigurationRoundTrip(t *testing.T) {
 	budget := int64(0)
 	firstBody := int64(12)
 	terminal := int64(18)
+	staleAt := now.Add(-time.Hour)
+	capability := &model.ChannelModelCapability{
+		ID:                       23,
+		ChannelID:                20,
+		ChannelUID:               "channel-uid-20",
+		EndpointID:               "chat",
+		Protocol:                 "chat",
+		ModelName:                "gemini",
+		Capability:               model.CapabilityToolCalling,
+		ProbeKeyID:               7,
+		Supported:                false,
+		Source:                   "probe",
+		ConfigurationFingerprint: "configuration-hash",
+		Stale:                    true,
+		StaleAt:                  &staleAt,
+		StaleReason:              "configuration_changed",
+	}
 	rows := []any{
 		&model.ProxyConfiguration{ID: 12, Name: "proxy", URL: "http://example.invalid:8080", Enabled: true},
 		&model.ModelPriceSchedule{ID: 10, Name: "schedule", RuleValue: "gemini", Enabled: true},
@@ -26,7 +43,7 @@ func TestBackupExtendedConfigurationRoundTrip(t *testing.T) {
 		&model.Channel{ID: 20, Name: "proxy-channel", ProxyMode: model.ProxyUsageModePool, ProxyConfigID: func() *int { n := 12; return &n }()},
 		&model.Group{ID: 21, Name: "rp", RequestTimeoutSeconds: 900, StreamKeepaliveEnabled: true, AssistantPrefillCompat: true, ForwardMode: "convert"},
 		&model.ChannelModelLimit{ID: 22, ChannelID: 20, ModelName: "gemini", MaxContextTokens: 32768, Source: "manual"},
-		&model.ChannelModelCapability{ID: 23, ChannelID: 20, ModelName: "gemini", Capability: model.CapabilityToolCalling, Supported: false, Source: "manual"},
+		capability,
 		&model.ChannelProbeRun{ID: 24, ChannelID: 20, ModelName: "gemini", StartedAt: now},
 		&model.ChannelProbeResult{
 			ID: 25, RunID: 24, ChannelID: 20, ModelName: "gemini",
@@ -89,10 +106,11 @@ func TestBackupExtendedConfigurationRoundTrip(t *testing.T) {
 	var schedule model.ModelPriceSchedule
 	var group model.Group
 	var result model.ChannelProbeResult
+	var restoredCapability model.ChannelModelCapability
 	for _, row := range []struct {
 		dest any
 		id   int
-	}{{&proxy, 12}, {&schedule, 10}, {&group, 21}, {&result, 25}} {
+	}{{&proxy, 12}, {&schedule, 10}, {&group, 21}, {&restoredCapability, 23}, {&result, 25}} {
 		if err := target.First(row.dest, row.id).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -109,6 +127,13 @@ func TestBackupExtendedConfigurationRoundTrip(t *testing.T) {
 	if result.Evidence == nil || result.Evidence.FirstBodyByteMS == nil || *result.Evidence.FirstBodyByteMS != 12 ||
 		!result.Evidence.TerminalObserved || result.Evidence.FinishReasons["0"] != "stop" {
 		t.Fatal("restore lost structured probe evidence")
+	}
+	if restoredCapability.ChannelUID != "channel-uid-20" || restoredCapability.EndpointID != "chat" ||
+		restoredCapability.Protocol != "chat" || restoredCapability.ProbeKeyID != 7 ||
+		restoredCapability.ConfigurationFingerprint != "configuration-hash" ||
+		!restoredCapability.Stale || restoredCapability.StaleAt == nil ||
+		restoredCapability.StaleReason != "configuration_changed" {
+		t.Fatalf("restore lost scoped capability evidence: %+v", restoredCapability)
 	}
 	for _, value := range []any{&model.StatsDailyChannel{}, &model.StatsDailyModel{}, &model.StatsDailyAPIKey{}, &model.StatsDailyChannelModel{}, &model.ErrorLog{}} {
 		var count int64

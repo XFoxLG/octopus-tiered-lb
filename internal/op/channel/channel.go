@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
@@ -404,6 +405,7 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 	if !ok {
 		return nil, fmt.Errorf("channel not found")
 	}
+	staleScope := capabilityStaleScopeForUpdate(&current, req)
 	if (current.ConnectionConfig != nil || req.ConnectionConfig != nil) && (req.Type != nil || req.BaseUrls != nil || req.UpstreamProtocols != nil || req.OutboundFormatOverride != nil) {
 		return nil, fmt.Errorf("connection_config_conflict: update endpoints instead of legacy connection fields")
 	}
@@ -768,6 +770,10 @@ func Update(req *model.ChannelUpdateRequest, ctx context.Context) (*model.Channe
 		}
 	}
 
+	if err := markCapabilitiesStaleTx(tx, req.ID, staleScope, time.Now()); err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("mark capability evidence stale: %w", err)
+	}
 	if err := tx.Commit().Error; err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}

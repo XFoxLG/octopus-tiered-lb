@@ -112,10 +112,12 @@ func TestConnectionEmbeddingProbeAndNoCrossEndpointCapabilityApply(t *testing.T)
 		t.Fatalf("embedding rejected %+v", out)
 	}
 	run := &m.ChannelProbeRun{Results: []m.ChannelProbeResult{{EndpointID: "chat-one", Kind: m.ProbeKindCapability, Item: m.ProbeItemToolCalling, Verdict: m.ProbeVerdictPass}}}
-	if len(CapabilityVerdicts(run)) != 0 {
-		t.Fatal("endpoint capability applied channel-wide")
+	verdicts := CapabilityVerdicts(run)
+	if len(verdicts) != 1 || verdicts[0].EndpointID != "chat-one" {
+		t.Fatalf("endpoint capability evidence lost its scope: %+v", verdicts)
 	}
-	if _, err := ApplyChannelProbeRun(context.Background(), &ch, run); err == nil {
-		t.Fatal("old protocol apply accepted")
+	applied, err := ApplyChannelProbeRun(context.Background(), &ch, run)
+	if err != nil || applied == nil || len(applied.AddedProtocols) != 0 {
+		t.Fatalf("configured endpoint probe rewrote protocol config: applied=%+v err=%v", applied, err)
 	}
 }

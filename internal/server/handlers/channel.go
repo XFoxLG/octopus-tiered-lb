@@ -626,20 +626,26 @@ func applyChannelProbe(c *gin.Context) {
 	applyResult.AddedProtocols = added
 
 	// 能力结论落库：只写明确结论（pass / unsupported），Unknown 一律跳过。
+	// Scope is the exact channel UID/endpoint/protocol/model/key combination
+	// observed by this run; separate scopes never overwrite each other.
 	verdicts := helper.CapabilityVerdicts(run)
-	for capability, supported := range verdicts {
+	for _, verdict := range verdicts {
 		record := model.ChannelModelCapability{
-			ChannelID:  channelID,
-			ModelName:  run.ModelName,
-			Capability: capability,
-			Supported:  supported,
-			Source:     "probe",
-			ProbeKeyID: run.KeyID,
-			ProbedAt:   time.Now(),
+			ChannelID:                channelID,
+			ChannelUID:               channel.ChannelUID,
+			EndpointID:               verdict.EndpointID,
+			Protocol:                 verdict.Protocol,
+			ModelName:                run.ModelName,
+			Capability:               verdict.Capability,
+			Supported:                verdict.Supported,
+			Source:                   "probe",
+			ProbeKeyID:               verdict.KeyID,
+			ConfigurationFingerprint: verdict.ConfigurationFingerprint,
+			ProbedAt:                 time.Now(),
 		}
 		if err := ch.UpsertCapability(c.Request.Context(), record); err != nil {
-			log.Warnf("failed to persist capability %s (channel=%d model=%s): %v",
-				capability, channelID, run.ModelName, err)
+			log.Warnf("failed to persist capability %s (channel=%d endpoint=%s protocol=%s model=%s key=%d): %v",
+				verdict.Capability, channelID, verdict.EndpointID, verdict.Protocol, run.ModelName, verdict.KeyID, err)
 		}
 	}
 	if err := ch.MarkProbeRunApplied(c.Request.Context(), run.ID); err != nil {
@@ -671,7 +677,11 @@ func listChannelCapabilities(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, "invalid channel id")
 		return
 	}
-	capabilities, err := ch.ListCapabilities(c.Request.Context(), channelID, strings.TrimSpace(c.Query("model")))
+	rawIncludeStale := strings.TrimSpace(c.Query("include_stale"))
+	includeStale := strings.EqualFold(rawIncludeStale, "true") || rawIncludeStale == "1"
+	capabilities, err := ch.ListCapabilities(
+		c.Request.Context(), channelID, strings.TrimSpace(c.Query("model")), includeStale,
+	)
 	if err != nil {
 		resp.Error(c, http.StatusInternalServerError, err.Error())
 		return

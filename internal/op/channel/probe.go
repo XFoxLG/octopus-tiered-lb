@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lingyuins/octopus/internal/db"
@@ -105,33 +106,120 @@ func MarkProbeRunApplied(ctx context.Context, runID int64) error {
 		}).Error
 }
 
-// UpsertCapability 写入或更新一条渠道×模型能力结论。
+// CapabilityStaleScope describes evidence invalidated by a configuration
+// change. All is used when the channel switches connection generation; the
+// narrower fields preserve evidence for untouched endpoints and keys.
+type CapabilityStaleScope struct {
+	All         bool
+	Legacy      bool
+	EndpointIDs []string
+	KeyIDs      []int
+	Reason      string
+}
+
+// UpsertCapability 写入或更新一条能力证据。
 //
-// 冲突目标固定为 (channel_id, model_name, capability)，与模型上的复合唯一索引一致；
-// 已存在则覆盖结论与时间戳——最近一次探测结果应当取代旧结论。
+// 冲突目标是稳定渠道身份、endpoint、实际协议、模型、能力与 Key 的复合范围。
+// 同一渠道的不同接口或 Key 不再互相覆盖；最近一次针对同一范围的探测结果
+// 取代旧结论，并把该范围重新标为 current。
 func UpsertCapability(ctx context.Context, capability model.ChannelModelCapability) error {
 	if capability.ChannelID <= 0 {
 		return nil
 	}
+	now := time.Now()
 	if capability.ProbedAt.IsZero() {
-		capability.ProbedAt = time.Now()
+		capability.ProbedAt = now
 	}
-	capability.UpdatedAt = time.Now()
+	capability.UpdatedAt = now
+	capability.ChannelUID = model.CapabilityScopeUID(capability.ChannelUID, capability.ChannelID)
+	if capability.ConfigurationFingerprint == "" {
+		if current, ok := chCache.Get(capability.ChannelID); ok {
+			capability.ConfigurationFingerprint = model.CapabilityConfigurationFingerprint(
+				&current, capability.EndpointID, capability.Protocol,
+			)
+		}
+	}
+	capability.Stale = false
+	capability.StaleAt = nil
+	capability.StaleReason = ""
 	return db.GetDB().WithContext(ctx).
-		Where("channel_id = ? AND model_name = ? AND capability = ?",
-			capability.ChannelID, capability.ModelName, capability.Capability).
+		Where("channel_id = ? AND endpoint_id = ? AND protocol = ? AND model_name = ? AND capability = ? AND probe_key_id = ?",
+			capability.ChannelID, capability.EndpointID, capability.Protocol,
+			capability.ModelName, capability.Capability, capability.ProbeKeyID).
 		Assign(map[string]any{
-			"supported":    capability.Supported,
-			"source":       capability.Source,
-			"probe_key_id": capability.ProbeKeyID,
-			"probed_at":    capability.ProbedAt,
-			"updated_at":   capability.UpdatedAt,
+			"channel_uid":               capability.ChannelUID,
+			"supported":                 capability.Supported,
+			"source":                    capability.Source,
+			"configuration_fingerprint": capability.ConfigurationFingerprint,
+			"stale":                     false,
+			"stale_at":                  nil,
+			"stale_reason":              "",
+			"probed_at":                 capability.ProbedAt,
+			"updated_at":                capability.UpdatedAt,
 		}).
 		FirstOrCreate(&capability).Error
 }
 
-// ListCapabilities 返回某渠道的能力结论（可按模型过滤）。
-func ListCapabilities(ctx context.Context, channelID int, modelName string) ([]model.ChannelModelCapability, error) {
+// MarkCapabilitiesStale invalidates evidence for changed transport settings or
+// keys. Historical rows are retained; only their current-capability status
+// changes. Callers inside a channel update should use markCapabilitiesStaleTx
+// so the configuration write and invalidation commit atomically.
+func MarkCapabilitiesStale(ctx context.Context, channelID int, scope CapabilityStaleScope) error {
+	if channelID <= 0 {
+		return nil
+	}
+	return markCapabilitiesStaleTx(db.GetDB().WithContext(ctx), channelID, scope, time.Now())
+}
+
+func markCapabilitiesStaleTx(tx *gorm.DB, channelID int, scope CapabilityStaleScope, now time.Time) error {
+	if tx == nil || channelID <= 0 {
+		return nil
+	}
+	if scope.Reason == "" {
+		scope.Reason = "configuration_changed"
+	}
+	base := func() *gorm.DB {
+		return tx.Model(&model.ChannelModelCapability{}).
+			Where("channel_id = ? AND stale = ?", channelID, false)
+	}
+	update := func(query *gorm.DB) error {
+		result := query.Updates(map[string]any{
+			"stale":        true,
+			"stale_at":     now,
+			"stale_reason": scope.Reason,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		return nil
+	}
+	if scope.All {
+		return update(base())
+	}
+	if scope.Legacy {
+		if err := update(base().Where("endpoint_id = ''")); err != nil {
+			return err
+		}
+	}
+	for _, endpointID := range scope.EndpointIDs {
+		if strings.TrimSpace(endpointID) == "" {
+			continue
+		}
+		if err := update(base().Where("endpoint_id = ?", endpointID)); err != nil {
+			return err
+		}
+	}
+	if len(scope.KeyIDs) > 0 {
+		if err := update(base().Where("probe_key_id IN ?", scope.KeyIDs)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListCapabilities 返回某渠道当前有效的能力结论（可按模型过滤）。
+// 历史证据可以显式包含；默认查询绝不把 stale 行显示为当前能力。
+func ListCapabilities(ctx context.Context, channelID int, modelName string, includeStale bool) ([]model.ChannelModelCapability, error) {
 	if channelID <= 0 {
 		return nil, fmt.Errorf("channel_id is required")
 	}
@@ -140,10 +228,29 @@ func ListCapabilities(ctx context.Context, channelID int, modelName string) ([]m
 		query = query.Where("model_name = ?", modelName)
 	}
 	var capabilities []model.ChannelModelCapability
-	if err := query.Order("model_name ASC, capability ASC").Find(&capabilities).Error; err != nil {
+	if err := query.Order("model_name ASC, endpoint_id ASC, protocol ASC, capability ASC, probe_key_id ASC").
+		Find(&capabilities).Error; err != nil {
 		return nil, err
 	}
-	return capabilities, nil
+	channel, hasChannel := chCache.Get(channelID)
+	now := time.Now()
+	current := capabilities[:0]
+	for index := range capabilities {
+		row := capabilities[index]
+		if !row.Stale && hasChannel && row.ConfigurationFingerprint != "" {
+			fingerprint := model.CapabilityConfigurationFingerprint(&channel, row.EndpointID, row.Protocol)
+			if fingerprint != "" && fingerprint != row.ConfigurationFingerprint {
+				row.Stale = true
+				row.StaleAt = &now
+				row.StaleReason = "configuration_fingerprint_changed"
+			}
+		}
+		if row.Stale && !includeStale {
+			continue
+		}
+		current = append(current, row)
+	}
+	return current, nil
 }
 
 // ApplyProbeProtocols 把探测通过的协议写进渠道声明（只加不减）。
