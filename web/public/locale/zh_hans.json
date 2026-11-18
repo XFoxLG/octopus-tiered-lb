@@ -1614,14 +1614,26 @@
         "previewing": "正在检查...",
         "previewResult": "导入预检",
         "previewSummary": "备份格式 v{version}；声明 {sections} 个集合",
-        "channelMapping": "通道重映射",
+        "channelMapping": "已解析的通道映射",
         "warnings": "警告",
         "sizeHint": "支持最大 256 MB 的备份文件；大文件导入可能需要较长时间，请耐心等待。",
+        "mapping": {
+          "label": "通道 ID 映射（可选）",
+          "hint": "键填写备份中的源通道 ID，值填写当前实例的目标通道 ID。当预检提示 ID 歧义或旧数据冲突时再添加映射；系统不会按名称或 URL 自动映射。",
+          "format": "JSON 对象格式：",
+          "errors": {
+            "invalidJson": "请输入有效的通道映射 JSON。",
+            "objectRequired": "通道映射必须是 JSON 对象，键和值都应为通道 ID。",
+            "invalidSource": "每个映射键都必须是正整数源通道 ID。",
+            "invalidTarget": "每个映射值都必须是正整数目标通道 ID。"
+          }
+        },
         "mode": {
           "label": "导入模式",
           "incremental": "增量导入",
           "full": "完整恢复",
-          "fullWarning": "完整恢复会先清空所有现有数据再导入。此操作不可逆，请确保已备份当前数据。"
+          "fullWarning": "完整恢复只替换备份清单（manifest）中明确列出且非 null 的集合。清单中缺失或为 null 的集合会保留当前数据；明确写为 [] 的集合会被清空。所有列出的集合都会被破坏性覆盖，无法撤销，请先确认已有当前备份。",
+          "fullPreviewWarning": "破坏性完整恢复：以下清单集合将被覆盖或清空："
         }
       },
       "migration": {

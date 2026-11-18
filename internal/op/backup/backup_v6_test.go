@@ -771,9 +771,12 @@ func TestV6PreviewMappingDoesNotWrite(t *testing.T) {
 			ID: 5, Name: "source", Type: outbound.OutboundTypeOpenAIChat, ChannelUID: uid,
 		}},
 	}
-	mappings, err := PreviewChannelMapping(context.Background(), dump, model.ImportModeIncremental)
+	mapping, mappings, err := PreviewChannelMapping(context.Background(), dump, model.ImportModeIncremental, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := mapping[5]; got != 9 {
+		t.Fatalf("preview resolved mapping[5] = %d, want 9", got)
 	}
 	if len(mappings) != 1 {
 		t.Fatalf("preview mappings = %+v", mappings)

@@ -1563,14 +1563,26 @@
         "previewing": "Checking...",
         "previewResult": "Import preview",
         "previewSummary": "Backup format v{version}; {sections} sections declared",
-        "channelMapping": "Channel remap",
+        "channelMapping": "Resolved channel mappings",
         "warnings": "Warnings",
         "sizeHint": "Backup files up to 256 MB are supported. Large files may take a while to import — please be patient.",
+        "mapping": {
+          "label": "Channel ID mapping (optional)",
+          "hint": "Use the source channel ID from the backup as the key and the target channel ID on this instance as the value. Add entries when preview reports an ambiguous ID or a legacy collision; names and URLs are never used for automatic mapping.",
+          "format": "JSON object format:",
+          "errors": {
+            "invalidJson": "Enter valid JSON for the channel mapping.",
+            "objectRequired": "Channel mapping must be a JSON object whose keys and values are channel IDs.",
+            "invalidSource": "Every mapping key must be a positive integer source channel ID.",
+            "invalidTarget": "Every mapping value must be a positive integer target channel ID."
+          }
+        },
         "mode": {
           "label": "Import mode",
           "incremental": "Incremental",
           "full": "Full Restore",
-          "fullWarning": "Full restore will clear ALL existing data before importing. This is irreversible. Make sure you have a current backup."
+          "fullWarning": "Full restore replaces only the non-null sections explicitly listed in the backup manifest. Missing or null sections keep their existing data; an explicitly listed empty array clears that section. Every listed section is destructive and cannot be undone. Make sure you have a current backup.",
+          "fullPreviewWarning": "Destructive full restore: these manifest sections will be replaced or cleared:"
         }
       },
       "migration": {

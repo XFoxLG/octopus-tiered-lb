@@ -338,6 +338,9 @@ func validateChannelSectionDependencies(conn *gorm.DB, dump *model.DBDump, autho
 	if err := validateRelayLogSectionDependencies(logConn, dump, authority); err != nil {
 		return err
 	}
+	if err := validateUnownedChildSectionDependencies(conn, dump, authority); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -488,6 +491,78 @@ func v6PreflightNeedsLogDBLookup(conn *gorm.DB, dump *model.DBDump, authority ma
 		return false, err
 	}
 	return len(changedIDs) > 0, nil
+}
+
+// validateUnownedChildSectionDependencies protects parent rows that are being
+// replaced while their child collection remains owned by the target. The v6
+// delete order already removes explicitly owned children first; this preflight
+// covers omitted/null child sections, including an explicit empty parent array.
+func validateUnownedChildSectionDependencies(conn *gorm.DB, dump *model.DBDump, authority map[string]bool) error {
+	if conn == nil || dump == nil {
+		return fmt.Errorf("full restore dependency check requires a database and backup")
+	}
+	checks := []struct {
+		parentSection string
+		childSection  string
+		childTable    string
+		parentColumn  string
+		incomingIDs   func() []int64
+	}{
+		{
+			parentSection: "channel_probe_runs",
+			childSection:  "channel_probe_results",
+			childTable:    "channel_probe_results",
+			parentColumn:  "run_id",
+			incomingIDs: func() []int64 {
+				ids := make([]int64, 0, len(dump.ChannelProbeRuns))
+				for _, row := range dump.ChannelProbeRuns {
+					ids = append(ids, row.ID)
+				}
+				return ids
+			},
+		},
+		{
+			parentSection: "group_health_snapshots",
+			childSection:  "group_health_attempts",
+			childTable:    "group_health_attempts",
+			parentColumn:  "snapshot_id",
+			incomingIDs: func() []int64 {
+				ids := make([]int64, 0, len(dump.GroupHealthSnapshots))
+				for _, row := range dump.GroupHealthSnapshots {
+					ids = append(ids, int64(row.ID))
+				}
+				return ids
+			},
+		},
+	}
+	for _, check := range checks {
+		if !sectionHasRows(dump, authority, check.parentSection) ||
+			sectionHasRows(dump, authority, check.childSection) ||
+			!conn.Migrator().HasTable(check.childTable) {
+			continue
+		}
+		parentIDs := check.incomingIDs()
+		incoming := make(map[int64]bool, len(parentIDs))
+		for _, id := range parentIDs {
+			incoming[id] = true
+		}
+		var referencedIDs []int64
+		if err := conn.Table(check.childTable).
+			Distinct(check.parentColumn).
+			Pluck(check.parentColumn, &referencedIDs).Error; err != nil {
+			return fmt.Errorf("inspect unowned %s parent references before replacing %s: %w", check.childSection, check.parentSection, err)
+		}
+		sort.Slice(referencedIDs, func(i, j int) bool { return referencedIDs[i] < referencedIDs[j] })
+		for _, parentID := range referencedIDs {
+			if !incoming[parentID] {
+				return fmt.Errorf(
+					"full restore replaces %s but unowned section %q still references removed parent id %d; include that section or retain the parent",
+					check.parentSection, check.childSection, parentID,
+				)
+			}
+		}
+	}
+	return nil
 }
 
 func validateChannelGroupReferences(conn *gorm.DB, dump *model.DBDump, authority map[string]bool) error {
@@ -854,17 +929,18 @@ func importV6DetailedStats(cfg *importConfig, dump *model.DBDump, authority map[
 }
 
 // PreviewChannelMapping resolves v6 channel identities without writing. It is
-// the dry-run counterpart used by the management import endpoint.
-func PreviewChannelMapping(ctx context.Context, dump *model.DBDump, mode string) ([]model.DBChannelMapping, error) {
+// the dry-run counterpart used by the management import endpoint and accepts
+// the same optional administrator mapping as the actual import.
+func PreviewChannelMapping(ctx context.Context, dump *model.DBDump, mode string, explicit map[int]int) (map[int]int, []model.DBChannelMapping, error) {
 	if dump == nil {
-		return nil, fmt.Errorf("empty dump")
+		return nil, nil, fmt.Errorf("empty dump")
 	}
 	if mode != model.ImportModeFull && mode != model.ImportModeIncremental {
-		return nil, fmt.Errorf("unsupported import mode")
+		return nil, nil, fmt.Errorf("unsupported import mode")
 	}
 	authority, err := authoritativeSections(dump)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	importChannels := sectionHasRows(dump, authority, "channels")
 	preserveMissingUIDs := map[int]bool(nil)
@@ -877,9 +953,9 @@ func PreviewChannelMapping(ctx context.Context, dump *model.DBDump, mode string)
 			}
 		}
 		if err := ensureDumpChannelUIDs(dump, preserveMissingUIDs); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	_, mappings, err := channelIDMapping(ctx, db.GetDB(), dump, mode == model.ImportModeFull, authority, nil, missingUID)
-	return mappings, err
+	mapping, mappings, err := channelIDMapping(ctx, db.GetDB(), dump, mode == model.ImportModeFull, authority, explicit, missingUID)
+	return mapping, mappings, err
 }

@@ -3,6 +3,7 @@ package model
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"time"
@@ -187,6 +188,9 @@ func (d *DBDump) UnmarshalJSON(data []byte) error {
 			decoded.nestedData = trimmed
 		}
 	}
+	if err := rejectNullBackupRows(object); err != nil {
+		return err
+	}
 	if decoded.Version < 6 {
 		decoded.rowFieldPresence = nil
 		decoded.relayLogAttemptChannelIDNonNull = nil
@@ -266,6 +270,48 @@ func (d *DBDump) UnmarshalJSON(data []byte) error {
 	}
 	decoded.rowFieldPresence = presence
 	*d = DBDump(decoded)
+	return nil
+}
+
+// rejectNullBackupRows prevents JSON null array entries from collapsing into
+// zero-valued structs. Importing such a row in full mode could delete valid
+// target data before the missing required fields are detected.
+func rejectNullBackupRows(object map[string]json.RawMessage) error {
+	typ := reflect.TypeOf(DBDump{})
+	for index := 0; index < typ.NumField(); index++ {
+		structField := typ.Field(index)
+		if structField.Type.Kind() != reflect.Slice || structField.Type.Elem().Kind() != reflect.Struct {
+			continue
+		}
+		name, _ := parseJSONTag(structField)
+		if name == "" {
+			continue
+		}
+		// Administrator identity rows are ignored by every import version before
+		// any section is written, so malformed legacy users must not block the
+		// rest of an otherwise valid backup.
+		if name == "users" {
+			continue
+		}
+		for section, raw := range object {
+			if !strings.EqualFold(section, name) {
+				continue
+			}
+			trimmed := bytes.TrimSpace(raw)
+			if len(trimmed) == 0 || trimmed[0] != '[' {
+				continue
+			}
+			var entries []json.RawMessage
+			if err := json.Unmarshal(trimmed, &entries); err != nil {
+				return fmt.Errorf("decode backup section %q rows: %w", name, err)
+			}
+			for rowIndex, entry := range entries {
+				if bytes.Equal(bytes.TrimSpace(entry), []byte("null")) {
+					return fmt.Errorf("backup section %q row %d must be a JSON object, got null", name, rowIndex)
+				}
+			}
+		}
+	}
 	return nil
 }
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	utilsjson "github.com/lingyuins/octopus/internal/utils/json"
@@ -227,9 +228,14 @@ func importDB(c *gin.Context) {
 		resp.Error(c, http.StatusBadRequest, fmt.Sprintf("invalid import mode: %s (use 'incremental' or 'full')", mode))
 		return
 	}
+	channelMapping, err := parseDBChannelMapping(c)
+	if err != nil {
+		resp.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if preview := c.Query("preview"); preview == "1" || strings.EqualFold(preview, "true") {
-		mappings, err := backup.PreviewChannelMapping(c.Request.Context(), &dump, mode)
+		resolvedMapping, mappings, err := backup.PreviewChannelMapping(c.Request.Context(), &dump, mode, channelMapping)
 		if err != nil {
 			resp.Error(c, http.StatusBadRequest, err.Error())
 			return
@@ -237,18 +243,11 @@ func importDB(c *gin.Context) {
 		resp.Success(c, gin.H{
 			"version":          dump.Version,
 			"mode":             mode,
+			"channel_mapping":  resolvedMapping,
 			"channel_mappings": mappings,
 			"sections":         dump.Sections,
 		})
 		return
-	}
-
-	var channelMapping map[int]int
-	if raw := c.Query("channel_mapping"); raw != "" {
-		if err := utilsjson.Unmarshal([]byte(raw), &channelMapping); err != nil {
-			resp.Error(c, http.StatusBadRequest, fmt.Sprintf("invalid channel_mapping: %v", err))
-			return
-		}
 	}
 
 	result, err := backup.ImportWithModeAndMapping(c.Request.Context(), &dump, mode, channelMapping)
@@ -262,6 +261,18 @@ func importDB(c *gin.Context) {
 		return
 	}
 	resp.Success(c, result)
+}
+
+func parseDBChannelMapping(c *gin.Context) (map[int]int, error) {
+	raw := c.Query("channel_mapping")
+	if raw == "" {
+		return nil, nil
+	}
+	var mapping map[int]int
+	if err := utilsjson.Unmarshal([]byte(raw), &mapping); err != nil {
+		return nil, fmt.Errorf("invalid channel_mapping: %w", err)
+	}
+	return mapping, nil
 }
 
 func decodeDBDump(body []byte, dump *model.DBDump) error {
@@ -320,19 +331,9 @@ func normalizeDBImportMultipartError(err error) error {
 }
 
 func decodeDBDumpReader(r io.Reader, dump *model.DBDump) error {
-	limitedReader := &io.LimitedReader{R: r, N: maxDBImportBytes + 1}
 	if dump == nil {
 		var empty struct{}
-		if err := utilsjson.NewDecoder(limitedReader).Decode(&empty); err != nil {
-			if limitedReader.N <= 0 {
-				return newDBImportTooLargeError()
-			}
-			return err
-		}
-		if limitedReader.N <= 0 {
-			return newDBImportTooLargeError()
-		}
-		return nil
+		return decodeSingleJSONValue(r, &empty)
 	}
 
 	var envelope struct {
@@ -341,14 +342,8 @@ func decodeDBDumpReader(r io.Reader, dump *model.DBDump) error {
 		Message string               `json:"message"`
 		Data    utilsjson.RawMessage `json:"data"`
 	}
-	if err := utilsjson.NewDecoder(limitedReader).Decode(&envelope); err != nil {
-		if limitedReader.N <= 0 {
-			return newDBImportTooLargeError()
-		}
+	if err := decodeSingleJSONValue(r, &envelope); err != nil {
 		return err
-	}
-	if limitedReader.N <= 0 {
-		return newDBImportTooLargeError()
 	}
 
 	nestedData := envelope.NestedData()
@@ -361,6 +356,33 @@ func decodeDBDumpReader(r io.Reader, dump *model.DBDump) error {
 	}
 
 	return nil
+}
+
+func decodeSingleJSONValue(r io.Reader, destination any) error {
+	limitedReader := &io.LimitedReader{R: r, N: maxDBImportBytes + 1}
+	decoder := stdjson.NewDecoder(limitedReader)
+	if err := decoder.Decode(destination); err != nil {
+		if limitedReader.N <= 0 {
+			return newDBImportTooLargeError()
+		}
+		return err
+	}
+	if limitedReader.N <= 0 {
+		return newDBImportTooLargeError()
+	}
+
+	var extra utilsjson.RawMessage
+	err := decoder.Decode(&extra)
+	if limitedReader.N <= 0 {
+		return newDBImportTooLargeError()
+	}
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("invalid trailing backup JSON: %w", err)
+	}
+	return fmt.Errorf("backup payload must contain exactly one JSON value")
 }
 
 func isEmptyDBDump(dump model.DBDump) bool {
