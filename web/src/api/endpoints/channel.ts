@@ -792,11 +792,21 @@ export type ChannelProbeApplyResult = {
 export type ChannelModelCapability = {
     id: number;
     channel_id: number;
+    /** 稳定渠道身份；旧孤儿证据可能带 legacy-channel-<id> 前缀。 */
+    channel_uid?: string;
+    /** 为空表示旧式渠道范围，而不是猜出来的 endpoint。 */
+    endpoint_id?: string;
+    /** 为空表示历史记录没有实际协议证据。 */
+    protocol?: string;
     model_name: string;
     capability: 'tool_calling' | 'structured_output' | 'web_search' | 'streaming';
     supported: boolean;
     source: string;
     probe_key_id: number;
+    configuration_fingerprint?: string;
+    stale: boolean;
+    stale_at?: string;
+    stale_reason?: string;
     probed_at: string;
     updated_at: string;
 };
@@ -849,12 +859,16 @@ export function useChannelProbeHistory(channelId: number | undefined, enabled = 
     });
 }
 
-export function useChannelCapabilities(channelId: number | undefined, modelName?: string, enabled = true) {
+export function useChannelCapabilities(channelId: number | undefined, modelName?: string, enabled = true, includeStale = false) {
     return useQuery({
-        queryKey: ['channel', channelId, 'capabilities', modelName ?? ''],
+        queryKey: ['channel', channelId, 'capabilities', modelName ?? '', includeStale],
         queryFn: async () => {
             if (!channelId) return [] as ChannelModelCapability[];
-            const suffix = modelName ? `?model=${encodeURIComponent(modelName)}` : '';
+            const params = new URLSearchParams();
+            if (modelName) params.set('model', modelName);
+            if (includeStale) params.set('include_stale', 'true');
+            const query = params.toString();
+            const suffix = query ? `?${query}` : '';
             return apiClient.get<ChannelModelCapability[]>(`/api/v1/channel/${channelId}/capabilities${suffix}`);
         },
         enabled: enabled && Boolean(channelId),

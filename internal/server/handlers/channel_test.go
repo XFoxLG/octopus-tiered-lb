@@ -7,13 +7,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op"
+	ch "github.com/lingyuins/octopus/internal/op/channel"
 )
 
 func TestClassifyChannelMutationError(t *testing.T) {
@@ -107,6 +111,98 @@ func TestClassifyChannelMutationError(t *testing.T) {
 				t.Fatalf("expected message containing %q, got %q", tt.wantMsg, msg)
 			}
 		})
+	}
+}
+
+func TestApplyProbePersistsConfiguredEndpointEvidenceWithoutRewritingChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx := context.Background()
+	testName := strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(t.Name())
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", testName)
+
+	if err := db.InitDB("sqlite", dsn, false); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	if err := op.InitCache(); err != nil {
+		t.Fatalf("init cache: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	config := &model.ConnectionConfig{
+		Version:   model.ConnectionConfigVersionDirect,
+		Selection: "configured",
+		Endpoints: []model.ChannelEndpoint{{
+			ID: "chat-primary", Protocol: "chat", URL: "https://example.com/v1", URLMode: "base", Auth: "default",
+		}},
+		Catalog: model.ModelCatalog{Format: "manual"},
+	}
+	channel := &model.Channel{
+		Name:             "probe-scope",
+		Type:             0,
+		Enabled:          true,
+		Model:            "m",
+		AutoGroup:        model.AutoGroupTypeNone,
+		ConnectionConfig: config,
+	}
+	if err := op.ChannelCreate(channel, ctx); err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	storedBefore, err := ch.Get(channel.ID, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run := &model.ChannelProbeRun{
+		ChannelID: channel.ID,
+		ModelName: "m",
+		KeyID:     10,
+		StartedAt: time.Now(),
+		Results: []model.ChannelProbeResult{{
+			Kind:       model.ProbeKindCapability,
+			Item:       model.ProbeItemToolCalling,
+			Verdict:    model.ProbeVerdictPass,
+			EndpointID: "chat-primary",
+			Protocol:   "chat",
+			Evidence: &model.ChannelProbeEvidence{
+				ConfigurationFingerprint: model.CapabilityConfigurationFingerprint(storedBefore, "chat-primary", "chat"),
+			},
+		}},
+	}
+	if err := ch.SaveProbeRun(ctx, run); err != nil {
+		t.Fatalf("save probe run: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"run_id":%d}`, run.ID)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/channel/"+strconv.Itoa(channel.ID)+"/probe/apply", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.ID)}}
+
+	applyChannelProbe(c)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	storedAfter, err := ch.Get(channel.ID, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(storedBefore.ConnectionConfig, storedAfter.ConnectionConfig) {
+		t.Fatalf("probe apply rewrote configured endpoints: before=%+v after=%+v", storedBefore.ConnectionConfig, storedAfter.ConnectionConfig)
+	}
+
+	capabilities, err := ch.ListCapabilities(ctx, channel.ID, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities) != 1 {
+		t.Fatalf("capabilities = %+v, want one exact endpoint row", capabilities)
+	}
+	got := capabilities[0]
+	if got.ChannelUID != storedBefore.ChannelUID || got.EndpointID != "chat-primary" ||
+		got.Protocol != "chat" || got.ProbeKeyID != 10 || got.ModelName != "m" {
+		t.Fatalf("capability scope = %+v", got)
 	}
 }
 

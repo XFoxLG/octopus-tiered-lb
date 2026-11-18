@@ -26,6 +26,20 @@ import (
 // 但本字段以 RawMessage 绑定（用于区分「缺失」与「显式 0」），所以在此单独判定。
 var errInvalidRequestTimeoutPayload = errors.New("invalid request_timeout_seconds payload")
 
+// presentRawJSON distinguishes an absent field from an explicit JSON null.
+// jsoniter can decode a nil json.RawMessage for both cases, so presence must
+// be recorded when UnmarshalJSON is actually invoked.
+type presentRawJSON struct {
+	raw     json.RawMessage
+	present bool
+}
+
+func (p *presentRawJSON) UnmarshalJSON(data []byte) error {
+	p.present = true
+	p.raw = append(p.raw[:0], data...)
+	return nil
+}
+
 func init() {
 	router.NewGroupRouter("/api/v1/apikey").
 		Use(middleware.Auth()).
@@ -223,13 +237,13 @@ type apiKeyRequestPayload struct {
 	AllowedGroupCategories string  `json:"allowed_group_categories,omitempty"`
 	RateLimitRPM           int     `json:"rate_limit_rpm,omitempty"`
 	RateLimitTPM           int     `json:"rate_limit_tpm,omitempty"`
-	// RequestTimeoutSecondsRaw 用 json.RawMessage 绑定，仅为在 Update 路径区分
+	// RequestTimeoutSecondsRaw 保留原始 JSON，仅为在 Update 路径区分
 	// 「字段缺失」与「显式 0」；解析出的整数值通过 toModel 落到 model.APIKey。
-	RequestTimeoutSecondsRaw json.RawMessage `json:"request_timeout_seconds"`
-	PerModelQuotaJSON        string          `json:"per_model_quota_json,omitempty"`
-	AllowedIPs               string          `json:"allowed_ips,omitempty"`
-	Tags                     string          `json:"tags,omitempty"`
-	ExcludedChannels         string          `json:"excluded_channels,omitempty"`
+	RequestTimeoutSecondsRaw presentRawJSON `json:"request_timeout_seconds"`
+	PerModelQuotaJSON        string         `json:"per_model_quota_json,omitempty"`
+	AllowedIPs               string         `json:"allowed_ips,omitempty"`
+	Tags                     string         `json:"tags,omitempty"`
+	ExcludedChannels         string         `json:"excluded_channels,omitempty"`
 }
 
 func (p apiKeyRequestPayload) toModel() model.APIKey {
@@ -260,21 +274,21 @@ func (p apiKeyRequestPayload) toModel() model.APIKey {
 // 字段缺失时返回 0（Create 的默认预算；Update 会另行补齐旧值），
 // 字段存在但不是合法整数时返回 errInvalidRequestTimeoutPayload。
 func (p apiKeyRequestPayload) requestTimeoutSeconds() (int, error) {
-	if len(p.RequestTimeoutSecondsRaw) == 0 {
+	if !p.RequestTimeoutSecondsRaw.present {
 		return 0, nil
 	}
-	if strings.TrimSpace(string(p.RequestTimeoutSecondsRaw)) == "null" {
+	if strings.TrimSpace(string(p.RequestTimeoutSecondsRaw.raw)) == "null" {
 		return 0, errInvalidRequestTimeoutPayload
 	}
 	var value int
-	if err := json.Unmarshal(p.RequestTimeoutSecondsRaw, &value); err != nil {
+	if err := json.Unmarshal(p.RequestTimeoutSecondsRaw.raw, &value); err != nil {
 		return 0, errInvalidRequestTimeoutPayload
 	}
 	return value, nil
 }
 
 func (p apiKeyRequestPayload) hasRequestTimeoutSeconds() bool {
-	return len(p.RequestTimeoutSecondsRaw) > 0
+	return p.RequestTimeoutSecondsRaw.present
 }
 
 // resolveRequestTimeoutSeconds 返回 Update 路径应写入的预算值：
