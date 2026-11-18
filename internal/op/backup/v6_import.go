@@ -136,9 +136,9 @@ func sectionTableByName(name string) string {
 }
 
 // importV6Sections imports a v6 configuration dump with explicit section
-// authority. Rows are complete snapshots: explicit false, zero and empty
-// strings are written exactly, and a collection absent from the manifest is
-// left untouched.
+// authority. Full restores use complete rows. Decoded incremental imports patch
+// only explicit non-null fields, preserving omitted/null target values while
+// writing explicit false, zero and empty strings exactly.
 func importV6Sections(cfg *importConfig, dump *model.DBDump, authority map[string]bool, skipRelayLogs bool) error {
 	if cfg.isFull {
 		if err := validateChannelSectionDependencies(authority); err != nil {
@@ -157,16 +157,19 @@ func importV6Sections(cfg *importConfig, dump *model.DBDump, authority map[strin
 		if isNullSection(rows) {
 			continue
 		}
+		var sourceIndexes []int
 		if s.name == "settings" {
 			rows = &dump.Settings
 			filtered := dump.Settings[:0]
+			sourceIndexes = make([]int, 0, len(dump.Settings))
 			skipped := false
-			for _, setting := range dump.Settings {
+			for index, setting := range dump.Settings {
 				if identityOwnedSetting(setting.Key) {
 					skipped = true
 					continue
 				}
 				filtered = append(filtered, setting)
+				sourceIndexes = append(sourceIndexes, index)
 			}
 			dump.Settings = filtered
 			if skipped {
@@ -175,38 +178,44 @@ func importV6Sections(cfg *importConfig, dump *model.DBDump, authority map[strin
 			}
 		}
 		count := sectionRowCount(rows)
-		if err := cfg.insertSectionExact(s, rows, count); err != nil {
+		if err := cfg.insertSectionExactWithIndexes(dump, s, rows, count, sourceIndexes); err != nil {
 			return err
 		}
 	}
 
 	if authority["stats_total"] && !isNullSection(&dump.StatsTotal) {
-		if err := cfg.upsertAll("stats_totals", &dump.StatsTotal, len(dump.StatsTotal), primaryKeyColumns(&model.StatsTotal{}, cfg.conn)); err != nil {
+		s := section{name: "stats_total", table: "stats_totals", model: &model.StatsTotal{}, conflict: primaryKeyColumns(&model.StatsTotal{}, cfg.conn)}
+		if err := cfg.insertSectionExact(dump, s, &dump.StatsTotal, len(dump.StatsTotal)); err != nil {
 			return err
 		}
 	}
 	if authority["stats_daily"] && !isNullSection(&dump.StatsDaily) {
-		if err := cfg.upsertAll("stats_dailies", &dump.StatsDaily, len(dump.StatsDaily), []clause.Column{{Name: "date"}}); err != nil {
+		s := section{name: "stats_daily", table: "stats_dailies", model: &model.StatsDaily{}, conflict: []clause.Column{{Name: "date"}}}
+		if err := cfg.insertSectionExact(dump, s, &dump.StatsDaily, len(dump.StatsDaily)); err != nil {
 			return err
 		}
 	}
 	if authority["stats_hourly"] && !isNullSection(&dump.StatsHourly) {
-		if err := cfg.upsertAll("stats_hourlies", &dump.StatsHourly, len(dump.StatsHourly), []clause.Column{{Name: "hour"}, {Name: "date"}}); err != nil {
+		s := section{name: "stats_hourly", table: "stats_hourlies", model: &model.StatsHourly{}, conflict: []clause.Column{{Name: "hour"}, {Name: "date"}}}
+		if err := cfg.insertSectionExact(dump, s, &dump.StatsHourly, len(dump.StatsHourly)); err != nil {
 			return err
 		}
 	}
 	if authority["stats_model"] && !isNullSection(&dump.StatsModel) {
-		if err := cfg.upsertAll("stats_models", &dump.StatsModel, len(dump.StatsModel), primaryKeyColumns(&model.StatsModel{}, cfg.conn)); err != nil {
+		s := section{name: "stats_model", table: "stats_models", model: &model.StatsModel{}, conflict: primaryKeyColumns(&model.StatsModel{}, cfg.conn)}
+		if err := cfg.insertSectionExact(dump, s, &dump.StatsModel, len(dump.StatsModel)); err != nil {
 			return err
 		}
 	}
 	if authority["stats_channel"] && !isNullSection(&dump.StatsChannel) {
-		if err := cfg.upsertAll("stats_channels", &dump.StatsChannel, len(dump.StatsChannel), []clause.Column{{Name: "channel_id"}}); err != nil {
+		s := section{name: "stats_channel", table: "stats_channels", model: &model.StatsChannel{}, conflict: []clause.Column{{Name: "channel_id"}}}
+		if err := cfg.insertSectionExact(dump, s, &dump.StatsChannel, len(dump.StatsChannel)); err != nil {
 			return err
 		}
 	}
 	if authority["stats_api_key"] && !isNullSection(&dump.StatsAPIKey) {
-		if err := cfg.upsertAll("stats_api_keys", &dump.StatsAPIKey, len(dump.StatsAPIKey), []clause.Column{{Name: "api_key_id"}}); err != nil {
+		s := section{name: "stats_api_key", table: "stats_api_keys", model: &model.StatsAPIKey{}, conflict: []clause.Column{{Name: "api_key_id"}}}
+		if err := cfg.insertSectionExact(dump, s, &dump.StatsAPIKey, len(dump.StatsAPIKey)); err != nil {
 			return err
 		}
 	}
@@ -277,13 +286,14 @@ func importV6DetailedStats(cfg *importConfig, dump *model.DBDump, authority map[
 	tables := []struct {
 		section string
 		table   string
+		model   any
 		rows    any
 		columns []clause.Column
 	}{
-		{"stats_daily_channel", "stats_daily_channels", &dump.StatsDailyChannel, []clause.Column{{Name: "date"}, {Name: "channel_id"}}},
-		{"stats_daily_model", "stats_daily_models", &dump.StatsDailyModel, []clause.Column{{Name: "date"}, {Name: "model_name"}}},
-		{"stats_daily_api_key", "stats_daily_api_keys", &dump.StatsDailyAPIKey, []clause.Column{{Name: "date"}, {Name: "api_key_id"}}},
-		{"stats_daily_channel_model", "stats_daily_channel_models", &dump.StatsDailyChannelModel, []clause.Column{{Name: "date"}, {Name: "channel_id"}, {Name: "model_name"}}},
+		{"stats_daily_channel", "stats_daily_channels", &model.StatsDailyChannel{}, &dump.StatsDailyChannel, []clause.Column{{Name: "date"}, {Name: "channel_id"}}},
+		{"stats_daily_model", "stats_daily_models", &model.StatsDailyModel{}, &dump.StatsDailyModel, []clause.Column{{Name: "date"}, {Name: "model_name"}}},
+		{"stats_daily_api_key", "stats_daily_api_keys", &model.StatsDailyAPIKey{}, &dump.StatsDailyAPIKey, []clause.Column{{Name: "date"}, {Name: "api_key_id"}}},
+		{"stats_daily_channel_model", "stats_daily_channel_models", &model.StatsDailyChannelModel{}, &dump.StatsDailyChannelModel, []clause.Column{{Name: "date"}, {Name: "channel_id"}, {Name: "model_name"}}},
 	}
 	for _, row := range tables {
 		if !authority[row.section] {
@@ -292,7 +302,8 @@ func importV6DetailedStats(cfg *importConfig, dump *model.DBDump, authority map[
 		if isNullSection(row.rows) {
 			continue
 		}
-		if err := cfg.insertExactValues(row.table, row.rows, clause.OnConflict{Columns: row.columns, UpdateAll: true}); err != nil {
+		s := section{name: row.section, table: row.table, model: row.model, conflict: row.columns}
+		if err := cfg.insertSectionExact(dump, s, row.rows, sectionRowCount(row.rows)); err != nil {
 			return err
 		}
 	}
@@ -312,13 +323,14 @@ func PreviewChannelMapping(ctx context.Context, dump *model.DBDump, mode string)
 	if err != nil {
 		return nil, err
 	}
+	preserveMissingUIDs := missingChannelUIDPatchRows(dump)
 	missingUID := make(map[int]bool, len(dump.Channels))
-	for _, channel := range dump.Channels {
-		if channel.ChannelUID == "" {
+	for index, channel := range dump.Channels {
+		if channel.ChannelUID == "" && !preserveMissingUIDs[index] {
 			missingUID[channel.ID] = true
 		}
 	}
-	if err := ensureDumpChannelUIDs(dump); err != nil {
+	if err := ensureDumpChannelUIDs(dump, preserveMissingUIDs); err != nil {
 		return nil, err
 	}
 	_, mappings, err := channelIDMapping(ctx, db.GetDB(), dump, mode == model.ImportModeFull, authority, nil, missingUID)

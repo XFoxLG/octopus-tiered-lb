@@ -1,6 +1,14 @@
 package model
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"reflect"
+	"strings"
+	"time"
+
+	utilsjson "github.com/lingyuins/octopus/internal/utils/json"
+)
 
 const (
 	ImportModeIncremental = "incremental" // insert new, skip existing
@@ -100,6 +108,245 @@ type DBDump struct {
 
 	// API credential profiles (Tools: CLI credential verification/export)
 	APICredentialProfiles []APICredentialProfile `json:"api_credential_profiles"`
+
+	// rowFieldPresence records which JSON fields actually appeared in each row.
+	// It is populated by UnmarshalJSON and deliberately excluded from exports.
+	// v6 incremental imports use it to patch only explicit non-null fields while
+	// preserving target values for missing/null fields and explicit zero values.
+	rowFieldPresence map[string][]DBDumpRowFieldPresence
+	// nestedData keeps a management API response envelope's data object until
+	// the handler can decode it. The value is never exported.
+	nestedData json.RawMessage
+}
+
+// DBDumpRowFieldPresence describes one decoded backup row without retaining its
+// payload. Present distinguishes an omitted field from an explicit zero value;
+// NonNull excludes JSON null, which means "leave the target value unchanged"
+// during v6 incremental imports.
+type DBDumpRowFieldPresence struct {
+	Present map[string]bool
+	NonNull map[string]bool
+}
+
+// RowFieldPresence returns the recorded field-presence metadata for one row.
+// Programmatically constructed dumps have no metadata and keep the historical
+// complete-row import behavior.
+func (d *DBDump) RowFieldPresence(section string, index int) (DBDumpRowFieldPresence, bool) {
+	if d == nil {
+		return DBDumpRowFieldPresence{}, false
+	}
+	rows, ok := d.rowFieldPresence[section]
+	if !ok || index < 0 || index >= len(rows) {
+		return DBDumpRowFieldPresence{}, false
+	}
+	return rows[index], true
+}
+
+// NestedData returns the wrapper response's data payload when one was present
+// during JSON decoding. The payload is immutable; callers must not modify it.
+// Direct backup objects return nil.
+func (d *DBDump) NestedData() json.RawMessage {
+	if d == nil || len(d.nestedData) == 0 {
+		return nil
+	}
+	return d.nestedData
+}
+
+// UnmarshalJSON preserves collection null-vs-array behavior and records row-level
+// field presence. The latter is required for v6 incremental patch semantics:
+// decoding directly into concrete structs otherwise collapses omitted fields,
+// explicit nulls and explicit zero values into the same Go value.
+func (d *DBDump) UnmarshalJSON(data []byte) error {
+	type dbDumpAlias DBDump
+	var decoded dbDumpAlias
+	if err := utilsjson.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return err
+	}
+	if raw, ok := object["data"]; ok {
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+			decoded.nestedData = trimmed
+		}
+	}
+	if decoded.Version < 6 {
+		decoded.rowFieldPresence = nil
+		*d = DBDump(decoded)
+		return nil
+	}
+	presence := make(map[string][]DBDumpRowFieldPresence)
+	for section, raw := range object {
+		if !requiresRowFieldPresence(section) {
+			continue
+		}
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 || trimmed[0] != '[' {
+			continue
+		}
+		var entries []json.RawMessage
+		if err := json.Unmarshal(trimmed, &entries); err != nil {
+			continue
+		}
+		// Only object arrays can represent database rows. The "sections"
+		// manifest is a string array and is intentionally ignored here.
+		rows := make([]DBDumpRowFieldPresence, 0, len(entries))
+		isRowArray := true
+		for _, entry := range entries {
+			rowBytes := bytes.TrimSpace(entry)
+			if len(rowBytes) == 0 || bytes.Equal(rowBytes, []byte("null")) {
+				rows = append(rows, DBDumpRowFieldPresence{})
+				continue
+			}
+			if rowBytes[0] != '{' {
+				isRowArray = false
+				break
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(rowBytes, &fields); err != nil {
+				return err
+			}
+			row := DBDumpRowFieldPresence{
+				Present: make(map[string]bool, len(fields)),
+				NonNull: make(map[string]bool, len(fields)),
+			}
+			for field, value := range fields {
+				row.Present[field] = true
+				if !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+					row.NonNull[field] = true
+				}
+			}
+			rows = append(rows, row)
+		}
+		if isRowArray {
+			presence[section] = rows
+		}
+	}
+	decoded.rowFieldPresence = presence
+	*d = DBDump(decoded)
+	return nil
+}
+
+// MarshalJSON emits canonical v6 backups as complete rows. Struct-level
+// omitempty tags are intentionally suppressed for row fields so an exported
+// zero, false or empty string remains distinguishable from a missing field when
+// the backup is later applied incrementally. Association-only fields and
+// json:"-" internals are omitted.
+func (d DBDump) MarshalJSON() ([]byte, error) {
+	value := reflect.ValueOf(d)
+	typ := value.Type()
+	object := make(map[string]any, typ.NumField())
+	for index := 0; index < typ.NumField(); index++ {
+		structField := typ.Field(index)
+		if structField.PkgPath != "" {
+			continue
+		}
+		name, omitEmpty := parseJSONTag(structField)
+		if name == "" {
+			continue
+		}
+		field := value.Field(index)
+		if omitEmpty && field.IsZero() {
+			continue
+		}
+		if field.Kind() == reflect.Slice && field.Type().Elem().Kind() == reflect.Struct {
+			rows := make([]any, field.Len())
+			for rowIndex := 0; rowIndex < field.Len(); rowIndex++ {
+				row, err := completeBackupRow(field.Index(rowIndex))
+				if err != nil {
+					return nil, err
+				}
+				rows[rowIndex] = row
+			}
+			object[name] = rows
+			continue
+		}
+		object[name] = field.Interface()
+	}
+	return utilsjson.Marshal(object)
+}
+
+func completeBackupRow(value reflect.Value) (map[string]any, error) {
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil, nil
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return nil, nil
+	}
+	object := make(map[string]any)
+	if err := appendCompleteBackupFields(object, value); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+func appendCompleteBackupFields(object map[string]any, value reflect.Value) error {
+	typ := value.Type()
+	for index := 0; index < typ.NumField(); index++ {
+		structField := typ.Field(index)
+		if structField.PkgPath != "" {
+			continue
+		}
+		name, _ := parseJSONTag(structField)
+		if name == "" || associationField(structField) {
+			continue
+		}
+		field := value.Field(index)
+		if structField.Anonymous && field.Kind() == reflect.Struct {
+			if err := appendCompleteBackupFields(object, field); err != nil {
+				return err
+			}
+			continue
+		}
+		object[name] = field.Interface()
+	}
+	return nil
+}
+
+func parseJSONTag(field reflect.StructField) (string, bool) {
+	tag, ok := field.Tag.Lookup("json")
+	if !ok {
+		return field.Name, false
+	}
+	parts := strings.Split(tag, ",")
+	if parts[0] == "-" {
+		return "", false
+	}
+	name := parts[0]
+	if name == "" {
+		name = field.Name
+	}
+	omitEmpty := false
+	for _, option := range parts[1:] {
+		if option == "omitempty" {
+			omitEmpty = true
+			break
+		}
+	}
+	return name, omitEmpty
+}
+
+func associationField(field reflect.StructField) bool {
+	tag := field.Tag.Get("gorm")
+	if tag == "-" {
+		return true
+	}
+	return strings.Contains(tag, "foreignKey:") || strings.Contains(tag, "many2many:")
+}
+
+func requiresRowFieldPresence(section string) bool {
+	switch section {
+	case "error_logs", "audit_logs", "relay_logs", "relay_log_attempts",
+		"relay_log_content_refs", "relay_log_content_blobs", "users":
+		return false
+	}
+	return true
 }
 
 // RelayLogContentBlobDump exposes bytea payloads only inside the versioned

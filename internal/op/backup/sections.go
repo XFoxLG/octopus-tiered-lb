@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
+	"strings"
 
 	"github.com/lingyuins/octopus/internal/model"
 	"gorm.io/gorm"
@@ -391,10 +393,29 @@ func rewriteChannelForeignKeys(dump *model.DBDump, mapping map[int]int) error {
 }
 
 // insertSectionExact upserts one v6 section by its natural key using exact
-// values, including explicit false, zero and empty strings.
-func (c *importConfig) insertSectionExact(s section, rows any, count int) error {
+// values, including explicit false, zero and empty strings. Incremental imports
+// decoded from JSON are field patches: omitted and explicit-null fields keep
+// the target value instead of being replaced by Go zero values.
+func (c *importConfig) insertSectionExact(dump *model.DBDump, s section, rows any, count int) error {
+	return c.insertSectionExactWithIndexes(dump, s, rows, count, nil)
+}
+
+// insertSectionExactWithIndexes is the same operation when the importer has
+// filtered rows before writing (for example, deployment-owned settings). The
+// indexes connect each retained row back to its original JSON field-presence
+// metadata.
+func (c *importConfig) insertSectionExactWithIndexes(dump *model.DBDump, s section, rows any, count int, sourceIndexes []int) error {
 	if count == 0 {
 		return nil
+	}
+	if !c.isFull && dump != nil {
+		firstSourceIndex := 0
+		if len(sourceIndexes) > 0 {
+			firstSourceIndex = sourceIndexes[0]
+		}
+		if _, hasPresence := dump.RowFieldPresence(s.name, firstSourceIndex); hasPresence {
+			return c.patchSectionExact(dump, s, rows, sourceIndexes)
+		}
 	}
 	conflict := clause.OnConflict{DoNothing: true}
 	if len(s.conflict) > 0 {
@@ -405,6 +426,156 @@ func (c *importConfig) insertSectionExact(s section, rows any, count int) error 
 		conflict = clause.OnConflict{Columns: primaryKeyColumns(s.model, c.conn), UpdateAll: true}
 	}
 	return c.insertExactValues(s.table, rows, conflict)
+}
+
+// patchSectionExact applies only fields that appeared with a non-null value in
+// each decoded JSON row. The natural/primary key must therefore be present; it
+// identifies the target row, while no other omitted field is allowed to become
+// a zero-value overwrite.
+func (c *importConfig) patchSectionExact(dump *model.DBDump, s section, rows any, sourceIndexes []int) error {
+	slice := reflect.ValueOf(rows)
+	if slice.Kind() != reflect.Pointer || slice.IsNil() || slice.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("%s: rows must be *[]T, got %T", s.table, rows)
+	}
+	slice = slice.Elem()
+	if sourceIndexes != nil && len(sourceIndexes) != slice.Len() {
+		return fmt.Errorf("%s: row/source index count mismatch: %d rows, %d indexes", s.name, slice.Len(), len(sourceIndexes))
+	}
+
+	conflictColumns := s.conflict
+	if len(conflictColumns) == 0 {
+		conflictColumns = primaryKeyColumns(s.model, c.conn)
+	}
+	if len(conflictColumns) == 0 {
+		return fmt.Errorf("%s: incremental patch requires a primary or natural key", s.table)
+	}
+
+	modelValue := reflect.New(slice.Type().Elem()).Interface()
+	modelSchema, err := schema.Parse(modelValue, &batchSchemaCache, c.conn.NamingStrategy)
+	if err != nil {
+		return fmt.Errorf("%s: parse schema for incremental patch: %w", s.table, err)
+	}
+	keyJSONFields := make([]string, 0, len(conflictColumns))
+	for _, column := range conflictColumns {
+		jsonField := jsonFieldNameForDBColumn(modelSchema, column.Name)
+		if jsonField == "" {
+			return fmt.Errorf("%s: cannot resolve JSON field for key column %q", s.table, column.Name)
+		}
+		keyJSONFields = append(keyJSONFields, jsonField)
+	}
+
+	var totalAffected int64
+	for rowIndex := 0; rowIndex < slice.Len(); rowIndex++ {
+		sourceIndex := rowIndex
+		if sourceIndexes != nil {
+			sourceIndex = sourceIndexes[rowIndex]
+		}
+		presence, ok := dump.RowFieldPresence(s.name, sourceIndex)
+		if !ok {
+			return fmt.Errorf("%s: missing field-presence metadata for row %d", s.name, sourceIndex)
+		}
+		for _, keyField := range keyJSONFields {
+			if !presence.NonNull[keyField] {
+				return fmt.Errorf(
+					"%s row %d: incremental patch requires non-null key field %q",
+					s.name, sourceIndex, keyField,
+				)
+			}
+		}
+
+		values := make(map[string]any, len(modelSchema.DBNames))
+		updateColumns := make([]string, 0, len(modelSchema.DBNames))
+		where := make(map[string]any, len(conflictColumns))
+		for _, dbName := range modelSchema.DBNames {
+			field := modelSchema.FieldsByDBName[dbName]
+			jsonField := jsonTagName(field)
+			if !shouldPatchDatabaseField(s.name, dbName, jsonField, presence) {
+				continue
+			}
+			value, _ := field.ValueOf(c.conn.Statement.Context, slice.Index(rowIndex))
+			values[dbName] = value
+			updateColumns = append(updateColumns, dbName)
+		}
+		sort.Strings(updateColumns)
+		for _, column := range conflictColumns {
+			where[column.Name] = values[column.Name]
+		}
+		var existing int64
+		if err := c.conn.Model(modelValue).Table(s.table).Where(where).Count(&existing).Error; err != nil {
+			appendStep(c.res, s.table, "patch", totalAffected, err)
+			return fmt.Errorf("%s row %d: locate target for incremental patch: %w", s.name, sourceIndex, err)
+		}
+		var result *gorm.DB
+		if existing > 0 {
+			updateValues := make(map[string]any, len(updateColumns))
+			for _, column := range updateColumns {
+				if _, isKey := where[column]; isKey {
+					continue
+				}
+				updateValues[column] = values[column]
+			}
+			if len(updateValues) == 0 {
+				totalAffected++
+				continue
+			}
+			result = c.conn.Model(modelValue).Table(s.table).Where(where).Updates(updateValues)
+		} else {
+			// A sparse v6 patch may omit channel_uid when updating an existing
+			// channel. If the same operation targets a new channel, generate the
+			// immutable identifier before the map-based insert bypasses create hooks.
+			if s.name == "channels" {
+				channel := slice.Index(rowIndex).Addr().Interface().(*model.Channel)
+				channel.EnsureChannelUID()
+				field := modelSchema.FieldsByDBName["channel_uid"]
+				values["channel_uid"], _ = field.ValueOf(c.conn.Statement.Context, slice.Index(rowIndex))
+			}
+			result = c.conn.Model(modelValue).Table(s.table).Create(&values)
+		}
+		if result.Error != nil {
+			appendStep(c.res, s.table, "patch", totalAffected, result.Error)
+			return fmt.Errorf("%s row %d: incremental patch: %w", s.name, sourceIndex, result.Error)
+		}
+		totalAffected += result.RowsAffected
+	}
+	appendStep(c.res, s.table, "patch", totalAffected, nil)
+	return nil
+}
+
+func shouldPatchDatabaseField(sectionName, dbName, jsonField string, presence model.DBDumpRowFieldPresence) bool {
+	if jsonField != "" && presence.NonNull[jsonField] {
+		return true
+	}
+	// api_key_hash is intentionally json:"-" but is a deterministic derivative of
+	// api_key. Recompute and persist it when the source field is explicitly
+	// patched, without exposing the hash in backup files.
+	return sectionName == "api_keys" && dbName == "api_key_hash" && presence.NonNull["api_key"]
+}
+
+func jsonFieldNameForDBColumn(modelSchema *schema.Schema, column string) string {
+	if modelSchema == nil {
+		return ""
+	}
+	return jsonTagName(modelSchema.FieldsByDBName[column])
+}
+
+func jsonTagName(field *schema.Field) string {
+	if field == nil {
+		return ""
+	}
+	name, tagged := field.StructField.Tag.Lookup("json")
+	if !tagged {
+		return field.StructField.Name
+	}
+	if comma := strings.IndexByte(name, ','); comma >= 0 {
+		name = name[:comma]
+	}
+	if name == "-" {
+		return ""
+	}
+	if name == "" {
+		return field.StructField.Name
+	}
+	return name
 }
 
 func primaryKeyColumns(modelValue any, conn *gorm.DB) []clause.Column {

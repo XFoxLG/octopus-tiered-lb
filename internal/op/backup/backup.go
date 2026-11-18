@@ -701,7 +701,13 @@ func (c *importConfig) upsertSettings(rows []model.Setting) error {
 
 func (c *importConfig) deleteAll(table string) error {
 	if table == "settings" {
-		result := c.conn.Where("key NOT IN ?", model.RetiredSemanticCacheSettingKeys()).Delete(&model.Setting{})
+		preserved := model.RetiredSemanticCacheSettingKeys()
+		preserved = append(preserved,
+			model.SettingKeyWebAuthnRPID,
+			model.SettingKeyWebAuthnRPName,
+			model.SettingKeyWebAuthnOrigins,
+		)
+		result := c.conn.Where("key NOT IN ?", preserved).Delete(&model.Setting{})
 		appendStep(c.res, table, "delete", result.RowsAffected, result.Error)
 		return result.Error
 	}
@@ -791,13 +797,14 @@ func ImportWithModeToDBAndMapping(ctx context.Context, target *gorm.DB, dump *mo
 	if dump.Version < 0 || dump.Version > dbDumpVersion {
 		return nil, fmt.Errorf("unsupported backup version %d", dump.Version)
 	}
+	preserveMissingUIDs := missingChannelUIDPatchRows(dump)
 	missingUID := make(map[int]bool, len(dump.Channels))
-	for _, channel := range dump.Channels {
-		if channel.ChannelUID == "" {
+	for index, channel := range dump.Channels {
+		if channel.ChannelUID == "" && !preserveMissingUIDs[index] {
 			missingUID[channel.ID] = true
 		}
 	}
-	if err := ensureDumpChannelUIDs(dump); err != nil {
+	if err := ensureDumpChannelUIDs(dump, preserveMissingUIDs); err != nil {
 		return nil, err
 	}
 	authority, err := authoritativeSections(dump)
@@ -1130,14 +1137,37 @@ func decryptDumpSecrets(d *model.DBDump) {
 // older binaries and rejects a backup that carries the same identifier on two
 // different channels. A generated value is written back into the dump so both
 // full and incremental imports use the same source identity.
-func ensureDumpChannelUIDs(d *model.DBDump) error {
+func missingChannelUIDPatchRows(d *model.DBDump) map[int]bool {
+	if d == nil || d.Version < 6 {
+		return nil
+	}
+	preserve := make(map[int]bool)
+	for index, channel := range d.Channels {
+		if channel.ChannelUID != "" {
+			continue
+		}
+		presence, ok := d.RowFieldPresence("channels", index)
+		if ok && !presence.NonNull["channel_uid"] {
+			preserve[index] = true
+		}
+	}
+	return preserve
+}
+
+func ensureDumpChannelUIDs(d *model.DBDump, preserveMissing map[int]bool) error {
 	if d == nil {
 		return nil
 	}
 	seen := make(map[string]int, len(d.Channels))
 	for i := range d.Channels {
 		ch := &d.Channels[i]
+		if preserveMissing[i] {
+			continue
+		}
 		ch.EnsureChannelUID()
+		if ch.ChannelUID == "" {
+			continue
+		}
 		if previous, ok := seen[ch.ChannelUID]; ok {
 			return fmt.Errorf("backup channel_uid collision %q between channel IDs %d and %d", ch.ChannelUID, previous, ch.ID)
 		}
@@ -1157,8 +1187,14 @@ func checkChannelUIDConflicts(target *gorm.DB, channels []model.Channel) error {
 	sourceByUID := make(map[string]int, len(channels))
 	uids := make([]string, 0, len(channels))
 	for _, ch := range channels {
+		if ch.ChannelUID == "" {
+			continue
+		}
 		sourceByUID[ch.ChannelUID] = ch.ID
 		uids = append(uids, ch.ChannelUID)
+	}
+	if len(uids) == 0 {
+		return nil
 	}
 	var existing []model.Channel
 	if err := target.Select("id", "channel_uid").

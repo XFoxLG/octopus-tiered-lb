@@ -351,10 +351,11 @@ func decodeDBDumpReader(r io.Reader, dump *model.DBDump) error {
 		return newDBImportTooLargeError()
 	}
 
+	nestedData := envelope.NestedData()
 	*dump = envelope.DBDump
 
-	if isEmptyDBDump(*dump) && len(envelope.Data) > 0 {
-		if err := utilsjson.Unmarshal(envelope.Data, dump); err != nil {
+	if isEmptyDBDump(*dump) && len(nestedData) > 0 {
+		if err := utilsjson.Unmarshal(nestedData, dump); err != nil {
 			return err
 		}
 	}

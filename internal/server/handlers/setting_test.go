@@ -41,6 +41,27 @@ func TestDecodeDBDumpReaderSupportsWrappedDump(t *testing.T) {
 	}
 }
 
+func TestDecodeDBDumpReaderPreservesWrappedV6FieldPresence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := `{"code":200,"message":"success","data":{"version":6,"sections":["settings"],"settings":[{"key":"proxy_url","value":null}]}}`
+
+	var dump model.DBDump
+	if err := decodeDBDumpReader(strings.NewReader(body), &dump); err != nil {
+		t.Fatalf("decodeDBDumpReader() error = %v", err)
+	}
+	if dump.Version != 6 {
+		t.Fatalf("dump.Version = %d, want 6", dump.Version)
+	}
+	presence, ok := dump.RowFieldPresence("settings", 0)
+	if !ok {
+		t.Fatal("wrapped v6 dump lost row field presence")
+	}
+	if !presence.Present["value"] || presence.NonNull["value"] {
+		t.Fatalf("unexpected value presence: %+v", presence)
+	}
+}
+
 func TestImportDBRejectsOversizedJSONBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

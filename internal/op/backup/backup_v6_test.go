@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	internaldb "github.com/lingyuins/octopus/internal/db"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/transformer/outbound"
+	"github.com/lingyuins/octopus/internal/utils/apikeyhash"
 	utilsjson "github.com/lingyuins/octopus/internal/utils/json"
 )
 
@@ -49,6 +51,80 @@ func TestV6ExportOmitsAdministratorIdentities(t *testing.T) {
 	}
 	if _, exists := object["sections"]; !exists {
 		t.Fatal("v6 export is missing the sections key")
+	}
+}
+
+func TestV6ExportWritesZeroValuesForIncrementalPatch(t *testing.T) {
+	if err := internaldb.InitDB("sqlite", filepath.Join(t.TempDir(), "v6-export-zero.db"), false); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = internaldb.Close() })
+	source := internaldb.GetDB()
+	if err := source.Create(&model.Group{
+		ID:                      7,
+		Name:                    "source-zero",
+		EndpointType:            "chat",
+		Mode:                    model.GroupModeFailover,
+		HedgeDelayMs:            0,
+		StreamKeepaliveEnabled:  false,
+		DefaultReasoningEffort:  "",
+		ReasoningForceOverride:  false,
+		ReasoningBufferStrategy: "",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Model(&model.Group{}).Where("id = ?", 7).UpdateColumn("hedge_delay_ms", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	dump, err := ExportAll(context.Background(), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := utilsjson.Marshal(dump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{
+		`"hedge_delay_ms":0`,
+		`"stream_keepalive_enabled":false`,
+		`"default_reasoning_effort":""`,
+		`"reasoning_force_override":false`,
+		`"reasoning_buffer_strategy":""`,
+	} {
+		if !bytes.Contains(raw, []byte(field)) {
+			t.Fatalf("canonical v6 export omitted %s", field)
+		}
+	}
+
+	target := openChannelUIDBackupTarget(t, "v6-export-zero-target.db")
+	if err := target.Create(&model.Group{
+		ID:                      7,
+		Name:                    "target-nonzero",
+		EndpointType:            "chat",
+		Mode:                    model.GroupModeFailover,
+		HedgeDelayMs:            321,
+		StreamKeepaliveEnabled:  true,
+		DefaultReasoningEffort:  "high",
+		ReasoningForceOverride:  true,
+		ReasoningBufferStrategy: "immediate",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var decoded model.DBDump
+	if err := utilsjson.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportWithModeToDB(context.Background(), target, &decoded, model.ImportModeIncremental); err != nil {
+		t.Fatal(err)
+	}
+	var got model.Group
+	if err := target.First(&got, 7).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.HedgeDelayMs != 0 || got.StreamKeepaliveEnabled ||
+		got.DefaultReasoningEffort != "" || got.ReasoningForceOverride ||
+		got.ReasoningBufferStrategy != "" {
+		t.Fatalf("canonical export did not restore explicit zero values: %+v", got)
 	}
 }
 
@@ -191,6 +267,263 @@ func TestV6IncrementalUpdatesExplicitValuesAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestV6IncrementalJSONPatchPreservesMissingAndNullFields(t *testing.T) {
+	target := openChannelUIDBackupTarget(t, "v6-incremental-patch.db")
+	group := model.Group{
+		ID:                      7,
+		Name:                    "keep-name",
+		EndpointType:            "chat",
+		Mode:                    model.GroupModeFailover,
+		HedgeDelayMs:            321,
+		StreamKeepaliveEnabled:  true,
+		DefaultReasoningEffort:  "high",
+		ReasoningForceOverride:  true,
+		ReasoningBufferStrategy: "immediate",
+	}
+	if err := target.Create(&group).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var nullPatch model.DBDump
+	if err := utilsjson.Unmarshal([]byte(`{
+		"version":6,
+		"sections":["groups"],
+		"groups":[{"id":7,"hedge_delay_ms":null}]
+	}`), &nullPatch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportWithModeToDB(context.Background(), target, &nullPatch, model.ImportModeIncremental); err != nil {
+		t.Fatal(err)
+	}
+	var got model.Group
+	if err := target.First(&got, 7).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.HedgeDelayMs != 321 || !got.StreamKeepaliveEnabled ||
+		got.DefaultReasoningEffort != "high" || !got.ReasoningForceOverride ||
+		got.ReasoningBufferStrategy != "immediate" {
+		t.Fatalf("null/missing fields changed target row: %+v", got)
+	}
+
+	var zeroPatch model.DBDump
+	if err := utilsjson.Unmarshal([]byte(`{
+		"version":6,
+		"sections":["groups"],
+		"groups":[{
+			"id":7,
+			"hedge_delay_ms":0,
+			"stream_keepalive_enabled":false,
+			"default_reasoning_effort":"",
+			"reasoning_force_override":false,
+			"reasoning_buffer_strategy":""
+		}]
+	}`), &zeroPatch); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := ImportWithModeToDB(context.Background(), target, &zeroPatch, model.ImportModeIncremental); err != nil {
+			t.Fatalf("patch import %d: %v", i, err)
+		}
+	}
+	if err := target.First(&got, 7).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "keep-name" || got.EndpointType != "chat" || got.Mode != model.GroupModeFailover {
+		t.Fatalf("missing identity/semantic fields changed target row: %+v", got)
+	}
+	if got.HedgeDelayMs != 0 || got.StreamKeepaliveEnabled ||
+		got.DefaultReasoningEffort != "" || got.ReasoningForceOverride ||
+		got.ReasoningBufferStrategy != "" {
+		t.Fatalf("explicit zero values were not applied: %+v", got)
+	}
+}
+
+func TestV6IncrementalJSONPatchRequiresPresentKey(t *testing.T) {
+	target := openChannelUIDBackupTarget(t, "v6-incremental-missing-key.db")
+	if err := target.Create(&model.Setting{Key: model.SettingKeyProxyURL, Value: "keep"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var patch model.DBDump
+	if err := utilsjson.Unmarshal([]byte(`{
+		"version":6,
+		"sections":["settings"],
+		"settings":[{"value":"must-not-change"}]
+	}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ImportWithModeToDB(context.Background(), target, &patch, model.ImportModeIncremental)
+	if err == nil || !strings.Contains(err.Error(), `non-null key field "key"`) {
+		t.Fatalf("missing key patch error = %v", err)
+	}
+	var stored model.Setting
+	if err := target.Where("key = ?", model.SettingKeyProxyURL).First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Value != "keep" {
+		t.Fatalf("missing-key patch changed target value to %q", stored.Value)
+	}
+}
+
+func TestV6FieldPresenceSurvivesEnvelopeDecode(t *testing.T) {
+	var envelope struct {
+		model.DBDump
+		Code int `json:"code"`
+	}
+	if err := utilsjson.Unmarshal([]byte(`{
+		"code":200,
+		"version":6,
+		"sections":["settings"],
+		"settings":[{"key":"proxy_url","value":null}]
+	}`), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	presence, ok := envelope.RowFieldPresence("settings", 0)
+	if !ok {
+		t.Fatal("embedded DBDump lost row field presence")
+	}
+	if !presence.Present["value"] || presence.NonNull["value"] {
+		t.Fatalf("unexpected value presence: %+v", presence)
+	}
+	if !presence.Present["key"] || !presence.NonNull["key"] {
+		t.Fatalf("unexpected key presence: %+v", presence)
+	}
+}
+
+func TestV6SettingsPatchPresenceFollowsFilteredRows(t *testing.T) {
+	target := openChannelUIDBackupTarget(t, "v6-settings-presence-filter.db")
+	if err := target.Create(&[]model.Setting{
+		{Key: model.SettingKeyProxyURL, Value: "keep"},
+		{Key: model.SettingKeyWebAuthnRPID, Value: "target.example"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var patch model.DBDump
+	if err := utilsjson.Unmarshal([]byte(`{
+		"version":6,
+		"sections":["settings"],
+		"settings":[
+			{"key":"webauthn_rp_id","value":"source.example"},
+			{"key":"proxy_url","value":null}
+		]
+	}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportWithModeToDB(context.Background(), target, &patch, model.ImportModeIncremental); err != nil {
+		t.Fatal(err)
+	}
+	var proxy model.Setting
+	if err := target.Where("key = ?", model.SettingKeyProxyURL).First(&proxy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if proxy.Value != "keep" {
+		t.Fatalf("filtered settings row reused the wrong presence metadata: %q", proxy.Value)
+	}
+	var rp model.Setting
+	if err := target.Where("key = ?", model.SettingKeyWebAuthnRPID).First(&rp).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rp.Value != "target.example" {
+		t.Fatalf("WebAuthn RP ID changed to %q", rp.Value)
+	}
+}
+
+func TestV6APIKeyPatchRefreshesDerivedHash(t *testing.T) {
+	target := openChannelUIDBackupTarget(t, "v6-apikey-derived-hash.db")
+	if err := target.Create(&model.APIKey{
+		ID:         14,
+		Name:       "keep-name",
+		APIKey:     "old-key",
+		APIKeyHash: "old-hash",
+		Enabled:    true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var patch model.DBDump
+	if err := utilsjson.Unmarshal([]byte(`{
+		"version":6,
+		"sections":["api_keys"],
+		"api_keys":[{"id":14,"api_key":"new-key"}]
+	}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportWithModeToDB(context.Background(), target, &patch, model.ImportModeIncremental); err != nil {
+		t.Fatal(err)
+	}
+	var got model.APIKey
+	if err := target.First(&got, 14).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "keep-name" || !got.Enabled {
+		t.Fatalf("unrelated API key fields changed: %+v", got)
+	}
+	if got.APIKeyHash != apikeyhash.Sum("new-key") {
+		t.Fatalf("derived api_key_hash was not refreshed: %q", got.APIKeyHash)
+	}
+}
+
+func TestV6ChannelPatchCanOmitStableUID(t *testing.T) {
+	target := openChannelUIDBackupTarget(t, "v6-channel-patch-omits-uid.db")
+	uid := uuid.NewString()
+	if err := target.Create(&model.Channel{
+		ID:         9,
+		Name:       "keep-channel",
+		Type:       outbound.OutboundTypeOpenAIChat,
+		ChannelUID: uid,
+		Enabled:    true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var patch model.DBDump
+	if err := utilsjson.Unmarshal([]byte(`{
+		"version":6,
+		"sections":["channels"],
+		"channels":[{"id":9,"enabled":false}]
+	}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportWithModeToDB(context.Background(), target, &patch, model.ImportModeIncremental); err != nil {
+		t.Fatal(err)
+	}
+	var got model.Channel
+	if err := target.First(&got, 9).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.ChannelUID != uid || got.Name != "keep-channel" || got.Type != outbound.OutboundTypeOpenAIChat {
+		t.Fatalf("missing channel fields changed: %+v", got)
+	}
+	if got.Enabled {
+		t.Fatal("explicit enabled=false was not applied")
+	}
+}
+
+func TestV6SparseChannelInsertGeneratesStableUID(t *testing.T) {
+	target := openChannelUIDBackupTarget(t, "v6-channel-patch-insert-uid.db")
+	var patch model.DBDump
+	if err := utilsjson.Unmarshal([]byte(`{
+		"version":6,
+		"sections":["channels"],
+		"channels":[{"id":11,"name":"new-channel","enabled":true}]
+	}`), &patch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ImportWithModeToDB(context.Background(), target, &patch, model.ImportModeIncremental); err != nil {
+		t.Fatal(err)
+	}
+	var got model.Channel
+	if err := target.First(&got, 11).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.ChannelUID == "" {
+		t.Fatal("sparse channel insert did not generate channel_uid")
+	}
+	if _, err := uuid.Parse(got.ChannelUID); err != nil {
+		t.Fatalf("generated channel_uid is not a UUID: %q: %v", got.ChannelUID, err)
+	}
+	if got.Name != "new-channel" || !got.Enabled {
+		t.Fatalf("explicit sparse insert fields changed: %+v", got)
+	}
+}
+
 func TestV6PreservesTargetWebAuthnSettings(t *testing.T) {
 	target := openChannelUIDBackupTarget(t, "v6-webauthn.db")
 	targetRows := []model.Setting{
@@ -235,6 +568,42 @@ func TestV6PreservesTargetWebAuthnSettings(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("missing Passkey identity warning: %+v", result.Warnings)
+	}
+}
+
+func TestV6FullRestorePreservesTargetWebAuthnSettings(t *testing.T) {
+	target := openChannelUIDBackupTarget(t, "v6-webauthn-full.db")
+	if err := target.Create(&[]model.Setting{
+		{Key: model.SettingKeyWebAuthnRPID, Value: "target.example"},
+		{Key: model.SettingKeyWebAuthnRPName, Value: "Target"},
+		{Key: model.SettingKeyProxyURL, Value: "old-proxy"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	dump := &model.DBDump{
+		Version:  6,
+		Sections: []string{"settings"},
+		Settings: []model.Setting{
+			{Key: model.SettingKeyWebAuthnRPID, Value: "source.example"},
+			{Key: model.SettingKeyWebAuthnRPName, Value: "Source"},
+			{Key: model.SettingKeyProxyURL, Value: "new-proxy"},
+		},
+	}
+	if _, err := ImportWithModeToDB(context.Background(), target, dump, model.ImportModeFull); err != nil {
+		t.Fatal(err)
+	}
+	var settings []model.Setting
+	if err := target.Find(&settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[model.SettingKey]string, len(settings))
+	for _, setting := range settings {
+		got[setting.Key] = setting.Value
+	}
+	if got[model.SettingKeyWebAuthnRPID] != "target.example" ||
+		got[model.SettingKeyWebAuthnRPName] != "Target" ||
+		got[model.SettingKeyProxyURL] != "new-proxy" {
+		t.Fatalf("full restore changed identity settings or missed ordinary setting: %+v", got)
 	}
 }
 
