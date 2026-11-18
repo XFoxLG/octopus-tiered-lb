@@ -188,7 +188,11 @@ type RequestRewriteConfig struct {
 }
 
 type Channel struct {
-	ID            int                   `json:"id" gorm:"primaryKey"`
+	ID int `json:"id" gorm:"primaryKey"`
+	// ChannelUID 是不可变稳定身份，由创建钩子或迁移生成。客户端请求不允许
+	// 指定或覆盖；时间戳、URL、Header 或 endpoint 变化都不应改变它。
+	// 列保持 nullable，使旧镜像可以继续写入 NULL（随后由 085 或缓存自愈回填）。
+	ChannelUID    string                `json:"channel_uid" gorm:"column:channel_uid;size:36;<-:create;uniqueIndex:uidx_channels_channel_uid"`
 	Name          string                `json:"name" gorm:"unique;not null"`
 	GroupID       int                   `json:"group_id" gorm:"not null;default:0;index"`
 	Type          outbound.OutboundType `json:"type"`

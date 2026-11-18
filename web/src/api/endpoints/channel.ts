@@ -187,6 +187,8 @@ export type ChannelBatchGroupResult = {
 export type Channel = {
     connection_config?: ConnectionConfig;
     id: number;
+    /** 不可变稳定身份，由服务端生成；创建/更新请求不可写入。 */
+    channel_uid?: string;
     name: string;
     group_id: number;
     type: ChannelType;

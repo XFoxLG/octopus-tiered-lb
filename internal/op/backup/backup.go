@@ -500,6 +500,14 @@ func (c *importConfig) batchInsert(table string, rows any, count int, conflict c
 	if totalRows == 0 {
 		return nil
 	}
+	// The exact-value map path bypasses GORM create hooks. Channel import rows
+	// must still receive a unique identifier before they reach the unique index;
+	// this also covers callers that invoke batchInsert directly.
+	if channels, ok := slice.Interface().([]model.Channel); ok {
+		for i := range channels {
+			channels[i].EnsureChannelUID()
+		}
+	}
 
 	// 解析模型 schema：既用于每批行数的变量预算，也用于判断该表是否存在
 	// 会被 GORM 零值替换影响的列。解析失败时回退到旧的 struct 插入路径。
@@ -746,6 +754,9 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	if dump.Version < 0 || dump.Version > dbDumpVersion {
 		return nil, fmt.Errorf("unsupported backup version %d", dump.Version)
 	}
+	if err := ensureDumpChannelUIDs(dump); err != nil {
+		return nil, err
+	}
 	// 敏感字段幂等加密：明文（v3 dump）→ 用本实例 key 加密；已带 enc: 前缀的
 	// （v1/v2 dump 同实例恢复）或空值原样保留，避免双重加密。
 	// api_keys 明文的 api_key_hash 一并补算（sha256 hex，见 encryptDumpSecrets）。
@@ -753,6 +764,11 @@ func ImportWithModeToDB(ctx context.Context, target *gorm.DB, dump *model.DBDump
 	isFull := mode == model.ImportModeFull
 	res := &model.DBImportResult{RowsAffected: map[string]int64{}}
 	cfg := &importConfig{conn: target.WithContext(ctx), res: res, isFull: isFull, version: dump.Version}
+	if !isFull {
+		if err := checkChannelUIDConflicts(target.WithContext(ctx), dump.Channels); err != nil {
+			return nil, err
+		}
+	}
 
 	// relay_logs 是否需要路由到独立日志库：仅在「live 导入」（target 即主库）
 	// 且配置了独立日志库时成立。此时 relay_logs 落在另一个数据库，无法纳入主库
@@ -1035,6 +1051,54 @@ func decryptDumpSecrets(d *model.DBDump) {
 	for i := range d.APICredentialProfiles {
 		d.APICredentialProfiles[i].APIKey = decryptValue("api_credential_profiles.api_key", d.APICredentialProfiles[i].APIKey)
 	}
+}
+
+// ensureDumpChannelUIDs fills identifiers missing from backups exported by
+// older binaries and rejects a backup that carries the same identifier on two
+// different channels. A generated value is written back into the dump so both
+// full and incremental imports use the same source identity.
+func ensureDumpChannelUIDs(d *model.DBDump) error {
+	if d == nil {
+		return nil
+	}
+	seen := make(map[string]int, len(d.Channels))
+	for i := range d.Channels {
+		ch := &d.Channels[i]
+		ch.EnsureChannelUID()
+		if previous, ok := seen[ch.ChannelUID]; ok {
+			return fmt.Errorf("backup channel_uid collision %q between channel IDs %d and %d", ch.ChannelUID, previous, ch.ID)
+		}
+		seen[ch.ChannelUID] = ch.ID
+	}
+	return nil
+}
+
+// checkChannelUIDConflicts rejects an incremental import whose source identity
+// already belongs to a different target channel. Without this guard the
+// DoNothing insert would silently skip the row and leave the administrator
+// believing the backup was restored.
+func checkChannelUIDConflicts(target *gorm.DB, channels []model.Channel) error {
+	if len(channels) == 0 {
+		return nil
+	}
+	sourceByUID := make(map[string]int, len(channels))
+	uids := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		sourceByUID[ch.ChannelUID] = ch.ID
+		uids = append(uids, ch.ChannelUID)
+	}
+	var existing []model.Channel
+	if err := target.Select("id", "channel_uid").
+		Where("channel_uid IN ?", uids).
+		Find(&existing).Error; err != nil {
+		return fmt.Errorf("check channel_uid conflicts: %w", err)
+	}
+	for _, row := range existing {
+		if sourceID, ok := sourceByUID[row.ChannelUID]; ok && sourceID != row.ID {
+			return fmt.Errorf("backup channel_uid %q belongs to source channel %d but target channel %d already uses it", row.ChannelUID, sourceID, row.ID)
+		}
+	}
+	return nil
 }
 
 // encryptDumpSecrets 在导入路径上对 dump 中的敏感字段做幂等加密（issue #247）。

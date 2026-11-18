@@ -851,6 +851,43 @@ func Get(id int, ctx context.Context) (*model.Channel, error) {
 	return &ch, nil
 }
 
+// ensureChannelUIDPersisted repairs rows written by binaries that predate the
+// column (or wrote NULL during a rollback). A conditional update keeps two
+// instances from overwriting each other's identifier; the loser re-reads the
+// winner's value. The cache never carries an identifier that is not in the DB.
+func ensureChannelUIDPersisted(ctx context.Context, ch *model.Channel) error {
+	if ch == nil {
+		return fmt.Errorf("channel is nil")
+	}
+	if strings.TrimSpace(ch.ChannelUID) != "" {
+		return nil
+	}
+	candidate := model.NewChannelUID()
+	// channel_uid is create-only for the model, so repair it with explicit SQL.
+	result := db.GetDB().WithContext(ctx).Exec(
+		"UPDATE channels SET channel_uid = ? WHERE id = ? AND (channel_uid IS NULL OR channel_uid = '')",
+		candidate, ch.ID,
+	)
+	if result.Error != nil {
+		return fmt.Errorf("persist channel_uid for channel %d: %w", ch.ID, result.Error)
+	}
+	if result.RowsAffected == 1 {
+		ch.ChannelUID = candidate
+		return nil
+	}
+	var stored model.Channel
+	if err := db.GetDB().WithContext(ctx).
+		Select("id", "channel_uid").
+		First(&stored, ch.ID).Error; err != nil {
+		return fmt.Errorf("reload channel_uid for channel %d: %w", ch.ID, err)
+	}
+	if strings.TrimSpace(stored.ChannelUID) == "" {
+		return fmt.Errorf("channel %d still has no channel_uid after persistence attempt", ch.ID)
+	}
+	ch.ChannelUID = stored.ChannelUID
+	return nil
+}
+
 func RefreshCache(ctx context.Context) error {
 	channels := []model.Channel{}
 	if err := db.GetDB().WithContext(ctx).
@@ -858,6 +895,11 @@ func RefreshCache(ctx context.Context) error {
 		Preload("Stats").
 		Find(&channels).Error; err != nil {
 		return err
+	}
+	for i := range channels {
+		if err := ensureChannelUIDPersisted(ctx, &channels[i]); err != nil {
+			return err
+		}
 	}
 	runtimeUpdateLock.Lock()
 	defer runtimeUpdateLock.Unlock()
@@ -905,6 +947,9 @@ func RefreshCacheByID(id int, ctx context.Context) error {
 		Preload("Keys").
 		Preload("Stats").
 		First(&ch, id).Error; err != nil {
+		return err
+	}
+	if err := ensureChannelUIDPersisted(ctx, &ch); err != nil {
 		return err
 	}
 	// 渠道 Key 解密回明文供运行时使用（存量明文原样通过）。
