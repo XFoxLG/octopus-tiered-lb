@@ -64,6 +64,15 @@ for (const locale of ['zh_hans', 'zh_hant', 'en']) test(`opening diagnostics doe
     assert.ok(!html.includes('END_MUST_NOT_RENDER'));
     assert.ok(!html.includes('MISSING_MESSAGE'));
     assert.equal(pageReads, 0);
+
+    firstState = true;
+    const legacy = { id: '1000', request_content: 'x'.repeat(32768), request_content_truncated: true, response_content: 'ok' };
+    const legacyHtml = renderToStaticMarkup(React.createElement(intl.NextIntlClientProvider, { locale: locale === 'en' ? 'en' : 'zh', messages, timeZone: 'UTC' },
+        React.createElement(BoundaryDetails, { detail: legacy, isLoading: false })));
+    assert.ok(!legacyHtml.includes('32.0 KiB'), 'the preview length is not the original size');
+    assert.ok(legacyHtml.includes('2 B'), 'a complete legacy body still shows its known size');
+    assert.ok(legacyHtml.includes(messages.log.card.forensics.viewContent));
+    assert.equal(pageReads, 0);
 });
 
 test('closing or superseding a detail fetch aborts it and ignores late results', async () => {

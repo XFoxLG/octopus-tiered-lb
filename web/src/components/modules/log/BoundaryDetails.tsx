@@ -91,7 +91,10 @@ function ContentRecord({ content }: { content: RelayLogContentRef }) {
                 <Badge variant="secondary">{t(`kinds.${content.kind}`)}</Badge>
                 {content.protocol ? <Badge variant="outline">{content.protocol}</Badge> : null}
                 {content.http_status ? <Badge variant="outline">HTTP {content.http_status}</Badge> : null}
-                <span className="text-muted-foreground">{formatBytes(content.captured_bytes || 0)}</span>
+                {/* Legacy previews have no stored full byte count; their page
+                    response supplies it after loading. Do not label the prefix
+                    length as the size of the original. */}
+                {!(content.legacy && content.text_truncated) ? <span className="text-muted-foreground">{formatBytes(content.captured_bytes || 0)}</span> : null}
                 {!content.complete ? (
                     <Badge variant="outline" className="border-amber-500/30 text-amber-700 dark:text-amber-300">
                         {t('partial')}
