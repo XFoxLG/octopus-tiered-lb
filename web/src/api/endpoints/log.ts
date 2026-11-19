@@ -125,6 +125,38 @@ export interface RelayLogContentRef {
     error?: string;
     created_at: number;
     text?: string;
+    text_truncated?: boolean;
+    text_deferred?: boolean;
+    legacy?: 'request' | 'response';
+}
+
+export interface RelayLogContentPage {
+    text: string;
+    offset: number;
+    next_offset: number;
+    total_bytes: number;
+    has_more: boolean;
+}
+
+function contentQuery(content: RelayLogContentRef): string {
+    return content.legacy
+        ? `log_id=${exactId(content.relay_log_id, content.relay_log_id_str)}&legacy=${content.legacy}`
+        : `ref_id=${exactId(content.id, content.id_str)}`;
+}
+
+export function useRelayLogContentPage(content: RelayLogContentRef, offset: number) {
+    return useQuery({
+        queryKey: ['log-content-page', contentQuery(content), offset],
+        queryFn: ({ signal }) => apiClient.get<RelayLogContentPage>(
+            `/api/v1/log/content?${contentQuery(content)}&preview=true&offset=${offset}`,
+            undefined, true, signal,
+        ),
+        // The viewer owns this page. Closing it releases text and aborts its read.
+        gcTime: 0,
+        staleTime: Infinity,
+        retry: false,
+        refetchOnWindowFocus: false,
+    });
 }
 
 /**
@@ -206,6 +238,8 @@ export interface RelayNetworkDiagnostics {
 }
 
 export interface RelayLogDetail extends RelayLog {
+    request_content_truncated?: boolean;
+    response_content_truncated?: boolean;
     diagnostics?: {
         non_chat_usage?: NonChatUsageEvidence;
         version: number;
@@ -418,7 +452,7 @@ export function useDownloadRelayLogContent() {
             const token = useAuthStore.getState().token;
             if (!token) throw new Error('Not authenticated');
 
-            const response = await fetch(`${API_BASE_URL}/api/v1/log/content?ref_id=${exactId(content.id, content.id_str)}`, {
+            const response = await fetch(`${API_BASE_URL}/api/v1/log/content?${contentQuery(content)}`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             if (!response.ok) {
@@ -844,14 +878,22 @@ export function useLogDetail() {
     // 保存失败原因。以前这里 catch 后只 setDetail(null)，界面永远只显示一句
     // 「无法读取日志详情」，分不清「日志已被清理」和「请求真的失败」。
     const [error, setError] = useState<LogDetailError | null>(null);
+    const currentRequest = useRef<AbortController | null>(null);
+    useEffect(() => () => currentRequest.current?.abort(), []);
 
     const fetchDetail = useCallback(async (id: string | number) => {
+        currentRequest.current?.abort();
+        const controller = new AbortController();
+        currentRequest.current = controller;
+        setDetail(null);
         setIsLoading(true);
         setError(null);
         try {
-            const result = await apiClient.get<RelayLogDetail | null>(`/api/v1/log/detail?id=${exactId(id)}`);
+            const result = await apiClient.get<RelayLogDetail | null>(`/api/v1/log/detail?id=${exactId(id)}&preview=true`, undefined, true, controller.signal);
+            if (controller.signal.aborted) return;
             setDetail(result ? withExactId(result) : null);
         } catch (e) {
+            if (controller.signal.aborted) return;
             logger.error('获取日志详情失败:', e);
             const status = typeof (e as ApiError | undefined)?.code === 'number' ? (e as ApiError).code : undefined;
             setError({
@@ -861,11 +903,14 @@ export function useLogDetail() {
             });
             setDetail(null);
         } finally {
-            setIsLoading(false);
+            if (!controller.signal.aborted) setIsLoading(false);
         }
     }, []);
 
     const reset = useCallback(() => {
+        currentRequest.current?.abort();
+        currentRequest.current = null;
+        setIsLoading(false);
         setDetail(null);
         setError(null);
     }, []);

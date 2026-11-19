@@ -12,6 +12,7 @@ import {
     type RelayLogContentState,
     type RelayLogDetail,
     useDownloadRelayLogContent,
+    useRelayLogContentPage,
 } from '@/api/endpoints/log';
 import { cn } from '@/lib/utils';
 import {
@@ -21,6 +22,7 @@ import {
 } from './body-preview';
 import { resolveOutboundMaxTokens, resolveTokenLimitEvidence } from './display.ts';
 import { TransportDetails } from './TransportDetails';
+import { boundedLogText, formatLogText } from './content-display';
 
 interface BoundaryDetailsProps {
     detail: RelayLogDetail | null;
@@ -36,13 +38,24 @@ function formatBytes(byteCount: number): string {
     return `${(byteCount / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-function formatContentText(content: RelayLogContentRef): string | undefined {
-    if (!content.text) return undefined;
-    try {
-        return JSON.stringify(JSON.parse(content.text), null, 2);
-    } catch {
-        return content.text;
-    }
+function ContentPage({ content }: { content: RelayLogContentRef }) {
+    const t = useTranslations('log.card.forensics');
+    const [offsets, setOffsets] = useState([0]);
+    const offset = offsets[offsets.length - 1];
+    const { data, error, isLoading } = useRelayLogContentPage(content, offset);
+    const display = useMemo(() => data ? formatLogText(data.text, offset === 0 && !data.has_more) : null, [data, offset]);
+    return <div className="space-y-2">
+        {isLoading ? <p role="status" className="text-xs text-muted-foreground">{t('loading')}</p> : null}
+        {error ? <p role="alert" className="break-words text-xs text-destructive">{error.message}</p> : null}
+        {data && display ? <>
+            <pre tabIndex={0} className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/50 p-3 font-mono text-xs leading-relaxed">{display.text || t('emptyContent')}</pre>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span>{t('pageRange', { start: data.offset, end: data.next_offset, total: data.total_bytes })}</span>
+                <Button type="button" variant="outline" size="sm" disabled={offsets.length === 1} onClick={() => setOffsets(previous => previous.slice(0, -1))}>{t('previousPage')}</Button>
+                <Button type="button" variant="outline" size="sm" disabled={!data.has_more} onClick={() => setOffsets(previous => [...previous, data.next_offset])}>{t('nextPage')}</Button>
+            </div>
+        </> : null}
+    </div>;
 }
 
 function stateClassName(state: RelayLogContentState): string {
@@ -64,8 +77,10 @@ function stateClassName(state: RelayLogContentState): string {
 function ContentRecord({ content }: { content: RelayLogContentRef }) {
     const t = useTranslations('log.card.forensics');
     const downloadContent = useDownloadRelayLogContent();
-    const displayText = useMemo(() => formatContentText(content), [content]);
-    const canDownload = content.state === 'ready' && (content.id_str ?? String(content.id)) !== '0';
+    const [open, setOpen] = useState(false);
+    const display = useMemo(() => open ? formatLogText(content.text ?? '', !content.text_truncated) : null, [content, open]);
+    const canDownload = content.state === 'ready' && (!!content.legacy || (content.id_str ?? String(content.id)) !== '0');
+    const canPreview = canDownload && (!content.content_type || /text|json|xml|javascript|yaml/i.test(content.content_type));
 
     return (
         <div className="space-y-2 rounded-xl border border-border/50 bg-card/70 p-3">
@@ -102,11 +117,16 @@ function ContentRecord({ content }: { content: RelayLogContentRef }) {
                     </Button>
                 ) : null}
             </div>
-            {displayText ? (
-                <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-mono text-xs leading-relaxed text-foreground">
-                    {displayText}
-                </pre>
-            ) : null}
+            {(canPreview || content.text !== undefined) ? <details onToggle={event => setOpen(event.currentTarget.open)}>
+                <summary className="cursor-pointer rounded text-xs font-medium text-primary focus-visible:outline-2 focus-visible:outline-ring">{t('viewContent')}</summary>
+                {open ? <div className="mt-2">
+                    {canPreview ? <ContentPage content={content} /> : <>
+                        <pre tabIndex={0} className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/50 p-3 font-mono text-xs">{display?.text || t('emptyContent')}</pre>
+                        {content.text_truncated || display?.truncated ? <p className="text-xs text-muted-foreground">{t('previewLimited')}</p> : null}
+                    </>}
+                </div> : null}
+            </details> : null}
+            {downloadContent.error ? <p role="alert" className="break-words text-xs text-destructive">{downloadContent.error.message}</p> : null}
             {content.error ? (
                 <div className="flex items-start gap-2 text-xs text-muted-foreground">
                     <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
@@ -225,7 +245,10 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
     const selectedResponse = selectedResponseRecords.find(record => record.kind === 'body')
         ?? selectedResponseRecords.find(record => record.kind === 'normalized_response');
     const contentFilterEvidence = isContentFilterTerminal
-        ? resolveContentFilterTextEvidence(detail.diagnostics, selectedResponse)
+        ? resolveContentFilterTextEvidence(detail.diagnostics, selectedResponse && {
+            text: selectedResponse.text,
+            complete: selectedResponse.complete && !selectedResponse.text_truncated && !selectedResponse.text_deferred,
+        })
         : null;
 
     return (
@@ -248,12 +271,16 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                 {(['client_ingress', 'client_egress'] as const).map(boundary => {
                     const record = recordsFor(boundary).find(item => item.kind === 'body');
                     const raw = record?.text || (boundary === 'client_ingress' ? detail.request_content : detail.response_content);
+                    const bounded = boundedLogText(raw || '');
+                    const truncated = record?.text_truncated || bounded.truncated || (boundary === 'client_ingress' ? detail.request_content_truncated : detail.response_content_truncated);
+                    const previewText = boundedLogText(truncated ? bounded.text : readableLogBody(bounded.text));
                     return (
                         <section key={boundary} className="min-w-0 space-y-2">
                             <h3 className="text-sm font-semibold">{t(boundary === 'client_ingress' ? 'requestPreview' : 'responsePreview')}</h3>
-                            {raw ? <pre tabIndex={0} aria-label={t(boundary === 'client_ingress' ? 'requestPreview' : 'responsePreview')} className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/30 p-3 font-sans text-sm leading-6 focus-visible:outline-2 focus-visible:outline-ring">{readableLogBody(raw)}</pre>
+                            {raw ? <pre tabIndex={0} aria-label={t(boundary === 'client_ingress' ? 'requestPreview' : 'responsePreview')} className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/30 p-3 font-sans text-sm leading-6 focus-visible:outline-2 focus-visible:outline-ring">{previewText.text}</pre>
                                 : <p className="text-sm text-muted-foreground">{record ? t(`states.${record.state}`) : t('boundaryMissing')}</p>}
                             {record && !record.complete ? <p className="text-xs text-muted-foreground">{t('partial')}</p> : null}
+                            {truncated || previewText.truncated ? <p className="text-xs text-muted-foreground">{t('previewLimited')}</p> : null}
                         </section>
                     );
                 })}
@@ -427,6 +454,8 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                             records={detail.request_content ? [{
                                 id: 0,
                                 relay_log_id: detail.id,
+                                relay_log_id_str: detail.id_str,
+                                legacy: 'request',
                                 attempt_num: 0,
                                 boundary: 'client_ingress',
                                 slot: 0,
@@ -436,6 +465,7 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                                 captured_bytes: new TextEncoder().encode(detail.request_content).length,
                                 created_at: detail.time,
                                 text: detail.request_content,
+                                text_truncated: detail.request_content_truncated,
                             }] : []}
                             emptyText={t('boundaryMissing')}
                         />
@@ -444,6 +474,8 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                             records={detail.response_content ? [{
                                 id: 0,
                                 relay_log_id: detail.id,
+                                relay_log_id_str: detail.id_str,
+                                legacy: 'response',
                                 attempt_num: 0,
                                 boundary: 'client_egress',
                                 slot: 0,
@@ -453,6 +485,7 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                                 captured_bytes: new TextEncoder().encode(detail.response_content).length,
                                 created_at: detail.time,
                                 text: detail.response_content,
+                                text_truncated: detail.response_content_truncated,
                             }] : []}
                             emptyText={t('boundaryMissing')}
                         />

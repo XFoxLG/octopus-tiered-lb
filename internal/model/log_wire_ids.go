@@ -53,5 +53,7 @@ func (v RelayLogCapturedContent) MarshalJSON() ([]byte, error) {
 		IDString         string `json:"id_str"`
 		RelayLogIDString string `json:"relay_log_id_str"`
 		Text             string `json:"text,omitempty"`
-	}{plain(v.RelayLogContentRef), strconv.FormatInt(v.ID, 10), strconv.FormatInt(v.RelayLogID, 10), v.Text})
+		TextTruncated    bool   `json:"text_truncated,omitempty"`
+		TextDeferred     bool   `json:"text_deferred,omitempty"`
+	}{plain(v.RelayLogContentRef), strconv.FormatInt(v.ID, 10), strconv.FormatInt(v.RelayLogID, 10), v.Text, v.TextTruncated, v.TextDeferred})
 }
