@@ -20,7 +20,6 @@ import {
     type UpdateChannelRequest,
     type TestChannelSummary,
 } from '@/api/endpoints/channel';
-import { useSettingList, SettingKey } from '@/api/endpoints/setting';
 import {
     MorphingDialogTitle,
     MorphingDialogDescription,
@@ -41,7 +40,6 @@ import {
 import { formatMoney } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { CCSwitchProviderLink } from './CCSwitchProviderLink';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -66,7 +64,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     const { setIsOpen } = useMorphingDialog();
     const updateChannel = useUpdateChannel();
     const deleteChannel = useDeleteChannel();
-    const { data: settings } = useSettingList();
     const [isEditing, setIsEditing] = useState(false);
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
     // 逐 Key 检查全部不可用时的结果；由测试弹窗回调写入，用于删除确认对话框的总数说明。
@@ -137,8 +134,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     });
     const t = useTranslations('channel.detail');
     const tProxy = useTranslations('proxyPool');
-
-    const publicApiBaseUrl = settings?.find((item) => item.key === SettingKey.PublicAPIBaseURL)?.value?.trim() ?? '';
 
     const currentView = isEditing ? 'editing' : 'viewing';
 
@@ -648,12 +643,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                         </div>
                                     )}
                                 </section>
-
-                                <CCSwitchProviderLink
-                                    channel={channel}
-                                    publicApiBaseUrl={publicApiBaseUrl}
-                                    sectionClassName={sectionClassName}
-                                />
 
                                 <dl className={sectionClassName}>
                                     <dt className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">

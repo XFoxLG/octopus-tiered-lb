@@ -19,7 +19,6 @@ import { useNavStore, type NavItem } from '@/components/modules/navbar';
 import { CreateDialogContent as ChannelCreateContent } from '@/components/modules/channel/Create';
 import { ChannelGroupManagerDialog } from '@/components/modules/channel/GroupManager';
 import { CreateDialogContent as GroupCreateContent } from '@/components/modules/group/Create';
-import { CCSwitchLinkButton } from '@/components/modules/group/CCSwitchLinkButton';
 import { MaintenanceButton } from '@/components/modules/group/MaintenanceButton';
 import { CreateDialogContent as ModelCreateContent } from '@/components/modules/model/Create';
 import { useModelViewStore } from '@/components/modules/model/view-store';
@@ -307,9 +306,6 @@ export function Toolbar() {
 
                 {toolbarItem === 'group' && (
                     <MaintenanceButton className="hidden sm:inline-flex" />
-                )}
-                {toolbarItem === 'group' && (
-                    <CCSwitchLinkButton className="hidden sm:inline-flex" />
                 )}
                 {/* 筛选弹层：市场摘要/布局/模型筛选仅服务模型广场视图，端点与分类视图隐藏 */}
                 {showFilterPopover && (
