@@ -10,7 +10,6 @@ import {
 
 const toolbar = readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
 const maintenance = readFileSync(new URL('../group/MaintenanceButton.tsx', import.meta.url), 'utf8');
-const ccSwitch = readFileSync(new URL('../group/CCSwitchLinkButton.tsx', import.meta.url), 'utf8');
 
 test('toolbar actions share responsive dimensions and interaction styles', () => {
   for (const style of [TOOLBAR_ICON_ACTION_CLASS, TOOLBAR_TEXT_ACTION_CLASS, TOOLBAR_PRIMARY_ACTION_CLASS]) {
@@ -30,8 +29,6 @@ test('toolbar and group triggers use the same action styles', () => {
   assert.match(toolbar, /TOOLBAR_TEXT_ACTION_CLASS/);
   assert.match(toolbar, /TOOLBAR_PRIMARY_ACTION_CLASS/);
   assert.match(maintenance, /className: TOOLBAR_TEXT_ACTION_CLASS/);
-  assert.match(ccSwitch, /TOOLBAR_TEXT_ACTION_CLASS,/);
-  assert.match(ccSwitch, /ariaLabel=\{t\('ccswitch.title'\)\}/);
 });
 
 test('toolbar avoids nested filter borders and keeps small-screen icons visible', () => {
