@@ -1471,6 +1471,16 @@ func RelayLogClearContents(ctx context.Context) error {
 
 // RelayLogGetByID 根据ID获取完整日志详情（包含 request_content 和 response_content）
 func RelayLogGetByID(ctx context.Context, id int64) (*model.RelayLog, error) {
+	return relayLogGetByID(ctx, id, false)
+}
+
+// RelayLogPreviewByID loads bounded client previews and metadata for other
+// boundaries. The existing full detail API remains available to API consumers.
+func RelayLogPreviewByID(ctx context.Context, id int64) (*model.RelayLog, error) {
+	return relayLogGetByID(ctx, id, true)
+}
+
+func relayLogGetByID(ctx context.Context, id int64, preview bool) (*model.RelayLog, error) {
 	// 在缓存中查找的闭包：日志库关闭或 DB 未命中时回落到内存缓存。
 	lookupCache := func() (*model.RelayLog, error) {
 		relayLogCacheLock.Lock()
@@ -1478,6 +1488,12 @@ func RelayLogGetByID(ctx context.Context, id int64) (*model.RelayLog, error) {
 		for i := range relayLogCache {
 			if relayLogCache[i].ID == id {
 				cached := relayLogCache[i]
+				// Hydration must not mutate the cache's shared slice.
+				cached.Contents = append([]model.RelayLogCapturedContent(nil), cached.Contents...)
+				if preview {
+					prepareCachedRelayLogPreview(&cached)
+					return &cached, nil
+				}
 				hydrateCachedRelayLogContents(&cached)
 				if usage, ok := cacheusage.ParseProviderPromptCacheUsageSignals(cached.ResponseContent); ok {
 					cached.SemanticCacheHit = usage.SemanticCacheHit
@@ -1500,11 +1516,31 @@ func RelayLogGetByID(ctx context.Context, id int64) (*model.RelayLog, error) {
 	}
 
 	var relayLog model.RelayLog
-	if err := conn.WithContext(ctx).Where("id = ?", id).First(&relayLog).Error; err != nil {
+	query := conn.WithContext(ctx).Where("id = ?", id)
+	if preview {
+		query = query.Omit("request_content", "response_content")
+	}
+	if err := query.First(&relayLog).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
 		return lookupCache()
+	}
+	if preview {
+		// SUBSTR is supported by all three database backends. Limit characters
+		// at the database boundary, then cap UTF-8 bytes before returning JSON.
+		var legacy struct{ RequestContent, ResponseContent string }
+		if err := conn.WithContext(ctx).Model(&model.RelayLog{}).Where("id = ?", id).
+			Select("SUBSTR(request_content, 1, ?) AS request_content, SUBSTR(response_content, 1, ?) AS response_content", RelayLogPreviewBytes+1, RelayLogPreviewBytes+1).
+			Scan(&legacy).Error; err != nil {
+			return nil, err
+		}
+		relayLog.RequestContent, relayLog.RequestContentTruncated = limitPreviewText(legacy.RequestContent)
+		relayLog.ResponseContent, relayLog.ResponseContentTruncated = limitPreviewText(legacy.ResponseContent)
+		if err := hydrateRelayLogPreview(ctx, conn, &relayLog); err != nil {
+			return nil, err
+		}
+		return &relayLog, nil
 	}
 	if usage, ok := cacheusage.ParseProviderPromptCacheUsageSignals(relayLog.ResponseContent); ok {
 		relayLog.SemanticCacheHit = usage.SemanticCacheHit

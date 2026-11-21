@@ -107,6 +107,9 @@ type RelayLogCapturedContent struct {
 	RelayLogContentRef
 	Data []byte `json:"-" gorm:"-"`
 	Text string `json:"text,omitempty" gorm:"-"`
+	// Preview flags describe the returned text, independently of capture completeness.
+	TextTruncated bool `json:"text_truncated,omitempty" gorm:"-"`
+	TextDeferred  bool `json:"text_deferred,omitempty" gorm:"-"`
 }
 
 func (RelayLogCapturedContent) TableName() string { return "-" }

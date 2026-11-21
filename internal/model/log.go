@@ -78,6 +78,8 @@ type RelayLog struct {
 	BillingWindow             string                    `json:"billing_window" gorm:"column:billing_window"`     // 计费窗口（DeepSeek 峰谷: peak/offpeak，其余为空）
 	RequestContent            string                    `json:"request_content" gorm:"column:request_content"`   // 兼容旧版详情的规范化请求内容
 	ResponseContent           string                    `json:"response_content" gorm:"column:response_content"` // 兼容旧版详情的规范化响应内容
+	RequestContentTruncated   bool                      `json:"request_content_truncated,omitempty" gorm:"-"`
+	ResponseContentTruncated  bool                      `json:"response_content_truncated,omitempty" gorm:"-"`
 	HTTPStatus                int                       `json:"http_status,omitempty" gorm:"column:http_status"` // Octopus 向客户端写出的 HTTP 状态
 	GenerationOutcome         string                    `json:"generation_outcome,omitempty" gorm:"column:generation_outcome;size:24"`
 	UpstreamOutcome           string                    `json:"upstream_outcome,omitempty" gorm:"column:upstream_outcome;size:24"`

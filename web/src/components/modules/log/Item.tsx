@@ -397,7 +397,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
         // provider creates many parallel global tooltip singletons — each with its
         // own layoutId animation + useFloating autoUpdate listeners — which spirals
         // into a layout-animation loop and OOMs the tab on hover. Reuse the global one.
-        <MorphingDialog onOpen={() => fetchDetail(log.id)} onClose={resetDetail}>
+        <MorphingDialog disableSharedLayout onOpen={() => fetchDetail(log.id)} onClose={resetDetail}>
                 <MorphingDialogTrigger
                     className={cn(
                         "rounded-xl border bg-card w-full text-left",
@@ -641,7 +641,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                     </div>
                 </MorphingDialogTrigger>
 
-                <MorphingDialogContainer>
+                <MorphingDialogContainer unmountOnClose>
                     <MorphingDialogContent className="relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl bg-card px-6 py-4 text-card-foreground md:w-[95vw] md:max-w-7xl">
                         <MorphingDialogClose className="top-4 right-5 text-muted-foreground hover:text-foreground transition-colors" />
                         <MorphingDialogTitle className="flex items-center gap-2 mb-3 pr-12 text-sm">

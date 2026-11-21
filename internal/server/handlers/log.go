@@ -193,7 +193,11 @@ func logDetail(c *gin.Context) {
 		return
 	}
 
-	log, err := relaylog.RelayLogGetByID(c.Request.Context(), id)
+	getDetail := relaylog.RelayLogGetByID
+	if c.Query("preview") == "true" {
+		getDetail = relaylog.RelayLogPreviewByID
+	}
+	log, err := getDetail(c.Request.Context(), id)
 	if err != nil {
 		logReadError(c, err)
 		return
@@ -207,9 +211,34 @@ func logDetail(c *gin.Context) {
 }
 
 func logContent(c *gin.Context) {
+	if c.Query("legacy") != "" {
+		logLegacyContent(c)
+		return
+	}
 	referenceID, err := strconv.ParseInt(c.Query("ref_id"), 10, 64)
 	if err != nil || referenceID <= 0 {
 		resp.Error(c, http.StatusBadRequest, "invalid ref_id")
+		return
+	}
+	if c.Query("preview") == "true" {
+		offset, ok := logPreviewOffset(c)
+		if !ok {
+			return
+		}
+		ref, page, err := relaylog.RelayLogContentPreview(c.Request.Context(), referenceID, offset)
+		if err != nil {
+			logPreviewError(c, err)
+			return
+		}
+		if ref == nil {
+			resp.Error(c, http.StatusNotFound, "log content not found")
+			return
+		}
+		if page == nil {
+			resp.Error(c, http.StatusGone, "log content is unavailable: "+ref.State)
+			return
+		}
+		resp.Success(c, page)
 		return
 	}
 	contentRef, payload, err := relaylog.RelayLogContentGet(c.Request.Context(), referenceID)
@@ -242,6 +271,61 @@ func logContent(c *gin.Context) {
 		c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": contentRef.FileName}))
 	}
 	c.Data(http.StatusOK, contentType, payload)
+}
+
+func logPreviewOffset(c *gin.Context) (int64, bool) {
+	offset, err := strconv.ParseInt(c.DefaultQuery("offset", "0"), 10, 64)
+	if err != nil || offset < 0 {
+		resp.Error(c, http.StatusBadRequest, "invalid preview offset")
+		return 0, false
+	}
+	return offset, true
+}
+
+func logPreviewError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, relaylog.ErrRelayLogPreviewRange):
+		resp.Error(c, http.StatusRequestedRangeNotSatisfiable, err.Error())
+	case errors.Is(err, relaylog.ErrRelayLogPreviewBinary):
+		resp.Error(c, http.StatusUnsupportedMediaType, err.Error())
+	case errors.Is(err, relaylog.ErrRelayLogContentCorrupt):
+		resp.Error(c, http.StatusInternalServerError, err.Error())
+	default:
+		logReadError(c, err)
+	}
+}
+
+func logLegacyContent(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Query("log_id"), 10, 64)
+	field := c.Query("legacy")
+	if err != nil || id <= 0 || (field != "request" && field != "response") {
+		resp.Error(c, http.StatusBadRequest, "invalid legacy content selector")
+		return
+	}
+	text, found, err := relaylog.RelayLogLegacyContent(c.Request.Context(), id, field)
+	if err != nil {
+		logReadError(c, err)
+		return
+	}
+	if !found {
+		resp.Error(c, http.StatusNotFound, "log not found")
+		return
+	}
+	if c.Query("preview") == "true" {
+		offset, ok := logPreviewOffset(c)
+		if !ok {
+			return
+		}
+		page, err := relaylog.RelayLogLegacyContentPage(text, offset)
+		if err != nil {
+			logPreviewError(c, err)
+			return
+		}
+		resp.Success(c, page)
+		return
+	}
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fmt.Sprintf("relay-log-%d-%s.txt", id, field)}))
+	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(text))
 }
 
 func logReadError(c *gin.Context, err error) {
