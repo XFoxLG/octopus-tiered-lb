@@ -52,7 +52,7 @@ function ErrorLogCard({ entry }: { entry: ErrorLog }) {
         <div className="rounded-xl border border-border/35 bg-card p-4">
             <button
                 type="button"
-                className="flex w-full items-start gap-3 text-left"
+                className="flex min-h-11 w-full items-start gap-3 text-left"
                 onClick={() => setExpanded((v) => !v)}
             >
                 <div className={cn(
@@ -135,7 +135,7 @@ export function ErrorLogView() {
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto py-1">
+            <div className="flex flex-wrap items-center gap-2 py-1">
                 <Select
                     value={filter.source ?? '__all__'}
                     onValueChange={(v) => {
@@ -148,7 +148,7 @@ export function ErrorLogView() {
                         setFilter(next);
                     }}
                 >
-                    <SelectTrigger size="sm" className="h-7 min-w-[8rem] text-xs">
+                    <SelectTrigger size="sm" className="h-10 min-w-[8rem] flex-1 text-xs md:h-7 md:flex-none">
                         <SelectValue placeholder={t('filter.allSources')} />
                     </SelectTrigger>
                     <SelectContent>
@@ -169,7 +169,7 @@ export function ErrorLogView() {
                         setFilter(next);
                     }}
                 >
-                    <SelectTrigger size="sm" className="h-7 min-w-[8rem] text-xs">
+                    <SelectTrigger size="sm" className="h-10 min-w-[8rem] flex-1 text-xs md:h-7 md:flex-none">
                         <SelectValue placeholder={t('filter.allLevels')} />
                     </SelectTrigger>
                     <SelectContent>
@@ -184,7 +184,7 @@ export function ErrorLogView() {
                 <Button
                     size="sm"
                     variant="ghost"
-                    className="ml-auto h-7 gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground"
+                    className="ml-auto h-10 gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground md:h-7"
                     onClick={handleClear}
                     disabled={clearLogs.isPending}
                 >

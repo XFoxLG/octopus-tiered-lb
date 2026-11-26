@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -84,6 +85,8 @@ func newTerminationFidelityRelayAttempt(t *testing.T, recorder *httptest.Respons
 	writer := newRelayResponseWriter(ginContext.Writer)
 	ginContext.Writer = writer
 	t.Cleanup(writer.close)
+	trace := &relayRequestTrace{id: "termination-test", startedAt: time.Now()}
+	trace.startDiagnosticAttempt(1, 0, "chat", context.Background())
 
 	stream := true
 	return &relayAttempt{
@@ -93,13 +96,23 @@ func newTerminationFidelityRelayAttempt(t *testing.T, recorder *httptest.Respons
 			operationCtx:    context.Background(),
 			inAdapter:       &terminationFidelityTestInbound{streamPayload: streamPayload},
 			internalRequest: &model.InternalLLMRequest{Stream: &stream},
-			metrics:         &RelayMetrics{},
+			metrics:         &RelayMetrics{RequestTrace: trace},
 		},
 		outAdapter: &terminationFidelityTestOutbound{
 			internalStream: internalStream,
 		},
-		channel: &dbmodel.Channel{Name: "termination-test"},
+		channel:          &dbmodel.Channel{Name: "termination-test"},
+		logAttemptNumber: 1,
 	}
+}
+
+func streamDiagnosticsForTest(t *testing.T, attempt *relayAttempt) *dbmodel.RelayStreamDiagnostics {
+	t.Helper()
+	diagnostics := attempt.metrics.RequestTrace.diagnosticsSnapshot()
+	if diagnostics == nil || len(diagnostics.Attempts) != 1 || diagnostics.Attempts[0].Stream == nil {
+		t.Fatalf("stream diagnostics missing: %#v", diagnostics)
+	}
+	return diagnostics.Attempts[0].Stream
 }
 
 func TestClassifyRelayErrorHandlesMissingStreamTerminal(t *testing.T) {
@@ -277,6 +290,70 @@ func TestHandleStreamResponseReportsMissingTerminalAfterPartialOutput(t *testing
 	if !strings.Contains(responseBody, "event: error") {
 		t.Fatalf("response body lacks SSE error event: %s", responseBody)
 	}
+	stream := streamDiagnosticsForTest(t, attempt)
+	if stream.FailureStage != "terminal" || stream.FailureKind != "missing_terminal" || stream.FailureEventIndex != 1 {
+		t.Fatalf("stream failure diagnostics = %#v, want missing terminal at event 1", stream)
+	}
+}
+
+func TestHandleStreamResponseRecordsMalformedJSONWithoutPayload(t *testing.T) {
+	const malformedPayload = `{"object":"chat.completion.chunk","choices":[`
+	wire := "data: " + malformedPayload + "\n\n"
+	recorder := httptest.NewRecorder()
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, nil, nil)
+	attempt.adapterType = outbound.OutboundTypeOpenAIChat
+	attempt.outAdapter = outbound.Get(attempt.adapterType)
+	attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
+
+	err := attempt.handleStreamResponse(context.Background(), &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(wire)),
+	})
+	if err == nil || !strings.Contains(err.Error(), "failed to transform stream event") {
+		t.Fatalf("handleStreamResponse() error = %v, want malformed event failure", err)
+	}
+	stream := streamDiagnosticsForTest(t, attempt)
+	if stream.FailureStage != "transform_event" || stream.FailureKind != "invalid_event" || stream.FailureEventIndex != 1 || stream.FailureEventBytes != int64(len(wire)) {
+		t.Fatalf("stream failure diagnostics = %#v, want invalid event 1 (%d bytes)", stream, len(wire))
+	}
+	diagnosticJSON, err := json.Marshal(attempt.metrics.RequestTrace.diagnosticsSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(diagnosticJSON), malformedPayload) {
+		t.Fatalf("diagnostics leaked upstream event payload: %s", diagnosticJSON)
+	}
+}
+
+func TestHandleStreamResponseRecordsIncompleteFinalSSEEvent(t *testing.T) {
+	const payload = `{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"partial-private-text"}}]}`
+	wire := "data: " + payload
+	recorder := httptest.NewRecorder()
+	attempt := newTerminationFidelityRelayAttempt(t, recorder, nil, nil)
+	attempt.adapterType = outbound.OutboundTypeOpenAIChat
+	attempt.outAdapter = outbound.Get(attempt.adapterType)
+	attempt.inAdapter = inbound.Get(inbound.InboundTypeOpenAIChat)
+
+	err := attempt.handleStreamResponse(context.Background(), &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(wire)),
+	})
+	if !errors.Is(err, errMissingStreamTerminal) {
+		t.Fatalf("handleStreamResponse() error = %v, want missing terminal", err)
+	}
+	stream := streamDiagnosticsForTest(t, attempt)
+	if stream.IncompleteEventIndex != 1 || stream.IncompleteEventBytes != int64(len(wire)) {
+		t.Fatalf("incomplete SSE evidence = %#v, want event 1 (%d bytes)", stream, len(wire))
+	}
+	diagnosticJSON, err := json.Marshal(attempt.metrics.RequestTrace.diagnosticsSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(diagnosticJSON), "partial-private-text") {
+		t.Fatalf("diagnostics leaked partial response text: %s", diagnosticJSON)
+	}
 }
 
 func TestHandleStreamResponseKeepsNoOutputMissingTerminalRetryable(t *testing.T) {
@@ -377,6 +454,10 @@ func TestHandleStreamResponseReportsPostOutputReadError(t *testing.T) {
 	if !strings.Contains(responseBody, `"type":"api_error"`) || !strings.Contains(responseBody, `"code":"stream_interrupted"`) {
 		t.Fatalf("response body lacks OpenAI-compatible interruption envelope: %s", responseBody)
 	}
+	stream := streamDiagnosticsForTest(t, attempt)
+	if stream.FailureStage != "upstream_read" || stream.FailureKind != "read_error" {
+		t.Fatalf("stream failure diagnostics = %#v, want upstream read error", stream)
+	}
 }
 
 func TestHandleStreamResponseIgnoresReadErrorAfterAcceptedTerminal(t *testing.T) {
@@ -403,6 +484,14 @@ func TestHandleStreamResponseIgnoresReadErrorAfterAcceptedTerminal(t *testing.T)
 	}
 	if strings.Contains(recorder.Body.String(), "event: error") {
 		t.Fatalf("accepted terminal received a second error event: %s", recorder.Body.String())
+	}
+	diagnostics := attempt.metrics.RequestTrace.diagnosticsSnapshot()
+	if diagnostics == nil || len(diagnostics.Attempts) != 1 {
+		t.Fatalf("attempt diagnostics missing after successful stream: %#v", diagnostics)
+	}
+	if stream := diagnostics.Attempts[0].Stream; stream != nil &&
+		(stream.IncompleteEventIndex != 0 || stream.IncompleteEventBytes != 0) {
+		t.Fatalf("complete SSE frames were marked incomplete: %#v", stream)
 	}
 }
 

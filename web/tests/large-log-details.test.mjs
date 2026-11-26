@@ -66,6 +66,22 @@ for (const locale of ['zh_hans', 'zh_hant', 'en']) test(`opening diagnostics doe
     assert.equal(pageReads, 0);
 
     firstState = true;
+    for (const section of ['request', 'response']) {
+        const sectionHtml = renderToStaticMarkup(React.createElement(intl.NextIntlClientProvider, { locale: locale === 'en' ? 'en' : 'zh', messages, timeZone: 'UTC' },
+            React.createElement(BoundaryDetails, { detail, isLoading: false, section })));
+        const visibleLabel = section === 'request'
+            ? messages.log.card.forensics.requestPreview
+            : messages.log.card.forensics.responsePreview;
+        const hiddenLabel = section === 'request'
+            ? messages.log.card.forensics.responsePreview
+            : messages.log.card.forensics.requestPreview;
+        assert.ok(sectionHtml.includes(visibleLabel));
+        assert.ok(!sectionHtml.includes(hiddenLabel), `${section} tab should not render the other client body panel`);
+        assert.ok(!sectionHtml.includes('END_MUST_NOT_RENDER'));
+        assert.equal(pageReads, 0);
+    }
+
+    firstState = true;
     const legacy = { id: '1000', request_content: 'x'.repeat(32768), request_content_truncated: true, response_content: 'ok' };
     const legacyHtml = renderToStaticMarkup(React.createElement(intl.NextIntlClientProvider, { locale: locale === 'en' ? 'en' : 'zh', messages, timeZone: 'UTC' },
         React.createElement(BoundaryDetails, { detail: legacy, isLoading: false })));

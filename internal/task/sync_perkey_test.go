@@ -106,7 +106,7 @@ func TestUnionKeyModelsKeepsFailedKeyOldValue(t *testing.T) {
 		{ID: 3},
 	}
 
-	got := unionKeyModels(results, current)
+	got := unionKeyModels(results, current, "")
 
 	// 并集 = 成功 key 的模型 + 失败 key 的旧值；顺序按 results 顺序去重。
 	want := []string{"gpt-a", "gpt-b", "old-only-key2", "gpt-c"}
@@ -120,9 +120,35 @@ func TestUnionKeyModelsIgnoresFailedKeyWithoutOldValue(t *testing.T) {
 		{KeyID: 1, Passed: true, Models: []string{"gpt-a"}},
 		{KeyID: 2, Passed: false},
 	}
-	got := unionKeyModels(results, []model.ChannelKey{{ID: 1}, {ID: 2}})
+	got := unionKeyModels(results, []model.ChannelKey{{ID: 1}, {ID: 2}}, "")
 	if !equalStringSlices(got, []string{"gpt-a"}) {
 		t.Fatalf("unionKeyModels() = %v, want [gpt-a]", got)
+	}
+}
+
+func TestUnionKeyModelsKeepsPreviousChannelSnapshotWhenAnyKeyFetchFails(t *testing.T) {
+	results := []helper.KeyModelResult{
+		{KeyID: 1, Passed: true, Models: []string{"new-model"}},
+		{KeyID: 2, Passed: false, Message: "upstream timeout"},
+	}
+
+	got := unionKeyModels(results, []model.ChannelKey{{ID: 1}, {ID: 2}}, "old-model,new-model")
+	want := []string{"new-model", "old-model"}
+	if !equalStringSlices(got, want) {
+		t.Fatalf("unionKeyModels() = %v, want %v", got, want)
+	}
+}
+
+func TestUnionKeyModelsKeepsPreviousChannelSnapshotWhenAnyKeyCatalogIsEmpty(t *testing.T) {
+	results := []helper.KeyModelResult{
+		{KeyID: 1, Passed: true, Models: []string{"new-model"}},
+		{KeyID: 2, Passed: true, Models: nil},
+	}
+
+	got := unionKeyModels(results, []model.ChannelKey{{ID: 1}, {ID: 2}}, "old-model,new-model")
+	want := []string{"new-model", "old-model"}
+	if !equalStringSlices(got, want) {
+		t.Fatalf("unionKeyModels() = %v, want %v", got, want)
 	}
 }
 
@@ -332,6 +358,7 @@ func TestSyncModelsTaskKeepsOldSupportedModelsWhenKeyFetchFails(t *testing.T) {
 		Enabled:           true,
 		AutoSync:          true,
 		AutoSyncKeyModels: true,
+		Model:             "legacy-channel-model",
 		BaseUrls:          []model.BaseUrl{{URL: srv.URL}},
 		Keys: []model.ChannelKey{
 			{Enabled: true, ChannelKey: "sk-good", Remark: "good"},
@@ -360,10 +387,9 @@ func TestSyncModelsTaskKeepsOldSupportedModelsWhenKeyFetchFails(t *testing.T) {
 	if g := modelsCSV(supported["good"]); !equalStringSlices(g, []string{"gpt-a"}) {
 		t.Errorf("successful key supported_models = %v, want [gpt-a]", g)
 	}
-	// 渠道级 Model = 成功 key 的模型 + 失败 key 的旧值，不能把失败 key 的模型删掉
-	// （删掉会连带删除 GroupItem 与价格行，并让该 key 在恢复前完全不可路由）。
-	if g := modelsCSV(got.Model); !equalStringSlices(g, []string{"gpt-a", "legacy-only-model"}) {
-		t.Errorf("channel model = %v, want [gpt-a legacy-only-model] (raw=%q)", g, got.Model)
+	// 渠道级 Model 保留失败 key 旧目录，也保留无法归属到 key 的上轮总目录。
+	if g := modelsCSV(got.Model); !equalStringSlices(g, []string{"gpt-a", "legacy-channel-model", "legacy-only-model"}) {
+		t.Errorf("channel model = %v, want [gpt-a legacy-channel-model legacy-only-model] (raw=%q)", g, got.Model)
 	}
 	if keyIDByName["bad"] == 0 {
 		t.Fatal("seeded key ids are missing; test fixture is broken")

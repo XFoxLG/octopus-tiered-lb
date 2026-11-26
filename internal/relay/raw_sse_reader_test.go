@@ -26,6 +26,27 @@ func TestRawSSEPreservesNativeFraming(t *testing.T) {
 	}
 }
 
+func TestRawSSEFrameTerminatedRecognizesLineEndingVariants(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		wire string
+		want bool
+	}{
+		{name: "lf", wire: "data: value\n\n", want: true},
+		{name: "crlf", wire: "data: value\r\n\r\n", want: true},
+		{name: "cr", wire: "data: value\r\r", want: true},
+		{name: "mixed", wire: "data: value\r\n\n", want: true},
+		{name: "one final newline", wire: "data: value\n", want: false},
+		{name: "no final delimiter", wire: "data: value", want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := rawSSEFrameTerminated([]byte(test.wire)); got != test.want {
+				t.Fatalf("rawSSEFrameTerminated(%q) = %t, want %t", test.wire, got, test.want)
+			}
+		})
+	}
+}
+
 func TestRawStreamBypassesInboundReframing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		attempt, recorder := newStreamTestAttempt(t, context.Background())

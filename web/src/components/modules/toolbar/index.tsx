@@ -19,10 +19,16 @@ import { useNavStore, type NavItem } from '@/components/modules/navbar';
 import { CreateDialogContent as ChannelCreateContent } from '@/components/modules/channel/Create';
 import { ChannelGroupManagerDialog } from '@/components/modules/channel/GroupManager';
 import { CreateDialogContent as GroupCreateContent } from '@/components/modules/group/Create';
-import { CCSwitchLinkButton } from '@/components/modules/group/CCSwitchLinkButton';
 import { MaintenanceButton } from '@/components/modules/group/MaintenanceButton';
 import { CreateDialogContent as ModelCreateContent } from '@/components/modules/model/Create';
-import { useModelViewStore } from '@/components/modules/model/view-store';
+import { useModelViewStore, type ModelView } from '@/components/modules/model/view-store';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import { useTranslations } from 'next-intl';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useSearchStore } from './search-store';
@@ -60,7 +66,7 @@ const COMBINED_SORT_OPTIONS: readonly CombinedSortOption[] = [
     { value: 'created-desc', field: 'created', order: 'desc', labelKey: 'popover.createdDesc' },
 ] as const;
 
-const OPTION_BUTTON_CLASS = 'min-h-9 sm:h-9 rounded-md border px-3 text-xs font-medium transition-[color,background-color,border-color] duration-150 active:scale-[0.98] py-2 sm:py-0';
+const OPTION_BUTTON_CLASS = 'min-h-11 rounded-md border px-3 text-xs font-medium transition-[color,background-color,border-color] duration-150 active:scale-[0.98] py-2 sm:min-h-9 sm:h-9 sm:py-0';
 const ACTIVE_OPTION_CLASS = 'border-primary/30 bg-primary text-primary-foreground';
 const INACTIVE_OPTION_CLASS = 'border-border bg-card text-foreground hover:border-primary/20 hover:bg-muted/50';
 
@@ -251,10 +257,10 @@ export function Toolbar() {
                 {showSearch && (
                     <div
                         className={cn(
-                            'relative h-9 shrink-0 transition-[width] duration-300 ease-out sm:h-11',
+                            'relative h-11 shrink-0 transition-[width] duration-300 ease-out sm:h-11',
                             searchExpanded
                                 ? 'w-[min(13rem,calc(100vw-12rem))] sm:w-44 lg:w-60'
-                                : 'w-9 sm:w-11'
+                                : 'w-11 sm:w-11'
                         )}
                     >
                         {!searchExpanded ? (
@@ -308,9 +314,6 @@ export function Toolbar() {
                 {toolbarItem === 'group' && (
                     <MaintenanceButton className="hidden sm:inline-flex" />
                 )}
-                {toolbarItem === 'group' && (
-                    <CCSwitchLinkButton className="hidden sm:inline-flex" />
-                )}
                 {/* 筛选弹层：市场摘要/布局/模型筛选仅服务模型广场视图，端点与分类视图隐藏 */}
                 {showFilterPopover && (
                 <div className="flex shrink-0 items-center">
@@ -322,7 +325,7 @@ export function Toolbar() {
                                 className={cn(
                                     buttonVariants({ variant: 'ghost', size: 'default' }),
                                     TOOLBAR_TEXT_ACTION_CLASS,
-                                    "w-9 px-0 sm:w-auto sm:px-3.5"
+                                    "min-w-11 w-11 px-0 sm:w-auto sm:px-3.5"
                                 )}
                             >
                                 <SlidersHorizontal className="header-action-icon size-4 transition-colors duration-300" />
@@ -550,47 +553,65 @@ export function Toolbar() {
 
                     {/* 模型广场 / 可用端点 切换开关：仅模型页显示，置于添加模型按钮左侧 */}
                     {toolbarItem === 'model' ? (
-                        <div className="flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5 sm:gap-1 sm:p-1">
-                            <button
-                                type="button"
-                                onClick={() => setModelView('market')}
-                                aria-pressed={modelView === 'market'}
-                                className={cn(
-                                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:px-4 sm:py-2 sm:text-sm',
-                                    modelView === 'market'
-                                        ? 'bg-primary text-primary-foreground shadow-sm'
-                                        : 'text-muted-foreground hover:text-foreground',
-                                )}
+                        <>
+                            <Select
+                                value={modelView}
+                                onValueChange={(value) => setModelView(value as ModelView)}
                             >
-                                {modelT('marketTitle')}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setModelView('endpoints')}
-                                aria-pressed={modelView === 'endpoints'}
-                                className={cn(
-                                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:px-4 sm:py-2 sm:text-sm',
-                                    modelView === 'endpoints'
-                                        ? 'bg-primary text-primary-foreground shadow-sm'
-                                        : 'text-muted-foreground hover:text-foreground',
-                                )}
-                            >
-                                {endpointsT('title')}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setModelView('categories')}
-                                aria-pressed={modelView === 'categories'}
-                                className={cn(
-                                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:px-4 sm:py-2 sm:text-sm',
-                                    modelView === 'categories'
-                                        ? 'bg-primary text-primary-foreground shadow-sm'
-                                        : 'text-muted-foreground hover:text-foreground',
-                                )}
-                            >
-                                {modelT('priceCategory.title')}
-                            </button>
-                        </div>
+                                <SelectTrigger
+                                    size="default"
+                                    className="h-11 w-[9.5rem] min-w-0 max-[380px]:w-28 sm:hidden"
+                                >
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent align="end">
+                                    <SelectItem value="market">{modelT('marketTitle')}</SelectItem>
+                                    <SelectItem value="endpoints">{endpointsT('title')}</SelectItem>
+                                    <SelectItem value="categories">{modelT('priceCategory.title')}</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <div className="hidden items-center gap-0.5 rounded-lg border border-border bg-card p-0.5 sm:flex sm:gap-1 sm:p-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setModelView('market')}
+                                    aria-pressed={modelView === 'market'}
+                                    className={cn(
+                                        'rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:px-4 sm:py-2 sm:text-sm',
+                                        modelView === 'market'
+                                            ? 'bg-primary text-primary-foreground shadow-sm'
+                                            : 'text-muted-foreground hover:text-foreground',
+                                    )}
+                                >
+                                    {modelT('marketTitle')}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setModelView('endpoints')}
+                                    aria-pressed={modelView === 'endpoints'}
+                                    className={cn(
+                                        'rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:px-4 sm:py-2 sm:text-sm',
+                                        modelView === 'endpoints'
+                                            ? 'bg-primary text-primary-foreground shadow-sm'
+                                            : 'text-muted-foreground hover:text-foreground',
+                                    )}
+                                >
+                                    {endpointsT('title')}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setModelView('categories')}
+                                    aria-pressed={modelView === 'categories'}
+                                    className={cn(
+                                        'rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:px-4 sm:py-2 sm:text-sm',
+                                        modelView === 'categories'
+                                            ? 'bg-primary text-primary-foreground shadow-sm'
+                                            : 'text-muted-foreground hover:text-foreground',
+                                    )}
+                                >
+                                    {modelT('priceCategory.title')}
+                                </button>
+                            </div>
+                        </>
                     ) : null}
 
                     {/* 创建按钮 */}

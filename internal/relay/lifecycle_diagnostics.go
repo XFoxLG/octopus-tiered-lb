@@ -14,7 +14,7 @@ import (
 func (trace *relayRequestTrace) ensureDiagnosticsLocked() *model.RelayDiagnostics {
 	if trace.diagnostics == nil {
 		trace.diagnostics = &model.RelayDiagnostics{
-			Version:    3,
+			Version:    model.RelayDiagnosticsVersion,
 			RequestID:  trace.id,
 			InstanceID: relaylog.LiveInstanceID(),
 			ReceivedAt: trace.startedAt.UnixMilli(),
@@ -295,6 +295,52 @@ func (trace *relayRequestTrace) recordUpstreamError(attempt int, err error) {
 			return
 		}
 	}
+}
+
+func (trace *relayRequestTrace) streamDiagnosticsLocked(attempt int) *model.RelayStreamDiagnostics {
+	diagnostics := trace.ensureDiagnosticsLocked()
+	for i := range diagnostics.Attempts {
+		item := &diagnostics.Attempts[i]
+		if item.Attempt != attempt {
+			continue
+		}
+		stream := &model.RelayStreamDiagnostics{}
+		if item.Stream != nil {
+			*stream = *item.Stream
+		}
+		item.Stream = stream
+		return stream
+	}
+
+	diagnostics.Attempts = append(diagnostics.Attempts, model.RelayAttemptDiagnostics{
+		Attempt: attempt,
+		Stream:  &model.RelayStreamDiagnostics{},
+	})
+	return diagnostics.Attempts[len(diagnostics.Attempts)-1].Stream
+}
+
+func (trace *relayRequestTrace) recordIncompleteStreamEvent(attempt int, eventIndex, eventBytes int64) {
+	if trace == nil {
+		return
+	}
+	trace.mutex.Lock()
+	defer trace.mutex.Unlock()
+	stream := trace.streamDiagnosticsLocked(attempt)
+	stream.IncompleteEventIndex = eventIndex
+	stream.IncompleteEventBytes = eventBytes
+}
+
+func (trace *relayRequestTrace) recordStreamFailure(attempt int, stage, kind string, eventIndex, eventBytes int64) {
+	if trace == nil {
+		return
+	}
+	trace.mutex.Lock()
+	defer trace.mutex.Unlock()
+	stream := trace.streamDiagnosticsLocked(attempt)
+	stream.FailureStage = stage
+	stream.FailureKind = kind
+	stream.FailureEventIndex = eventIndex
+	stream.FailureEventBytes = eventBytes
 }
 
 func (trace *relayRequestTrace) endDiagnosticAttempt(attempt int, ctx context.Context, terminal bool, outputTextPresent *bool) {

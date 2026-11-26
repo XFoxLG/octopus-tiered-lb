@@ -20,7 +20,6 @@ import {
     type UpdateChannelRequest,
     type TestChannelSummary,
 } from '@/api/endpoints/channel';
-import { useSettingList, SettingKey } from '@/api/endpoints/setting';
 import {
     MorphingDialogTitle,
     MorphingDialogDescription,
@@ -41,7 +40,6 @@ import {
 import { formatMoney } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { CCSwitchProviderLink } from './CCSwitchProviderLink';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -66,7 +64,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     const { setIsOpen } = useMorphingDialog();
     const updateChannel = useUpdateChannel();
     const deleteChannel = useDeleteChannel();
-    const { data: settings } = useSettingList();
     const [isEditing, setIsEditing] = useState(false);
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
     // 逐 Key 检查全部不可用时的结果；由测试弹窗回调写入，用于删除确认对话框的总数说明。
@@ -138,7 +135,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
     const t = useTranslations('channel.detail');
     const tProxy = useTranslations('proxyPool');
 
-    const publicApiBaseUrl = settings?.find((item) => item.key === SettingKey.PublicAPIBaseURL)?.value?.trim() ?? '';
 
     const currentView = isEditing ? 'editing' : 'viewing';
 
@@ -393,7 +389,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                     <TabsContents className="flex min-h-0 flex-1 flex-col">
                         <TabsContent value="viewing" className="flex flex-1 min-h-0 flex-col">
                             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain space-y-4 pr-1 sm:space-y-5">
-                                <dl className="grid grid-cols-3 gap-2 sm:gap-3">
+                                <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
                                     <div className="rounded-lg border border-chart-1/18 bg-linear-to-br from-chart-1/10 via-background/42 to-chart-1/5 p-3.5 shadow-sm sm:p-4">
                                         <dt className="flex items-center gap-2 mb-2 text-xs font-medium text-muted-foreground">
                                             <Activity className="size-4 text-chart-1" />
@@ -648,12 +644,6 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
                                         </div>
                                     )}
                                 </section>
-
-                                <CCSwitchProviderLink
-                                    channel={channel}
-                                    publicApiBaseUrl={publicApiBaseUrl}
-                                    sectionClassName={sectionClassName}
-                                />
 
                                 <dl className={sectionClassName}>
                                     <dt className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	appmodel "github.com/lingyuins/octopus/internal/model"
 	tmodel "github.com/lingyuins/octopus/internal/transformer/model"
 )
 
@@ -158,8 +159,8 @@ func TestReasoningBufferDiagnosticsFlushOnlyAfterVisibleOutput(t *testing.T) {
 	if diagnostics == nil {
 		t.Fatal("diagnostics missing")
 	}
-	if diagnostics.Version != 3 {
-		t.Fatalf("version = %d, want 3", diagnostics.Version)
+	if diagnostics.Version != appmodel.RelayDiagnosticsVersion {
+		t.Fatalf("version = %d, want %d", diagnostics.Version, appmodel.RelayDiagnosticsVersion)
 	}
 	if diagnostics.ReasoningBufferStrategy != "buffer" {
 		t.Fatalf("strategy = %q, want buffer", diagnostics.ReasoningBufferStrategy)

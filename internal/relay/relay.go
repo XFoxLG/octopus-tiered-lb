@@ -931,6 +931,8 @@ func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelT
 	if c == nil || relaySemanticWritten(c) {
 		return
 	}
+	var modelUnavailableErr *modelTargetsUnavailableClientError
+	modelUnavailable := errors.As(err, &modelUnavailableErr)
 	if c.Writer.Written() {
 		err = catietasks.ClientError(err)
 		if adapter, exists := c.Get("relay_stream_error_renderer"); exists {
@@ -943,9 +945,23 @@ func writeClientTerminalError(c *gin.Context, channel *dbmodel.Channel, channelT
 				}
 			}
 		}
-		payload, _ := jsonAPI.Marshal(map[string]any{"error": map[string]any{"message": err.Error(), "type": clientErrorType(statusCode), "code": statusCode}})
+		errorType := clientErrorType(statusCode)
+		var errorCode any = statusCode
+		if modelUnavailable {
+			errorType = "upstream_unavailable"
+			errorCode = "upstream_model_unavailable"
+		}
+		payload, _ := jsonAPI.Marshal(map[string]any{"error": map[string]any{"message": err.Error(), "type": errorType, "code": errorCode}})
 		_, _ = c.Writer.Write([]byte("event: error\ndata: " + string(payload) + "\n\n"))
 		_ = http.NewResponseController(c.Writer).Flush()
+		return
+	}
+	if modelUnavailable {
+		c.AbortWithStatusJSON(statusCode, gin.H{"error": gin.H{
+			"message": modelUnavailableErr.Error(),
+			"type":    "upstream_unavailable",
+			"code":    "upstream_model_unavailable",
+		}})
 		return
 	}
 	if termination, ok := terminalCauseFromError(err); ok && termination.Cause.IsProviderRefusal() {
@@ -1168,6 +1184,37 @@ func (ra *relayAttempt) readStreamMismatchBody(body io.ReadCloser) ([]byte, erro
 func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http.Response) (retErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var lastEventIndex, lastEventBytes int64
+	failureStage, failureKind := "", ""
+	markStreamFailure := func(stage, kind string) {
+		failureStage, failureKind = stage, kind
+	}
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		if failureKind == "" {
+			switch {
+			case errors.Is(retErr, errFirstVisibleOutputTimeout):
+				failureStage, failureKind = "deadline", "first_visible_timeout"
+			case errors.Is(retErr, errStreamIdleTimeout):
+				failureStage, failureKind = "deadline", "stream_idle_timeout"
+			case errors.Is(retErr, errMissingStreamTerminal):
+				failureStage, failureKind = "terminal", "missing_terminal"
+			case errors.Is(retErr, errProviderTerminalFailure):
+				failureStage, failureKind = "terminal", "provider_failure"
+			case errors.Is(retErr, errClientDisconnected):
+				failureStage, failureKind = "client", "cancelled"
+			case errors.Is(retErr, context.DeadlineExceeded):
+				failureStage, failureKind = "deadline", "operation_timeout"
+			case errors.Is(retErr, context.Canceled):
+				failureStage, failureKind = "operation", "cancelled"
+			}
+		}
+		if failureKind != "" && ra.metrics != nil && ra.metrics.RequestTrace != nil {
+			ra.metrics.RequestTrace.recordStreamFailure(ra.logAttemptNumber, failureStage, failureKind, lastEventIndex, lastEventBytes)
+		}
+	}()
 	// Canceling the reader goroutine alone cannot unblock a pending Body.Read.
 	defer response.Body.Close()
 	hasDownstreamOutput := false // Payload committed to a client or replay session.
@@ -1348,9 +1395,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 	}
 
 	type sseReadResult struct {
-		data  string
-		frame []byte
-		err   error
+		data            string
+		frame           []byte
+		err             error
+		eventIndex      int64
+		frameTerminated bool
 	}
 	results := make(chan sseReadResult, 1)
 	go func() {
@@ -1361,10 +1410,12 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		}()
 		defer close(results)
 		scanner := rawSSEScanner(response.Body)
+		var eventIndex int64
 		for scanner.Scan() {
+			eventIndex++
 			frame := append([]byte(nil), scanner.Bytes()...)
 			select {
-			case results <- sseReadResult{data: rawSSEData(frame), frame: frame}:
+			case results <- sseReadResult{data: rawSSEData(frame), frame: frame, eventIndex: eventIndex, frameTerminated: rawSSEFrameTerminated(frame)}:
 			case <-ctx.Done():
 				return
 			}
@@ -1686,6 +1737,14 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 		case r, ok = <-results:
 		}
 
+		if r.eventIndex > 0 {
+			lastEventIndex = r.eventIndex
+			lastEventBytes = int64(len(r.frame))
+			if !r.frameTerminated && ra.metrics != nil && ra.metrics.RequestTrace != nil {
+				ra.metrics.RequestTrace.recordIncompleteStreamEvent(ra.logAttemptNumber, r.eventIndex, lastEventBytes)
+			}
+		}
+
 		if !ok {
 			// results channel 被 SSE reader goroutine 关闭。
 			// 需要区分正常结束（上游 EOF）和异常中断（ctx 取消/超时）。
@@ -1753,6 +1812,11 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 				return finishAcceptedTerminal()
 			}
 			logClientDisconnected()
+			readFailureKind := "read_error"
+			if errors.Is(r.err, io.ErrUnexpectedEOF) {
+				readFailureKind = "unexpected_eof"
+			}
+			markStreamFailure("upstream_read", readFailureKind)
 			logRelayErrorfByContext(r.err, "failed to read event: %v", r.err)
 			readErr := taskResponseError(fmt.Errorf("failed to read stream event: %w", r.err))
 			emitStreamInterruption(readErr, false)
@@ -1777,6 +1841,13 @@ func (ra *relayAttempt) handleStreamResponse(ctx context.Context, response *http
 			}
 		}
 		if err != nil {
+			if errors.Is(err, errMissingStreamTerminal) {
+				markStreamFailure("terminal", "missing_terminal")
+			} else if errors.Is(err, io.ErrUnexpectedEOF) {
+				markStreamFailure("transform_event", "unexpected_eof")
+			} else {
+				markStreamFailure("transform_event", "invalid_event")
+			}
 			transformErr := fmt.Errorf("failed to transform stream event: %w", err)
 			emitStreamInterruption(transformErr, false)
 			return transformErr
@@ -2458,6 +2529,8 @@ func handleClientDisconnect(req *relayRequest, allAttempts []dbmodel.ChannelAtte
 func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, maxRouteRetries int, ratelimitCooldown int, maxTotalAttempts int) error {
 	var allAttempts []dbmodel.ChannelAttempt
 	var lastErr error
+	modelUnavailableFailures := 0
+	onlyModelUnavailableFailures := true
 	coolingCandidates := make(recoveryCandidates)
 	completedCandidateScan := false
 	requestRejectedTargets := make(map[string]bool)
@@ -2785,6 +2858,11 @@ func executeRelay(req *relayRequest, group dbmodel.Group, requestModel string, m
 					goto exhausted
 				}
 
+				if result.Decision.UpstreamError != nil && result.Decision.UpstreamError.Category == "model_unavailable" {
+					modelUnavailableFailures++
+				} else {
+					onlyModelUnavailableFailures = false
+				}
 				if requestSpecificRecoveryFailure(result.Decision) {
 					requestRejectedTargets[recoveryTargetKey(channel.ID, usedKey.ID, resolvedModelName)] = true
 				}
@@ -2926,6 +3004,8 @@ exhausted:
 			writeCandidatesCooling(req.c, cooling)
 		} else if errors.Is(req.operationCtx.Err(), context.DeadlineExceeded) {
 			writeClientTerminalError(req.c, nil, outbound.OutboundTypeOpenAIChat, http.StatusGatewayTimeout, errors.New("relay operation timed out"))
+		} else if modelUnavailableFailures > 0 && onlyModelUnavailableFailures {
+			writeClientTerminalError(req.c, nil, outbound.OutboundTypeOpenAIChat, http.StatusServiceUnavailable, &modelTargetsUnavailableClientError{})
 		} else {
 			// 走到这里说明所有候选渠道都已尝试且失败(自愈未成功)。按三级分级
 			// 的「全部渠道不可用」给出面向下游的友好文案;具体上游错误已入日志。

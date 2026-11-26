@@ -206,9 +206,9 @@ type Channel struct {
 	Proxy         bool                  `json:"proxy" gorm:"default:false"`
 	AutoSync      bool                  `json:"auto_sync" gorm:"default:false"`
 	// AutoSyncKeyModels 开启后，模型自动同步任务会逐个 key 抓取上游模型列表，
-	// 并把结果回填到每个 key 的 SupportedModels（按 key 隔离模型权限）。
-	// 抓取失败的 key 保留旧值，绝不清空。默认关闭：关闭时同步任务只抓成本最低
-	// 的一个 key，把结果写进渠道级 Model（保持原有行为不变）。
+	// 并把结果回填到每个 key 的 SupportedModels。路由优先选择目录明确列出的 key；
+	// 若没有 key 列出分组指定模型，则把目录缺项视为未知并允许尝试。抓取失败或空
+	// 目录会保留旧值。关闭时 SupportedModels 仍作为严格过滤，且同步只抓成本最低的 key。
 	AutoSyncKeyModels    bool           `json:"auto_sync_key_models" gorm:"column:auto_sync_key_models;default:false"`
 	AutoGroup            AutoGroupType  `json:"auto_group" gorm:"default:0"`
 	SkipModelTest        bool           `json:"skip_model_test" gorm:"default:false"`
@@ -339,9 +339,9 @@ type ChannelKey struct {
 	TotalCost        float64 `json:"total_cost"`
 	Priority         int     `json:"priority" gorm:"default:0"`
 	Remark           string  `json:"remark"`
-	// SupportedModels 逗号分隔的模型列表，限定该 key 只能用于这些模型。
-	// 空表示不限制（兼容存量 key）。key 选择时用 ModelMatches 过滤，
-	// 避免把不支持当前模型的 key 发给上游（如上游中转站某 token 无某模型权限）。
+	// SupportedModels 是逗号分隔的模型目录。AutoSyncKeyModels 关闭时，非空列表
+	// 严格限制该 key；开启时，明确匹配的 key 优先，目录缺项在没有其他匹配 key 时
+	// 视为未知并允许尝试。空列表仍表示不限制（兼容存量 key）。
 	// type:text：模型列表逗号连接后可轻松超过 512 字符（实测聚合站 123 个模型
 	// ≈ 2346 字符），varchar(512) 在 MySQL/PG 严格模式下会拒写导致 update 500（迁移 070）。
 	SupportedModels string `json:"supported_models,omitempty" gorm:"column:supported_models;type:text"`
@@ -833,10 +833,12 @@ func (c *Channel) GetChannelKeyExcludingWithCooldown(excludeKeyIDs []int, modelN
 		if _, excluded := excludeSet[k.ID]; excluded {
 			continue
 		}
-		// 按模型过滤：key 的 SupportedModels 非空时，只选支持当前模型的 key。
-		// 空表示不限制（兼容存量 key）。用 ModelMatches 做 trim 后精确比较。
-		// modelName 为空（后台任务）时不跳过。
-		if modelName != "" && !ModelMatches(k.SupportedModels, modelName) {
+		// 按模型过滤。自动同步目录是正向证据：优先用明确列出模型的 key；若没有任何
+		// 可用 key 列出该模型，则缺项按未知处理并允许尝试。手动模型限制仍严格生效。
+		// 空 SupportedModels 表示不限；自动同步下它是未知目录，不算明确匹配。
+		// 后台任务不按模型过滤。
+		matchesModel := modelName == "" || ModelMatches(k.SupportedModels, modelName)
+		if modelName != "" && !matchesModel && !c.AutoSyncKeyModels {
 			continue
 		}
 		// 按模型粒度冷却：仅当该 (channelID, keyID, modelName) 处于冷却期时跳过。
@@ -846,6 +848,17 @@ func (c *Channel) GetChannelKeyExcludingWithCooldown(excludeKeyIDs []int, modelN
 			continue
 		}
 		candidates = append(candidates, k)
+	}
+	if c.AutoSyncKeyModels && modelName != "" {
+		matched := make([]ChannelKey, 0, len(candidates))
+		for _, k := range candidates {
+			if strings.TrimSpace(k.SupportedModels) != "" && ModelMatches(k.SupportedModels, modelName) {
+				matched = append(matched, k)
+			}
+		}
+		if len(matched) > 0 {
+			candidates = matched
+		}
 	}
 	if len(candidates) == 0 {
 		return ChannelKey{}

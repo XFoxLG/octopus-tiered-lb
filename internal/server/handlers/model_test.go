@@ -81,10 +81,10 @@ func seedChannelAndGroup(t *testing.T) (int64, int64) {
 	t.Helper()
 
 	ch := model.Channel{
-		Name:    "test-channel",
-		Type:    1,
+		Name:     "test-channel",
+		Type:     1,
 		BaseUrls: []model.BaseUrl{{URL: "https://example.com"}},
-		Enabled: true,
+		Enabled:  true,
 	}
 	if err := db.GetDB().WithContext(context.Background()).Create(&ch).Error; err != nil {
 		t.Fatalf("create channel: %v", err)
@@ -302,6 +302,54 @@ func TestGetModelListWithEndpointParam_DefaultNoParamStillWorks(t *testing.T) {
 	if !hasMusic || !hasChat {
 		t.Error("default /v1/models (no endpoint param) should include both music and chat models")
 	}
+}
+
+func TestGetModelListKeepsConfiguredAliasWhenChannelCatalogChanges(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	apiKeyID, cleanup := setupModelListTest(t)
+	defer cleanup()
+
+	chID, _ := seedChannelAndGroup(t)
+	if err := db.GetDB().WithContext(context.Background()).Model(&model.Channel{}).
+		Where("id = ?", chID).Update("model", "current-upstream-model").Error; err != nil {
+		t.Fatalf("update channel's current catalog: %v", err)
+	}
+	if err := db.GetDB().WithContext(context.Background()).Create(&model.Group{
+		Name:         "stable-public-alias",
+		EndpointType: model.EndpointTypeChat,
+		Mode:         1,
+		Items: []model.GroupItem{
+			{ChannelID: int(chID), ModelName: "current-upstream-model", Priority: 1, Weight: 1},
+		},
+	}).Error; err != nil {
+		t.Fatalf("create stable group route: %v", err)
+	}
+	if err := op.InitCache(); err != nil {
+		t.Fatalf("refresh cache: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	c.Request = c.Request.WithContext(context.Background())
+	c.Set("api_key_id", apiKeyID)
+	getModelList(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var body struct {
+		Data []model.OpenAIModel `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal model list: %v", err)
+	}
+	for _, listed := range body.Data {
+		if listed.ID == "stable-public-alias" {
+			return
+		}
+	}
+	t.Fatalf("/v1/models omitted configured group alias: %s", recorder.Body.String())
 }
 
 func TestGetModelListAnthropicResponseShape(t *testing.T) {
