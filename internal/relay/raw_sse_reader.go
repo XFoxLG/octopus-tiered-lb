@@ -53,6 +53,27 @@ func rawSSEScanner(body io.Reader) *bufio.Scanner {
 	scanner.Buffer(make([]byte, 4096), maxSSEEventSize)
 	return scanner
 }
+
+func rawSSEFrameTerminated(frame []byte) bool {
+	lineBreaks := 0
+	for index := len(frame) - 1; index >= 0 && lineBreaks < 2; {
+		switch frame[index] {
+		case '\n':
+			lineBreaks++
+			index--
+			if index >= 0 && frame[index] == '\r' {
+				index--
+			}
+		case '\r':
+			lineBreaks++
+			index--
+		default:
+			return false
+		}
+	}
+	return lineBreaks == 2
+}
+
 func rawSSEHasData(frame []byte) bool {
 	for _, line := range bytes.Split(bytes.ReplaceAll(frame, []byte("\r"), []byte("\n")), []byte("\n")) {
 		if bytes.HasPrefix(line, []byte("data:")) {

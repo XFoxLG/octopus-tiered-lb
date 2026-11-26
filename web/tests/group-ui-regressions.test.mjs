@@ -251,6 +251,20 @@ test('group advanced fields retain shrinkable native selects and a labeled overr
     assert.doesNotMatch(source, /md:col-span-2/);
 });
 
+test('collapsed group cards wrap and expose the full first model name', () => {
+    const source = readSource('../src/components/modules/group/GroupListItem.tsx');
+    const summaryStart = source.indexOf('<div className="flex min-w-0 flex-wrap items-baseline gap-x-1 text-xs text-muted-foreground">');
+    const summaryEnd = source.indexOf('</div>', summaryStart);
+    assert.notEqual(summaryStart, -1);
+    assert.notEqual(summaryEnd, -1);
+    const summary = source.slice(summaryStart, summaryEnd);
+    assert.match(summary, /flex min-w-0 flex-wrap/);
+    assert.match(summary, /\[overflow-wrap:anywhere\]/);
+    assert.match(summary, /title=\{firstModelName\}/);
+    assert.match(summary, /card\.modelCount/);
+    assert.doesNotMatch(summary, /line-clamp|truncate/);
+});
+
 
 function editorFixture(relativePath) {
     const sourceFile = parseSource(relativePath);

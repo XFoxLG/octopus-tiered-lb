@@ -28,6 +28,7 @@ import {
     MorphingDialogDescription,
 } from '@/components/ui/morphing-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/animate-ui/components/animate/tooltip';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 /** Format count or money result into a compact display string like "1.23 万". */
 function fmt({ value, unit }: { value: string; unit: string }) {
@@ -266,6 +267,8 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
     const tNonChat = useTranslations('nonChat');
     const tGroup = useTranslations('group');
     const { detail, error: detailError, isLoading: isDetailLoading, fetchDetail, reset: resetDetail } = useLogDetail();
+    const isMobile = useIsMobile();
+    const [mobileDetailTab, setMobileDetailTab] = useState<'request' | 'response' | 'diagnostics'>('request');
     const hasError = !!log.error;
     const clientDisconnected = isClientDisconnectText(log.error);
     const hasMultipleAttempts = log.attempts && log.attempts.length > 1;
@@ -397,7 +400,10 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
         // provider creates many parallel global tooltip singletons — each with its
         // own layoutId animation + useFloating autoUpdate listeners — which spirals
         // into a layout-animation loop and OOMs the tab on hover. Reuse the global one.
-        <MorphingDialog disableSharedLayout onOpen={() => fetchDetail(log.id)} onClose={resetDetail}>
+        <MorphingDialog disableSharedLayout onOpen={() => {
+            setMobileDetailTab('request');
+            fetchDetail(log.id);
+        }} onClose={resetDetail}>
                 <MorphingDialogTrigger
                     className={cn(
                         "rounded-xl border bg-card w-full text-left",
@@ -642,9 +648,9 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                 </MorphingDialogTrigger>
 
                 <MorphingDialogContainer unmountOnClose>
-                    <MorphingDialogContent className="relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl bg-card px-6 py-4 text-card-foreground md:w-[95vw] md:max-w-7xl">
+                    <MorphingDialogContent className="relative flex max-h-[calc(100dvh-1rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] min-h-0 w-[calc(100vw-1rem-env(safe-area-inset-left,0px)-env(safe-area-inset-right,0px))] flex-col overflow-hidden rounded-xl bg-card px-3 py-3 text-card-foreground sm:px-6 sm:py-4 md:max-h-[calc(100dvh-2rem)] md:w-[95vw] md:max-w-7xl">
                         <MorphingDialogClose className="top-4 right-5 text-muted-foreground hover:text-foreground transition-colors" />
-                        <MorphingDialogTitle className="flex items-center gap-2 mb-3 pr-12 text-sm">
+                        <MorphingDialogTitle className="flex flex-wrap items-center gap-x-1.5 gap-y-1 mb-3 pr-12 text-sm md:gap-2">
                             <ModelAvatar size={28} />
                             <span className="min-w-0 shrink truncate font-semibold text-card-foreground" title={displayRequestModelName}>{displayRequestModelName}</span>
                             {log.is_test && (
@@ -705,7 +711,7 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                             {log.upstream_model && (
                                 <span
                                     className={cn(
-                                        'shrink-0 rounded border px-1 py-0.5 text-[10px]',
+                                        'max-w-full shrink-0 break-all rounded border px-1 py-0.5 text-[10px] [overflow-wrap:anywhere]',
                                         isUpstreamModelMismatch(log.upstream_model, log.actual_model_name)
                                             ? 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400'
                                             : 'border-border/60 bg-muted/60 text-muted-foreground',
@@ -720,9 +726,40 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                             )}
                         </MorphingDialogTitle>
 
-                        <MorphingDialogDescription className="flex min-h-0 flex-1 overflow-hidden">
-                            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
-                                {(hasError || hasMultipleAttempts) && (
+                        <MorphingDialogDescription className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                            {isMobile && (
+                                <div role="tablist" aria-label={t('forensics.diagnostics')} className="mb-2 grid shrink-0 grid-cols-3 gap-1 rounded-lg border border-border/40 bg-muted/30 p-1">
+                                    {(['request', 'response', 'diagnostics'] as const).map((tab) => {
+                                        const label = t(`forensics.${tab === 'request' ? 'requestPreview' : tab === 'response' ? 'responsePreview' : 'diagnostics'}`);
+                                        const selected = mobileDetailTab === tab;
+                                        return (
+                                            <button
+                                                key={tab}
+                                                id={`log-detail-tab-${log.id}-${tab}`}
+                                                type="button"
+                                                role="tab"
+                                                aria-selected={selected}
+                                                aria-controls={`log-detail-panel-${log.id}`}
+                                                onClick={() => setMobileDetailTab(tab)}
+                                                className={cn(
+                                                    'min-h-11 min-w-0 rounded-md px-1.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring',
+                                                    selected ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                                                )}
+                                            >
+                                                <span className="block truncate">{label}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                            <div
+                                id={`log-detail-panel-${log.id}`}
+                                role={isMobile ? 'tabpanel' : undefined}
+                                aria-labelledby={isMobile ? `log-detail-tab-${log.id}-${mobileDetailTab}` : undefined}
+                                tabIndex={isMobile ? 0 : undefined}
+                                className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overscroll-contain"
+                            >
+                                {(!isMobile || mobileDetailTab === 'diagnostics') && (hasError || hasMultipleAttempts) && (
                                     <div className={cn(
                                         "flex flex-col rounded-xl border",
                                         hasError
@@ -875,11 +912,16 @@ export const LogCard = memo(function LogCard({ log, channelNameById, channelKeyL
                                         </AnimatePresence>
                                     </div>
                                 )}
-                                <BoundaryDetails detail={detail} error={detailError} isLoading={isDetailLoading} />
+                                <BoundaryDetails
+                                    detail={detail}
+                                    error={detailError}
+                                    isLoading={isDetailLoading}
+                                    section={isMobile ? mobileDetailTab : undefined}
+                                />
                             </div>
                         </MorphingDialogDescription>
 
-                        <div className="max-h-[40dvh] shrink-0 space-y-3 overflow-y-auto overscroll-contain border-t border-border/50 pt-3 text-xs text-muted-foreground">
+                        <div className="max-h-[28dvh] shrink-0 space-y-3 overflow-y-auto overscroll-contain border-t border-border/50 pt-3 text-xs text-muted-foreground sm:max-h-[40dvh]">
                             {investigationMarkers.length > 0 && (
                                 <div className="mb-2 flex flex-wrap gap-1.5">
                                     {investigationMarkers.map((marker) => (

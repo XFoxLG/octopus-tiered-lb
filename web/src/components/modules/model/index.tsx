@@ -209,7 +209,7 @@ export function Model() {
                                     onClick={() => setDedupe(!dedupe)}
                                     aria-pressed={dedupe}
                                     className={cn(
-                                        'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                                        'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
                                         dedupe
                                             ? 'border-primary/40 bg-primary/10 text-primary'
                                             : 'border-border bg-card text-muted-foreground hover:text-foreground',

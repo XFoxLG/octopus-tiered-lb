@@ -316,6 +316,11 @@ test('channel detail keeps a single test entry and drops the retired parallel bu
     assert.equal(fs.existsSync(new URL('../src/components/modules/channel/ProbeDialog.tsx', import.meta.url)), false);
 });
 
+test('channel detail metrics use two readable columns on narrow screens', () => {
+    const card = read('../src/components/modules/channel/CardContent.tsx');
+    assert.match(card, /grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3/);
+});
+
 const mixedProbe = {
     id: 11, model_name: 'robin-3.1-pro', channel_id: 7, key_id: 1, applied: false,
     results: [

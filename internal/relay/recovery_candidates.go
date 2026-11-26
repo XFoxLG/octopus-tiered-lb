@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -34,7 +35,8 @@ func (c recoveryCandidates) earliestRecovery() time.Time {
 		var keyRemaining time.Duration
 		eligible, allKeysCooling := false, true
 		for _, key := range candidate.channel.Keys {
-			if !key.Enabled || key.ChannelKey == "" || !model.ModelMatches(key.SupportedModels, candidate.model) {
+			modelListed := model.ModelMatches(key.SupportedModels, candidate.model)
+			if !key.Enabled || key.ChannelKey == "" || (!modelListed && !candidate.channel.AutoSyncKeyModels) {
 				continue
 			}
 			eligible = true
@@ -78,14 +80,25 @@ func (e *candidatesCoolingError) Error() string {
 	return fmt.Sprintf("all eligible upstream targets are cooling down; earliest scheduled retry at %s", e.until.UTC().Format(time.RFC3339))
 }
 
+type modelTargetsUnavailableClientError struct{}
+
+func (*modelTargetsUnavailableClientError) Error() string {
+	return "当前没有上游接受分组配置的模型映射，请检查渠道模型名称，或稍后重试。"
+}
+
+func (e *candidatesCoolingError) clientMessage() string {
+	beijing := time.FixedZone("UTC+08:00", 8*60*60)
+	return fmt.Sprintf("所有可用上游目标均在冷却中，预计最早于 %s（北京时间，UTC+08:00）可重试。", e.until.In(beijing).Format("2006-01-02 15:04:05"))
+}
+
 func writeCandidatesCooling(c *gin.Context, err *candidatesCoolingError) {
 	seconds := max(1, int(math.Ceil(time.Until(err.until).Seconds())))
 	if c.Writer.Written() {
-		writeClientTerminalError(c, nil, outbound.OutboundTypeOpenAIChat, http.StatusServiceUnavailable, err)
+		writeClientTerminalError(c, nil, outbound.OutboundTypeOpenAIChat, http.StatusServiceUnavailable, errors.New(err.clientMessage()))
 		return
 	}
 	c.Header("Retry-After", strconv.Itoa(seconds))
-	c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": err.Error(), "type": "upstream_unavailable", "code": "upstream_recovery_pending", "retry_after": seconds, "retry_at": err.until.UTC().Format(time.RFC3339)}})
+	c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": err.clientMessage(), "type": "upstream_unavailable", "code": "upstream_recovery_pending", "retry_after": seconds, "retry_at": err.until.UTC().Format(time.RFC3339)}})
 }
 
 func requestSpecificRecoveryFailure(decision RetryDecision) bool {

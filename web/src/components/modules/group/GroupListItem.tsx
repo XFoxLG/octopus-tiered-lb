@@ -882,13 +882,20 @@ export function GroupListItem({ group }: { group: Group }) {
                                 </Tooltip>
                             )}
                         </h3>
-                        <p className="line-clamp-2 text-xs text-muted-foreground">
-                            {group.category ? `${group.category} · ` : ''}
-                            {modeLabel}
-                            {firstModelName ? ` · ${firstModelName}` : ''}
-                            {' · '}
-                            {t('card.modelCount', { count: memberCount })}
-                        </p>
+                        <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 text-xs text-muted-foreground">
+                            <span className="min-w-0 [overflow-wrap:anywhere]">
+                                {group.category ? `${group.category} · ` : ''}
+                                {modeLabel}
+                            </span>
+                            {firstModelName && (
+                                <span className="min-w-0 [overflow-wrap:anywhere]" title={firstModelName}>
+                                    · {firstModelName}
+                                </span>
+                            )}
+                            <span className="shrink-0">
+                                · {t('card.modelCount', { count: memberCount })}
+                            </span>
+                        </div>
                     </div>
                 </div>
 

@@ -67,7 +67,7 @@ func (r *RelayLog) SetNonChatObservation(o *transmodel.NonChatObservation, reque
 		}
 	}
 	if r.Diagnostics == nil {
-		r.Diagnostics = &RelayDiagnostics{Version: 1}
+		r.Diagnostics = &RelayDiagnostics{Version: RelayDiagnosticsVersion}
 	}
 	r.Diagnostics.NonChatUsage = o
 }

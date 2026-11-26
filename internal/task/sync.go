@@ -12,7 +12,6 @@ import (
 	"github.com/lingyuins/octopus/internal/helper"
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/op/channel"
-	"github.com/lingyuins/octopus/internal/op/group"
 	"github.com/lingyuins/octopus/internal/op/llm"
 
 	"github.com/lingyuins/octopus/internal/utils/diff"
@@ -70,6 +69,24 @@ func SyncModelsTask() {
 		fetchMu      sync.Mutex
 		fetchResults = make([]fetchResult, 0, len(channels))
 	)
+	retainedPriceModels := make([]string, 0, 32)
+	retainedPriceModelSet := make(map[string]struct{}, 32)
+	retainLastKnownPriceModels := func(ch model.Channel) {
+		modelNames := xstrings.SplitTrimCompact(",", ch.Model)
+		fetchMu.Lock()
+		defer fetchMu.Unlock()
+		for _, modelName := range modelNames {
+			modelName = strings.ToLower(strings.TrimSpace(modelName))
+			if modelName == "" {
+				continue
+			}
+			if _, exists := retainedPriceModelSet[modelName]; exists {
+				continue
+			}
+			retainedPriceModelSet[modelName] = struct{}{}
+			retainedPriceModels = append(retainedPriceModels, modelName)
+		}
+	}
 	fg, fgctx := errgroup.WithContext(ctx)
 	fg.SetLimit(syncFetchConcurrency())
 	for _, ch := range channels {
@@ -79,17 +96,19 @@ func SyncModelsTask() {
 		}
 		if syncFailureTracker.ShouldSkip(ch.ID) {
 			log.Debugf("skipping channel %s (id=%d) — in cooldown", ch.Name, ch.ID)
+			retainLastKnownPriceModels(ch)
 			continue
 		}
 		fg.Go(func() error {
-			// 开启「按 key 隔离模型」的渠道：逐个 key 抓取，结果回填到各 key 的
-			// SupportedModels；渠道级 Model 仍写所有成功 key 的并集（语义与原来一致）。
+			// 开启「按 key 隔离模型」的渠道：逐个 key 抓取并回填 SupportedModels；
+			// 渠道级 Model 写成功目录并集，并保留失败或空目录 key 的最后有效目录。
 			// 与单 key 路径同样使用短超时 client，避免不可达 endpoint 拖垮整轮同步。
 			if ch.AutoSyncKeyModels {
 				perKey, err := helper.FetchModelsPerKeyShortTimeout(fgctx, ch)
 				if err != nil {
 					log.Warnf("failed to fetch models per key for channel %s: %v", ch.Name, err)
 					syncFailureTracker.RecordFailure(ch.ID, ch.Name)
+					retainLastKnownPriceModels(ch)
 					return nil
 				}
 				if !anyKeyFetchPassed(perKey.Results) {
@@ -98,14 +117,16 @@ func SyncModelsTask() {
 					// 否则一次上游抖动就会解除全部模型隔离 / 删光渠道模型。
 					log.Warnf("all keys failed to fetch models for channel %s, skipping (keeping existing models)", ch.Name)
 					syncFailureTracker.RecordFailure(ch.ID, ch.Name)
+					retainLastKnownPriceModels(ch)
 					return nil
 				}
-				union := unionKeyModels(perKey.Results, ch.Keys)
+				union := unionKeyModels(perKey.Results, ch.Keys, ch.Model)
 				if len(union) == 0 {
-					// 有 key 抓取成功但上游返回空列表，且没有可用的旧值：同样跳过，
-					// 不写空 Model（写空会连带删除 GroupItem 与价格行）。
-					log.Warnf("channel %s fetched an empty model list, skipping", ch.Name)
+					// 有 key 抓取成功但上游返回空列表，且没有可用的旧值：保留
+					// channels.model 快照，避免把临时空目录当成模型已删除。
+					log.Warnf("channel %s fetched an empty model list, skipping (keeping existing models)", ch.Name)
 					syncFailureTracker.RecordFailure(ch.ID, ch.Name)
+					retainLastKnownPriceModels(ch)
 					return nil
 				}
 				syncFailureTracker.RecordSuccess(ch.ID)
@@ -123,6 +144,14 @@ func SyncModelsTask() {
 			if err != nil {
 				log.Warnf("failed to fetch models for channel %s: %v", ch.Name, err)
 				syncFailureTracker.RecordFailure(ch.ID, ch.Name)
+				retainLastKnownPriceModels(ch)
+				return nil
+			}
+			fetchModels = xstrings.TrimCompact(fetchModels)
+			if len(fetchModels) == 0 {
+				log.Warnf("channel %s fetched an empty model list, skipping (keeping existing models)", ch.Name)
+				syncFailureTracker.RecordFailure(ch.ID, ch.Name)
+				retainLastKnownPriceModels(ch)
 				return nil
 			}
 			syncFailureTracker.RecordSuccess(ch.ID)
@@ -173,22 +202,23 @@ func SyncModelsTask() {
 				continue
 			}
 		}
-		// 批量删除消失的模型对应的 GroupItem
+		// A changing upstream catalog is discovery evidence, not an instruction
+		// to rewrite the administrator's configured channel/model routes.
 		if len(deletedModels) > 0 {
-			log.Infof("deleted channel %s models: %v", ch.Name, deletedModels)
-			keys := make([]model.GroupIDAndLLMName, len(deletedModels))
-			for i, m := range deletedModels {
-				keys[i] = model.GroupIDAndLLMName{ChannelID: ch.ID, ModelName: m}
-			}
-			if err := group.GroupItemBatchDelByChannelAndModels(keys, ctx); err != nil {
-				log.Errorf("failed to batch delete group items for channel %s: %v", ch.Name, err)
-			}
+			log.Debugf("channel %s catalog no longer lists models %v; configured group routes are retained", ch.Name, deletedModels)
 		}
 
 		// 自动分组
 		if len(newModels) > 0 {
 			helper.ChannelAutoGroup(&ch, ctx)
 		}
+	}
+	for _, modelName := range retainedPriceModels {
+		if _, exists := seenTotalNewModels[modelName]; exists {
+			continue
+		}
+		seenTotalNewModels[modelName] = struct{}{}
+		totalNewModels = append(totalNewModels, modelName)
 	}
 	llmPrice, err := llm.List(ctx)
 	if err != nil {
@@ -240,16 +270,16 @@ func anyKeyFetchPassed(results []helper.KeyModelResult) bool {
 // unionKeyModels 计算写回渠道级 channels.model 的模型列表：
 //
 //   - 所有抓取成功的 key 的模型并集；
-//   - 加上抓取失败的 key 已记录的 SupportedModels（保留旧值）。
+//   - 加上抓取失败或成功返回空目录的 key 已记录的 SupportedModels（保留旧值）；
+//   - 若任意 key 抓取失败或返回空目录，再保留上一轮渠道总目录，因为旧目录无法归属到某个 key。
 //
-// 第二项是必须的：若只用成功 key 的并集，一次局部上游抖动就会把“只有失败 key
-// 支持”的模型从 channels.model 里删掉，连带删除 GroupItem 与价格行（阶段二
-// 的 deletedModels 分支），并且那个 key 在下轮成功前完全不可路由。这与
-// “抓取失败的 key 保留旧值”的安全策略一致：权限未知时保留既有事实，不做推断。
+// 后两项是必须的：若只用本次非空成功目录的并集，一次局部上游抖动就会从渠道目录和
+// 自动价格发现结果中丢掉“只有失败或空目录 key 曾列出”的模型。权限未知时保留最后
+// 一次有效发现，不把失败或空列表推断成模型已删除。
 //
 // 不直接用 helper.FetchModelsPerKeyResult.AllModels：后者由 map 遍历得到、
 // 顺序不确定，会让 CSV 每轮“伪变化”而反复写库。
-func unionKeyModels(results []helper.KeyModelResult, currentKeys []model.ChannelKey) []string {
+func unionKeyModels(results []helper.KeyModelResult, currentKeys []model.ChannelKey, previousChannelModels string) []string {
 	supportedByKey := make(map[int]string, len(currentKeys))
 	for _, k := range currentKeys {
 		supportedByKey[k.ID] = k.SupportedModels
@@ -257,6 +287,7 @@ func unionKeyModels(results []helper.KeyModelResult, currentKeys []model.Channel
 
 	seen := make(map[string]struct{})
 	union := make([]string, 0, 32)
+	hasIncompleteKeyCatalog := false
 	add := func(models []string) {
 		for _, m := range xstrings.TrimCompact(models) {
 			if _, ok := seen[m]; ok {
@@ -273,9 +304,15 @@ func unionKeyModels(results []helper.KeyModelResult, currentKeys []model.Channel
 			add(models)
 			continue
 		}
+		if !r.Passed || len(models) == 0 {
+			hasIncompleteKeyCatalog = true
+		}
 		if old, ok := supportedByKey[r.KeyID]; ok && old != "" {
 			add(xstrings.SplitTrimCompact(",", old))
 		}
+	}
+	if hasIncompleteKeyCatalog {
+		add(xstrings.SplitTrimCompact(",", previousChannelModels))
 	}
 	return union
 }

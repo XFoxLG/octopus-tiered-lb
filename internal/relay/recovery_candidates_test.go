@@ -13,6 +13,7 @@ import (
 	"github.com/lingyuins/octopus/internal/model"
 	"github.com/lingyuins/octopus/internal/relay/balancer"
 	llmmodel "github.com/lingyuins/octopus/internal/transformer/model"
+	"github.com/lingyuins/octopus/internal/transformer/outbound"
 )
 
 func TestAllCandidatesCoolingReturnsAccurate503(t *testing.T) {
@@ -38,12 +39,48 @@ func TestAllCandidatesCoolingReturnsAccurate503(t *testing.T) {
 		c, _ := gin.CreateTestContext(recorder)
 		c.Request = httptest.NewRequest("POST", "/v1/chat/completions", http.NoBody)
 		writeCandidatesCooling(c, &candidatesCoolingError{until})
-		if recorder.Code != 503 || recorder.Header().Get("Retry-After") != "900" || !strings.Contains(recorder.Body.String(), "upstream_recovery_pending") {
+		if recorder.Code != 503 || recorder.Header().Get("Retry-After") != "900" ||
+			!strings.Contains(recorder.Body.String(), "upstream_recovery_pending") ||
+			!strings.Contains(recorder.Body.String(), "北京时间，UTC+08:00") ||
+			strings.Contains(recorder.Body.String(), "all eligible upstream targets") {
 			t.Fatalf("response=%d %v %s", recorder.Code, recorder.Header(), recorder.Body)
 		}
 		balancer.ClearKeyCooldown(91002, 91002, "model-a")
 		if !candidates.earliestRecovery().IsZero() {
 			t.Fatal("available candidate incorrectly hidden by global cooldown")
+		}
+	})
+}
+
+func TestCandidatesCoolingClientMessageUsesBeijingTimeAndKeepsDiagnosticEnglish(t *testing.T) {
+	err := &candidatesCoolingError{
+		until: time.Date(2026, time.November, 21, 17, 18, 14, 0, time.UTC),
+	}
+	const wantClient = "所有可用上游目标均在冷却中，预计最早于 2026-11-22 01:18:14（北京时间，UTC+08:00）可重试。"
+	if got := err.clientMessage(); got != wantClient {
+		t.Fatalf("clientMessage() = %q, want %q", got, wantClient)
+	}
+	if got, want := err.Error(), "all eligible upstream targets are cooling down; earliest scheduled retry at 2026-11-21T17:18:14Z"; got != want {
+		t.Fatalf("Error() = %q, want diagnostic %q", got, want)
+	}
+}
+
+func TestAutoSyncUnknownModelKeyCooldownContributesRecoveryTime(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const channelID, keyID = 91005, 91005
+		channel := &model.Channel{
+			ID:                channelID,
+			Enabled:           true,
+			AutoSyncKeyModels: true,
+			Keys:              []model.ChannelKey{{ID: keyID, Enabled: true, ChannelKey: "synthetic", SupportedModels: "other-model"}},
+		}
+		candidates := make(recoveryCandidates)
+		candidates.observe(channel, "configured-model")
+		balancer.RecordKeyCooldownWithRetryAfter(channelID, keyID, "configured-model", http.StatusTooManyRequests, 15*time.Minute)
+		t.Cleanup(func() { balancer.ClearKeyCooldown(channelID, keyID, "configured-model") })
+
+		if got := time.Until(candidates.earliestRecovery()); got != 15*time.Minute {
+			t.Fatalf("recovery=%v, want cooldown for the unknown auto-sync key", got)
 		}
 	})
 }
@@ -61,8 +98,56 @@ func TestCandidatesCoolingAfterPingUsesOneStreamError(t *testing.T) {
 	}
 	stop()
 	writeCandidatesCooling(c, &candidatesCoolingError{time.Now().Add(15 * time.Minute)})
-	if recorder.Code != 200 || recorder.Header().Get("Retry-After") != "" || strings.Count(recorder.Body.String(), "event: error") != 1 || strings.Contains(recorder.Body.String(), "[DONE]") {
+	if recorder.Code != 200 || recorder.Header().Get("Retry-After") != "" ||
+		strings.Count(recorder.Body.String(), "event: error") != 1 ||
+		strings.Contains(recorder.Body.String(), "[DONE]") ||
+		!strings.Contains(recorder.Body.String(), "北京时间，UTC+08:00") ||
+		strings.Contains(recorder.Body.String(), "all eligible upstream targets") {
 		t.Fatalf("invalid committed response: %d %v %s", recorder.Code, recorder.Header(), recorder.Body)
+	}
+}
+
+func TestModelTargetsUnavailableWritesStructured503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", http.NoBody)
+
+	writeClientTerminalError(c, nil, outbound.OutboundTypeOpenAIChat, http.StatusServiceUnavailable, &modelTargetsUnavailableClientError{})
+
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`"type":"upstream_unavailable"`,
+		`"code":"upstream_model_unavailable"`,
+		"当前没有上游接受分组配置的模型映射",
+	} {
+		if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(body, want) {
+			t.Fatalf("response=%d body=%s, want %q", recorder.Code, body, want)
+		}
+	}
+}
+
+func TestModelTargetsUnavailableAfterStreamCommitWritesOneErrorEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", http.NoBody)
+	w := installRelayResponseWriter(c)
+	defer w.close()
+	stop, err := w.keepalive(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop()
+
+	writeClientTerminalError(c, nil, outbound.OutboundTypeOpenAIChat, http.StatusServiceUnavailable, &modelTargetsUnavailableClientError{})
+
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusOK ||
+		strings.Count(body, "event: error") != 1 ||
+		!strings.Contains(body, `"code":"upstream_model_unavailable"`) ||
+		strings.Contains(body, "[DONE]") {
+		t.Fatalf("invalid committed response: %d %s", recorder.Code, body)
 	}
 }
 

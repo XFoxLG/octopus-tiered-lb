@@ -468,6 +468,33 @@ func TestKeySupportedModelsFiltersByModel(t *testing.T) {
 	}
 }
 
+func TestAutoSyncKeyModelCatalogPrefersListedKeysAndFallsBackToUnknown(t *testing.T) {
+	cleanup := setupCostTest()
+	defer cleanup()
+
+	unlisted := enabledKey(1, 1.0)
+	unlisted.SupportedModels = "other-model"
+	unknown := enabledKey(3, 0.1)
+	listed := enabledKey(2, 10.0)
+	listed.SupportedModels = "target-model"
+	ch := makeChannelWithKeys(unlisted, unknown, listed)
+	ch.AutoSyncKeyModels = true
+
+	key := ch.GetChannelKeyWithCooldown("target-model", 300)
+	if key.ID != listed.ID {
+		t.Fatalf("selected key %d, want listed key %d while a positive catalog match exists", key.ID, listed.ID)
+	}
+
+	// If no enabled key lists the explicitly configured model, catalog absence
+	// is uncertain for an auto-sync channel, so the route may still be attempted.
+	// This includes keys whose catalog is empty; they must not outrank an explicit match.
+	ch.Keys = []ChannelKey{unlisted, unknown}
+	key = ch.GetChannelKeyWithCooldown("target-model", 300)
+	if key.ID != unknown.ID {
+		t.Fatalf("selected key %d, want lowest-cost unknown-capability key %d as fallback", key.ID, unknown.ID)
+	}
+}
+
 // TestKeySupportedModelsEmptyMeansNoRestriction 验证空 SupportedModels
 // 表示不限制（兼容存量 key）：任何模型都可选中该 key。
 func TestKeySupportedModelsEmptyMeansNoRestriction(t *testing.T) {

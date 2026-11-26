@@ -738,7 +738,7 @@ func recordTestLog(ctx context.Context, endpointType string, item appmodel.Group
 		IsTest:            true,
 	}
 	if result.Evidence != nil {
-		relayLog.Diagnostics = &appmodel.RelayDiagnostics{Version: 3, SelectedAttempt: 1, Probe: result.Evidence, Network: result.Evidence.Network, Task: result.Evidence.Task,
+		relayLog.Diagnostics = &appmodel.RelayDiagnostics{Version: appmodel.RelayDiagnosticsVersion, SelectedAttempt: 1, Probe: result.Evidence, Network: result.Evidence.Network, Task: result.Evidence.Task,
 			Attempts: []appmodel.RelayAttemptDiagnostics{{Attempt: 1, ChannelID: channelID, Protocol: result.Protocol, EndpointID: result.EndpointID, Model: item.ModelName, KeyID: result.ChannelKeyID, Network: result.Evidence.Network, Task: result.Evidence.Task}}}
 	}
 

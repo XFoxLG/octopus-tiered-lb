@@ -2,6 +2,8 @@ package model
 
 import transmodel "github.com/lingyuins/octopus/internal/transformer/model"
 
+const RelayDiagnosticsVersion = 4
+
 // RelayDiagnostics records observations made by this gateway. It does not
 // claim that a downstream browser rendered bytes accepted by the HTTP writer.
 type RelayDiagnostics struct {
@@ -73,17 +75,29 @@ type RelayAttemptDiagnostics struct {
 	UpstreamError  *RelayUpstreamError      `json:"upstream_error,omitempty"`
 	// OutboundMaxTokens is the final limit observed on the wire for this
 	// attempt. Source identifies client, override, or adapter default.
-	OutboundMaxTokens         *int64 `json:"outbound_max_tokens,omitempty"`
-	OutboundMaxTokensSource   string `json:"outbound_max_tokens_source,omitempty"`
-	OutboundMaxTokensField    string `json:"outbound_max_tokens_field,omitempty"`
-	OutboundMaxTokensAdjusted bool   `json:"outbound_max_tokens_adjusted,omitempty"`
-	OutboundBudgetState       string `json:"outbound_budget_state,omitempty"`
-	OutputTextPresent         *bool  `json:"output_text_present,omitempty"`
+	OutboundMaxTokens         *int64                  `json:"outbound_max_tokens,omitempty"`
+	OutboundMaxTokensSource   string                  `json:"outbound_max_tokens_source,omitempty"`
+	OutboundMaxTokensField    string                  `json:"outbound_max_tokens_field,omitempty"`
+	OutboundMaxTokensAdjusted bool                    `json:"outbound_max_tokens_adjusted,omitempty"`
+	OutboundBudgetState       string                  `json:"outbound_budget_state,omitempty"`
+	OutputTextPresent         *bool                   `json:"output_text_present,omitempty"`
+	Stream                    *RelayStreamDiagnostics `json:"stream,omitempty"`
 	// RobinEnvelopeReason is a bounded classification, never tool arguments or
 	// generated content.
 	RobinEnvelopeKind   string                `json:"robin_envelope_kind,omitempty"`
 	RobinEnvelopeReason string                `json:"robin_envelope_reason,omitempty"`
 	Task                *RelayTaskDiagnostics `json:"task,omitempty"`
+}
+
+// RelayStreamDiagnostics contains bounded framing and failure evidence. It
+// never stores event payloads or upstream response text.
+type RelayStreamDiagnostics struct {
+	FailureStage         string `json:"failure_stage,omitempty"`
+	FailureKind          string `json:"failure_kind,omitempty"`
+	FailureEventIndex    int64  `json:"failure_event_index,omitempty"`
+	FailureEventBytes    int64  `json:"failure_event_bytes,omitempty"`
+	IncompleteEventIndex int64  `json:"incomplete_event_index,omitempty"`
+	IncompleteEventBytes int64  `json:"incomplete_event_bytes,omitempty"`
 }
 
 type RelayTaskDiagnostics struct {

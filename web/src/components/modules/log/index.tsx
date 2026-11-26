@@ -91,7 +91,7 @@ function LogFilterBar({
     }, [onChange, setModelSearch]);
 
     return (
-        <div className="flex flex-nowrap items-center gap-2 overflow-x-auto py-1">
+        <div className="flex flex-wrap items-center gap-2 py-1">
             <Select
                 value={filter.channel_id != null ? String(filter.channel_id) : ''}
                 onValueChange={(v) => {
@@ -104,7 +104,7 @@ function LogFilterBar({
                     onChange(next);
                 }}
             >
-                <SelectTrigger size="sm" className="h-7 text-xs min-w-[7rem]">
+                <SelectTrigger size="sm" className="h-11 min-w-[7rem] max-w-full flex-1 text-xs md:h-7 md:flex-none">
                     <SelectValue placeholder={t('allChannels')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -129,7 +129,7 @@ function LogFilterBar({
                     onChange(next);
                 }}
             >
-                <SelectTrigger size="sm" className="h-7 text-xs min-w-[7rem]">
+                <SelectTrigger size="sm" className="h-11 min-w-[7rem] max-w-full flex-1 text-xs md:h-7 md:flex-none">
                     <SelectValue placeholder={t('allKeys')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -154,7 +154,7 @@ function LogFilterBar({
                     onChange(next);
                 }}
             >
-                <SelectTrigger size="sm" className="h-7 text-xs min-w-[7rem]">
+                <SelectTrigger size="sm" className="h-11 min-w-[7rem] max-w-full flex-1 text-xs md:h-7 md:flex-none">
                     <SelectValue placeholder={t('allTypes')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -179,7 +179,7 @@ function LogFilterBar({
                     onChange(next);
                 }}
             >
-                <SelectTrigger size="sm" className="h-7 text-xs min-w-[6rem]">
+                <SelectTrigger size="sm" className="h-11 min-w-[6rem] max-w-full flex-1 text-xs md:h-7 md:flex-none">
                     <SelectValue placeholder={t('allStatuses')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -203,7 +203,7 @@ function LogFilterBar({
                     onChange(next);
                 }}
             >
-                <SelectTrigger size="sm" className="h-7 text-xs min-w-[6rem]">
+                <SelectTrigger size="sm" className="h-11 min-w-[6rem] max-w-full flex-1 text-xs md:h-7 md:flex-none">
                     <SelectValue placeholder={t('allLogs')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -226,7 +226,7 @@ function LogFilterBar({
                     onChange(next);
                 }}
             >
-                <SelectTrigger size="sm" className="h-7 text-xs min-w-[6rem]">
+                <SelectTrigger size="sm" className="h-11 min-w-[6rem] max-w-full flex-1 text-xs md:h-7 md:flex-none">
                     <SelectValue placeholder={t('allImages')} />
                 </SelectTrigger>
                 <SelectContent>
@@ -246,7 +246,7 @@ function LogFilterBar({
                 <PopoverTrigger asChild>
                     <button
                         type="button"
-                        className="flex h-7 items-center gap-1 rounded-md border border-border/50 bg-background px-2 text-xs hover:bg-muted transition-colors min-w-[7rem]"
+                        className="flex h-11 min-w-[7rem] max-w-full flex-1 items-center gap-1 rounded-md border border-border/50 bg-background px-2 text-xs transition-colors hover:bg-muted md:h-7 md:flex-none"
                     >
                         <span className="truncate">
                             {selectedModels.size > 0
@@ -274,7 +274,7 @@ function LogFilterBar({
                                     delete next.models;
                                     onChange(next);
                                 }}
-                                className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                                className="min-h-10 shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground"
                             >
                                 {t('clearModels')}
                             </button>
@@ -291,7 +291,7 @@ function LogFilterBar({
                                         key={m.name}
                                         type="button"
                                         onClick={() => toggleModel(m.name)}
-                                        className="flex w-full items-center gap-2 px-2.5 py-1 text-xs hover:bg-muted transition-colors"
+                                        className="flex min-h-11 w-full items-center gap-2 px-2.5 py-1 text-left text-xs transition-colors hover:bg-muted"
                                     >
                                         <span className={`flex size-3.5 shrink-0 items-center justify-center rounded border ${checked ? 'border-primary bg-primary text-primary-foreground' : 'border-border/60'}`}>
                                             {checked && <Check className="size-3" />}
@@ -309,7 +309,7 @@ function LogFilterBar({
                 <button
                     type="button"
                     onClick={handleClear}
-                    className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    className="flex min-h-10 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                     <X className="size-3" />
                     {t('clear')}
@@ -320,7 +320,7 @@ function LogFilterBar({
                 <PopoverTrigger asChild>
                     <button
                         type="button"
-                        className="flex items-center gap-1 rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        className="flex size-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:size-8"
                         title={tView('title')}
                         aria-label={tView('title')}
                     >

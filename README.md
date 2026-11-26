@@ -389,7 +389,7 @@ The embedded management UI currently ships with these top-level modules:
 | Home | Version, runtime status, high-level summaries, trend chart, activity heatmap, and ranking panel |
 | Hub | Upstream relay platform management with 5 tabs: Sites (multi-account cards with inline balance / sync / check-in status, archive/restore, batch edit, and bulk import from AllAPIHub / MetAPI), Site Channels (projected channel bindings), Automation (auto-sync and auto-checkin intervals), Balance (plan balance charts), and TokenPlan (token plan monitoring) |
 | Channel | Upstream provider configuration, keys, headers, sync, latency probing, proxy mode, and request rewrite profiles |
-| Group | Model routing, load-balancing strategies, sticky sessions, group test, AI route generation, endpoint provider, zashboard-style collapsible group list, and CC Switch deep link |
+| Group | Model routing, load-balancing strategies, sticky sessions, group test, AI route generation, endpoint provider, and zashboard-style collapsible group list |
 | Model Market | Model catalog with market / available endpoints / price categories views, custom pricing, channel coverage, enabled key counts, latency, success metrics, multi-dimension filters with normalized dedupe, and fallback pricing plus peak/off-peak billing rules |
 | Analytics | Channel × Model (default), Usage Breakdown, Route Health, Latency distribution, Evaluation, Cache (semantic + provider prompt cache), and share snapshot |
 | Log | Relay request history, error details, token usage, and cost records |
@@ -630,10 +630,6 @@ Groups aggregate multiple channels into a unified external model name.
 - Clicking **AI Fill Current Group** in the edit dialog sends all models to AI and appends only the matched route items to that group
 - The setting previously named AI route target group now acts as the default target group for the single-group compatibility flow only
 - AI route tasks are persistent with heartbeat, progress tracking, batch management, and interruption recovery
-
-**CC Switch Integration:**
-
-The group toolbar includes a CC Switch deep link generator that creates provider import links for 5 target apps: Claude Code, Codex, Gemini, OpenCode, and OpenClaw. For Claude Code, it supports mapping Haiku / Sonnet / Opus models to specific route groups.
 
 > 💡 **Example**: Create a group named `gpt-4o`, add multiple providers' GPT-4o channels to it, then access all channels via a unified `model: gpt-4o`.
 

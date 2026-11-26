@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { resolveClientName } from './ua';
 import { AlertTriangle, Download, Loader2 } from 'lucide-react';
@@ -28,6 +28,7 @@ interface BoundaryDetailsProps {
     detail: RelayLogDetail | null;
     error?: LogDetailError | null;
     isLoading: boolean;
+    section?: 'request' | 'response' | 'diagnostics';
 }
 
 const boundaryOrder = ['client_ingress', 'upstream_request', 'upstream_response', 'client_egress'] as const;
@@ -154,6 +155,39 @@ function BoundarySection({ title, records, emptyText }: { title: string; records
     );
 }
 
+function ClientBodyPreview({ detail, boundary }: { detail: RelayLogDetail; boundary: 'request' | 'response' }) {
+    const t = useTranslations('log.card.forensics');
+    const isRequest = boundary === 'request';
+    const record = detail.contents?.find(content => (
+        content.boundary === (isRequest ? 'client_ingress' : 'client_egress') && content.kind === 'body'
+    ));
+    const raw = record?.text || (isRequest ? detail.request_content : detail.response_content);
+    const bounded = boundedLogText(raw || '');
+    const truncated = record?.text_truncated
+        || bounded.truncated
+        || (isRequest ? detail.request_content_truncated : detail.response_content_truncated);
+    const previewText = boundedLogText(truncated ? bounded.text : readableLogBody(bounded.text));
+    const title = t(isRequest ? 'requestPreview' : 'responsePreview');
+
+    return (
+        <section className="min-w-0 space-y-2">
+            <p className="text-xs text-muted-foreground">{t('previewHint')}</p>
+            <h3 className="text-sm font-semibold">{title}</h3>
+            {raw ? (
+                <pre tabIndex={0} aria-label={title} className="max-h-[55dvh] overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/30 p-3 font-sans text-sm leading-6 focus-visible:outline-2 focus-visible:outline-ring">
+                    {previewText.text}
+                </pre>
+            ) : (
+                <p className="text-sm text-muted-foreground">
+                    {record ? t(`states.${record.state}`) : t('boundaryMissing')}
+                </p>
+            )}
+            {record && !record.complete ? <p className="text-xs text-muted-foreground">{t('partial')}</p> : null}
+            {truncated || previewText.truncated ? <p className="text-xs text-muted-foreground">{t('previewLimited')}</p> : null}
+        </section>
+    );
+}
+
 function StatusAxis({ label, value, text, hint }: { label: string; value?: string; text?: string; hint?: string }) {
     const t = useTranslations('log.card.forensics');
     return (
@@ -166,9 +200,12 @@ function StatusAxis({ label, value, text, hint }: { label: string; value?: strin
     );
 }
 
-export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsProps) {
+export function BoundaryDetails({ detail, error, isLoading, section }: BoundaryDetailsProps) {
     const t = useTranslations('log.card.forensics');
     const [showDiagnostics, setShowDiagnostics] = useState(false);
+    useEffect(() => {
+        setShowDiagnostics(section === 'diagnostics');
+    }, [section]);
     if (isLoading) {
         return (
             <div className="flex min-h-48 flex-1 items-center justify-center" role="status" aria-label={t('loading')}>
@@ -199,6 +236,10 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                 ) : null}
             </div>
         );
+    }
+
+    if (section === 'request' || section === 'response') {
+        return <ClientBodyPreview detail={detail} boundary={section} />;
     }
 
     const contents = [...(detail.contents ?? [])].sort((left, right) => {
@@ -256,8 +297,8 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
 
     return (
         <div className="min-h-0 space-y-4 pb-1">
-            <p className="text-xs text-muted-foreground">{t('previewHint')}</p>
-            {tokenLimitEvidence.isTokenLimitTerminated ? (
+            {section !== 'diagnostics' ? <p className="text-xs text-muted-foreground">{t('previewHint')}</p> : null}
+            {section !== 'diagnostics' && tokenLimitEvidence.isTokenLimitTerminated ? (
                 <div role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
                     <div className="flex items-start gap-2">
                         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
@@ -270,7 +311,7 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                     </div>
                 </div>
             ) : null}
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {section !== 'diagnostics' ? <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {(['client_ingress', 'client_egress'] as const).map(boundary => {
                     const record = recordsFor(boundary).find(item => item.kind === 'body');
                     const raw = record?.text || (boundary === 'client_ingress' ? detail.request_content : detail.response_content);
@@ -287,8 +328,8 @@ export function BoundaryDetails({ detail, error, isLoading }: BoundaryDetailsPro
                         </section>
                     );
                 })}
-            </div>
-            <details onToggle={event => setShowDiagnostics(event.currentTarget.open)} className="rounded-lg border border-border/50 p-3">
+            </div> : null}
+            <details open={showDiagnostics} onToggle={event => setShowDiagnostics(event.currentTarget.open)} className="rounded-lg border border-border/50 p-3">
                 <summary className="cursor-pointer rounded text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">{t('diagnostics')}</summary>
                 {showDiagnostics && <div className="mt-3 space-y-3">
                     {detail.diagnostics ? <pre tabIndex={0} aria-label={t('diagnostics')} className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/30 p-3 font-mono text-xs">{JSON.stringify(detail.diagnostics, null, 2)}</pre> : null}
